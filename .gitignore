@@ -1,0 +1,4 @@
+build/
+*.o
+*.bmp
+compile_commands.json
