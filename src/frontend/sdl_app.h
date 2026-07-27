@@ -2,12 +2,12 @@
 
 #include <string>
 
-#include "drivers/bagman.h"
+#include "core/machine.h"
 
 namespace dsp {
 
 struct AppOptions {
-    std::string rom_path = "bagman";
+    std::string rom_path;
     int scale = 3;
     bool mute = false;
     bool fullscreen = false;
@@ -21,10 +21,10 @@ class SdlApp {
 public:
     explicit SdlApp(const AppOptions& options) : options_(options) {}
 
-    int run(Bagman& machine);
+    int run(Machine& machine);
 
 private:
-    int run_headless(Bagman& machine);
+    int run_headless(Machine& machine);
 
     AppOptions options_;
 };

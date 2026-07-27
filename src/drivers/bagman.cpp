@@ -290,25 +290,30 @@ void Bagman::run_frame() {
     }
 }
 
-void Bagman::set_inputs(const InputState& player1, const InputState& player2, bool coin1,
-                        bool coin2) {
+void Bagman::set_inputs(const MachineInputs& inputs) {
+    const InputState& player1 = inputs.player1;
+    const InputState& player2 = inputs.player2;
     in0_ = 0xff;
     in1_ = 0xff;
-    if (coin1) in0_ &= 0xfe;
-    if (coin2) in0_ &= 0xfd;
+    if (inputs.coin1) in0_ &= 0xfe;
+    if (inputs.coin2) in0_ &= 0xfd;
     if (player1.start) in0_ &= 0xfb;
     if (player1.left) in0_ &= 0xf7;
     if (player1.right) in0_ &= 0xef;
     if (player1.up) in0_ &= 0xdf;
     if (player1.down) in0_ &= 0xbf;
-    if (player1.button) in0_ &= 0x7f;
+    if (player1.button1) in0_ &= 0x7f;
 
     if (player2.start) in1_ &= 0xfb;
     if (player2.left) in1_ &= 0xf7;
     if (player2.right) in1_ &= 0xef;
     if (player2.up) in1_ &= 0xdf;
     if (player2.down) in1_ &= 0xbf;
-    if (player2.button) in1_ &= 0x7f;
+    if (player2.button1) in1_ &= 0x7f;
+}
+
+void Bagman::set_dip_switch(int bank, uint8_t value) {
+    if (bank == 0) dsw_ = value;
 }
 
 void Bagman::drain_audio(std::vector<int16_t>& out) {

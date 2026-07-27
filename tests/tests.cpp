@@ -3,9 +3,11 @@
 #include <cstring>
 #include <vector>
 
+#include "cpu/m6809.h"
 #include "cpu/z80.h"
 #include "machine/bagman_pal.h"
 #include "sound/ay8910.h"
+#include "sound/sn76496.h"
 #include "video/gfx.h"
 
 namespace {
@@ -140,6 +142,111 @@ void test_ay8910() {
     check(non_zero, "the PSG generates a tone");
 }
 
+dsp::M6809 make_m6809(std::vector<uint8_t>& memory) {
+    dsp::M6809 cpu(1536000);
+    cpu.set_memory_handlers(
+        [&memory](uint16_t address) { return memory[address]; },
+        [&memory](uint16_t address, uint8_t value) { memory[address] = value; });
+    return cpu;
+}
+
+void test_m6809_reset_and_loads() {
+    auto memory = make_memory();
+    memory[0xfffe] = 0x10;  // reset vector -> 0x1000
+    memory[0xffff] = 0x00;
+    // lda #$12 / ldb #$34 / std $2000 / ldx #$1234 / leax 1,x
+    const uint8_t program[] = {0x86, 0x12, 0xc6, 0x34, 0xfd, 0x20, 0x00,
+                               0x8e, 0x12, 0x34, 0x30, 0x01};
+    std::memcpy(memory.data() + 0x1000, program, sizeof(program));
+
+    dsp::M6809 cpu = make_m6809(memory);
+    cpu.reset();
+    check(cpu.pc() == 0x1000, "m6809 starts at the reset vector");
+    cpu.run(20);
+    check(cpu.a == 0x12 && cpu.b == 0x34, "m6809 immediate loads");
+    check(memory[0x2000] == 0x12 && memory[0x2001] == 0x34, "m6809 stores D big endian");
+    check(cpu.x == 0x1235, "m6809 leax with a 5 bit indexed offset");
+}
+
+void test_m6809_branches_and_stack() {
+    auto memory = make_memory();
+    memory[0xfffe] = 0x10;
+    // lds #$3000 / lda #$05 / pshs a / clra / puls a / cmpa #$05 / beq +2 / lda #$ff
+    const uint8_t program[] = {0x10, 0xce, 0x30, 0x00, 0x86, 0x05, 0x34, 0x02, 0x4f,
+                               0x35, 0x02, 0x81, 0x05, 0x27, 0x02, 0x86, 0xff};
+    std::memcpy(memory.data() + 0x1000, program, sizeof(program));
+
+    dsp::M6809 cpu = make_m6809(memory);
+    cpu.reset();
+    cpu.run(40);
+    check(cpu.s == 0x3000, "m6809 pshs/puls balance the stack");
+    check(cpu.a == 0x05, "m6809 beq skips the branch target");
+}
+
+void test_m6809_interrupts() {
+    auto memory = make_memory();
+    memory[0xfffe] = 0x10;
+    memory[0xfff8] = 0x20;  // irq vector -> 0x2000
+    memory[0xfff6] = 0x30;  // firq vector -> 0x3000
+    // andcc #$af clears I and F, then a tight loop
+    const uint8_t program[] = {0x10, 0xce, 0x40, 0x00, 0x1c, 0xaf, 0x12, 0x12, 0x12, 0x12};
+    std::memcpy(memory.data() + 0x1000, program, sizeof(program));
+    memory[0x2000] = 0x86;  // lda #$77
+    memory[0x2001] = 0x77;
+    memory[0x3000] = 0x86;  // lda #$55
+    memory[0x3001] = 0x55;
+
+    dsp::M6809 cpu = make_m6809(memory);
+    cpu.reset();
+    cpu.run(12);
+    check(!cpu.cc.i && !cpu.cc.f, "m6809 andcc clears the interrupt masks");
+
+    cpu.set_irq(dsp::IrqLine::Hold);
+    cpu.run(4);
+    check(cpu.a == 0x77, "m6809 takes the irq vector");
+    check(cpu.cc.i && cpu.cc.e, "m6809 irq masks itself and stacks the full state");
+    check(memory[0x3ffe] == 0x10 || memory[0x3fff] == 0x10, "m6809 irq stacks the return address");
+
+    dsp::M6809 fast = make_m6809(memory);
+    fast.reset();
+    fast.run(12);
+    fast.set_firq(dsp::IrqLine::Hold);
+    fast.run(4);
+    check(fast.a == 0x55, "m6809 takes the firq vector");
+    check(!fast.cc.e, "m6809 firq stacks only pc and cc");
+}
+
+void test_sn76496() {
+    dsp::SN76496 psg(14318180 / 8);
+    bool silent = true;
+    for (int i = 0; i < 128; i++) {
+        if (psg.update() != 0) silent = false;
+    }
+    check(silent, "the SN76496 is silent after reset");
+
+    psg.write(0x80 | 0x20);  // channel 0 frequency, low nibble
+    psg.write(0x01);         // channel 0 frequency, high bits
+    psg.write(0x90);         // channel 0 volume, maximum
+    bool non_zero = false;
+    bool changed = false;
+    int32_t first = psg.update();
+    for (int i = 0; i < 4410; i++) {
+        int32_t sample = psg.update();
+        if (sample != 0) non_zero = true;
+        if (sample != first) changed = true;
+    }
+    check(non_zero, "the SN76496 generates a tone");
+    check(changed, "the SN76496 tone oscillates");
+
+    psg.write(0xe4);  // noise control: white noise, N/512
+    psg.write(0xf0);  // noise volume, maximum
+    bool noise = false;
+    for (int i = 0; i < 4410; i++) {
+        if (psg.update() != 0) noise = true;
+    }
+    check(noise, "the SN76496 generates noise");
+}
+
 }  // namespace
 
 int main() {
@@ -150,6 +257,10 @@ int main() {
     test_gfx_decode();
     test_palette_weights();
     test_ay8910();
+    test_m6809_reset_and_loads();
+    test_m6809_branches_and_stack();
+    test_m6809_interrupts();
+    test_sn76496();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

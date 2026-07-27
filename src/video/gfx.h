@@ -25,6 +25,13 @@ class GfxSet {
 public:
     void decode(const GfxLayout& layout, const std::vector<uint8_t>& rom);
 
+    // Allocates room for `total` elements, to be filled with decode_elements().
+    void create(int width, int height, int total);
+    // Decodes layout.total elements starting at `first_element`, so a set can be
+    // built out of several ROM regions with different plane offsets.
+    void decode_elements(const GfxLayout& layout, const std::vector<uint8_t>& rom,
+                         int first_element);
+
     int width() const { return width_; }
     int height() const { return height_; }
     int total() const { return total_; }

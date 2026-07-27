@@ -15,10 +15,13 @@ find_package(ZLIB REQUIRED)
 add_executable(dsp
   src/main.cpp
   src/cpu/z80.cpp
+  src/cpu/m6809.cpp
   src/sound/ay8910.cpp
+  src/sound/sn76496.cpp
   src/video/gfx.cpp
   src/machine/bagman_pal.cpp
   src/drivers/bagman.cpp
+  src/drivers/mikie.cpp
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
 )
@@ -31,7 +34,9 @@ enable_testing()
 add_executable(dsp_tests
   tests/tests.cpp
   src/cpu/z80.cpp
+  src/cpu/m6809.cpp
   src/sound/ay8910.cpp
+  src/sound/sn76496.cpp
   src/video/gfx.cpp
   src/machine/bagman_pal.cpp
 )
