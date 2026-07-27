@@ -15,14 +15,23 @@ inline uint8_t get_bit(const std::vector<uint8_t>& rom, int bit_index) {
 }  // namespace
 
 void GfxSet::decode(const GfxLayout& layout, const std::vector<uint8_t>& rom) {
-    width_ = layout.width;
-    height_ = layout.height;
-    total_ = layout.total;
-    pixels_.assign(size_t(total_) * size_t(width_ * height_), 0);
+    create(layout.width, layout.height, layout.total);
+    decode_elements(layout, rom, 0);
+}
 
-    size_t index = 0;
-    for (int element = 0; element < layout.total; element++) {
-        int base = element * layout.char_increment;
+void GfxSet::create(int width, int height, int total) {
+    width_ = width;
+    height_ = height;
+    total_ = total;
+    pixels_.assign(size_t(total_) * size_t(width_ * height_), 0);
+}
+
+void GfxSet::decode_elements(const GfxLayout& layout, const std::vector<uint8_t>& rom,
+                             int first_element) {
+    size_t index = size_t(first_element) * size_t(width_ * height_);
+    for (int n = 0; n < layout.total; n++) {
+        int element = first_element + n;
+        int base = n * layout.char_increment;
         for (int y = 0; y < layout.height; y++) {
             for (int x = 0; x < layout.width; x++) {
                 uint8_t value = 0;

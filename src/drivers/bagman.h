@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "core/machine.h"
 #include "cpu/z80.h"
 #include "machine/bagman_pal.h"
 #include "sound/ay8910.h"
@@ -12,18 +13,8 @@
 
 namespace dsp {
 
-// Player inputs, one entry per player.
-struct InputState {
-    bool up = false;
-    bool down = false;
-    bool left = false;
-    bool right = false;
-    bool button = false;
-    bool start = false;
-};
-
 // Bagman (Valadon Automation, 1982), ported from bagman_hw.pas.
-class Bagman {
+class Bagman : public Machine {
 public:
     static constexpr int kScreenWidth = 224;
     static constexpr int kScreenHeight = 256;
@@ -34,24 +25,22 @@ public:
 
     Bagman();
 
-    // `rom_path` is a directory or a zip archive holding the bagman ROM set.
-    bool init(const std::string& rom_path, std::string* error);
-    void reset();
+    bool init(const std::string& rom_path, std::string* error) override;
+    void reset() override;
+    void run_frame() override;
 
-    // Runs a full frame and renders it into the internal framebuffer.
-    void run_frame();
+    void set_inputs(const MachineInputs& inputs) override;
+    void set_dip_switch(int bank, uint8_t value) override;
 
-    void set_inputs(const InputState& player1, const InputState& player2, bool coin1, bool coin2);
-    void set_dip_switches(uint8_t value) { dsw_ = value; }
-    uint8_t dip_switches() const { return dsw_; }
+    const uint32_t* framebuffer() const override { return framebuffer_.data(); }
+    int screen_width() const override { return kScreenWidth; }
+    int screen_height() const override { return kScreenHeight; }
+    double frames_per_second() const override { return kFramesPerSecond; }
 
-    // ARGB8888 framebuffer, kScreenWidth * kScreenHeight pixels.
-    const uint32_t* framebuffer() const { return framebuffer_.data(); }
+    void drain_audio(std::vector<int16_t>& out) override;
+    int sample_rate() const override { return AY8910::kSampleRate; }
 
-    // Consumes the audio samples generated so far (mono, 44100 Hz, signed 16 bit).
-    void drain_audio(std::vector<int16_t>& out);
-
-    const std::vector<std::string>& warnings() const { return warnings_; }
+    const char* title() const override { return "Bagman"; }
 
 private:
     uint8_t read_byte(uint16_t address);
@@ -93,7 +82,6 @@ private:
 
     int64_t audio_accumulator_ = 0;
     std::vector<int16_t> audio_;
-    std::vector<std::string> warnings_;
 };
 
 }  // namespace dsp

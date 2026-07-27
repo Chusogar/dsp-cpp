@@ -4,10 +4,9 @@
 #include <functional>
 #include <utility>
 
-namespace dsp {
+#include "cpu/irq_line.h"
 
-// Interrupt line states, mirroring the DSP emulator (nz80.pas) semantics.
-enum class IrqLine { Clear, Assert, Hold, Pulse };
+namespace dsp {
 
 class Z80 {
 public:
