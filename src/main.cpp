@@ -8,6 +8,7 @@
 
 #include "core/machine.h"
 #include "drivers/bagman.h"
+#include "drivers/gauntlet.h"
 #include "drivers/mikie.h"
 #include "frontend/sdl_app.h"
 
@@ -22,10 +23,10 @@ void print_usage(const char* program) {
     std::printf(
         "Usage: %s [options] <romset.zip | rom directory>\n"
         "\n"
-        "Games: bagman (default), mikie\n"
+        "Games: bagman (default), mikie, gauntlet\n"
         "\n"
         "Options:\n"
-        "  --game NAME        game to run: bagman or mikie\n"
+        "  --game NAME        game to run: bagman, mikie or gauntlet\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
         "                     bank, mikie has three (0=A, 1=B, 2=C)\n"
@@ -45,12 +46,14 @@ std::string guess_game(const std::string& rom_path) {
     std::string lowered;
     for (char character : rom_path) lowered += char(std::tolower(character));
     if (lowered.find("mikie") != std::string::npos) return "mikie";
+    if (lowered.find("gauntlet") != std::string::npos) return "gauntlet";
     return "bagman";
 }
 
 std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "bagman") return std::make_unique<dsp::Bagman>();
     if (game == "mikie") return std::make_unique<dsp::Mikie>();
+    if (game == "gauntlet") return std::make_unique<dsp::Gauntlet>();
     return nullptr;
 }
 

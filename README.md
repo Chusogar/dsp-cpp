@@ -15,6 +15,12 @@ Supported games: **Bagman** (Valadon Automation, 1982) and **Mikie** (Konami, 19
 | Graphics decoding, palette | `src/misc/gfx_engine.pas`, `pal_engine.pas` | Bit-level layouts and resistor weights |
 | Bagman driver | `src/arcade/bagman_hw.pas` | Memory map, video, inputs, DIP switches |
 | Mikie driver | `src/arcade/mikie_hw.pas` | M6809 + sound Z80, PROM colour lookup tables, sprites |
+| M68000/68010 CPU | `src/cpu/m68000.pas` | Gauntlet main CPU |
+| M6502 CPU | `src/cpu/m6502.pas` | Gauntlet sound CPU |
+| YM2151 FM, POKEY | `src/snd/fm_2151.pas`, `src/snd/pokey.pas` | Gauntlet sound board |
+| SLAPSTIC | `src/arcade/misc/slapstic.pas` | Types 101-107, bank switched protected ROM |
+| Atari motion objects | `src/arcade/misc/atari_mo.pas` | SLIP based sprite lists |
+| Gauntlet driver | `src/arcade/gauntlet_hw.pas` | Memory map, playfield/char/sprite video, EEPROM, sound communication |
 | Front end | `src/misc/main_engine.pas` | SDL2 window, texture, audio queue, keyboard |
 
 ## Building
@@ -38,10 +44,12 @@ holding the individual files:
 ./build/dsp /path/to/bagman.zip
 ./build/dsp --scale 3 --dip 0xfe /path/to/roms/bagman/
 ./build/dsp --game mikie /path/to/mikie.zip
+./build/dsp --game gauntlet /path/to/gauntlet.zip
 ```
 
-The game is taken from `--game` (`bagman` or `mikie`); when omitted it is guessed from
-the ROM set name.
+The game is taken from `--game` (`bagman`, `mikie` or `gauntlet`); when omitted it is
+guessed from the ROM set name. Gauntlet accepts both the four player parent set
+(SLAPSTIC 104) and the two player `136041-xxx` set (SLAPSTIC 107).
 
 Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
 `n9_b10.bin`, `c1_b01.bin`, `e1_b02.bin`, `f1_b03s.bin`, `j1_b04.bin`, `p3.bin`, `r3.bin`.
@@ -49,10 +57,11 @@ Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s
 Options:
 
 ```
---game NAME        game to run: bagman or mikie
+--game NAME        game to run: bagman, mikie or gauntlet
 --scale N          window scale factor (default 3)
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
-                   mikie: 0=A coinage, 1=B gameplay, 2=C flip screen)
+                   mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
+                   gauntlet: service switch)
 --mute             disable audio
 --fullscreen       start in full screen
 --screenshot FILE  headless mode: render frames and write FILE (BMP)

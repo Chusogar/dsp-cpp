@@ -3,11 +3,17 @@
 #include <cstring>
 #include <vector>
 
+#include "cpu/m6502.h"
 #include "cpu/m6809.h"
+#include "cpu/m68000.h"
 #include "cpu/z80.h"
 #include "machine/bagman_pal.h"
+#include "machine/slapstic.h"
 #include "sound/ay8910.h"
+#include "sound/pokey.h"
 #include "sound/sn76496.h"
+#include "sound/ym2151.h"
+#include "video/atari_mo.h"
 #include "video/gfx.h"
 
 namespace {
@@ -247,6 +253,239 @@ void test_sn76496() {
     check(noise, "the SN76496 generates noise");
 }
 
+std::vector<uint8_t> m68k_memory;
+
+dsp::M68000 make_m68k() {
+    m68k_memory.assign(0x10000, 0);
+    dsp::M68000 cpu(7159090, dsp::M68000::Type::M68010);
+    cpu.set_memory_handlers(
+        [](uint32_t address) {
+            return uint16_t((m68k_memory[address & 0xfffe] << 8) | m68k_memory[(address & 0xfffe) + 1]);
+        },
+        [](uint32_t address, uint16_t value) {
+            m68k_memory[address & 0xfffe] = uint8_t(value >> 8);
+            m68k_memory[(address & 0xfffe) + 1] = uint8_t(value);
+        });
+    return cpu;
+}
+
+void put_word(uint32_t address, uint16_t value) {
+    m68k_memory[address] = uint8_t(value >> 8);
+    m68k_memory[address + 1] = uint8_t(value);
+}
+
+void put_long(uint32_t address, uint32_t value) {
+    put_word(address, uint16_t(value >> 16));
+    put_word(address + 2, uint16_t(value));
+}
+
+void test_m68000_reset_and_moves() {
+    dsp::M68000 cpu = make_m68k();
+    put_long(0x0000, 0x00001000);  // initial stack pointer
+    put_long(0x0004, 0x00000400);  // initial program counter
+    put_word(0x0400, 0x7aff);      // moveq #-1,d5
+    put_word(0x0402, 0x7c2a);      // moveq #$2a,d6
+    put_word(0x0404, 0x0686);      // addi.l #$100,d6
+    put_long(0x0406, 0x00000100);
+    put_word(0x040a, 0x60fe);      // bra.s *
+    cpu.reset();
+    check(cpu.a[7].l == 0x1000, "the 68000 loads the stack pointer from vector 0");
+    check(cpu.pc() == 0x400, "the 68000 loads the program counter from vector 1");
+    cpu.run(200);
+    check(cpu.d[5].l == 0xffffffff, "moveq sign extends into the whole register");
+    check(cpu.d[6].l == 0x12a, "addi.l adds a long immediate");
+}
+
+void test_m68000_branches_and_subroutines() {
+    dsp::M68000 cpu = make_m68k();
+    put_long(0x0000, 0x00001000);
+    put_long(0x0004, 0x00000400);
+    put_word(0x0400, 0x7003);      // moveq #3,d0
+    put_word(0x0402, 0x6106);      // bsr.s $40a
+    put_word(0x0404, 0x60fe);      // bra.s *  (endless loop)
+    put_word(0x040a, 0x5280);      // addq.l #1,d0
+    put_word(0x040c, 0x4e75);      // rts
+    cpu.reset();
+    cpu.run(200);
+    check(cpu.d[0].l == 4, "bsr/rts execute the subroutine once");
+    check(cpu.a[7].l == 0x1000, "rts restores the stack pointer");
+}
+
+void test_m68000_interrupt() {
+    dsp::M68000 cpu = make_m68k();
+    put_long(0x0000, 0x00001000);
+    put_long(0x0004, 0x00000400);
+    put_long(0x0078, 0x00000500);  // autovector for level 6
+    put_word(0x0400, 0x027c);      // andi #$f8ff,sr (interrupt mask 0)
+    put_word(0x0402, 0xf8ff);
+    put_word(0x0404, 0x60fe);      // bra.s *
+    put_word(0x0500, 0x7201);      // moveq #1,d1
+    put_word(0x0502, 0x60fe);      // bra.s *
+    cpu.reset();
+    cpu.run(40);
+    cpu.set_irq(6, dsp::IrqLine::Assert);
+    cpu.run(200);
+    check(cpu.d[1].l == 1, "the 68000 takes an autovectored level 6 interrupt");
+}
+
+std::vector<uint8_t> m6502_memory;
+
+dsp::M6502 make_m6502() {
+    m6502_memory.assign(0x10000, 0);
+    dsp::M6502 cpu(1789772);
+    cpu.set_memory_handlers([](uint16_t address) { return m6502_memory[address]; },
+                            [](uint16_t address, uint8_t value) { m6502_memory[address] = value; });
+    return cpu;
+}
+
+void load_6502(uint16_t address, const std::vector<uint8_t>& code) {
+    for (size_t i = 0; i < code.size(); i++) m6502_memory[address + i] = code[i];
+    m6502_memory[0xfffc] = uint8_t(address);
+    m6502_memory[0xfffd] = uint8_t(address >> 8);
+}
+
+void test_m6502_arithmetic() {
+    dsp::M6502 cpu = make_m6502();
+    // lda #$40 / adc #$40 / sbc #$01
+    load_6502(0x1000, {0xa9, 0x40, 0x18, 0x69, 0x40, 0x38, 0xe9, 0x01});
+    cpu.reset();
+    check(cpu.pc() == 0x1000, "the 6502 loads the reset vector");
+    cpu.run(6);
+    check(cpu.a == 0x80, "adc adds the accumulator");
+    check(cpu.p.v, "adc reports the signed overflow");
+    cpu.run(4);
+    check(cpu.a == 0x7f, "sbc subtracts with borrow");
+}
+
+void test_m6502_stack_and_interrupts() {
+    dsp::M6502 cpu = make_m6502();
+    // jsr $1010 / jmp * ; at $1010: lda #$7f / rts
+    load_6502(0x1000, {0x20, 0x10, 0x10, 0x4c, 0x03, 0x10});
+    m6502_memory[0x1010] = 0xa9;
+    m6502_memory[0x1011] = 0x7f;
+    m6502_memory[0x1012] = 0x60;
+    // nmi handler at $1100: inc $20 / rti
+    m6502_memory[0xfffa] = 0x00;
+    m6502_memory[0xfffb] = 0x11;
+    m6502_memory[0x1100] = 0xe6;
+    m6502_memory[0x1101] = 0x20;
+    m6502_memory[0x1102] = 0x40;
+    cpu.reset();
+    cpu.run(20);
+    check(cpu.a == 0x7f, "jsr/rts run the subroutine");
+    cpu.set_nmi(dsp::IrqLine::Assert);
+    cpu.run(40);
+    check(m6502_memory[0x20] == 1, "the 6502 takes the NMI once");
+}
+
+void test_slapstic() {
+    dsp::Slapstic slapstic(104, nullptr);
+    slapstic.reset();
+    check(slapstic.current_bank() == 3, "the slapstic starts on its default bank");
+    // The standard sequence is an access to offset 0 followed by the bank value.
+    const uint16_t banks[4] = {0x0020, 0x0028, 0x0030, 0x0038};
+    for (uint8_t wanted = 0; wanted < 4; wanted++) {
+        slapstic.tweak(0);
+        check(slapstic.tweak(banks[wanted]) == wanted, "the slapstic selects the requested bank");
+    }
+    // Without the unlock access the bank must not change.
+    slapstic.tweak(0x1234);
+    check(slapstic.tweak(banks[1]) == 3, "the slapstic ignores bank values while disabled");
+}
+
+void test_ym2151() {
+    dsp::YM2151 ym(14318180 / 4);
+    ym.reset();
+    check((ym.status() & 0x03) == 0, "the YM2151 clears its timer flags on reset");
+    ym.write_reg(0x14, 0x00);
+    ym.write_reg(0x10, 0x10);  // timer A period
+    ym.write_reg(0x14, 0x05);  // start timer A, enable its flag
+    ym.run_timers(14318180 / 4);
+    check((ym.status() & 0x01) != 0, "the YM2151 raises the timer A flag");
+    ym.write_reg(0x14, 0x15);  // reset the flag
+    check((ym.status() & 0x01) == 0, "the YM2151 clears the timer A flag on request");
+
+    ym.write_reg(0x20, 0xc7);  // both outputs, algorithm 7
+    ym.write_reg(0x28, 0x4a);  // key code
+    ym.write_reg(0x60, 0x00);  // maximum level for every operator
+    ym.write_reg(0x68, 0x00);
+    ym.write_reg(0x70, 0x00);
+    ym.write_reg(0x78, 0x00);
+    for (int reg = 0x80; reg < 0xa0; reg += 8) ym.write_reg(uint8_t(reg), 0x1f);
+    ym.write_reg(0x08, 0x78);  // key on
+    bool audible = false;
+    for (int i = 0; i < 4410; i++) {
+        if (ym.update() != 0) audible = true;
+    }
+    check(audible, "the YM2151 produces sound after a key on");
+}
+
+void test_pokey() {
+    dsp::Pokey pokey(14318180 / 8);
+    pokey.reset();
+    bool silent = true;
+    for (int i = 0; i < 128; i++) {
+        pokey.run(32);
+        if (pokey.update() != 0) silent = false;
+    }
+    check(silent, "the POKEY is silent after reset");
+
+    pokey.write(0x08, 0x00);  // audctl
+    pokey.write(0x00, 0x40);  // channel 0 frequency
+    pokey.write(0x01, 0xaf);  // channel 0: pure tone, maximum volume
+    bool audible = false;
+    int32_t first = pokey.update();
+    bool changed = false;
+    for (int i = 0; i < 8192; i++) {
+        pokey.run(16);
+        int32_t sample = pokey.update();
+        if (sample != 0) audible = true;
+        if (sample != first) changed = true;
+    }
+    check(audible, "the POKEY generates a tone");
+    check(changed, "the POKEY tone oscillates");
+}
+
+void test_atari_motion_objects() {
+    std::vector<uint16_t> sprite_ram(0x1000, 0);
+    std::vector<uint16_t> slip_ram(0x40, 0);
+    dsp::AtariMotionObjects::Config config;
+    config.tile_width = 8;
+    config.tile_height = 8;
+    config.linked = true;
+    config.split = true;
+    config.link_entry = {0, 0, 0, 0x03ff};
+    config.code_entry = {{0x7fff, 0, 0, 0}, {0, 0, 0, 0}};
+    config.color_entry = {{0, 0x000f, 0, 0}, {0, 0, 0, 0}};
+    config.xpos_entry = {0, 0xff80, 0, 0};
+    config.ypos_entry = {0, 0, 0xff80, 0};
+    config.width_entry = {0, 0, 0x0038, 0};
+    config.height_entry = {0, 0, 0x0007, 0};
+    config.hflip_entry = {0, 0, 0x0040, 0};
+    // An 8x8 object with code 5, colour 2 at (16, 24). The list ends with an entry
+    // linked to itself, which the hardware uses as the terminator and never draws.
+    sprite_ram[0x000] = 0x0005;          // code
+    sprite_ram[0x400] = 0x0002 | (16 << 7);  // colour and horizontal position
+    sprite_ram[0x800] = 0x1e0 << 7;      // vertical position (counted upwards)
+    sprite_ram[0xc00] = 0x0001;          // link to the terminator
+    sprite_ram[0xc01] = 0x0001;          // the terminator links to itself
+
+    dsp::AtariMotionObjects objects(config, slip_ram.data(), sprite_ram.data(), 512, 256);
+    int drawn = 0;
+    int last_code = -1, last_color = -1, last_x = -1, last_y = -1;
+    objects.draw(0, 0, 0, [&](int code, int color, bool, bool, int x, int y) {
+        drawn++;
+        last_code = code;
+        last_color = color;
+        last_x = x;
+        last_y = y;
+    });
+    check(drawn == 1, "the motion object list stops on the self link");
+    check(last_code == 5, "the motion object code is extracted");
+    check(last_color == 0x20, "the motion object colour becomes a palette offset");
+    check(last_x == 16 && last_y == 24, "the motion object position is extracted");
+}
+
 }  // namespace
 
 int main() {
@@ -261,6 +500,15 @@ int main() {
     test_m6809_branches_and_stack();
     test_m6809_interrupts();
     test_sn76496();
+    test_m68000_reset_and_moves();
+    test_m68000_branches_and_subroutines();
+    test_m68000_interrupt();
+    test_m6502_arithmetic();
+    test_m6502_stack_and_interrupts();
+    test_slapstic();
+    test_ym2151();
+    test_pokey();
+    test_atari_motion_objects();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

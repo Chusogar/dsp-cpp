@@ -16,12 +16,19 @@ add_executable(dsp
   src/main.cpp
   src/cpu/z80.cpp
   src/cpu/m6809.cpp
+  src/cpu/m6502.cpp
+  src/cpu/m68000.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
+  src/sound/ym2151.cpp
+  src/sound/pokey.cpp
   src/video/gfx.cpp
+  src/video/atari_mo.cpp
   src/machine/bagman_pal.cpp
+  src/machine/slapstic.cpp
   src/drivers/bagman.cpp
   src/drivers/mikie.cpp
+  src/drivers/gauntlet.cpp
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
 )
@@ -35,10 +42,16 @@ add_executable(dsp_tests
   tests/tests.cpp
   src/cpu/z80.cpp
   src/cpu/m6809.cpp
+  src/cpu/m6502.cpp
+  src/cpu/m68000.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
+  src/sound/ym2151.cpp
+  src/sound/pokey.cpp
   src/video/gfx.cpp
+  src/video/atari_mo.cpp
   src/machine/bagman_pal.cpp
+  src/machine/slapstic.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)
 target_compile_options(dsp_tests PRIVATE -Wall -Wextra)
