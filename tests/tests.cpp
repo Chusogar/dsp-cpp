@@ -378,6 +378,31 @@ void test_m6502_stack_and_interrupts() {
     check(m6502_memory[0x20] == 1, "the 6502 takes the NMI once");
 }
 
+void test_m6502_pushed_flags() {
+    dsp::M6502 cpu = make_m6502();
+    // sei / php / jmp *  -- the pushed byte must have both unused bits set
+    load_6502(0x1000, {0x78, 0x08, 0x4c, 0x02, 0x10});
+    // irq handler at $1100: pla / sta $30 / jmp *
+    m6502_memory[0xfffe] = 0x00;
+    m6502_memory[0xffff] = 0x11;
+    m6502_memory[0x1100] = 0x68;
+    m6502_memory[0x1101] = 0x85;
+    m6502_memory[0x1102] = 0x30;
+    m6502_memory[0x1103] = 0x4c;
+    m6502_memory[0x1104] = 0x03;
+    m6502_memory[0x1105] = 0x11;
+    cpu.reset();
+    cpu.run(20);
+    check((m6502_memory[0x1fd] & 0x30) == 0x30, "php pushes the break and unused bits");
+    // cli / jmp * so the pending IRQ is taken
+    load_6502(0x2000, {0x58, 0x4c, 0x01, 0x20});
+    cpu.reset();
+    cpu.set_irq(dsp::IrqLine::Assert);
+    cpu.run(60);
+    check((m6502_memory[0x30] & 0x30) == 0x20,
+          "an interrupt pushes the flags with the break bit clear");
+}
+
 void test_slapstic() {
     dsp::Slapstic slapstic(104, nullptr);
     slapstic.reset();
@@ -505,6 +530,7 @@ int main() {
     test_m68000_interrupt();
     test_m6502_arithmetic();
     test_m6502_stack_and_interrupts();
+    test_m6502_pushed_flags();
     test_slapstic();
     test_ym2151();
     test_pokey();

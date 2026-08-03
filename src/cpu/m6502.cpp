@@ -120,7 +120,7 @@ int M6502::call_nmi() {
     if (nmi_state_ != IrqLine::Clear) return 0;
     push(uint8_t(pc_ >> 8));
     push(uint8_t(pc_));
-    push(uint8_t(get_flags() & 0xdf));
+    push(uint8_t((get_flags() & 0xef) | 0x20));
     p.irq_disable = true;
     pc_ = uint16_t(read(0xfffa) | (read(0xfffb) << 8));
     if (nmi_request_ == IrqLine::Pulse) nmi_request_ = IrqLine::Clear;
@@ -132,7 +132,7 @@ int M6502::call_irq() {
     if (p.irq_disable) return 0;
     push(uint8_t(pc_ >> 8));
     push(uint8_t(pc_));
-    push(uint8_t(get_flags() & 0xdf));
+    push(uint8_t((get_flags() & 0xef) | 0x20));
     p.irq_disable = true;
     pc_ = uint16_t(read(0xfffe) | (read(0xffff) << 8));
     if (irq_request_ == IrqLine::Hold) irq_request_ = IrqLine::Clear;
@@ -286,8 +286,8 @@ int M6502::run(int cycles) {
                 pc_ += 1;
                 push(uint8_t(pc_ >> 8));
                 push(uint8_t(pc_));
+                push(uint8_t(get_flags() | 0x30));
                 p.brk = true;
-                push(get_flags());
                 p.irq_disable = true;
                 pc_ = uint16_t(read(0xfffe) | (read(0xffff) << 8));
                 break;
@@ -311,8 +311,7 @@ int M6502::run(int cycles) {
                 set_nz(a);
                 break;
             case 0x08:  // php
-                p.brk = true;
-                push(get_flags());
+                push(uint8_t(get_flags() | 0x30));
                 break;
             case 0x10:  // bpl
                 branch(!p.n, offset);
