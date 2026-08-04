@@ -32,7 +32,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Double Dragon driver | `src/arcade/doubledragon_hw.pas` | Both variants: banked ROM, shared RAM, scroll, sprites, sound CPUs |
 | Spectrum ULA | `src/computer/spectrum_hw.pas` | Keyboard matrix, border, one bit beeper, EAR input, contended timing |
 | Spectrum driver | `src/computer/spectrum_hw.pas`, `spectrum_misc.pas` | 48K memory map, display file with attributes and flash, Kempston joystick |
-| Tape player | `src/misc/tap_tzx.pas` | Standard speed `.tap` blocks, hooked to the ROM loader |
+| Tape player | `src/misc/tap_tzx.pas` | `.tap` blocks and `.tzx` images (turbo, pure tone/data, direct recording, pauses, loops), hooked to the ROM loader |
 | Front end | `src/misc/main_engine.pas` | SDL2 window, texture, audio queue, keyboard |
 
 ## Building
@@ -59,7 +59,7 @@ holding the individual files:
 ./build/dsp --game gauntlet /path/to/gauntlet.zip
 ./build/dsp --game ddragon /path/to/ddragon.zip
 ./build/dsp --game ddragon2 /path/to/ddragon2.zip
-./build/dsp --game spectrum48 --tape /path/to/game.tap /path/to/48.rom
+./build/dsp --game spectrum48 --tape /path/to/game.tzx /path/to/48.rom
 ```
 
 The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
@@ -83,7 +83,7 @@ Options:
 --fullscreen       start in full screen
 --screenshot FILE  headless mode: render frames and write FILE (BMP)
 --frames N         frames to run in headless mode (default 300)
---tape FILE        .tap image to insert (spectrum48)
+--tape FILE        tape image to insert, .tap or .tzx (spectrum48)
 ```
 
 ### ZX Spectrum 48K
@@ -93,15 +93,19 @@ directory holding it (Debian/Ubuntu ship it in the `spectrum-roms` package):
 
 ```bash
 ./build/dsp --game spectrum48 /usr/share/spectrum-roms/48.rom
-./build/dsp --game spectrum48 --tape jetpac.tap /usr/share/spectrum-roms/48.rom
+./build/dsp --game spectrum48 --tape jetpac.tzx /usr/share/spectrum-roms/48.rom
 ```
 
 The host keyboard is mapped one to one onto the Spectrum matrix (Left/Right Ctrl are
 symbol shift, Shift is caps shift), so `P` is not the pause key here: use `F2`. The
 arrows and Left Ctrl are also read as a Kempston joystick. A tape given with `--tape`
 plays by itself whenever the ROM loader is running, so typing `LOAD ""` and pressing
-Enter loads it; only standard speed `.tap` blocks are supported, not `.tzx` or custom
-loaders.
+Enter loads it. Both `.tap` and `.tzx` images work: the `.tzx` player handles standard
+and turbo blocks, pure tones, pulse sequences, pure data, direct recordings, pauses,
+signal level changes, jumps and loops. Games that only play under a custom loader still
+need the loader to be running, and the CSW (`$18`) and generalized data (`$19`) blocks
+are skipped. A "stop the tape" block only pauses for two seconds, because the machine
+restarts the tape whenever the loader runs.
 
 ### Controls
 

@@ -76,6 +76,8 @@ private:
     uint8_t flash_counter_ = 0;
     bool flash_ = false;
     bool issue2_ = false;
+    int ula_reads_ = 0;        // reads of port $fe in the current frame
+    bool polling_ear_ = false;  // a custom loader is reading the tape
 
     int64_t audio_accumulator_ = 0;
     int64_t audio_level_ = 0;

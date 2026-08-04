@@ -709,6 +709,79 @@ void test_spectrum_tape() {
     check(!single.ear() && single.finished(), "the tape stops after the last block");
 }
 
+// Measures the pulses a tape emits until `cycles` T states have gone by.
+std::vector<int> tape_pulses(dsp::SpectrumTape& tape, int cycles) {
+    std::vector<int> pulses;
+    bool level = tape.ear();
+    int length = 0;
+    for (int cycle = 0; cycle < cycles; cycle++) {
+        tape.advance(1);
+        length++;
+        if (tape.ear() != level) {
+            level = tape.ear();
+            pulses.push_back(length);
+            length = 0;
+        }
+    }
+    return pulses;
+}
+
+void test_spectrum_tzx() {
+    auto tzx = [](const std::vector<uint8_t>& blocks) {
+        std::vector<uint8_t> tape = {'Z', 'X', 'T', 'a', 'p', 'e', '!', 0x1a, 0x01, 0x14};
+        tape.insert(tape.end(), blocks.begin(), blocks.end());
+        return tape;
+    };
+    std::string error;
+
+    // $30 text and $32 archive info are skipped, $12 is a pure tone of four
+    // 100 T pulses and $13 a sequence of two pulses.
+    dsp::SpectrumTape tape;
+    check(tape.load_from_memory(tzx({0x30, 0x02, 'h', 'i',                        //
+                                     0x32, 0x03, 0x00, 0x00, 0x00, 0x00,          //
+                                     0x12, 0x64, 0x00, 0x04, 0x00,                //
+                                     0x13, 0x02, 0xc8, 0x00, 0x2c, 0x01}),        //
+                                &error),
+          "a .tzx image with tone and pulse blocks loads");
+    check(tape.block_count() == 2, "the text and archive info blocks are skipped");
+    tape.set_playing(true);
+    const std::vector<int> pulses = tape_pulses(tape, 4 * 100 + 200 + 300);
+    check(pulses == std::vector<int>({100, 100, 100, 100, 200, 300}),
+          "the pure tone and the pulse sequence keep their lengths");
+
+    // $14 pure data: $c0 and $00 with only two bits used in the last byte.
+    dsp::SpectrumTape pure;
+    check(pure.load_from_memory(tzx({0x14, 0x0a, 0x00, 0x14, 0x00, 0x02, 0x00, 0x00,  //
+                                     0x02, 0x00, 0x00, 0xc0, 0x00}),
+                                &error),
+          "a pure data block loads");
+    pure.set_playing(true);
+    const std::vector<int> bits = tape_pulses(pure, 8 * 2 * 10 + 2 * 2 * 20);
+    check(bits.size() == 20, "only the used bits of the last byte are played");
+    check(bits[0] == 20 && bits[3] == 20 && bits[4] == 10 && bits[19] == 10,
+          "the one bits of $c0 are 20 T and the zero bits 10 T");
+
+    // $15 direct recording: the level follows the sample bits, no toggling.
+    dsp::SpectrumTape direct;
+    check(direct.load_from_memory(tzx({0x15, 0x0a, 0x00, 0x00, 0x00, 0x08, 0x01, 0x00, 0x00, 0xf0}),
+                                  &error),
+          "a direct recording block loads");
+    direct.set_playing(true);
+    check(direct.ear(), "the first sample of $f0 is high");
+    direct.advance(40);
+    check(!direct.ear(), "the fifth sample of $f0 is low");
+
+    // $24/$25 repeat the pure tone inside the loop three times.
+    dsp::SpectrumTape loop;
+    check(loop.load_from_memory(tzx({0x24, 0x03, 0x00,              //
+                                     0x12, 0x64, 0x00, 0x02, 0x00,  //
+                                     0x25}),
+                                &error),
+          "a loop block loads");
+    loop.set_playing(true);
+    check(tape_pulses(loop, 6 * 100).size() == 6, "the loop plays its body three times");
+}
+
 void test_spectrum_ula() {
     dsp::Spectrum48 spectrum;
     dsp::MachineInputs inputs;
@@ -767,6 +840,7 @@ int main() {
     test_msm5205();
     test_okim6295();
     test_spectrum_tape();
+    test_spectrum_tzx();
     test_spectrum_ula();
     if (failures == 0) {
         std::printf("all tests passed\n");

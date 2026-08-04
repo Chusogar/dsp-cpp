@@ -19,9 +19,14 @@ const std::vector<RomEntry> kRoms = {
     {"spectrum.rom|48.rom|48k.rom|zx48.rom", 0x4000, 0x0000, 0xddee531f},
 };
 
-// LD-BYTES, the ROM tape loader: the tape only runs while the CPU is in it.
+// LD-BYTES, the ROM tape loader: the tape runs while the CPU is in it.
 constexpr uint16_t kLoaderStart = 0x0556;
 constexpr uint16_t kLoaderEnd = 0x0605;
+
+// A custom loader runs from RAM, so it is recognised by how often it polls the
+// EAR bit: the ROM keyboard scan reads port $fe a few dozen times per frame and
+// a loader thousands of times.
+constexpr int kLoaderPollsPerFrame = 200;
 
 // Keyboard matrix of the ULA: one half row per address line A8..A15.
 constexpr Key kMatrix[8][5] = {
@@ -112,6 +117,8 @@ void Spectrum48::reset() {
     audio_.clear();
     audio_accumulator_ = 0;
     audio_level_ = 0;
+    ula_reads_ = 0;
+    polling_ear_ = false;
     tape_.rewind();
     cpu_.reset();
 }
@@ -128,6 +135,7 @@ uint8_t Spectrum48::read_port(uint16_t port) {
             if ((port & (0x100 << row)) == 0) value &= keys_[row];
         }
         value &= 0xbf;
+        ula_reads_++;
         const bool ear = tape_.playing() ? tape_.ear()
                                          : (speaker_ != 0 || (issue2_ && mic_ != 0));
         if (ear) value |= 0x40;
@@ -164,7 +172,7 @@ void Spectrum48::on_cycles(int cycles) {
 void Spectrum48::update_tape() {
     if (!tape_.loaded() || tape_.finished()) return;
     const uint16_t pc = cpu_.pc();
-    tape_.set_playing(pc >= kLoaderStart && pc <= kLoaderEnd);
+    tape_.set_playing((pc >= kLoaderStart && pc <= kLoaderEnd) || polling_ear_);
 }
 
 void Spectrum48::render_line(int line) {
@@ -212,6 +220,9 @@ void Spectrum48::run_frame() {
         }
         render_line(line);
     }
+    polling_ear_ = ula_reads_ >= kLoaderPollsPerFrame;
+    ula_reads_ = 0;
+
     flash_counter_ = uint8_t((flash_counter_ + 1) & 0x0f);
     if (flash_counter_ == 0) flash_ = !flash_;
 }
