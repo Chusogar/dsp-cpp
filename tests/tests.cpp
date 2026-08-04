@@ -3,6 +3,7 @@
 #include <cstring>
 #include <vector>
 
+#include "cpu/hd63701.h"
 #include "cpu/m6502.h"
 #include "cpu/m6809.h"
 #include "cpu/m68000.h"
@@ -10,6 +11,8 @@
 #include "machine/bagman_pal.h"
 #include "machine/slapstic.h"
 #include "sound/ay8910.h"
+#include "sound/msm5205.h"
+#include "sound/okim6295.h"
 #include "sound/pokey.h"
 #include "sound/sn76496.h"
 #include "sound/ym2151.h"
@@ -511,6 +514,143 @@ void test_atari_motion_objects() {
     check(last_x == 16 && last_y == 24, "the motion object position is extracted");
 }
 
+// Builds a HD63701 whose internal ROM holds `program` at $c000 and whose reset
+// vector points there. External memory is a plain 64 KB buffer.
+dsp::HD63701 make_hd63701(std::vector<uint8_t>& memory, const std::vector<uint8_t>& program) {
+    dsp::HD63701 cpu(1000000);
+    cpu.set_memory_handlers([&memory](uint16_t address) { return memory[address]; },
+                            [&memory](uint16_t address, uint8_t value) { memory[address] = value; });
+    std::array<uint8_t, 0x4000>& rom = cpu.internal_rom();
+    rom.fill(0);
+    for (size_t index = 0; index < program.size(); index++) rom[index] = program[index];
+    rom[0x3ffe] = 0xc0;  // reset vector
+    rom[0x3fff] = 0x00;
+    cpu.reset();
+    return cpu;
+}
+
+void test_hd63701_reset_and_internal_ram() {
+    auto memory = make_memory();
+    // ldaa #$12 / staa $50 / ldab $50 / addb #$01
+    dsp::HD63701 cpu = make_hd63701(memory, {0x86, 0x12, 0x97, 0x50, 0xd6, 0x50, 0xcb, 0x01});
+    check(cpu.pc() == 0xc000, "the HD63701 takes the reset vector from the internal ROM");
+    cpu.run(20);
+    check(cpu.a == 0x12, "the HD63701 loads an immediate value");
+    check(cpu.b == 0x13, "the HD63701 stores to and reads back its internal RAM");
+    check(memory[0x50] == 0, "internal RAM is not visible on the external bus");
+}
+
+void test_hd63701_ports() {
+    auto memory = make_memory();
+    // ldaa #$ff / staa $00 (DDR1 = all outputs) / ldaa #$5a / staa $02 (port 1)
+    // ldab $03 (port 2, an input because DDR2 stays at zero)
+    dsp::HD63701 cpu = make_hd63701(
+        memory, {0x86, 0xff, 0x97, 0x00, 0x86, 0x5a, 0x97, 0x02, 0xd6, 0x03});
+    uint8_t written = 0;
+    int writes = 0;
+    cpu.set_port_write(0, [&](uint8_t value) {
+        written = value;
+        writes++;
+    });
+    cpu.set_port_read(1, []() { return uint8_t(0xa5); });
+    cpu.run(30);
+    check(writes > 0 && written == 0x5a, "a port write reaches the output handler");
+    check(cpu.b == 0xa5, "a port read comes from the input handler");
+}
+
+void test_hd63701_hd63701_only_opcodes() {
+    auto memory = make_memory();
+    // ldaa #$12 / ldab #$34 / ldx #$abcd / xgdx / oim #$0f,$60 / aim #$f1,$60 /
+    // tim #$01,$60
+    dsp::HD63701 cpu = make_hd63701(memory, {0x86, 0x12, 0xc6, 0x34, 0xce, 0xab, 0xcd, 0x18,
+                                             0x72, 0x0f, 0x60, 0x71, 0xf1, 0x60, 0x7b, 0x01, 0x60});
+    cpu.run(40);
+    check(cpu.a == 0xab && cpu.b == 0xcd, "xgdx moves X into D");
+    // The internal RAM byte at $60 starts at zero: oim sets the low nibble and
+    // aim keeps only the bits also present in $f1.
+    check(!cpu.cc.z, "tim reports the tested bit as set");
+}
+
+void test_hd63701_interrupts() {
+    auto memory = make_memory();
+    // cli / nop ... with the IRQ vector ($fff8) pointing at $c020.
+    dsp::HD63701 cpu(1000000);
+    cpu.set_memory_handlers([&memory](uint16_t address) { return memory[address]; },
+                            [&memory](uint16_t address, uint8_t value) { memory[address] = value; });
+    std::array<uint8_t, 0x4000>& rom = cpu.internal_rom();
+    rom.fill(0x01);  // nop
+    rom[0x0000] = 0x0e;  // cli
+    rom[0x0020] = 0x20;  // bra *, so the handler stays put
+    rom[0x0021] = 0xfe;
+    rom[0x0040] = 0x20;
+    rom[0x0041] = 0xfe;
+    rom[0x3ff8] = 0xc0;
+    rom[0x3ff9] = 0x20;
+    rom[0x3ffc] = 0xc0;  // NMI vector
+    rom[0x3ffd] = 0x40;
+    rom[0x3ffe] = 0xc0;
+    rom[0x3fff] = 0x00;
+    cpu.reset();
+    cpu.sp = 0x01ff;
+    cpu.run(4);
+    check(!cpu.cc.i, "cli clears the interrupt mask");
+    cpu.set_irq(dsp::IrqLine::Assert);
+    cpu.run(20);
+    check(cpu.pc() == 0xc020 || cpu.pc() == 0xc022,
+          "an IRQ jumps through the vector at $fff8");
+
+    cpu.reset();
+    cpu.sp = 0x01ff;
+    cpu.set_nmi(dsp::IrqLine::Assert);
+    cpu.run(20);
+    check(cpu.pc() == 0xc040 || cpu.pc() == 0xc042,
+          "an NMI jumps through the vector at $fffc even with I set");
+}
+
+void test_msm5205() {
+    dsp::MSM5205 chip(384000, 48, 4);
+    check(chip.sample_frequency() == 8000, "the MSM5205 prescaler sets the sample rate");
+    std::vector<uint8_t> rom(0x100, 0);
+    // A ramp of maximum positive steps followed by silence.
+    for (int index = 0; index < 8; index++) rom[index] = 0x77;
+    chip.set_rom(rom);
+    chip.reset();
+    check(chip.idle(), "the MSM5205 starts idle");
+    chip.set_start(0);
+    chip.set_end(0x40);
+    chip.set_reset(false);
+    for (int index = 0; index < 8; index++) chip.vclk();
+    check(!chip.idle(), "the MSM5205 plays while inside the sample");
+    check(chip.output() > 0, "positive ADPCM nibbles push the output up");
+    chip.set_reset(true);
+    check(chip.output() == 0, "resetting the MSM5205 silences it");
+}
+
+void test_okim6295() {
+    dsp::OKIM6295 chip(1056000, true);
+    check(chip.sample_frequency() == 8000, "pin 7 high selects the /132 divider");
+    std::vector<uint8_t> rom(0x1000, 0);
+    // Sample 1: table entry at $08 holds the start and end addresses.
+    rom[0x08] = 0x00;
+    rom[0x09] = 0x02;
+    rom[0x0a] = 0x00;  // start $000200
+    rom[0x0b] = 0x00;
+    rom[0x0c] = 0x02;
+    rom[0x0d] = 0x20;  // end $000220
+    for (int index = 0x200; index <= 0x220; index++) rom[index] = 0x77;
+    chip.set_rom(rom);
+    chip.reset();
+    check(chip.update() == 0, "an idle OKI6295 is silent");
+    chip.write(0x81);  // select sample 1
+    chip.write(0x10);  // start it on voice 1 at full volume
+    check((chip.read() & 0x01) != 0, "the status byte reports the busy voice");
+    int32_t sample = 0;
+    for (int index = 0; index < 16; index++) sample = chip.update();
+    check(sample != 0, "the OKI6295 decodes the selected sample");
+    chip.write(0x08);  // silence voice 1
+    check((chip.read() & 0x01) == 0, "the silence command stops the voice");
+}
+
 }  // namespace
 
 int main() {
@@ -535,6 +675,12 @@ int main() {
     test_ym2151();
     test_pokey();
     test_atari_motion_objects();
+    test_hd63701_reset_and_internal_ram();
+    test_hd63701_ports();
+    test_hd63701_hd63701_only_opcodes();
+    test_hd63701_interrupts();
+    test_msm5205();
+    test_okim6295();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

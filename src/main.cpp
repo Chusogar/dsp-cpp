@@ -8,6 +8,7 @@
 
 #include "core/machine.h"
 #include "drivers/bagman.h"
+#include "drivers/doubledragon.h"
 #include "drivers/gauntlet.h"
 #include "drivers/mikie.h"
 #include "frontend/sdl_app.h"
@@ -23,10 +24,11 @@ void print_usage(const char* program) {
     std::printf(
         "Usage: %s [options] <romset.zip | rom directory>\n"
         "\n"
-        "Games: bagman (default), mikie, gauntlet\n"
+        "Games: bagman (default), mikie, gauntlet, ddragon, ddragon2\n"
         "\n"
         "Options:\n"
-        "  --game NAME        game to run: bagman, mikie or gauntlet\n"
+        "  --game NAME        game to run: bagman, mikie, gauntlet, ddragon or\n"
+        "                     ddragon2\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
         "                     bank, mikie has three (0=A, 1=B, 2=C)\n"
@@ -37,6 +39,7 @@ void print_usage(const char* program) {
         "  --help             show this help\n"
         "\n"
         "Controls: arrows move, Left Ctrl/Space button 1, Left Alt/Z button 2,\n"
+        "          X button 3 (Double Dragon jump),\n"
         "          1/2 start, 5/6 insert coin, P pause, F3 reset, Esc quit.\n",
         program);
 }
@@ -47,6 +50,8 @@ std::string guess_game(const std::string& rom_path) {
     for (char character : rom_path) lowered += char(std::tolower(character));
     if (lowered.find("mikie") != std::string::npos) return "mikie";
     if (lowered.find("gauntlet") != std::string::npos) return "gauntlet";
+    if (lowered.find("ddragon2") != std::string::npos) return "ddragon2";
+    if (lowered.find("ddragon") != std::string::npos) return "ddragon";
     return "bagman";
 }
 
@@ -54,6 +59,12 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "bagman") return std::make_unique<dsp::Bagman>();
     if (game == "mikie") return std::make_unique<dsp::Mikie>();
     if (game == "gauntlet") return std::make_unique<dsp::Gauntlet>();
+    if (game == "ddragon") {
+        return std::make_unique<dsp::DoubleDragon>(dsp::DoubleDragon::Variant::DDragon);
+    }
+    if (game == "ddragon2") {
+        return std::make_unique<dsp::DoubleDragon>(dsp::DoubleDragon::Variant::DDragon2);
+    }
     return nullptr;
 }
 
