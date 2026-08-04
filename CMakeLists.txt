@@ -29,10 +29,12 @@ add_executable(dsp
   src/video/atari_mo.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
+  src/machine/spectrum_tape.cpp
   src/drivers/bagman.cpp
   src/drivers/mikie.cpp
   src/drivers/gauntlet.cpp
   src/drivers/doubledragon.cpp
+  src/drivers/spectrum.cpp
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
 )
@@ -59,8 +61,12 @@ add_executable(dsp_tests
   src/video/atari_mo.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
+  src/machine/spectrum_tape.cpp
+  src/drivers/spectrum.cpp
+  src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)
+target_link_libraries(dsp_tests PRIVATE ZLIB::ZLIB)
 target_compile_options(dsp_tests PRIVATE -Wall -Wextra)
 add_test(NAME dsp_tests COMMAND dsp_tests)
 

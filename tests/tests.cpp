@@ -8,8 +8,10 @@
 #include "cpu/m6809.h"
 #include "cpu/m68000.h"
 #include "cpu/z80.h"
+#include "drivers/spectrum.h"
 #include "machine/bagman_pal.h"
 #include "machine/slapstic.h"
+#include "machine/spectrum_tape.h"
 #include "sound/ay8910.h"
 #include "sound/msm5205.h"
 #include "sound/okim6295.h"
@@ -651,6 +653,162 @@ void test_okim6295() {
     check((chip.read() & 0x01) == 0, "the silence command stops the voice");
 }
 
+// A .tap image with a single block, the format the ROM loader expects.
+std::vector<uint8_t> make_tap(const std::vector<uint8_t>& block) {
+    std::vector<uint8_t> tape;
+    tape.push_back(uint8_t(block.size() & 0xff));
+    tape.push_back(uint8_t(block.size() >> 8));
+    tape.insert(tape.end(), block.begin(), block.end());
+    return tape;
+}
+
+void test_spectrum_tape() {
+    dsp::SpectrumTape tape;
+    std::string error;
+    // Flag $00 marks a header, so the long pilot tone is used.
+    check(tape.load_from_memory(make_tap({0x00, 0xff, 0xff}), &error), "a .tap image loads");
+    check(tape.loaded() && !tape.playing(), "the tape starts stopped");
+    tape.advance(1000000);
+    check(!tape.ear(), "a stopped tape does not move");
+
+    tape.set_playing(true);
+    int edges = 0;
+    bool level = tape.ear();
+    for (int index = 0; index < dsp::SpectrumTape::kHeaderPilotPulses; index++) {
+        tape.advance(dsp::SpectrumTape::kPilotPulse);
+        if (tape.ear() != level) {
+            level = tape.ear();
+            edges++;
+        }
+    }
+    check(edges == dsp::SpectrumTape::kHeaderPilotPulses,
+          "the header pilot tone is 8063 pulses long");
+
+    // Sync pair, then the first bit of the $00 flag byte as a short pulse.
+    tape.advance(dsp::SpectrumTape::kSync1Pulse);
+    tape.advance(dsp::SpectrumTape::kSync2Pulse);
+    level = tape.ear();
+    tape.advance(dsp::SpectrumTape::kBit0Pulse);
+    check(tape.ear() != level, "a zero bit is two 855 T pulses");
+
+    dsp::SpectrumTape empty;
+    check(!empty.load_from_memory({0x01}, &error), "a truncated image is rejected");
+
+    // A block closes with a short pulse: without that edge the ROM loader never
+    // sees the end of the last bit and waits forever.
+    dsp::SpectrumTape single;
+    check(single.load_from_memory(make_tap({0xff, 0x00}), &error), "a data block loads");
+    single.set_playing(true);
+    single.advance(dsp::SpectrumTape::kDataPilotPulses * dsp::SpectrumTape::kPilotPulse +
+                   dsp::SpectrumTape::kSync1Pulse + dsp::SpectrumTape::kSync2Pulse +
+                   16 * dsp::SpectrumTape::kBit1Pulse + 16 * dsp::SpectrumTape::kBit0Pulse);
+    level = single.ear();
+    single.advance(dsp::SpectrumTape::kTailPulse);
+    check(single.ear() != level && !single.ear(), "a block ends with a closing edge");
+    single.advance(dsp::SpectrumTape::kPauseCycles);
+    check(!single.ear() && single.finished(), "the tape stops after the last block");
+}
+
+// Measures the pulses a tape emits until `cycles` T states have gone by.
+std::vector<int> tape_pulses(dsp::SpectrumTape& tape, int cycles) {
+    std::vector<int> pulses;
+    bool level = tape.ear();
+    int length = 0;
+    for (int cycle = 0; cycle < cycles; cycle++) {
+        tape.advance(1);
+        length++;
+        if (tape.ear() != level) {
+            level = tape.ear();
+            pulses.push_back(length);
+            length = 0;
+        }
+    }
+    return pulses;
+}
+
+void test_spectrum_tzx() {
+    auto tzx = [](const std::vector<uint8_t>& blocks) {
+        std::vector<uint8_t> tape = {'Z', 'X', 'T', 'a', 'p', 'e', '!', 0x1a, 0x01, 0x14};
+        tape.insert(tape.end(), blocks.begin(), blocks.end());
+        return tape;
+    };
+    std::string error;
+
+    // $30 text and $32 archive info are skipped, $12 is a pure tone of four
+    // 100 T pulses and $13 a sequence of two pulses.
+    dsp::SpectrumTape tape;
+    check(tape.load_from_memory(tzx({0x30, 0x02, 'h', 'i',                        //
+                                     0x32, 0x03, 0x00, 0x00, 0x00, 0x00,          //
+                                     0x12, 0x64, 0x00, 0x04, 0x00,                //
+                                     0x13, 0x02, 0xc8, 0x00, 0x2c, 0x01}),        //
+                                &error),
+          "a .tzx image with tone and pulse blocks loads");
+    check(tape.block_count() == 2, "the text and archive info blocks are skipped");
+    tape.set_playing(true);
+    const std::vector<int> pulses = tape_pulses(tape, 4 * 100 + 200 + 300);
+    check(pulses == std::vector<int>({100, 100, 100, 100, 200, 300}),
+          "the pure tone and the pulse sequence keep their lengths");
+
+    // $14 pure data: $c0 and $00 with only two bits used in the last byte.
+    dsp::SpectrumTape pure;
+    check(pure.load_from_memory(tzx({0x14, 0x0a, 0x00, 0x14, 0x00, 0x02, 0x00, 0x00,  //
+                                     0x02, 0x00, 0x00, 0xc0, 0x00}),
+                                &error),
+          "a pure data block loads");
+    pure.set_playing(true);
+    const std::vector<int> bits = tape_pulses(pure, 8 * 2 * 10 + 2 * 2 * 20);
+    check(bits.size() == 20, "only the used bits of the last byte are played");
+    check(bits[0] == 20 && bits[3] == 20 && bits[4] == 10 && bits[19] == 10,
+          "the one bits of $c0 are 20 T and the zero bits 10 T");
+
+    // $15 direct recording: the level follows the sample bits, no toggling.
+    dsp::SpectrumTape direct;
+    check(direct.load_from_memory(tzx({0x15, 0x0a, 0x00, 0x00, 0x00, 0x08, 0x01, 0x00, 0x00, 0xf0}),
+                                  &error),
+          "a direct recording block loads");
+    direct.set_playing(true);
+    check(direct.ear(), "the first sample of $f0 is high");
+    direct.advance(40);
+    check(!direct.ear(), "the fifth sample of $f0 is low");
+
+    // $24/$25 repeat the pure tone inside the loop three times.
+    dsp::SpectrumTape loop;
+    check(loop.load_from_memory(tzx({0x24, 0x03, 0x00,              //
+                                     0x12, 0x64, 0x00, 0x02, 0x00,  //
+                                     0x25}),
+                                &error),
+          "a loop block loads");
+    loop.set_playing(true);
+    check(tape_pulses(loop, 6 * 100).size() == 6, "the loop plays its body three times");
+}
+
+void test_spectrum_ula() {
+    dsp::Spectrum48 spectrum;
+    dsp::MachineInputs inputs;
+    inputs.keys[size_t(dsp::Key::A)] = true;
+    inputs.keys[size_t(dsp::Key::Enter)] = true;
+    spectrum.set_inputs(inputs);
+    // A is bit 0 of the half row selected by A9, enter bit 0 of the one on A14.
+    check((spectrum.read_port(0xfdfe) & 0x01) == 0, "the ULA reports the pressed key");
+    check((spectrum.read_port(0xfbfe) & 0x01) != 0, "other half rows stay high");
+    check((spectrum.read_port(0xbffe) & 0x01) == 0, "enter is read on A14");
+
+    dsp::MachineInputs released;
+    spectrum.set_inputs(released);
+    check((spectrum.read_port(0xfdfe) & 0x1f) == 0x1f, "releasing the key frees the matrix");
+
+    spectrum.write_port(0xfe, 0x10);
+    check((spectrum.read_port(0xfffe) & 0x40) != 0, "the speaker bit comes back on EAR");
+    spectrum.write_port(0xfe, 0x00);
+    check((spectrum.read_port(0xfffe) & 0x40) == 0, "and clears with it");
+
+    dsp::MachineInputs joystick;
+    joystick.player1.right = true;
+    joystick.player1.button1 = true;
+    spectrum.set_inputs(joystick);
+    check(spectrum.read_port(0x001f) == 0x11, "the Kempston joystick answers on A5 low");
+}
+
 }  // namespace
 
 int main() {
@@ -681,6 +839,9 @@ int main() {
     test_hd63701_interrupts();
     test_msm5205();
     test_okim6295();
+    test_spectrum_tape();
+    test_spectrum_tzx();
+    test_spectrum_ula();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

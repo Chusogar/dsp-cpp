@@ -11,6 +11,7 @@
 #include "drivers/doubledragon.h"
 #include "drivers/gauntlet.h"
 #include "drivers/mikie.h"
+#include "drivers/spectrum.h"
 #include "frontend/sdl_app.h"
 
 namespace {
@@ -24,11 +25,12 @@ void print_usage(const char* program) {
     std::printf(
         "Usage: %s [options] <romset.zip | rom directory>\n"
         "\n"
-        "Games: bagman (default), mikie, gauntlet, ddragon, ddragon2\n"
+        "Games: bagman (default), mikie, gauntlet, ddragon, ddragon2, spectrum48\n"
         "\n"
         "Options:\n"
-        "  --game NAME        game to run: bagman, mikie, gauntlet, ddragon or\n"
-        "                     ddragon2\n"
+        "  --game NAME        game to run: bagman, mikie, gauntlet, ddragon,\n"
+        "                     ddragon2 or spectrum48\n"
+        "  --tape FILE        ZX Spectrum tape image (.tap)\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
         "                     bank, mikie has three (0=A, 1=B, 2=C)\n"
@@ -40,7 +42,10 @@ void print_usage(const char* program) {
         "\n"
         "Controls: arrows move, Left Ctrl/Space button 1, Left Alt/Z button 2,\n"
         "          X button 3 (Double Dragon jump),\n"
-        "          1/2 start, 5/6 insert coin, P pause, F3 reset, Esc quit.\n",
+        "          1/2 start, 5/6 insert coin, P pause, F3 reset, Esc quit.\n"
+        "On the Spectrum the host keyboard is the Spectrum keyboard (Left Shift is\n"
+        "caps shift, Left Ctrl symbol shift, cursor keys the caps shift arrows) and\n"
+        "pause moves to F2.\n",
         program);
 }
 
@@ -52,6 +57,9 @@ std::string guess_game(const std::string& rom_path) {
     if (lowered.find("gauntlet") != std::string::npos) return "gauntlet";
     if (lowered.find("ddragon2") != std::string::npos) return "ddragon2";
     if (lowered.find("ddragon") != std::string::npos) return "ddragon";
+    if (lowered.find("spectrum") != std::string::npos || lowered.find("48.rom") != std::string::npos) {
+        return "spectrum48";
+    }
     return "bagman";
 }
 
@@ -65,6 +73,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "ddragon2") {
         return std::make_unique<dsp::DoubleDragon>(dsp::DoubleDragon::Variant::DDragon2);
     }
+    if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48>();
     return nullptr;
 }
 
@@ -73,6 +82,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 int main(int argc, char** argv) {
     dsp::AppOptions options;
     std::string game;
+    std::string tape;
     std::vector<DipSetting> dips;
 
     for (int index = 1; index < argc; index++) {
@@ -103,6 +113,8 @@ int main(int argc, char** argv) {
                 setting.value = uint8_t(std::strtoul(value.c_str() + separator + 1, nullptr, 0));
             }
             dips.push_back(setting);
+        } else if (argument == "--tape") {
+            tape = next("--tape");
         } else if (argument == "--mute") {
             options.mute = true;
         } else if (argument == "--fullscreen") {
@@ -135,6 +147,10 @@ int main(int argc, char** argv) {
     std::string error;
     if (!machine->init(options.rom_path, &error)) {
         std::fprintf(stderr, "cannot start %s: %s\n", game.c_str(), error.c_str());
+        return 1;
+    }
+    if (!tape.empty() && !machine->load_media(tape, &error)) {
+        std::fprintf(stderr, "cannot load tape %s: %s\n", tape.c_str(), error.c_str());
         return 1;
     }
     for (const DipSetting& setting : dips) machine->set_dip_switch(setting.bank, setting.value);

@@ -3,6 +3,10 @@
 C++17 + SDL2 port of [dsp-emulator](https://github.com/leniad/dsp-emulator) (Free Pascal).
 Supported games: **Bagman** (Valadon Automation, 1982), **Mikie** (Konami, 1984),
 **Gauntlet** (Atari, 1985), **Double Dragon** and **Double Dragon II** (Technos, 1987/1988).
+It also emulates the **ZX Spectrum 48K** home computer (Sinclair, 1982).
+
+To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
+explains the port workflow and comes with a driver skeleton (`tools/new_driver.py`).
 
 ## What is ported
 
@@ -26,6 +30,9 @@ Supported games: **Bagman** (Valadon Automation, 1982), **Mikie** (Konami, 1984)
 | MSM5205 ADPCM | `src/snd/msm5205.pas` | Two chips in Double Dragon |
 | OKI MSM6295 | `src/snd/oki6295.pas` | Double Dragon II sample player |
 | Double Dragon driver | `src/arcade/doubledragon_hw.pas` | Both variants: banked ROM, shared RAM, scroll, sprites, sound CPUs |
+| Spectrum ULA | `src/computer/spectrum_hw.pas` | Keyboard matrix, border, one bit beeper, EAR input, contended timing |
+| Spectrum driver | `src/computer/spectrum_hw.pas`, `spectrum_misc.pas` | 48K memory map, display file with attributes and flash, Kempston joystick |
+| Tape player | `src/misc/tap_tzx.pas` | `.tap` blocks and `.tzx` images (turbo, pure tone/data, direct recording, pauses, loops), hooked to the ROM loader |
 | Front end | `src/misc/main_engine.pas` | SDL2 window, texture, audio queue, keyboard |
 
 ## Building
@@ -52,10 +59,11 @@ holding the individual files:
 ./build/dsp --game gauntlet /path/to/gauntlet.zip
 ./build/dsp --game ddragon /path/to/ddragon.zip
 ./build/dsp --game ddragon2 /path/to/ddragon2.zip
+./build/dsp --game spectrum48 --tape /path/to/game.tzx /path/to/48.rom
 ```
 
-The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon` or
-`ddragon2`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
+The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
+`ddragon2` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 (SLAPSTIC 104) and the two player `136041-xxx` set (SLAPSTIC 107).
 
 Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
@@ -64,7 +72,8 @@ Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s
 Options:
 
 ```
---game NAME        game to run: bagman, mikie, gauntlet, ddragon or ddragon2
+--game NAME        machine to run: bagman, mikie, gauntlet, ddragon, ddragon2
+                   or spectrum48
 --scale N          window scale factor (default 3)
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
                    mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
@@ -74,7 +83,29 @@ Options:
 --fullscreen       start in full screen
 --screenshot FILE  headless mode: render frames and write FILE (BMP)
 --frames N         frames to run in headless mode (default 300)
+--tape FILE        tape image to insert, .tap or .tzx (spectrum48)
 ```
+
+### ZX Spectrum 48K
+
+The machine needs the 16 KiB Sinclair ROM, given as a plain `48.rom` image, a zip or a
+directory holding it (Debian/Ubuntu ship it in the `spectrum-roms` package):
+
+```bash
+./build/dsp --game spectrum48 /usr/share/spectrum-roms/48.rom
+./build/dsp --game spectrum48 --tape jetpac.tzx /usr/share/spectrum-roms/48.rom
+```
+
+The host keyboard is mapped one to one onto the Spectrum matrix (Left/Right Ctrl are
+symbol shift, Shift is caps shift), so `P` is not the pause key here: use `F2`. The
+arrows and Left Ctrl are also read as a Kempston joystick. A tape given with `--tape`
+plays by itself whenever the ROM loader is running, so typing `LOAD ""` and pressing
+Enter loads it. Both `.tap` and `.tzx` images work: the `.tzx` player handles standard
+and turbo blocks, pure tones, pulse sequences, pure data, direct recordings, pauses,
+signal level changes, jumps and loops. Games that only play under a custom loader still
+need the loader to be running, and the CSW (`$18`) and generalized data (`$19`) blocks
+are skipped. A "stop the tape" block only pauses for two seconds, because the machine
+restarts the tape whenever the loader runs.
 
 ### Controls
 
@@ -89,7 +120,7 @@ Options:
 | Q | Player 2 button 3 |
 | 1, 2 | Start 1P / 2P |
 | 5, 6 | Insert coin 1 / 2 |
-| P | Pause |
+| P | Pause (F2 on the Spectrum, whose keyboard uses every letter) |
 | F3 | Reset |
 | Esc | Quit |
 
@@ -132,8 +163,8 @@ cmake --build build --target dsp_zexdoc
 src/cpu/        Z80 and M6809 cores
 src/sound/      AY-3-8910 and SN76496
 src/video/      graphics decoding and resistor based palette helpers
-src/machine/    Bagman PAL16R6
-src/drivers/    Bagman and Mikie machines (memory map, video, inputs)
+src/machine/    Bagman PAL16R6, SLAPSTIC, Spectrum tape player
+src/drivers/    the machines themselves (memory map, video, inputs)
 src/frontend/   SDL2 front end, driven through the core/machine.h interface
 src/core/       ROM loader (directory or zip) and the Machine interface
 ```
