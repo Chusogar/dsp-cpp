@@ -1,10 +1,23 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 namespace dsp {
+
+// Host keys forwarded to the machines with a real keyboard (home computers).
+// The arcade drivers ignore them.
+enum class Key {
+    A, B, C, D, E, F, G, H, I, J, K, L, M,
+    N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
+    Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9,
+    Enter, Space, LeftShift, RightShift, LeftCtrl, RightCtrl, Backspace,
+    Up, Down, Left, Right, Comma, Period, Semicolon, Quote, Slash, Minus,
+    Count
+};
 
 // Controls of a single player.
 struct InputState {
@@ -23,6 +36,9 @@ struct MachineInputs {
     InputState player2;
     bool coin1 = false;
     bool coin2 = false;
+    std::array<bool, size_t(Key::Count)> keys{};
+
+    bool key(Key value) const { return keys[size_t(value)]; }
 };
 
 // Common interface implemented by every arcade driver, so the SDL2 front end
@@ -53,6 +69,18 @@ public:
     virtual int sample_rate() const = 0;
 
     virtual const char* title() const = 0;
+
+    // True when the driver reads MachineInputs::keys, so the front end does not
+    // steal letters for its own shortcuts.
+    virtual bool uses_keyboard() const { return false; }
+
+    // Attaches a tape, disk or cartridge image. Machines without removable
+    // media reject it.
+    virtual bool load_media(const std::string& path, std::string* error) {
+        (void)path;
+        if (error != nullptr) *error = "this machine has no removable media";
+        return false;
+    }
 
     const std::vector<std::string>& warnings() const { return warnings_; }
 

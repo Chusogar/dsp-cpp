@@ -8,8 +8,10 @@
 #include "cpu/m6809.h"
 #include "cpu/m68000.h"
 #include "cpu/z80.h"
+#include "drivers/spectrum.h"
 #include "machine/bagman_pal.h"
 #include "machine/slapstic.h"
+#include "machine/spectrum_tape.h"
 #include "sound/ay8910.h"
 #include "sound/msm5205.h"
 #include "sound/okim6295.h"
@@ -651,6 +653,89 @@ void test_okim6295() {
     check((chip.read() & 0x01) == 0, "the silence command stops the voice");
 }
 
+// A .tap image with a single block, the format the ROM loader expects.
+std::vector<uint8_t> make_tap(const std::vector<uint8_t>& block) {
+    std::vector<uint8_t> tape;
+    tape.push_back(uint8_t(block.size() & 0xff));
+    tape.push_back(uint8_t(block.size() >> 8));
+    tape.insert(tape.end(), block.begin(), block.end());
+    return tape;
+}
+
+void test_spectrum_tape() {
+    dsp::SpectrumTape tape;
+    std::string error;
+    // Flag $00 marks a header, so the long pilot tone is used.
+    check(tape.load_from_memory(make_tap({0x00, 0xff, 0xff}), &error), "a .tap image loads");
+    check(tape.loaded() && !tape.playing(), "the tape starts stopped");
+    tape.advance(1000000);
+    check(!tape.ear(), "a stopped tape does not move");
+
+    tape.set_playing(true);
+    int edges = 0;
+    bool level = tape.ear();
+    for (int index = 0; index < dsp::SpectrumTape::kHeaderPilotPulses; index++) {
+        tape.advance(dsp::SpectrumTape::kPilotPulse);
+        if (tape.ear() != level) {
+            level = tape.ear();
+            edges++;
+        }
+    }
+    check(edges == dsp::SpectrumTape::kHeaderPilotPulses,
+          "the header pilot tone is 8063 pulses long");
+
+    // Sync pair, then the first bit of the $00 flag byte as a short pulse.
+    tape.advance(dsp::SpectrumTape::kSync1Pulse);
+    tape.advance(dsp::SpectrumTape::kSync2Pulse);
+    level = tape.ear();
+    tape.advance(dsp::SpectrumTape::kBit0Pulse);
+    check(tape.ear() != level, "a zero bit is two 855 T pulses");
+
+    dsp::SpectrumTape empty;
+    check(!empty.load_from_memory({0x01}, &error), "a truncated image is rejected");
+
+    // A block closes with a short pulse: without that edge the ROM loader never
+    // sees the end of the last bit and waits forever.
+    dsp::SpectrumTape single;
+    check(single.load_from_memory(make_tap({0xff, 0x00}), &error), "a data block loads");
+    single.set_playing(true);
+    single.advance(dsp::SpectrumTape::kDataPilotPulses * dsp::SpectrumTape::kPilotPulse +
+                   dsp::SpectrumTape::kSync1Pulse + dsp::SpectrumTape::kSync2Pulse +
+                   16 * dsp::SpectrumTape::kBit1Pulse + 16 * dsp::SpectrumTape::kBit0Pulse);
+    level = single.ear();
+    single.advance(dsp::SpectrumTape::kTailPulse);
+    check(single.ear() != level && !single.ear(), "a block ends with a closing edge");
+    single.advance(dsp::SpectrumTape::kPauseCycles);
+    check(!single.ear() && single.finished(), "the tape stops after the last block");
+}
+
+void test_spectrum_ula() {
+    dsp::Spectrum48 spectrum;
+    dsp::MachineInputs inputs;
+    inputs.keys[size_t(dsp::Key::A)] = true;
+    inputs.keys[size_t(dsp::Key::Enter)] = true;
+    spectrum.set_inputs(inputs);
+    // A is bit 0 of the half row selected by A9, enter bit 0 of the one on A14.
+    check((spectrum.read_port(0xfdfe) & 0x01) == 0, "the ULA reports the pressed key");
+    check((spectrum.read_port(0xfbfe) & 0x01) != 0, "other half rows stay high");
+    check((spectrum.read_port(0xbffe) & 0x01) == 0, "enter is read on A14");
+
+    dsp::MachineInputs released;
+    spectrum.set_inputs(released);
+    check((spectrum.read_port(0xfdfe) & 0x1f) == 0x1f, "releasing the key frees the matrix");
+
+    spectrum.write_port(0xfe, 0x10);
+    check((spectrum.read_port(0xfffe) & 0x40) != 0, "the speaker bit comes back on EAR");
+    spectrum.write_port(0xfe, 0x00);
+    check((spectrum.read_port(0xfffe) & 0x40) == 0, "and clears with it");
+
+    dsp::MachineInputs joystick;
+    joystick.player1.right = true;
+    joystick.player1.button1 = true;
+    spectrum.set_inputs(joystick);
+    check(spectrum.read_port(0x001f) == 0x11, "the Kempston joystick answers on A5 low");
+}
+
 }  // namespace
 
 int main() {
@@ -681,6 +766,8 @@ int main() {
     test_hd63701_interrupts();
     test_msm5205();
     test_okim6295();
+    test_spectrum_tape();
+    test_spectrum_ula();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
