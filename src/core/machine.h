@@ -14,6 +14,7 @@ struct InputState {
     bool right = false;
     bool button1 = false;
     bool button2 = false;
+    bool button3 = false;
     bool start = false;
 };
 

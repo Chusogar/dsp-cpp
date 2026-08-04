@@ -165,6 +165,7 @@ void Z80::reset() {
     after_ei_ = false;
     irq_state_ = IrqLine::Clear;
     nmi_state_ = IrqLine::Clear;
+    nmi_latched_ = false;
     irq_vector_ = 0xff;
 }
 
@@ -173,7 +174,10 @@ void Z80::set_irq(IrqLine state, uint8_t vector) {
     irq_vector_ = vector;
 }
 
-void Z80::set_nmi(IrqLine state) { nmi_state_ = state; }
+void Z80::set_nmi(IrqLine state) {
+    nmi_state_ = state;
+    if (state == IrqLine::Clear) nmi_latched_ = false;
+}
 
 uint8_t Z80::fetch() { return rd(pc_++); }
 
@@ -458,6 +462,7 @@ void Z80::block_out(int delta, bool repeat) {
 }
 
 int Z80::take_nmi() {
+    if (nmi_latched_) return 0;
     halted = false;
     iff2 = iff1;
     iff1 = false;
@@ -466,6 +471,7 @@ int Z80::take_nmi() {
     wz = pc_;
     r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
     if (nmi_state_ == IrqLine::Pulse || nmi_state_ == IrqLine::Hold) nmi_state_ = IrqLine::Clear;
+    else nmi_latched_ = true;
     return 11;
 }
 

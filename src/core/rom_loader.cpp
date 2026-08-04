@@ -155,23 +155,37 @@ bool RomLoader::load(const std::vector<RomEntry>& entries, std::vector<uint8_t>&
     for (const RomEntry& entry : entries) {
         if (entry.name == nullptr) continue;
         std::vector<uint8_t> data;
-        if (!read_file(entry.name, data)) {
+        // A name can list several alternatives separated by '|', so a driver can
+        // accept the file names of more than one revision of the same set.
+        std::string names(entry.name);
+        std::string used;
+        for (size_t start = 0; start <= names.size();) {
+            size_t separator = names.find('|', start);
+            if (separator == std::string::npos) separator = names.size();
+            std::string candidate = names.substr(start, separator - start);
+            if (!candidate.empty() && read_file(candidate, data)) {
+                used = candidate;
+                break;
+            }
+            start = separator + 1;
+        }
+        if (used.empty()) {
             if (error) *error = std::string("missing ROM file: ") + entry.name;
             return false;
         }
         if (data.size() != entry.length) {
             if (error) {
-                *error = std::string("wrong size for ") + entry.name + " (expected " +
+                *error = std::string("wrong size for ") + used + " (expected " +
                          std::to_string(entry.length) + ", got " + std::to_string(data.size()) +
                          ")";
             }
             return false;
         }
         uint32_t crc = crc32_of(data.data(), data.size());
-        if (crc != entry.crc) {
+        if (entry.crc != 0 && crc != entry.crc) {
             char buffer[128];
             std::snprintf(buffer, sizeof(buffer), "%s: CRC mismatch (expected %08x, got %08x)",
-                          entry.name, entry.crc, crc);
+                          used.c_str(), entry.crc, crc);
             warnings_.emplace_back(buffer);
         }
         if (entry.offset + entry.length > dest.size()) dest.resize(entry.offset + entry.length);

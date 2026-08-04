@@ -1,7 +1,8 @@
 # dsp-cpp
 
 C++17 + SDL2 port of [dsp-emulator](https://github.com/leniad/dsp-emulator) (Free Pascal).
-Supported games: **Bagman** (Valadon Automation, 1982) and **Mikie** (Konami, 1984).
+Supported games: **Bagman** (Valadon Automation, 1982), **Mikie** (Konami, 1984),
+**Gauntlet** (Atari, 1985), **Double Dragon** and **Double Dragon II** (Technos, 1987/1988).
 
 ## What is ported
 
@@ -21,6 +22,10 @@ Supported games: **Bagman** (Valadon Automation, 1982) and **Mikie** (Konami, 19
 | SLAPSTIC | `src/arcade/misc/slapstic.pas` | Types 101-107, bank switched protected ROM |
 | Atari motion objects | `src/arcade/misc/atari_mo.pas` | SLIP based sprite lists |
 | Gauntlet driver | `src/arcade/gauntlet_hw.pas` | Memory map, playfield/char/sprite video, EEPROM, sound communication |
+| HD63701Y MCU | `src/cpu/m680x.pas` | Double Dragon sub CPU: internal RAM/ROM, I/O ports, output compare timer |
+| MSM5205 ADPCM | `src/snd/msm5205.pas` | Two chips in Double Dragon |
+| OKI MSM6295 | `src/snd/oki6295.pas` | Double Dragon II sample player |
+| Double Dragon driver | `src/arcade/doubledragon_hw.pas` | Both variants: banked ROM, shared RAM, scroll, sprites, sound CPUs |
 | Front end | `src/misc/main_engine.pas` | SDL2 window, texture, audio queue, keyboard |
 
 ## Building
@@ -45,10 +50,12 @@ holding the individual files:
 ./build/dsp --scale 3 --dip 0xfe /path/to/roms/bagman/
 ./build/dsp --game mikie /path/to/mikie.zip
 ./build/dsp --game gauntlet /path/to/gauntlet.zip
+./build/dsp --game ddragon /path/to/ddragon.zip
+./build/dsp --game ddragon2 /path/to/ddragon2.zip
 ```
 
-The game is taken from `--game` (`bagman`, `mikie` or `gauntlet`); when omitted it is
-guessed from the ROM set name. Gauntlet accepts both the four player parent set
+The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon` or
+`ddragon2`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 (SLAPSTIC 104) and the two player `136041-xxx` set (SLAPSTIC 107).
 
 Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
@@ -57,11 +64,12 @@ Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s
 Options:
 
 ```
---game NAME        game to run: bagman, mikie or gauntlet
+--game NAME        game to run: bagman, mikie, gauntlet, ddragon or ddragon2
 --scale N          window scale factor (default 3)
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
                    mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
-                   gauntlet: service switch)
+                   gauntlet: service switch;
+                   double dragon: 0=A coinage/cabinet, 1=B gameplay)
 --mute             disable audio
 --fullscreen       start in full screen
 --screenshot FILE  headless mode: render frames and write FILE (BMP)
@@ -75,8 +83,10 @@ Options:
 | Arrows | Player 1 movement |
 | Left Ctrl / Space | Player 1 button 1 |
 | Left Alt / Z | Player 1 button 2 |
+| X | Player 1 button 3 (Double Dragon jump) |
 | D / G / R / F | Player 2 movement |
 | A / S | Player 2 buttons |
+| Q | Player 2 button 3 |
 | 1, 2 | Start 1P / 2P |
 | 5, 6 | Insert coin 1 / 2 |
 | P | Pause |
