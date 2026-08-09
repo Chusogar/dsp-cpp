@@ -51,8 +51,9 @@ const std::vector<RomEntry> kJunglekChars = {
     {"kn55.bin", 0x1000, 0x6000, 0x70aef58f}, {"kn56.bin", 0x1000, 0x7000, 0x932eb667},
 };
 
+// The PROM is called eb16.ic22 in the Elevator Action sets.
 const std::vector<RomEntry> kPriorityProm = {
-    {"eb16.22", 0x100, 0x0000, 0xb833b5ea},
+    {"eb16.22|eb16.ic22", 0x100, 0x0000, 0xb833b5ea},
 };
 
 constexpr uint8_t kTransparent = 0xff;
@@ -323,12 +324,16 @@ void TaitoSJ::main_write(uint16_t address, uint8_t value) {
         }
         return;
     }
-    if (address < 0xd000) {  // sprite RAM and the three tile maps
+    if (address < 0xd000) {  // the three tile maps
         memory_[address] = value;
         return;
     }
     if (address < 0xd060) {
         scroll_y_[address & 0x7f] = value;
+        return;
+    }
+    if (address >= 0xd100 && address < 0xd200) {  // sprite RAM
+        memory_[address] = value;
         return;
     }
     if (address >= 0xd200 && address < 0xd300) {
