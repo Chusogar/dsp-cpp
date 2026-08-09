@@ -12,6 +12,7 @@
 #include "drivers/gauntlet.h"
 #include "drivers/mikie.h"
 #include "drivers/spectrum.h"
+#include "drivers/taitosj.h"
 #include "frontend/sdl_app.h"
 
 namespace {
@@ -25,11 +26,12 @@ void print_usage(const char* program) {
     std::printf(
         "Usage: %s [options] <romset.zip | rom directory>\n"
         "\n"
-        "Games: bagman (default), mikie, gauntlet, ddragon, ddragon2, spectrum48\n"
+        "Games: bagman (default), mikie, gauntlet, ddragon, ddragon2, elevator,\n"
+        "       junglek, spectrum48\n"
         "\n"
         "Options:\n"
         "  --game NAME        game to run: bagman, mikie, gauntlet, ddragon,\n"
-        "                     ddragon2 or spectrum48\n"
+        "                     ddragon2, elevator, junglek or spectrum48\n"
         "  --tape FILE        ZX Spectrum tape image (.tap)\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
@@ -57,6 +59,10 @@ std::string guess_game(const std::string& rom_path) {
     if (lowered.find("gauntlet") != std::string::npos) return "gauntlet";
     if (lowered.find("ddragon2") != std::string::npos) return "ddragon2";
     if (lowered.find("ddragon") != std::string::npos) return "ddragon";
+    if (lowered.find("elevator") != std::string::npos) return "elevator";
+    if (lowered.find("junglek") != std::string::npos || lowered.find("jungleking") != std::string::npos) {
+        return "junglek";
+    }
     if (lowered.find("spectrum") != std::string::npos || lowered.find("48.rom") != std::string::npos) {
         return "spectrum48";
     }
@@ -72,6 +78,12 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     }
     if (game == "ddragon2") {
         return std::make_unique<dsp::DoubleDragon>(dsp::DoubleDragon::Variant::DDragon2);
+    }
+    if (game == "elevator" || game == "elevatob" || game == "elevaction") {
+        return std::make_unique<dsp::TaitoSJ>(dsp::TaitoSJ::Variant::ElevatorAction);
+    }
+    if (game == "junglek" || game == "jungleking") {
+        return std::make_unique<dsp::TaitoSJ>(dsp::TaitoSJ::Variant::JungleKing);
     }
     if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48>();
     return nullptr;

@@ -5,6 +5,7 @@
 
 #include "cpu/hd63701.h"
 #include "cpu/m6502.h"
+#include "cpu/m6805.h"
 #include "cpu/m6809.h"
 #include "cpu/m68000.h"
 #include "cpu/z80.h"
@@ -542,6 +543,59 @@ void test_hd63701_reset_and_internal_ram() {
     check(memory[0x50] == 0, "internal RAM is not visible on the external bus");
 }
 
+// The MCU has 0x800 bytes of address space, with its I/O ports at the bottom.
+dsp::M6805 make_m6805(std::vector<uint8_t>& memory, const std::vector<uint8_t>& program) {
+    std::copy(program.begin(), program.end(), memory.begin() + 0x100);
+    memory[0x7fe] = 0x01;  // reset vector, $0100
+    memory[0x7ff] = 0x00;
+    memory[0x7fa] = 0x02;  // interrupt vector, $0200
+    memory[0x7fb] = 0x00;
+    dsp::M6805 cpu(3000000, dsp::M6805::Type::M68705);
+    cpu.set_memory_handlers([&memory](uint16_t address) { return memory[address & 0x7ff]; },
+                            [&memory](uint16_t address, uint8_t value) {
+                                memory[address & 0x7ff] = value;
+                            });
+    cpu.reset();
+    return cpu;
+}
+
+void test_m6805_arithmetic() {
+    auto memory = make_memory();
+    // lda #$10 / add #$05 / sta $50 / ldx #$03 / incx / stx $51
+    dsp::M6805 cpu = make_m6805(
+        memory, {0xa6, 0x10, 0xab, 0x05, 0xb7, 0x50, 0xae, 0x03, 0x5c, 0xbf, 0x51});
+    check(cpu.pc() == 0x0100, "the 6805 takes the reset vector from $fffe");
+    cpu.run(30);
+    check(memory[0x50] == 0x15, "the 6805 adds and stores through direct addressing");
+    check(memory[0x51] == 0x04, "incx increments the index register");
+}
+
+void test_m6805_bit_branches() {
+    auto memory = make_memory();
+    memory[0x40] = 0x02;
+    // brset 1,$40,+1 / clra / lda #$77 / bclr 1,$40
+    dsp::M6805 cpu = make_m6805(memory, {0x02, 0x40, 0x01, 0x4f, 0xa6, 0x77, 0x13, 0x40});
+    cpu.run(30);
+    check(cpu.a == 0x77, "brset skips the clra when the bit is set");
+    check(memory[0x40] == 0x00, "bclr clears the bit of a direct address");
+}
+
+void test_m6805_interrupt() {
+    auto memory = make_memory();
+    // cli / nop / nop ...  with rti at the interrupt vector
+    dsp::M6805 cpu = make_m6805(memory, {0x9a, 0x9d, 0x9d, 0x9d});
+    memory[0x200] = 0x9d;  // nop
+    memory[0x201] = 0x80;  // rti
+    cpu.a = 0x33;
+    cpu.run(4);  // cli and the first nop
+    cpu.set_irq(dsp::IrqLine::Assert);
+    cpu.run(1);  // the interrupt plus the nop of its handler
+    check(cpu.pc() == 0x0201, "an unmasked interrupt jumps through the vector at $fffa");
+    check(cpu.cc.i, "the interrupt masks further interrupts");
+    cpu.run(1);
+    check(cpu.pc() == 0x0102 && cpu.a == 0x33, "rti restores the context of the interrupt");
+}
+
 void test_hd63701_ports() {
     auto memory = make_memory();
     // ldaa #$ff / staa $00 (DDR1 = all outputs) / ldaa #$5a / staa $02 (port 1)
@@ -837,6 +891,9 @@ int main() {
     test_hd63701_ports();
     test_hd63701_hd63701_only_opcodes();
     test_hd63701_interrupts();
+    test_m6805_arithmetic();
+    test_m6805_bit_branches();
+    test_m6805_interrupt();
     test_msm5205();
     test_okim6295();
     test_spectrum_tape();
