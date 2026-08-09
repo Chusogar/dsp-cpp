@@ -2,7 +2,8 @@
 
 C++17 + SDL2 port of [dsp-emulator](https://github.com/leniad/dsp-emulator) (Free Pascal).
 Supported games: **Bagman** (Valadon Automation, 1982), **Mikie** (Konami, 1984),
-**Gauntlet** (Atari, 1985), **Double Dragon** and **Double Dragon II** (Technos, 1987/1988).
+**Gauntlet** (Atari, 1985), **Double Dragon** and **Double Dragon II** (Technos, 1987/1988),
+**Elevator Action** and **Jungle King** (Taito, 1983, Taito SJ hardware).
 It also emulates the **ZX Spectrum 48K** home computer (Sinclair, 1982).
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
@@ -30,6 +31,8 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | MSM5205 ADPCM | `src/snd/msm5205.pas` | Two chips in Double Dragon |
 | OKI MSM6295 | `src/snd/oki6295.pas` | Double Dragon II sample player |
 | Double Dragon driver | `src/arcade/doubledragon_hw.pas` | Both variants: banked ROM, shared RAM, scroll, sprites, sound CPUs |
+| M6805/M68705 MCU | `src/cpu/m6805.pas` | MC68705P3 protection MCU of Elevator Action |
+| Taito SJ driver | `src/arcade/taitosj_hw.pas` | Main and sound Z80, four AY-3-8910, DAC, MCU handshake, three tile layers with per column scroll, sprites and PROM priorities |
 | Spectrum ULA | `src/computer/spectrum_hw.pas` | Keyboard matrix, border, one bit beeper, EAR input, contended timing |
 | Spectrum driver | `src/computer/spectrum_hw.pas`, `spectrum_misc.pas` | 48K memory map, display file with attributes and flash, Kempston joystick |
 | Tape player | `src/misc/tap_tzx.pas` | `.tap` blocks and `.tzx` images (turbo, pure tone/data, direct recording, pauses, loops), hooked to the ROM loader |
@@ -59,11 +62,13 @@ holding the individual files:
 ./build/dsp --game gauntlet /path/to/gauntlet.zip
 ./build/dsp --game ddragon /path/to/ddragon.zip
 ./build/dsp --game ddragon2 /path/to/ddragon2.zip
+./build/dsp --game elevator /path/to/elevator.zip
+./build/dsp --game junglek /path/to/junglek.zip
 ./build/dsp --game spectrum48 --tape /path/to/game.tzx /path/to/48.rom
 ```
 
 The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
-`ddragon2` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
+`ddragon2`, `elevator`, `junglek` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 (SLAPSTIC 104) and the two player `136041-xxx` set (SLAPSTIC 107).
 
 Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
@@ -72,8 +77,8 @@ Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s
 Options:
 
 ```
---game NAME        machine to run: bagman, mikie, gauntlet, ddragon, ddragon2
-                   or spectrum48
+--game NAME        machine to run: bagman, mikie, gauntlet, ddragon, ddragon2,
+                   elevator, junglek or spectrum48
 --scale N          window scale factor (default 3)
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
                    mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
@@ -85,6 +90,39 @@ Options:
 --frames N         frames to run in headless mode (default 300)
 --tape FILE        tape image to insert, .tap or .tzx (spectrum48)
 ```
+
+### Taito SJ (Elevator Action, Jungle King)
+
+The board runs a 4 MHz Z80 for the game, a 3 MHz Z80 for the sound with four AY-3-8910
+and a DAC, and Elevator Action adds a MC68705P3 MCU that talks to the main CPU through
+a two byte handshake and can read and write its RAM. Both games use three 8x8 tile
+layers whose characters live in RAM, 16x16 sprites and a PROM that decides the drawing
+order of the four layers for every priority code.
+
+```bash
+./build/dsp --game elevator /path/to/elevator.zip
+./build/dsp --game junglek /path/to/junglek.zip
+```
+
+DIP banks: 0 = A (bonus/finish bonus on bits 0-1, lives on bits 3-4, flip screen on
+bit 6, cabinet on bit 7), 1 = B (coin A and coin B), 2 = C (difficulty or bonus life on
+bits 0-1, year and coinage displays, hit detection or infinite lives, coin slots).
+The defaults are `--dip 0:0x7f --dip 1:0x00 --dip 2:0xff` for Elevator Action and
+`--dip 0:0x3f` for Jungle King. Jungle King runs on a monitor rotated 180 degrees, and
+the port rotates its picture back.
+
+Elevator Action ROM set: `ba3__01.2764.ic1`, `ba3__02.2764.ic2`, `ba3__03-1.2764.ic3`,
+`ba3__04-1.2764.ic6`, `ba3__05.2764.ic4`, `ba3__06.2764.ic5`, `ba3__07.2764.ic9`,
+`ba3__08.2764.ic10`, `ba3__09.2732.ic70`, `ba3__10.2732.ic71`,
+`ba3__11.mc68705p3.ic24`, `eb16.22`.
+
+Jungle King ROM set: `kn21-1.bin`, `kn22-1.bin`, `kn43.bin`, `kn24.bin`, `kn25.bin`,
+`kn46.bin`, `kn47.bin`, `kn28.bin`, `kn60.bin`, `kn29.bin`, `kn30.bin`, `kn51.bin`,
+`kn52.bin`, `kn53.bin`, `kn34.bin`, `kn55.bin`, `kn56.bin`, `kn37.bin`, `kn38.bin`,
+`kn59-1.bin`, `eb16.22`.
+
+Neither set has been run here with real ROMs yet: the driver is only checked against a
+synthetic set, so this hardware is still unverified.
 
 ### ZX Spectrum 48K
 
@@ -160,7 +198,7 @@ cmake --build build --target dsp_zexdoc
 ## Layout
 
 ```
-src/cpu/        Z80 and M6809 cores
+src/cpu/        Z80, M6809, M6502, M68000, HD63701 and M6805 cores
 src/sound/      AY-3-8910 and SN76496
 src/video/      graphics decoding and resistor based palette helpers
 src/machine/    Bagman PAL16R6, SLAPSTIC, Spectrum tape player

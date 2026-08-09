@@ -19,6 +19,7 @@ add_executable(dsp
   src/cpu/m6502.cpp
   src/cpu/m68000.cpp
   src/cpu/hd63701.cpp
+  src/cpu/m6805.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
@@ -35,6 +36,7 @@ add_executable(dsp
   src/drivers/gauntlet.cpp
   src/drivers/doubledragon.cpp
   src/drivers/spectrum.cpp
+  src/drivers/taitosj.cpp
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
 )
@@ -51,6 +53,7 @@ add_executable(dsp_tests
   src/cpu/m6502.cpp
   src/cpu/m68000.cpp
   src/cpu/hd63701.cpp
+  src/cpu/m6805.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
