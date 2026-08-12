@@ -32,11 +32,15 @@ add_executable(dsp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/spectrum_tape.cpp
+  src/machine/tape_tzx.cpp
+  src/machine/i8255.cpp
+  src/machine/nec765.cpp
   src/drivers/bagman.cpp
   src/drivers/mikie.cpp
   src/drivers/gauntlet.cpp
   src/drivers/doubledragon.cpp
   src/drivers/spectrum.cpp
+  src/drivers/amstrad_cpc.cpp
   src/drivers/taitosj.cpp
   src/drivers/sms.cpp
   src/machine/sega_vdp.cpp
@@ -68,7 +72,11 @@ add_executable(dsp_tests
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/spectrum_tape.cpp
+  src/machine/tape_tzx.cpp
+  src/machine/i8255.cpp
+  src/machine/nec765.cpp
   src/drivers/spectrum.cpp
+  src/drivers/amstrad_cpc.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

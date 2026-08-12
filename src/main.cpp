@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "core/machine.h"
+#include "drivers/amstrad_cpc.h"
 #include "drivers/bagman.h"
 #include "drivers/doubledragon.h"
 #include "drivers/gauntlet.h"
@@ -14,6 +15,7 @@
 #include "drivers/spectrum.h"
 #include "drivers/taitosj.h"
 #include "drivers/sms.h"
+#include "drivers/mrdo.h"
 
 #include "frontend/sdl_app.h"
 
@@ -29,15 +31,20 @@ void print_usage(const char* program) {
         "Usage: %s [options] <romset.zip | rom directory>\n"
         "\n"
         "Games: sms, bagman (default), mikie, gauntlet, ddragon, ddragon2, elevator,\n"
-        "       junglek, spectrum48\n"
+        "       junglek, spectrum48, cpc464, cpc664, cpc6128\n"
         "\n"
         "Options:\n"
         "  --game NAME        game to run: sms, bagman, mikie, gauntlet, ddragon,\n"
-        "                     ddragon2, elevator, junglek or spectrum48\n"
-        "  --tape FILE        ZX Spectrum tape image (.tap)\n"
+        "                     ddragon2, elevator, junglek, spectrum48, cpc464,\n"
+        "                     cpc664 or cpc6128\n"
+        "  --tape FILE        ZX Spectrum or Amstrad CPC tape image (.tap/.tzx/.cdt)\n"
+        "  --disk FILE        Amstrad CPC .dsk/.edsk floppy image (664/6128, needs\n"
+        "                     amsdos.rom); use CAT / RUN\"filename\" from BASIC\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
-        "                     bank, mikie has three (0=A, 1=B, 2=C)\n"
+        "                     bank, mikie has three (0=A, 1=B, 2=C); cpc: 0=colour(1)/\n"
+        "                     green(0) monitor, 1=joysticks on the keyboard matrix\n"
+        "                     (off by default, see README)\n"
         "  --mute             disable audio\n"
         "  --fullscreen       start in full screen\n"
         "  --screenshot FILE  headless mode: render frames and write FILE (BMP)\n"
@@ -71,6 +78,9 @@ std::string guess_game(const std::string& rom_path) {
     if (lowered.find("spectrum") != std::string::npos || lowered.find("48.rom") != std::string::npos) {
         return "spectrum48";
     }
+    if (lowered.find("cpc6128") != std::string::npos) return "cpc6128";
+    if (lowered.find("cpc664") != std::string::npos) return "cpc664";
+    if (lowered.find("cpc464") != std::string::npos) return "cpc464";
     return "bagman";
 }
 
@@ -91,7 +101,12 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "junglek" || game == "jungleking") {
         return std::make_unique<dsp::TaitoSJ>(dsp::TaitoSJ::Variant::JungleKing);
     }
-    if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48>();
+    if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48k>();
+    if (game == "cpc464") return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC464);
+    if (game == "cpc664") return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC664);
+    if (game == "cpc6128" || game == "cpc") {
+        return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC6128);
+    }
     return nullptr;
 }
 
@@ -101,6 +116,7 @@ int main(int argc, char** argv) {
     dsp::AppOptions options;
     std::string game;
     std::string tape;
+    std::string disk;
     std::vector<DipSetting> dips;
 
     for (int index = 1; index < argc; index++) {
@@ -133,6 +149,8 @@ int main(int argc, char** argv) {
             dips.push_back(setting);
         } else if (argument == "--tape") {
             tape = next("--tape");
+        } else if (argument == "--disk") {
+            disk = next("--disk");
         } else if (argument == "--mute") {
             options.mute = true;
         } else if (argument == "--fullscreen") {
@@ -169,6 +187,10 @@ int main(int argc, char** argv) {
     }
     if (!tape.empty() && !machine->load_media(tape, &error)) {
         std::fprintf(stderr, "cannot load tape %s: %s\n", tape.c_str(), error.c_str());
+        return 1;
+    }
+    if (!disk.empty() && !machine->load_media(disk, &error)) {
+        std::fprintf(stderr, "cannot load disk %s: %s\n", disk.c_str(), error.c_str());
         return 1;
     }
     for (const DipSetting& setting : dips) machine->set_dip_switch(setting.bank, setting.value);

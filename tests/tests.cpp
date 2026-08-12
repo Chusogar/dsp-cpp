@@ -837,30 +837,30 @@ void test_spectrum_tzx() {
 }
 
 void test_spectrum_ula() {
-    dsp::Spectrum48 spectrum;
+    dsp::Spectrum48k spectrum;
     dsp::MachineInputs inputs;
     inputs.keys[size_t(dsp::Key::A)] = true;
     inputs.keys[size_t(dsp::Key::Enter)] = true;
     spectrum.set_inputs(inputs);
     // A is bit 0 of the half row selected by A9, enter bit 0 of the one on A14.
-    check((spectrum.read_port(0xfdfe) & 0x01) == 0, "the ULA reports the pressed key");
-    check((spectrum.read_port(0xfbfe) & 0x01) != 0, "other half rows stay high");
-    check((spectrum.read_port(0xbffe) & 0x01) == 0, "enter is read on A14");
+    check((spectrum.io_in(0xfdfe) & 0x01) == 0, "the ULA reports the pressed key");
+    check((spectrum.io_in(0xfbfe) & 0x01) != 0, "other half rows stay high");
+    check((spectrum.io_in(0xbffe) & 0x01) == 0, "enter is read on A14");
 
     dsp::MachineInputs released;
     spectrum.set_inputs(released);
-    check((spectrum.read_port(0xfdfe) & 0x1f) == 0x1f, "releasing the key frees the matrix");
+    check((spectrum.io_in(0xfdfe) & 0x1f) == 0x1f, "releasing the key frees the matrix");
 
-    spectrum.write_port(0xfe, 0x10);
-    check((spectrum.read_port(0xfffe) & 0x40) != 0, "the speaker bit comes back on EAR");
-    spectrum.write_port(0xfe, 0x00);
-    check((spectrum.read_port(0xfffe) & 0x40) == 0, "and clears with it");
+    spectrum.io_out(0xfe, 0x10);
+    check((spectrum.io_in(0xfffe) & 0x40) != 0, "the speaker bit comes back on EAR");
+    spectrum.io_out(0xfe, 0x00);
+    check((spectrum.io_in(0xfffe) & 0x40) == 0, "and clears with it");
 
     dsp::MachineInputs joystick;
     joystick.player1.right = true;
     joystick.player1.button1 = true;
     spectrum.set_inputs(joystick);
-    check(spectrum.read_port(0x001f) == 0x11, "the Kempston joystick answers on A5 low");
+    check(spectrum.io_in(0x001f) == 0x11, "the Kempston joystick answers on A5 low");
 }
 
 }  // namespace
