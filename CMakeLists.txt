@@ -15,6 +15,7 @@ find_package(ZLIB REQUIRED)
 add_executable(dsp
   src/main.cpp
   src/cpu/z80.cpp
+  src/cpu/z80ctc.cpp
   src/cpu/m6809.cpp
   src/cpu/m6502.cpp
   src/cpu/m68000.cpp
@@ -27,23 +28,32 @@ add_executable(dsp
   src/sound/msm5205.cpp
   src/sound/okim6295.cpp
   src/sound/ym2413.cpp
+  src/sound/tms5220.cpp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
+  src/machine/via6522.cpp
   src/machine/spectrum_tape.cpp
   src/machine/tape_tzx.cpp
   src/machine/i8255.cpp
   src/machine/nec765.cpp
+  src/machine/upd765.cpp
+  src/machine/disk_image.cpp
   src/drivers/bagman.cpp
   src/drivers/mikie.cpp
   src/drivers/gauntlet.cpp
   src/drivers/doubledragon.cpp
   src/drivers/spectrum.cpp
+  src/drivers/spectrum_128k.cpp
+  src/drivers/spectrum_3.cpp
   src/drivers/amstrad_cpc.cpp
   src/drivers/taitosj.cpp
   src/drivers/sms.cpp
   src/machine/sega_vdp.cpp
+  src/drivers/mrdo.cpp
+  src/drivers/atari_system1.cpp
+  src/drivers/mcr.cpp
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
 )

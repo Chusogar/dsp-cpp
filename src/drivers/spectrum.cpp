@@ -58,10 +58,17 @@ bool try_rom(const std::string& dir, const char* name, std::vector<uint8_t>& out
 
 }  // namespace
 
+uint32_t cto_argb(uint32_t bgr) {
+    const uint32_t blue = (bgr >> 16) & 0xff;
+    const uint32_t green = (bgr >> 8) & 0xff;
+    const uint32_t red = bgr & 0xff;
+    return 0xff000000u | (red << 16) | (green << 8) | blue;
+}
+
 Spectrum48k::Spectrum48k(Model model)
     : model_(model), cpu_(kClock) {
     for (int i = 0; i < 16; ++i) {
-        palette_[i] = kPalette[i] | 0xff000000;
+        palette_[i] = cto_argb(kPalette[i] | 0xff000000);
         palette_ext_[i] = palette_[i];
     }
     for (int i = 16; i < 80; ++i) palette_ext_[i] = 0xff000000;

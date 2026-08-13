@@ -45,8 +45,9 @@ bool TapeTzx::load_file(const std::string& path, std::string* error) {
         return false;
     }
     f.seekg(0, std::ios::beg);
-    std::vector<uint8_t> buf(static_cast<size_t>(sz));
-	f.read(reinterpret_cast<char*>(buf.data()), sz);
+    std::vector<uint8_t> buf;
+	buf.resize(size_t(sz));
+    f.read(reinterpret_cast<char*>(buf.data()), sz);
     return load_memory(buf.data(), buf.size(), error);
 }
 
@@ -341,6 +342,92 @@ bool TapeTzx::parse_tzx(const uint8_t* data, size_t size, std::string* error) {
                 blocks_.push_back(std::move(b));
                 break;
             }
+			case 0x18: {
+			if (!need(10))
+				return false;
+
+			const uint32_t block_len =
+				rd32(data + pos);
+			pos += 4;
+
+			const uint16_t pause_ms =
+				rd16(data + pos);
+			pos += 2;
+
+			const uint32_t sample_rate =
+				rd24(data + pos);
+			pos += 3;
+
+			const uint8_t compression =
+				data[pos++];
+
+			const size_t payload_size =
+				block_len - 10;
+
+			if (!need(payload_size))
+				return false;
+
+			std::vector<uint8_t> csw;
+
+			//
+			// reconstruir cabecera CSW V2
+			//
+			csw.insert(csw.end(),
+					   {
+						   'C','o','m','p','r','e','s','s','e','d',' ',
+						   'S','q','u','a','r','e',' ','W','a','v','e'
+					   });
+
+			csw.push_back(0x1a);
+			csw.push_back(2);
+			csw.push_back(0);
+
+			auto push32 = [&](uint32_t v)
+			{
+				csw.push_back(v & 0xff);
+				csw.push_back((v >> 8) & 0xff);
+				csw.push_back((v >> 16) & 0xff);
+				csw.push_back((v >> 24) & 0xff);
+			};
+
+			push32(sample_rate);
+			push32(0);
+
+			csw.push_back(compression);
+			csw.push_back(0);
+			csw.push_back(0);
+
+			for (int i = 0; i < 16; i++)
+				csw.push_back(0);
+
+			csw.insert(
+				csw.end(),
+				data + pos,
+				data + pos + payload_size);
+
+			pos += payload_size;
+
+			TapeTzx tmp;
+
+			std::string err;
+
+			if (!tmp.parse_csw(
+					csw.data(),
+					csw.size(),
+					&err))
+			{
+				if (error)
+					*error = err;
+				return false;
+			}
+
+			blocks_.insert(
+				blocks_.end(),
+				tmp.blocks_.begin(),
+				tmp.blocks_.end());
+
+			break;
+		}
             case 0x19: {  // Generalized Data Block
                 if (!need(18)) return false;
                 const uint32_t block_len = rd32(data + pos);  // not including this length field? Spec: length of following data
@@ -447,6 +534,33 @@ bool TapeTzx::parse_tzx(const uint8_t* data, size_t size, std::string* error) {
             case 0x25:
                 blocks_.push_back(std::move(b));
                 break;
+			case 0x26: {
+				if (!need(2))
+					return false;
+
+				const uint16_t count =
+					rd16(data + pos);
+
+				pos += 2;
+
+				if (!need(count * 2))
+					return false;
+
+				for (uint16_t i = 0; i < count; i++) {
+					b.call_offsets.push_back(
+						int16_t(rd16(data + pos)));
+					pos += 2;
+				}
+
+				blocks_.push_back(std::move(b));
+
+				break;
+			}
+			case 0x27:
+			{
+				blocks_.push_back(std::move(b));
+				break;
+			}
             case 0x28: {  // Select — skip (UI only)
                 if (!need(2)) return false;
                 const uint16_t n = rd16(data + pos); pos += 2;
@@ -752,7 +866,7 @@ void TapeTzx::start_block() {
             next_block();
             break;
         case BlockType::Jump: {
-            const int target = int(index_) + b.jump;
+            const int target = int(index_) + 1 + b.jump;
             if (target >= 0 && target < int(blocks_.size())) {
                 index_ = size_t(target);
                 start_block();
@@ -781,6 +895,50 @@ void TapeTzx::start_block() {
         case BlockType::Stop48k:
             next_block();
             break;
+		case BlockType::CallSequence:
+		{
+			if (b.call_offsets.empty()) {
+				next_block();
+				break;
+			}
+
+			//
+			// almacenar puntos de retorno
+			//
+			for (int i =
+					int(b.call_offsets.size()) - 1;
+				 i >= 0;
+				 --i)
+			{
+				const int target =
+					int(index_) + 1 +
+					b.call_offsets[i];
+
+				call_stack_.push_back(
+					size_t(target));
+			}
+
+			index_ = call_stack_.back();
+			call_stack_.pop_back();
+
+			start_block();
+			break;
+		}
+		case BlockType::ReturnSequence:
+		{
+			if (call_stack_.empty()) {
+				next_block();
+				break;
+			}
+
+			index_ =
+				call_stack_.back();
+
+			call_stack_.pop_back();
+
+			start_block();
+			break;
+		}
         default:
             next_block();
             break;

@@ -12,6 +12,7 @@
 #include "machine/slapstic.h"
 #include "sound/pokey.h"
 #include "sound/ym2151.h"
+#include "sound/tms5220.h"
 #include "video/atari_mo.h"
 #include "video/gfx.h"
 
@@ -76,6 +77,7 @@ private:
     M6502 sound_cpu_;
     YM2151 ym_;
     Pokey pokey_;
+    Tms5220 tms_;
     Slapstic slapstic_;
 
     std::vector<uint16_t> rom_;                       // 0x40000 big endian words
@@ -109,6 +111,8 @@ private:
     bool main_to_sound_ready_ = false;
     uint8_t sound_to_main_data_ = 0;
     uint8_t main_to_sound_data_ = 0;
+    uint8_t soundctl_ = 0xff;  // LS259 Q0..Q7 (active handling on bit7 writes)
+    float ym_gain_ = 1.0f, pokey_gain_ = 1.0f;
     uint8_t vblank_ = 0x40;
 
     uint16_t in0_ = 0xffff;

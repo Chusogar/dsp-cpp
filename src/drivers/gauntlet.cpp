@@ -117,6 +117,7 @@ Gauntlet::Gauntlet()
       sound_cpu_(kSoundClock),
       ym_(kYmClock),
       pokey_(kPokeyClock),
+      tms_(14318180 / 2 / 11),  // ~650 kHz nominal
       slapstic_(107, &main_cpu_),
       rom_(0x40000, 0) {
     char_back_.assign(size_t(kCharPlaneWidth) * kCharPlaneHeight, kTransparent);
@@ -241,6 +242,8 @@ void Gauntlet::reset() {
     sound_cpu_.reset();
     ym_.reset();
     pokey_.reset();
+    tms_.reset();
+    soundctl_ = 0xff;
     in0_ = 0xffff;
     in1_ = 0xffff;
     in2_ = 0xff;
@@ -371,9 +374,13 @@ uint8_t Gauntlet::sound_read(uint16_t address) {
     }
     if (address >= 0x1020 && address <= 0x102f) return in2_;
     if (address >= 0x1030 && address <= 0x103f) {
+        // switch_6502_r (MAME): TMS readyq on bit5
         uint8_t value = 0x30;
         if (main_to_sound_ready_) value ^= 0x80;
         if (sound_to_main_ready_) value ^= 0x40;
+        if (tms_.readyq()) value ^= 0x20;  // not ready ? bit clear after xor from base? MAME: if (!readyq) xor 0x20
+        // readyq() true means pin low (busy). MAME xors when !readyq_r() i.e. when NOT ready.
+        // Our readyq() returns true when busy ? matches.
         if (dsw_a_ == 8) value ^= 0x10;
         return value;
     }
@@ -397,9 +404,26 @@ void Gauntlet::sound_write(uint16_t address, uint8_t value) {
         main_cpu_.set_irq(6, IrqLine::Assert);
         return;
     }
+    if (address >= 0x1020 && address <= 0x102f) {
+        // mixer_w: bits 0-2 YM, 3-4 Pokey, 5-7 TMS volume
+        ym_gain_ = float(value & 7) / 7.0f;
+        pokey_gain_ = float((value >> 3) & 3) / 3.0f;
+        tms_.set_volume(float((value >> 5) & 7) / 7.0f);
+        return;
+    }
     if (address >= 0x1030 && address <= 0x103f) {
-        // Only the music reset line (bit 7 of offset 0) is wired on this board.
-        if ((address & 7) == 0 && (value & 0x80) == 0) ym_.reset();
+        // LS259 soundctl: D7 of each offset 0..7
+        const int bit = address & 7;
+        const bool level = (value & 0x80) != 0;
+        if (level) soundctl_ = uint8_t(soundctl_ | (1 << bit));
+        else soundctl_ = uint8_t(soundctl_ & ~(1 << bit));
+        // Q0: YM reset (active low)
+        if (bit == 0 && !level) ym_.reset();
+        // Q1: TMS WSQ (active low write)
+        if (bit == 1) tms_.set_wsq(level);
+        // Q2: TMS RSQ (active low reset)
+        if (bit == 2) tms_.set_rsq(level);
+        // Q3: speech squeak ? clock select (ignored beyond default rate)
         return;
     }
     if (address == 0x1810) {
@@ -414,6 +438,11 @@ void Gauntlet::sound_write(uint16_t address, uint8_t value) {
         pokey_.write(uint16_t(address & 0x0f), value);
         return;
     }
+    if (address >= 0x1820 && address <= 0x182f) {
+        // TMS5220 data latch (strobe via WSQ)
+        tms_.set_data_latch(value);
+        return;
+    }
     if (address >= 0x1830 && address <= 0x183f) sound_cpu_.set_irq(IrqLine::Clear);
 }
 
@@ -423,8 +452,10 @@ void Gauntlet::on_sound_cycles(int cycles) {
     audio_accumulator_ += int64_t(cycles) * YM2151::kSampleRate;
     while (audio_accumulator_ >= kSoundClock) {
         audio_accumulator_ -= kSoundClock;
-        int32_t sample = ym_.update() + pokey_.update();
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        const int32_t sample = int32_t(float(ym_.update()) * ym_gain_) +
+                               int32_t(float(pokey_.update()) * pokey_gain_) +
+                               int32_t(tms_.update());
+        audio_.push_back(int16_t(std::clamp(sample, int32_t(-32768), int32_t(32767))));
     }
 }
 
@@ -541,8 +572,8 @@ void Gauntlet::update_video() {
             if (index != kTransparent) {
                 composite_[size_t(y * kTilePlaneWidth + x)] = palette_[size_t(index)];
             }
-            framebuffer_[size_t(y * kScreenWidth + x)] =
-                composite_[size_t(y * kTilePlaneWidth + x)];
+				framebuffer_[size_t(y * kScreenWidth + x)] =
+				composite_[size_t(y * kTilePlaneWidth + x)];
         }
     }
 }
@@ -615,4 +646,4 @@ void Gauntlet::drain_audio(std::vector<int16_t>& out) {
     audio_.clear();
 }
 
-}  // namespace dsp
+}  //  namespace dsp
