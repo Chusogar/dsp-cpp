@@ -50,6 +50,13 @@ AY8910::AY8910(uint32_t clock, float amplitude) : clock_(clock), amplitude_(ampl
     reset();
 }
 
+void AY8910::set_clock(uint32_t clock) {
+    if (clock == 0 || clock == clock_) return;
+    clock_ = clock;
+    update_step_ = int32_t((int64_t(kStep) * kSampleRate * 8) / clock_);
+    period_a_ = period_b_ = period_c_ = period_e_ = period_n_ = update_step_;
+}
+
 void AY8910::set_port_handlers(PortRead port_a_read, PortRead port_b_read, PortWrite port_a_write,
                                PortWrite port_b_write) {
     port_a_read_ = std::move(port_a_read);

@@ -294,9 +294,8 @@ uint8_t Spectrum48k::io_in(uint16_t port) {
         if ((port & 0x0200) == 0) keys &= keys_[1];
         if ((port & 0x0100) == 0) keys &= keys_[0];
         // bit5 unused (1), bit6 EAR, bit7 unused (1) — Pascal: (temp and $bf) or cinta or altavoz
-        result = uint8_t((keys & 0x1f) | 0xa0 | ear_ | speaker_);
-        result = uint8_t(result & 0xbf);  // clear bit6 then OR ear
-        result = uint8_t(result | ear_ | speaker_);
+        const uint8_t ear_bit = uint8_t(ear_ | (speaker_ != 0 ? 0x40 : 0x00));
+        result = uint8_t((keys & 0x1f) | 0xa0 | ear_bit);
     }
 
     // Kempston joystick (port with A5=0, common $1F)

@@ -9,6 +9,7 @@
 #include "core/machine.h"
 #include "drivers/amstrad_cpc.h"
 #include "drivers/bagman.h"
+#include "drivers/dec0.h"
 #include "drivers/doubledragon.h"
 #include "drivers/gauntlet.h"
 #include "drivers/mikie.h"
@@ -35,11 +36,13 @@ void print_usage(const char* program) {
         "Usage: %s [options] <romset.zip | rom directory>\n"
         "\n"
         "Games: sms, bagman (default), mikie, gauntlet, ddragon, ddragon2, elevator,\n"
-        "       junglek, spectrum48, cpc464, cpc664, cpc6128\n"
+        "       junglek, robocop, baddudes, hippodrm, slyspy, bouldash, spectrum48,\n"
+        "       cpc464, cpc664, cpc6128\n"
         "\n"
         "Options:\n"
         "  --game NAME        game to run: sms, bagman, mikie, gauntlet, ddragon,\n"
-        "                     ddragon2, elevator, junglek, spectrum48, cpc464,\n"
+        "                     ddragon2, elevator, junglek, robocop, baddudes,\n"
+        "                     hippodrm, slyspy, bouldash, spectrum48, cpc464,\n"
         "                     cpc664 or cpc6128\n"
         "  --tape FILE        ZX Spectrum or Amstrad CPC tape image (.tap/.tzx/.cdt)\n"
         "  --disk FILE        Amstrad CPC .dsk/.edsk floppy image (664/6128, needs\n"
@@ -76,6 +79,17 @@ std::string guess_game(const std::string& rom_path) {
     if (lowered.find("ddragon2") != std::string::npos) return "ddragon2";
     if (lowered.find("ddragon") != std::string::npos) return "ddragon";
     if (lowered.find("elevator") != std::string::npos) return "elevator";
+    if (lowered.find("robocop") != std::string::npos) return "robocop";
+    if (lowered.find("baddudes") != std::string::npos || lowered.find("drgninja") != std::string::npos) {
+        return "baddudes";
+    }
+    if (lowered.find("hippodr") != std::string::npos || lowered.find("ffantasy") != std::string::npos) {
+        return "hippodrm";
+    }
+    if (lowered.find("slyspy") != std::string::npos || lowered.find("secretag") != std::string::npos) {
+        return "slyspy";
+    }
+    if (lowered.find("bouldash") != std::string::npos) return "bouldash";
     if (lowered.find("junglek") != std::string::npos || lowered.find("jungleking") != std::string::npos) {
         return "junglek";
     }
@@ -151,6 +165,17 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	
 
 
+    if (game == "robocop") return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::Robocop);
+    if (game == "baddudes" || game == "drgninja") {
+        return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::BadDudes);
+    }
+    if (game == "hippodrm" || game == "hippodrome") {
+        return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::Hippodrome);
+    }
+    if (game == "slyspy" || game == "secretag") {
+        return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::SlySpy);
+    }
+    if (game == "bouldash") return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::BoulderDash);
     return nullptr;
 }
 
