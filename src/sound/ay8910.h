@@ -18,6 +18,9 @@ public:
     void set_port_handlers(PortRead port_a_read, PortRead port_b_read, PortWrite port_a_write,
                            PortWrite port_b_write);
 
+    // Reprograms the master clock (the YM2203 prescaler drives the PSG clock).
+    void set_clock(uint32_t clock);
+
     void reset();
     void control(uint8_t value) { latch_ = uint8_t(value & 0x0f); }
     void write(uint8_t value) { write_reg(latch_, value); }

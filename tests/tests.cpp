@@ -4,8 +4,10 @@
 #include <vector>
 
 #include "cpu/hd63701.h"
+#include "cpu/hu6280.h"
 #include "cpu/m6502.h"
 #include "cpu/m6805.h"
+#include "cpu/mcs51.h"
 #include "cpu/m6809.h"
 #include "cpu/m68000.h"
 #include "cpu/z80.h"
@@ -19,7 +21,10 @@
 #include "sound/pokey.h"
 #include "sound/sn76496.h"
 #include "sound/ym2151.h"
+#include "sound/ym2203.h"
+#include "sound/ym3812.h"
 #include "video/atari_mo.h"
+#include "video/deco_bac06.h"
 #include "video/gfx.h"
 
 namespace {
@@ -863,6 +868,238 @@ void test_spectrum_ula() {
     check(spectrum.io_in(0x001f) == 0x11, "the Kempston joystick answers on A5 low");
 }
 
+// The HuC6280 runs the DEC0 protection MCUs and the DEC1 sound CPU.
+void test_hu6280_basics() {
+    std::vector<uint8_t> memory(0x200000, 0);
+    dsp::HuC6280 cpu(1342325);
+    cpu.set_memory_handlers([&memory](uint32_t address) { return memory[address & 0x1fffff]; },
+                            [&memory](uint32_t address, uint8_t value) {
+                                memory[address & 0x1fffff] = value;
+                            });
+    // The mapper registers start at zero, so the banks have to be set up first.
+    cpu.mpr[7] = 0x07;  // $e000-$ffff -> $00e000
+    cpu.mpr[1] = 0x01;  // $2000-$3fff -> $002000 (also the zero page and the stack)
+    memory[0xfffe] = 0x00;
+    memory[0xffff] = 0xe0;
+    cpu.reset();
+    check(cpu.pc() == 0xe000, "the HuC6280 takes the reset vector from $fffe");
+    check(cpu.p.irq_disable && cpu.p.brk, "the HuC6280 starts with interrupts disabled");
+
+    // csh; lda #$5a; sta $2000; tma #2; cli; nop; nop; nop
+    const uint8_t program[] = {0xd4, 0xa9, 0x5a, 0x8d, 0x00, 0x20,
+                               0x43, 0x02, 0x58, 0xea, 0xea, 0xea};
+    std::memcpy(&memory[0xe000], program, sizeof(program));
+    cpu.run(14);
+    check(memory[0x2000] == 0x5a, "the HuC6280 stores through the memory mapper");
+    check(cpu.a == cpu.mpr[1], "tma copies the requested mapper register into A");
+
+    // An enabled IRQ1 vectors through $fff8, which is how the 68000 wakes the MCU.
+    memory[0xf000] = 0xa9;  // lda #$77
+    memory[0xf001] = 0x77;
+    memory[0xf002] = 0x40;  // rti
+    memory[0xfff8] = 0x00;
+    memory[0xfff9] = 0xf0;
+    cpu.irq_status_w(2, 0x00);  // no interrupt masked
+    cpu.set_irq_line(0, dsp::IrqLine::Assert);
+    cpu.run(20);
+    check(cpu.a == 0x77, "an enabled IRQ1 vectors the HuC6280 through $fff8");
+}
+
+// The i8751 protects Bad Dudes; the 68000 talks to it through ports 0 and 2.
+void test_mcs51_ports_and_interrupts() {
+    dsp::Mcs51 mcu(8000000);
+    uint8_t port0 = 0;
+    uint8_t port2_written = 0xff;
+    mcu.set_port_read_handler(0, [&port0]() { return port0; });
+    mcu.set_port_write_handler(2, [&port2_written](uint8_t value) { port2_written = value; });
+
+    // mov a,p0; mov p2,a; sjmp -2
+    uint8_t* rom = mcu.rom();
+    rom[0] = 0xe5;
+    rom[1] = 0x80;  // mov a,P0
+    rom[2] = 0xf5;
+    rom[3] = 0xa0;  // mov P2,a
+    rom[4] = 0x80;
+    rom[5] = 0xfe;  // sjmp $
+    port0 = 0x37;
+    mcu.reset();
+    check(mcu.pc() == 0, "the i8751 starts at address zero");
+    mcu.run(8);
+    check(port2_written == 0x37, "the i8751 copies port 0 into port 2");
+
+    // With IE and IT1 enabled an IRQ1 has to vector to $0013.
+    rom[0x13] = 0x80;
+    rom[0x14] = 0xfe;  // sjmp $ inside the handler
+    rom[6] = 0x75;
+    rom[7] = 0xa8;
+    rom[8] = 0x84;  // mov IE,#$84 (EA + EX1)
+    rom[9] = 0x80;
+    rom[10] = 0xfe;
+    rom[4] = 0x80;
+    rom[5] = 0x00;  // sjmp +0 so execution reaches the mov IE
+    mcu.reset();
+    mcu.run(12);
+    mcu.set_irq1_line(dsp::IrqLine::Assert);
+    mcu.run(8);
+    check(mcu.pc() >= 0x13 && mcu.pc() <= 0x15, "an IRQ1 vectors the i8751 to $0013");
+}
+
+void test_ym2203() {
+    dsp::YM2203 chip(1500000);
+    chip.reset();
+    // The AY part answers on registers 0-15.
+    chip.control(0x07);
+    chip.write(0x38);
+    chip.control(0x07);
+    check(chip.read() == 0x38, "the YM2203 reads back its AY mixer register");
+
+    // Timer A: load it, enable it and wait for the status flag.
+    chip.control(0x24);
+    chip.write(0x00);
+    chip.control(0x25);
+    chip.write(0x00);
+    chip.control(0x27);
+    chip.write(0x05);  // load and enable timer A
+    bool flagged = false;
+    for (int sample = 0; sample < 4000 && !flagged; sample++) {
+        chip.update();
+        flagged = (chip.status() & 0x01) != 0;
+    }
+    check(flagged, "the YM2203 raises the timer A status flag");
+
+    // A key-on on FM channel 1 has to make the chip produce sound.
+    for (int slot = 0; slot < 4; slot++) {
+        chip.control(uint8_t(0x30 + slot * 4));
+        chip.write(0x01);  // multiple 1
+        chip.control(uint8_t(0x40 + slot * 4));
+        chip.write(0x00);  // full volume
+        chip.control(uint8_t(0x50 + slot * 4));
+        chip.write(0x1f);  // fastest attack
+        chip.control(uint8_t(0x80 + slot * 4));
+        chip.write(0x00);  // no decay to zero
+    }
+    chip.control(0xb0);
+    chip.write(0x07);  // algorithm 7: the four operators are carriers
+    chip.control(0xa4);
+    chip.write(0x22);
+    chip.control(0xa0);
+    chip.write(0x69);
+    chip.control(0x28);
+    chip.write(0xf0);  // key on every slot of channel 1
+    int32_t peak = 0;
+    for (int sample = 0; sample < 2000; sample++) {
+        const int32_t value = chip.update();
+        if (value < 0) peak = peak > -value ? peak : -value;
+        if (value > peak) peak = value;
+    }
+    check(peak != 0, "the YM2203 FM channel generates samples after a key on");
+}
+
+void test_ym3812() {
+    dsp::YM3812 chip(3000000);
+    chip.reset();
+    check((chip.status() & 0x80) == 0, "the YM3812 starts without a pending IRQ");
+
+    bool irq = false;
+    chip.set_irq_handler([&irq](bool state) { irq = state; });
+    chip.write_reg(0x02, 0xff);  // timer 1 close to overflow
+    chip.write_reg(0x04, 0x01);  // start timer 1
+    for (int sample = 0; sample < 4000 && !irq; sample++) chip.update();
+    check(irq, "the YM3812 timer 1 raises the IRQ line");
+    check((chip.status() & 0x40) != 0, "the YM3812 sets the timer 1 status flag");
+    chip.write_reg(0x04, 0x80);  // reset the flags
+    check((chip.status() & 0xc0) == 0, "writing $80 to register 4 clears the flags");
+
+    chip.write_reg(0x20, 0x21);
+    chip.write_reg(0x23, 0x21);
+    chip.write_reg(0x40, 0x00);
+    chip.write_reg(0x43, 0x00);
+    chip.write_reg(0x60, 0xff);
+    chip.write_reg(0x63, 0xff);
+    chip.write_reg(0x80, 0x0f);
+    chip.write_reg(0x83, 0x0f);
+    chip.write_reg(0xa0, 0x98);
+    chip.write_reg(0xb0, 0x31);  // key on channel 0
+    int32_t peak = 0;
+    for (int sample = 0; sample < 2000; sample++) {
+        const int32_t value = chip.update();
+        if (value > peak) peak = value;
+    }
+    check(peak != 0, "the YM3812 generates samples after a key on");
+}
+
+// BAC06 tilemaps and MXC06 sprites, the DEC0 video chips.
+void test_deco_bac06() {
+    dsp::GfxLayout layout;
+    layout.width = 16;
+    layout.height = 16;
+    layout.total = 4;
+    layout.planes = 4;
+    layout.char_increment = 16 * 16;
+    layout.plane_offsets = {4 * 16 * 16 * 1, 4 * 16 * 16 * 3, 0, 4 * 16 * 16 * 2};
+    layout.x_offsets = {128, 129, 130, 131, 132, 133, 134, 135, 0, 1, 2, 3, 4, 5, 6, 7};
+    layout.y_offsets = {0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120};
+    // Every plane solid for elements 1 to 3, so their pens are 0x0f.
+    std::vector<uint8_t> rom(4 * 4 * 16 * 16 / 8, 0);
+    for (int plane = 0; plane < 4; plane++) {
+        const size_t base = size_t(plane) * 4 * 32 + 32;
+        for (size_t byte = 0; byte < 3 * 32; byte++) rom[base + byte] = 0xff;
+    }
+    dsp::GfxSet gfx;
+    gfx.decode(layout, rom);
+    check(gfx.element(1)[0] == 0x0f, "the DEC0 tile layout decodes four planes");
+
+    dsp::Bac06Chip chip(0x000, 0x200, 0x300, 1, 1, 1, 0x100);
+    chip.reset();
+    chip.tile_2.change_control0(0, 0x0000);  // 16x16 tiles
+    chip.tile_2.change_control0(3, 0x0001);  // 32x32 tilemap
+    chip.tile_2.change_control1(0, 0);
+    chip.tile_2.change_control1(1, 0);
+    chip.tile_2.data[0] = 0x3001;  // colour 3, code 1
+
+    std::vector<uint16_t> pens(size_t(dsp::Bac06Layer::kScreenWidth) *
+                                   dsp::Bac06Layer::kScreenHeight,
+                               0);
+    chip.tile_2.draw(gfx, false, pens.data());
+    check(pens[0] == 0x200 + 0x30 + 0x0f, "the tile colour, the base and the pen are added");
+    check(pens[16] == 0x200, "an empty neighbour tile paints the layer base");
+
+    // Scrolling moves the tile out of the visible area.
+    chip.tile_2.change_control1(0, 16);
+    std::fill(pens.begin(), pens.end(), 0);
+    chip.tile_2.draw(gfx, true, pens.data());
+    check(pens[0] == 0, "a transparent layer leaves the pen zero areas untouched");
+
+    // Priority tiles are the ones with bit 15 set and pens with bit 3 set.
+    chip.tile_2.change_control1(0, 0);
+    chip.tile_2.data[0] = 0xb001;  // bit 15 marks the tile as high priority
+    std::fill(pens.begin(), pens.end(), 0);
+    chip.tile_2.draw_priority(gfx, pens.data());
+    check(pens[0] == 0x200 + 0xb0 + 0x0f, "the priority surface keeps the high priority tiles");
+    chip.tile_2.data[0] = 0x3001;
+    std::fill(pens.begin(), pens.end(), 0);
+    chip.tile_2.draw_priority(gfx, pens.data());
+    check(pens[0] == 0, "tiles without bit 15 stay out of the priority surface");
+
+    // Sprites: enabled, 2x height, colour 2 and code 1.
+    std::vector<uint16_t> sprite_ram(0x400, 0);
+    sprite_ram[0] = uint16_t(0x8000 | 0x0800 | ((240 - 32) & 0x1ff));  // 2x height at y=32
+    sprite_ram[1] = 0x0002;  // a 2x sprite uses an even code
+    sprite_ram[2] = uint16_t(0x2000 | ((240 - 64) & 0x1ff));  // colour 2 at x=64
+    chip.update_sprite_data(sprite_ram.data());
+    std::fill(pens.begin(), pens.end(), 0);
+    chip.draw_sprites(gfx, 0, 0, false, pens.data());
+    const size_t sprite_pen = size_t(32 * dsp::Bac06Layer::kScreenWidth + 64);
+    check(pens[sprite_pen] == 0x100 + 0x20 + 0x0f, "the sprite colour and base are added");
+    const size_t upper_half = size_t(16 * dsp::Bac06Layer::kScreenWidth + 64);
+    check(pens[upper_half] == 0x100 + 0x20 + 0x0f, "a 2x sprite also paints the tile above");
+
+    // Sprites whose colour does not match the priority pair are skipped.
+    std::fill(pens.begin(), pens.end(), 0);
+    chip.draw_sprites(gfx, 8, 8, false, pens.data());
+    check(pens[sprite_pen] == 0, "the priority mask filters the sprites out");
+}
+
 }  // namespace
 
 int main() {
@@ -899,6 +1136,11 @@ int main() {
     test_spectrum_tape();
     test_spectrum_tzx();
     test_spectrum_ula();
+    test_hu6280_basics();
+    test_mcs51_ports_and_interrupts();
+    test_ym2203();
+    test_ym3812();
+    test_deco_bac06();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

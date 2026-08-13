@@ -21,6 +21,8 @@ add_executable(dsp
   src/cpu/m68000.cpp
   src/cpu/hd63701.cpp
   src/cpu/m6805.cpp
+  src/cpu/hu6280.cpp
+  src/cpu/mcs51.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
@@ -29,8 +31,12 @@ add_executable(dsp
   src/sound/okim6295.cpp
   src/sound/ym2413.cpp
   src/sound/tms5220.cpp
+  src/sound/fmopn.cpp
+  src/sound/ym2203.cpp
+  src/sound/ym3812.cpp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
+  src/video/deco_bac06.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/via6522.cpp
@@ -54,6 +60,7 @@ add_executable(dsp
   src/drivers/mrdo.cpp
   src/drivers/atari_system1.cpp
   src/drivers/mcr.cpp
+  src/drivers/dec0.cpp
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
 )
@@ -71,14 +78,20 @@ add_executable(dsp_tests
   src/cpu/m68000.cpp
   src/cpu/hd63701.cpp
   src/cpu/m6805.cpp
+  src/cpu/hu6280.cpp
+  src/cpu/mcs51.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
   src/sound/pokey.cpp
   src/sound/msm5205.cpp
   src/sound/okim6295.cpp
+  src/sound/fmopn.cpp
+  src/sound/ym2203.cpp
+  src/sound/ym3812.cpp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
+  src/video/deco_bac06.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/spectrum_tape.cpp
@@ -87,6 +100,7 @@ add_executable(dsp_tests
   src/machine/nec765.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
+  src/drivers/dec0.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

@@ -2,7 +2,9 @@
 
 C++17 + SDL2 port of [dsp-emulator](https://github.com/leniad/dsp-emulator) (Free Pascal).
 Supported games: **Bagman** (Valadon Automation, 1982), **Mikie** (Konami, 1984),
-**Gauntlet** (Atari, 1985), **Double Dragon** and **Double Dragon II** (Technos, 1987/1988).
+**Gauntlet** (Atari, 1985), **Double Dragon** and **Double Dragon II** (Technos, 1987/1988)
+and the Data East DEC0 games **Robocop**, **Bad Dudes vs. Dragonninja**, **Hippodrome**,
+**Sly Spy** and **Boulder Dash** (1988/1989).
 It also emulates the **ZX Spectrum 48K** home computer (Sinclair, 1982).
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
@@ -33,6 +35,11 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Spectrum ULA | `src/computer/spectrum_hw.pas` | Keyboard matrix, border, one bit beeper, EAR input, contended timing |
 | Spectrum driver | `src/computer/spectrum_hw.pas`, `spectrum_misc.pas` | 48K memory map, display file with attributes and flash, Kempston joystick |
 | Tape player | `src/misc/tap_tzx.pas` | `.tap` blocks and `.tzx` images (turbo, pure tone/data, direct recording, pauses, loops), hooked to the ROM loader |
+| HuC6280 CPU | `src/cpu/hu6280.pas` | Robocop/Hippodrome protection MCU and the DEC1 sound CPU |
+| MCS-51 (i8751) MCU | `src/cpu/mcs51.pas` | Bad Dudes protection: ports 0/2 handshake with the 68000 |
+| YM2203, YM3812 | `src/snd/fm.pas`, `src/snd/fmopl.pas` | DEC0 sound board, both IRQ lines wired to the sound CPU |
+| BAC06/MXC06 video | `src/arcade/misc/deco_bac06.pas` | Three tile layers (8x8/16x16, variable geometry, row/column scroll), priority surfaces and 1x-8x sprites |
+| DEC0 driver | `src/arcade/dec0_hw.pas` | Robocop, Bad Dudes, Hippodrome, Sly Spy and Boulder Dash: memory maps, protection, palettes and per game video priorities |
 | Front end | `src/misc/main_engine.pas` | SDL2 window, texture, audio queue, keyboard |
 
 ## Building
@@ -58,6 +65,7 @@ holding the individual files:
 ./build/dsp --game mikie /path/to/mikie.zip
 ./build/dsp --game gauntlet /path/to/gauntlet.zip
 ./build/dsp --game ddragon /path/to/ddragon.zip
+./build/dsp --game robocop /path/to/robocop.zip
 ./build/dsp --game ddragon2 /path/to/ddragon2.zip
 ./build/dsp --game spectrum48 --tape /path/to/game.tzx /path/to/48.rom
 ```
