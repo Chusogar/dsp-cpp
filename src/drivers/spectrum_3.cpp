@@ -54,7 +54,7 @@ bool try_rom(const std::string& dir, const char* name, std::vector<uint8_t>& out
 
 }  // namespace
 
-uint32_t dto_argb(uint32_t bgr) {
+uint32_t to_argb_p3(uint32_t bgr) {
     const uint32_t blue = (bgr >> 16) & 0xff;
     const uint32_t green = (bgr >> 8) & 0xff;
     const uint32_t red = bgr & 0xff;
@@ -64,7 +64,7 @@ uint32_t dto_argb(uint32_t bgr) {
 Spectrum3::Spectrum3()
     : cpu_(kClock), ay0_(kAyClock), ay1_(kAyClock) {
     for (int i = 0; i < 16; ++i) {
-        palette_[i] = dto_argb(kPalette[i] | 0xff000000);
+        palette_[i] = to_argb_p3(kPalette[i] | 0xff000000);
         palette_ext_[i] = palette_[i];
     }
     for (int i = 16; i < 80; ++i) palette_ext_[i] = 0xff000000;
@@ -246,49 +246,47 @@ void Spectrum3::set_dip_switch(int, uint8_t) {}
 void Spectrum3::set_inputs(const MachineInputs& inputs) { apply_keyboard(inputs); }
 
 void Spectrum3::apply_keyboard(const MachineInputs& in) {
+    #if 0
     keys_.fill(0xff);
     for (int row = 0; row < 8; ++row) {
         for (int bit = 0; bit < 5; ++bit) {
             if (in.key(kMatrix[row][bit])) keys_[row] &= uint8_t(~(1u << bit));
         }
     }
-    // Kempston (port bit5=0)
+    // Kempston: active high
     joy_ = 0;
     if (in.player1.right) joy_ |= 0x01;
     if (in.player1.left) joy_ |= 0x02;
     if (in.player1.down) joy_ |= 0x04;
     if (in.player1.up) joy_ |= 0x08;
     if (in.player1.button1) joy_ |= 0x10;
+#endif
 
-    // Interface 2 / Sinclair joysticks → keyboard matrix (active low)
-    // Right stick: 6,7,8,9,0  (keys_[4] bits 4..0)
-    // Left stick:  1,2,3,4,5  (keys_[3] bits 0..4)
-    auto press_bit = [&](int row, int bit) {
-        keys_[row] = uint8_t(keys_[row] & ~(1u << bit));
-    };
-    // Right IF2 ← player1 also as Sinclair (many games)
-    if (in.player1.left) press_bit(4, 4);   // 6
-    if (in.player1.right) press_bit(4, 3);  // 7
-    if (in.player1.down) press_bit(4, 2);   // 8
-    if (in.player1.up) press_bit(4, 1);     // 9
-    if (in.player1.button1) press_bit(4, 0); // 0
-    // Left IF2 ← player2
-    if (in.player2.left) press_bit(3, 0);   // 1
-    if (in.player2.right) press_bit(3, 1);  // 2
-    if (in.player2.down) press_bit(3, 2);   // 3
-    if (in.player2.up) press_bit(3, 3);     // 4
-    if (in.player2.button1) press_bit(3, 4); // 5
-
-    // Kempston mouse: digital nudge + buttons (active low)
-    if (kempston_mouse_) {
-        if (in.player1.right) kmouse_x_ = uint8_t(kmouse_x_ + 2);
-        if (in.player1.left) kmouse_x_ = uint8_t(kmouse_x_ - 2);
-        if (in.player1.up) kmouse_y_ = uint8_t(kmouse_y_ - 2);
-        if (in.player1.down) kmouse_y_ = uint8_t(kmouse_y_ + 2);
-        kmouse_btn_ = 0xff;
-        if (in.player1.button1) kmouse_btn_ = uint8_t(kmouse_btn_ & ~0x01);
-        if (in.player1.button2) kmouse_btn_ = uint8_t(kmouse_btn_ & ~0x02);
+	keys_.fill(0xff);
+    for (int row = 0; row < 8; row++) {
+        for (int bit = 0; bit < 5; bit++) {
+            if (in.key(kMatrix[row][bit])) keys_[row] &= uint8_t(~(1 << bit));
+        }
     }
+    // Left control doubles as symbol shift and the cursor keys as caps shift
+    // plus 5/6/7/8, the combinations the ROM expects.
+    if (in.key(Key::LeftCtrl) || in.key(Key::RightShift)) keys_[7] &= 0xfd;
+    auto caps_shift_with = [this](int row, int bit) {
+        keys_[0] &= 0xfe;
+        keys_[row] &= uint8_t(~(1 << bit));
+    };
+    if (in.key(Key::Left)) caps_shift_with(3, 4);   // 5
+    if (in.key(Key::Down)) caps_shift_with(4, 4);   // 6
+    if (in.key(Key::Up)) caps_shift_with(4, 3);     // 7
+    if (in.key(Key::Right)) caps_shift_with(4, 2);  // 8
+    if (in.key(Key::Backspace)) caps_shift_with(4, 0);
+
+    joy_ = 0;
+    if (in.player1.right) joy_ |= 0x01;
+    if (in.player1.left) joy_ |= 0x02;
+    if (in.player1.down) joy_ |= 0x04;
+    if (in.player1.up) joy_ |= 0x08;
+    if (in.player1.button1) joy_ |= 0x10;
 }
 
 

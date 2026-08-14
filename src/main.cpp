@@ -7,19 +7,32 @@
 #include <vector>
 
 #include "core/machine.h"
-#include "drivers/amstrad_cpc.h"
+
+// Arcade
 #include "drivers/bagman.h"
 #include "drivers/doubledragon.h"
 #include "drivers/gauntlet.h"
 #include "drivers/mikie.h"
-#include "drivers/spectrum.h"
-#include "drivers/spectrum_128k.h"
-#include "drivers/spectrum_3.h"
 #include "drivers/taitosj.h"
-#include "drivers/sms.h"
 #include "drivers/mrdo.h"
 #include "drivers/atari_system1.h"
 #include "drivers/mcr.h"
+
+// Computers
+#include "drivers/spectrum.h"
+#include "drivers/spectrum_128k.h"
+#include "drivers/spectrum_3.h"
+#include "drivers/amstrad_cpc.h"
+#include "drivers/msx1.h"
+
+// Consoles
+#include "drivers/sms.h"
+#include "drivers/gamegear.h"
+#include "drivers/pv1000.h"
+#include "drivers/colecovision.h"
+#include "drivers/sg1000.h"
+//#include "drivers/gameboy.h"
+//#include "drivers/nes.h"
 
 #include "frontend/sdl_app.h"
 
@@ -69,8 +82,7 @@ std::string guess_game(const std::string& rom_path) {
     std::string lowered;
     for (char character : rom_path) lowered += char(std::tolower(character));
     
-	if (lowered.find("sms") != std::string::npos) return "sms";
-    
+	// Arcade
 	if (lowered.find("mikie") != std::string::npos) return "mikie";
     if (lowered.find("gauntlet") != std::string::npos) return "gauntlet";
     if (lowered.find("ddragon2") != std::string::npos) return "ddragon2";
@@ -79,18 +91,6 @@ std::string guess_game(const std::string& rom_path) {
     if (lowered.find("junglek") != std::string::npos || lowered.find("jungleking") != std::string::npos) {
         return "junglek";
     }
-	if (lowered.find("mrdo") != std::string::npos) return "mrdo";
-    
-    if (lowered.find("spectrum") != std::string::npos || lowered.find("48.rom") != std::string::npos) {
-        return "spectrum48";
-    }
-    if (lowered.find("cpc6128") != std::string::npos) return "cpc6128";
-    if (lowered.find("cpc664") != std::string::npos) return "cpc664";
-    if (lowered.find("cpc464") != std::string::npos) return "cpc464";
-
-	if (lowered.find("spectrum128") != std::string::npos) return "spectrum128";
-	if (lowered.find("plus3") != std::string::npos) return "plus3";
-
 	if (lowered.find("indydoom") != std::string::npos) return "indydoom";
 	if (lowered.find("peter") != std::string::npos) return "peter";
 	if (lowered.find("marble") != std::string::npos) return "marble";
@@ -103,13 +103,37 @@ std::string guess_game(const std::string& rom_path) {
 	if (lowered.find("dotron") != std::string::npos) return "dotron";
 	if (lowered.find("timber") != std::string::npos) return "timber";
 
+	if (lowered.find("mrdo") != std::string::npos) return "mrdo";
+    
+    // Computers
+	if (lowered.find("spectrum") != std::string::npos || lowered.find("48.rom") != std::string::npos) {
+        return "spectrum48";
+    }
+    if (lowered.find("cpc6128") != std::string::npos) return "cpc6128";
+    if (lowered.find("cpc664") != std::string::npos) return "cpc664";
+    if (lowered.find("cpc464") != std::string::npos) return "cpc464";
+
+	if (lowered.find("spectrum128") != std::string::npos) return "spectrum128";
+	if (lowered.find("plus3") != std::string::npos) return "plus3";
+	if (lowered.find("msx") != std::string::npos) return "msx";
+		
+	// console
+	if (lowered.find("sms") != std::string::npos) return "sms";
+    if (lowered.find("gamegear") != std::string::npos) return "gamegear";
+    if (lowered.find("pv1000") != std::string::npos) return "pv1000";
+	if (lowered.find("coleco") != std::string::npos) return "coleco";
+	if (lowered.find("sg1000") != std::string::npos) return "sg1000";
+	//if (lowered.find("gb") != std::string::npos) return "gb";
+	//if (lowered.find("nes") != std::string::npos) return "nes";
+    
 
     return "bagman";
 }
 
 std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
-    if (game == "sms") return std::make_unique<dsp::Sms>();
-	if (game == "bagman") return std::make_unique<dsp::Bagman>();
+
+	// arcade
+    if (game == "bagman") return std::make_unique<dsp::Bagman>();
     if (game == "mikie") return std::make_unique<dsp::Mikie>();
     if (game == "gauntlet") return std::make_unique<dsp::Gauntlet>();
 	if (game == "mrdo") return std::make_unique<dsp::MrDo>();
@@ -126,21 +150,10 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "junglek" || game == "jungleking") {
         return std::make_unique<dsp::TaitoSJ>(dsp::TaitoSJ::Variant::JungleKing);
     }
-    if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48k>();
-    if (game == "cpc464") return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC464);
-    if (game == "cpc664") return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC664);
-    if (game == "cpc6128" || game == "cpc") {
-        return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC6128);
-    }
-
-	if (game == "spectrum128") return std::make_unique<dsp::Spectrum128k>(dsp::Spectrum128k::Model::Spec128k);
-	if (game == "plus3") return std::make_unique<dsp::Spectrum3>();
-    
 	if (game == "indydoom") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Indy);
 	if (game == "peter") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::PeterPak);	
 	if (game == "marble") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Marble);
 
-	// MCR
 	if (game == "tapper") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Tapper);
 	if (game == "tron") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Tron);
     if (game == "shollow") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Shollow);
@@ -150,6 +163,26 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "timber") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Timber);
 	
 
+	// computers
+    if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48k>();
+    if (game == "cpc464") return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC464);
+    if (game == "cpc664") return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC664);
+    if (game == "cpc6128" || game == "cpc") {
+        return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC6128);
+    }
+	if (game == "spectrum128") return std::make_unique<dsp::Spectrum128k>(dsp::Spectrum128k::Model::Spec128k);
+	if (game == "plus3") return std::make_unique<dsp::Spectrum3>();
+	if (game == "msx") return std::make_unique<dsp::Msx1>();
+    	
+	// consoles
+	if (game == "sms") return std::make_unique<dsp::Sms>();
+	if (game == "gamegear") return std::make_unique<dsp::GameGear>();
+	if (game == "pv1000") return std::make_unique<dsp::Pv1000>();
+	if (game == "coleco") return std::make_unique<dsp::ColecoVision>();
+	if (game == "sg1000") return std::make_unique<dsp::Sg1000>();
+	//if (game == "gb") return std::make_unique<dsp::GameBoy>();
+	//if (game == "nes") return std::make_unique<dsp::Nes>();
+	
 
     return nullptr;
 }

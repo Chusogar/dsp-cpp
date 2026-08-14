@@ -21,6 +21,7 @@ add_executable(dsp
   src/cpu/m68000.cpp
   src/cpu/hd63701.cpp
   src/cpu/m6805.cpp
+  src/cpu/lr35902.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
@@ -31,6 +32,7 @@ add_executable(dsp
   src/sound/tms5220.cpp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
+  src/video/tms9918.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/via6522.cpp
@@ -40,20 +42,31 @@ add_executable(dsp
   src/machine/nec765.cpp
   src/machine/upd765.cpp
   src/machine/disk_image.cpp
+  
   src/drivers/bagman.cpp
   src/drivers/mikie.cpp
   src/drivers/gauntlet.cpp
   src/drivers/doubledragon.cpp
+  src/drivers/taitosj.cpp
+  src/drivers/mrdo.cpp
+  src/drivers/atari_system1.cpp
+  src/drivers/mcr.cpp
+      
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
   src/drivers/spectrum_3.cpp
   src/drivers/amstrad_cpc.cpp
-  src/drivers/taitosj.cpp
+  src/drivers/msx1.cpp
+  
   src/drivers/sms.cpp
   src/machine/sega_vdp.cpp
-  src/drivers/mrdo.cpp
-  src/drivers/atari_system1.cpp
-  src/drivers/mcr.cpp
+  src/drivers/gamegear.cpp
+  src/drivers/pv1000.cpp
+  src/drivers/colecovision.cpp
+  src/machine/i2cmem.cpp
+  src/drivers/sg1000.cpp
+  src/machine/gb_mappers.cpp
+    
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
 )
