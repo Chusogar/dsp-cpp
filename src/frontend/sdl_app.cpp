@@ -116,12 +116,16 @@ int SdlApp::run(Machine& machine) {
 
     const int width = machine.screen_width();
     const int height = machine.screen_height();
+    // Spectrum full-border (352x280): default scale 2 → ~704x560 window unless user set --scale
+    int scale = options_.scale;
+    if (scale == 3 && width == 352 && (height == 280 || height == 296 || height == 288))
+        scale = 2;
     const double frame_time_ms = 1000.0 / machine.frames_per_second();
     const std::string title = std::string("DSP C++ - ") + machine.title();
 
     SDL_Window* window =
         SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                         width * options_.scale, height * options_.scale,
+                         width * scale, height * scale,
                          options_.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
     if (window == nullptr) {
         std::fprintf(stderr, "cannot create window: %s\n", SDL_GetError());

@@ -90,25 +90,27 @@ void Spectrum128k::ulaplus_set_entry(uint8_t index, uint8_t value) {
 }
 
 uint8_t Spectrum128k::border_index() const {
-    if (ulaplus_.active && ulaplus_.enabled) return uint8_t(16 + (border_ & 7));
+    if (ulaplus_.active && ulaplus_.enabled)
+        return uint8_t(16 + (border_ & 7));
     return uint8_t(border_ & 7);
 }
 
 uint32_t Spectrum128k::border_colour() const {
     const uint8_t idx = border_index();
-    return idx < 16 ? palette_[idx] : palette_ext_[idx < 80 ? idx : 16];
+    if (idx < 16) return palette_[idx];
+    return palette_ext_[idx < 80 ? idx : 16];
 }
 
-void Spectrum128k::border_fill_to(int t_end) {
-    if (line_ < 0 || line_ >= kLinesPerFrame) return;
-    int start = border_pos_;
-    if (t_end > kTstatesPerLine) t_end = kTstatesPerLine;
-    if (start >= t_end) return;
-    const uint8_t col = border_index();
-    auto& row = border_buf_[size_t(line_)];
-    for (int t = start; t < t_end; ++t) row[size_t(t)] = col;
-    border_pos_ = t_end;
+void Spectrum128k::border_fill_to(int /*abs_t*/) {
+    // No-op with per-T painting; kept for API compatibility.
 }
+
+void Spectrum128k::border_on_out() {
+    // Colour changes immediately; on_cycles paints border_buf_ every T-state
+    // with the current border_index().  No deferred fill needed.
+}
+
+
 
 bool Spectrum128k::init(const std::string& rom_path, std::string* error) {
     std::vector<uint8_t> rom;
@@ -316,27 +318,83 @@ void Spectrum128k::mem_write(uint16_t addr, uint8_t value) {
 
 
 uint8_t Spectrum128k::floating_bus() const {
-    // spectrum_128k.pas: cont = T mod 228, lin = line + T/228
-    // Paper lines 63..254, cont < 128, phase from display bank.
-    if (line_ < 63 || line_ > 254) return 0xff;
-    const int cont = t_in_line_;
-    if (cont < 0 || cont >= 128) return 0xff;
-    const int y = line_ - 63;
+    // Exact algorithm from spectrum_128k.pas (spec128_inbyte floating-bus branch):
+    //   cont := contador mod 228;
+    //   lin  := linea_128 + (contador div 228);
+    //   if (lin > 62) and (lin < 255) and (cont < 128) then
+    //     lin := lin - 63;
+    //     col := (cont and $f8) shr 2;
+    //     case (cont and 7) of
+    //       1: pixel[col]
+    //       2: attr[col]
+    //       3: pixel[col+1]
+    //       4: attr[col+1]
+    //       0,5,6,7: idle → $FF
+    // Pascal indexes memoria_128k[marco[1], ...] (bank at $4000 = 5).
+    // Real ULA reads the *display* bank (5 or 7 via bit 3 of $7FFD); use pantalla_.
+    int cont = t_in_line_;
+    int lin = line_;
+    if (cont < 0) cont = 0;
+    // Guard against a mid-instruction span past the line end before on_cycles wraps.
+    if (cont >= kTstatesPerLine) {
+        lin += cont / kTstatesPerLine;
+        cont %= kTstatesPerLine;
+    }
+    if (!(lin > 62 && lin < 255 && cont < 128))
+        return 0xff;
+
+    const int y = lin - 63;
     if (y < 0 || y >= 192) return 0xff;
+
+    const int col = (cont & 0xf8) >> 2;  // 0,2,4,...,30
     const auto& vram = banks_[pantalla_];
-    // col index: (cont & $f8) shr 2  → byte offset within 32-attr / pixel row
-    // Pascal uses this as offset into attribute/pixel row (not absolute $4000).
-    const int col = (cont & 0xf8) >> 2;  // 0,2,4,...,30 style steps of 2
-    const uint16_t attr_base = atrib_scr_[y];
+    const uint16_t attr_base = atrib_scr_[size_t(y)];
     const uint16_t pix_base = kScrTable[y];
+
     switch (cont & 7) {
         case 1: return vram[(pix_base + col) & 0x3fff];
         case 2: return vram[(attr_base + col) & 0x3fff];
         case 3: return vram[(pix_base + col + 1) & 0x3fff];
         case 4: return vram[(attr_base + col + 1) & 0x3fff];
-        default: return 0xff;  // idle slots 0,5,6,7
+        default: return 0xff;  // ULA idle slots 0,5,6,7
     }
 }
+
+void Spectrum128k::apply_port_contention(uint16_t port) {
+    // spectrum_128k.pas:spec128_retraso_puerto — extra T-states on every I/O.
+    const int pos = frame_t_;
+    auto delay_at = [&](int p) -> int {
+        if (p >= 0 && p < int(contention_.size())) return contention_[size_t(p)];
+        return 0;
+    };
+    int extra = 0;
+    if ((port & 0xc000) == 0x4000) {
+        // Contended port address range
+        if (port & 1) {
+            // A0=1: four contended probes
+            int e = delay_at(pos) + 1;
+            e += delay_at(pos + e) + 1;
+            e += delay_at(pos + e) + 1;
+            e += delay_at(pos + e) + 1;
+            extra = e;
+        } else {
+            // A0=0 (ULA): two probes
+            int e = delay_at(pos) + 1;
+            e += delay_at(pos + e) + 3;
+            extra = e;
+        }
+    } else {
+        if (port & 1)
+            extra = 4;  // uncontended A0=1
+        else
+            extra = 1 + delay_at(pos + 1) + 3;  // uncontended ULA
+    }
+    if (extra <= 0) return;
+    // Advance time; on_cycles will wrap lines and render when its turn comes.
+    frame_t_ += extra;
+    t_in_line_ += extra;
+}
+
 
 
 uint8_t Spectrum128k::kempston_read() const {
@@ -346,6 +404,7 @@ uint8_t Spectrum128k::kempston_read() const {
 }
 
 uint8_t Spectrum128k::io_in(uint16_t port) {
+    apply_port_contention(port);
     uint8_t result = 0xff;
     if ((port & 1) == 0) {
         // ULA: keyboard + EAR + speaker bit
@@ -396,13 +455,8 @@ uint8_t Spectrum128k::io_in(uint16_t port) {
 }
 
 void Spectrum128k::io_out(uint16_t port, uint8_t value) {
+    apply_port_contention(port);
     if ((port & 1) == 0) {
-        {
-            int t = t_in_line_;
-            if (t < 0) t = 0;
-            if (t > kTstatesPerLine) t = kTstatesPerLine;
-            border_fill_to(t);
-        }
         border_ = value & 7;
         speaker_ = (value & 0x10) ? 0x10 : 0x00;
         beeper_level_ = (value & 0x10) ? int16_t(4096) : int16_t(-4096);
@@ -438,16 +492,29 @@ void Spectrum128k::io_out(uint16_t port, uint8_t value) {
 }
 
 void Spectrum128k::on_cycles(int cycles) {
+    for (int n = 0; n < cycles; ++n) {
+        if (line_ >= 0 && line_ < kLinesPerFrame &&
+            t_in_line_ >= 0 && t_in_line_ < kTstatesPerLine) {
+            border_buf_[size_t(line_)][size_t(t_in_line_)] = border_index();
+        }
+        ++t_in_line_;
+        ++frame_t_;
+        if (t_in_line_ >= kTstatesPerLine) {
+            t_in_line_ -= kTstatesPerLine;
+            render_line(line_);
+            ++line_;
+            if (line_ >= kLinesPerFrame) line_ = 0;
+        }
+    }
+
     maybe_start_tape_from_rom();
     if (tape_.is_playing()) ear_ = tape_.advance(cycles) ? 0x40 : 0x00;
 
-    // Interface 2: after ~10.5M T-states switch to upper 16K of cart ROM
     if (if2_present_ && !if2_switched_) {
         if2_delay_ += cycles;
         if (if2_delay_ > 10500000) if2_switched_ = true;
     }
 
-    // Mix AY + beeper @ sample rate
     audio_acc_ += int64_t(cycles) * kSampleRate;
     while (audio_acc_ >= int64_t(kClock)) {
         audio_acc_ -= int64_t(kClock);
@@ -455,27 +522,14 @@ void Spectrum128k::on_cycles(int cycles) {
         const int32_t mixed = ay + beeper_level_;
         audio_.push_back(int16_t(std::clamp(mixed, int32_t(-32768), int32_t(32767))));
     }
-
-    frame_t_ += cycles;
-    t_in_line_ += cycles;
-    while (t_in_line_ >= kTstatesPerLine) {
-        t_in_line_ -= kTstatesPerLine;
-        render_line(line_);
-        ++line_;
-        if (line_ >= kLinesPerFrame) line_ = 0;
-        border_pos_ = 0;
-    }
 }
 
 void Spectrum128k::render_line(int line) {
-    const int saved = line_;
-    line_ = line;
-    border_fill_to(kTstatesPerLine);
-    line_ = saved;
-    border_pos_ = 0;
-
-    if (line < 16 || line > 295) return;
-    const int sy = line - 16;
+    // Pascal borde_128_full: 228 T/line, Y=line-15, left T203..227, paper lines 63..254
+    
+    if (line < 14 || line > 296) return;
+    if (line == 14) return;  // only buffer fill; drawn as left of line 15
+    const int sy = line - 15;
     if (sy < 0 || sy >= kScreenHeight) return;
     uint32_t* dst = framebuffer_.data() + size_t(sy) * kScreenWidth;
     const auto& brow = border_buf_[size_t(line % kLinesPerFrame)];
@@ -486,14 +540,14 @@ void Spectrum128k::render_line(int line) {
         return palette_[0];
     };
 
-    // Left border from previous line T 200-223 (scaled: 128k uses same 24T→48px)
-    // Map: 228-line buffer — left border still last 24 T of prev line ≈ 204-227
-    if (line > 15) {
+    // Left border: Pascal T 203..226 of previous line → 48 px
+    if (line > 14) {
         const auto& prev = border_buf_[size_t((line - 1) % kLinesPerFrame)];
         for (int f = 0; f < 24; ++f) {
-            const uint32_t c = col_at(prev[size_t(204 + f)]);
-            dst[f * 2] = c;
-            dst[f * 2 + 1] = c;
+            const uint32_t c = col_at(prev[size_t(203 + f)]);
+            const int px = f * 2;
+            dst[px] = c;
+            dst[px + 1] = c;
         }
     } else {
         const uint32_t c = border_colour();
@@ -509,7 +563,7 @@ void Spectrum128k::render_line(int line) {
     }
 
     // Paper from display bank
-    if (line >= 63 && line <= 254) {
+    if (line >= 63 && line <= 254)  /* Pascal: skip centre border when linea>62 && linea<255 */ {
         const int y = line - 63;
         if (y >= 0 && y < 192) {
             const auto& vram = banks_[pantalla_];

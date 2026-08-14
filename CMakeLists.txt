@@ -42,7 +42,6 @@ add_executable(dsp
   src/machine/tape_tzx.cpp
   src/machine/i8255.cpp
   src/machine/nec765.cpp
-  src/machine/upd765.cpp
   src/machine/disk_image.cpp
   
   src/drivers/bagman.cpp

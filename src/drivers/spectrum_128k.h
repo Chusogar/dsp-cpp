@@ -18,7 +18,7 @@ namespace dsp {
 class Spectrum128k : public Machine {
 public:
     static constexpr int kScreenWidth = 352;
-    static constexpr int kScreenHeight = 296;
+    static constexpr int kScreenHeight = 280;  // 48+192+40, matches Pascal putpixel range
     static constexpr uint32_t kClock = 3546895;  // 17734475 / 5
     static constexpr int kTstatesPerLine = 228;
     static constexpr int kLinesPerFrame = 311;
@@ -66,9 +66,11 @@ private:
 
     void apply_7ffd(uint8_t value);
     uint8_t floating_bus() const;
+    void apply_port_contention(uint16_t port);
     void build_contention();
     void render_line(int line);
-    void border_fill_to(int t_end);
+    void border_fill_to(int abs_t);  // absolute T in frame
+    void border_on_out();
     void apply_keyboard(const MachineInputs& in);
 
     uint8_t border_index() const;

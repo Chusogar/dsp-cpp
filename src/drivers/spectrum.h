@@ -16,8 +16,8 @@ namespace dsp {
 // Chips: Z80 @ 3.5 MHz, ULA (border/beeper/keyboard/EAR), TapeTzx.
 class Spectrum48k : public Machine {
 public:
-    static constexpr int kScreenWidth = 352;   // 48 + 256 + 48
-    static constexpr int kScreenHeight = 296;  // 48 + 192 + 56
+    static constexpr int kScreenWidth = 352;   // 48 left + 256 paper + 48 right
+    static constexpr int kScreenHeight = 280;  // 48 top + 192 paper + 40 bottom (matches drawn lines)
     static constexpr uint32_t kClock = 3500000;
     static constexpr int kTstatesPerLine = 224;
     static constexpr int kLinesPerFrame = 312;
@@ -62,8 +62,8 @@ private:
     
     void build_contention();
     void render_line(int line);
-    void border_fill_to(int t_end);
-    void border_on_out(uint8_t new_colour_index);
+    void border_fill_to(int abs_t);  // absolute T in frame
+    void border_on_out();
     uint8_t border_index() const;
     void apply_keyboard(const MachineInputs& in);
 
@@ -78,7 +78,7 @@ private:
 
     // ULA state
     uint8_t border_ = 7;
-    int border_pos_ = 0;  // T-state within line when colour last changed
+    int border_pos_ = 0;  // absolute T-state in frame of last border change
     // Per-T border colour index (ULA classic 0-15 or ULA+ 16-23)
     std::array<std::array<uint8_t, kTstatesPerLine>, kLinesPerFrame> border_buf_{};
     uint8_t speaker_ = 0;   // bit 4 of port $FE → 0x00 / 0x10

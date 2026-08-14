@@ -91,9 +91,8 @@ void Spectrum48k::ulaplus_set_entry(uint8_t index, uint8_t value) {
 }
 
 uint8_t Spectrum48k::border_index() const {
-    if (ulaplus_.active && ulaplus_.enabled) {
+    if (ulaplus_.active && ulaplus_.enabled)
         return uint8_t(16 + (border_ & 7));
-    }
     return uint8_t(border_ & 7);
 }
 
@@ -103,28 +102,16 @@ uint32_t Spectrum48k::border_colour() const {
     return palette_ext_[idx < 80 ? idx : 16];
 }
 
-void Spectrum48k::border_fill_to(int t_end) {
-    // Fill border_buf_[line_][border_pos_ .. t_end) with current border colour.
-    if (line_ < 0 || line_ >= kLinesPerFrame) return;
-    int start = border_pos_;
-    if (start < 0) start = 0;
-    if (t_end > kTstatesPerLine) t_end = kTstatesPerLine;
-    if (start >= t_end) return;
-    const uint8_t col = border_index();
-    auto& row = border_buf_[size_t(line_)];
-    for (int t = start; t < t_end; ++t) row[size_t(t)] = col;
-    border_pos_ = t_end;
+void Spectrum48k::border_fill_to(int /*abs_t*/) {
+    // No-op with per-T painting; kept for API compatibility.
 }
 
-void Spectrum48k::border_on_out(uint8_t /*new_border_bits*/) {
-    // On OUT ($FE): paint from last change to current T with the *old* colour, then
-    // border_ already holds the new colour for subsequent T-states.
-    int t = t_in_line_;
-    if (t < 0) t = 0;
-    if (t > kTstatesPerLine) t = kTstatesPerLine;
-    // Note: caller updates border_ *after* capturing old index, or we fill with
-    // pre-change colour. See io_out.
+void Spectrum48k::border_on_out() {
+    // Colour changes immediately; on_cycles paints border_buf_ every T-state
+    // with the current border_index().  No deferred fill needed.
 }
+
+
 
 
 
@@ -330,16 +317,8 @@ uint8_t Spectrum48k::io_in(uint16_t port) {
 
 void Spectrum48k::io_out(uint16_t port, uint8_t value) {
     if ((port & 1) == 0) {
-        // Full border: fill [border_pos_ .. t_in_line_) with previous colour.
-        {
-            int t = t_in_line_;
-            if (t < 0) t = 0;
-            if (t > kTstatesPerLine) t = kTstatesPerLine;
-            border_fill_to(t);
-        }
         border_ = value & 7;
-        // border_pos_ already at t_in_line_ — further T-states use new colour
-        speaker_ = (value & 0x10) ? 0x10 : 0x00;
+                speaker_ = (value & 0x10) ? 0x10 : 0x00;
         beeper_level_ = (value & 0x10) ? int16_t(8192) : int16_t(-8192);
     }
 
@@ -366,43 +345,54 @@ void Spectrum48k::io_out(uint16_t port, uint8_t value) {
 }
 
 void Spectrum48k::on_cycles(int cycles) {
-    // Tape @ same 3.5 MHz clock
+    // Paint border colour into the per-T buffer for every elapsed T-state, then
+    // advance the raster.  OUT ($FE) only updates border_; stripes appear because
+    // consecutive T-states keep the colour that was current when they executed.
+    for (int n = 0; n < cycles; ++n) {
+        if (line_ >= 0 && line_ < kLinesPerFrame &&
+            t_in_line_ >= 0 && t_in_line_ < kTstatesPerLine) {
+            border_buf_[size_t(line_)][size_t(t_in_line_)] = border_index();
+        }
+        ++t_in_line_;
+        ++frame_t_;
+        if (t_in_line_ >= kTstatesPerLine) {
+            t_in_line_ -= kTstatesPerLine;
+            render_line(line_);
+            ++line_;
+            if (line_ >= kLinesPerFrame) line_ = 0;
+        }
+    }
+
     if (tape_.is_playing()) {
         ear_ = tape_.advance(cycles) ? 0x40 : 0x00;
     }
 
-    // Beeper audio resample 3.5 MHz → 44100
     audio_acc_ += int64_t(cycles) * kSampleRate;
     while (audio_acc_ >= int64_t(kClock)) {
         audio_acc_ -= int64_t(kClock);
         audio_.push_back(beeper_level_);
     }
-
-    frame_t_ += cycles;
-    t_in_line_ += cycles;
-    while (t_in_line_ >= kTstatesPerLine) {
-        t_in_line_ -= kTstatesPerLine;
-        render_line(line_);
-        ++line_;
-        if (line_ >= kLinesPerFrame) line_ = 0;
-    }
 }
 
 void Spectrum48k::render_line(int line) {
-    // Finish this line's border buffer with the current colour.
-    const int saved_line = line_;
-    line_ = line;
-    border_fill_to(kTstatesPerLine);
-    line_ = saved_line;
-    border_pos_ = 0;
+    // Pascal borde_48_full (spectrum_48k.pas):
+    //   fill buffer[line*224 + pos .. contador) with current colour
+    //   left:  T 200..223 of previous line → 48 px at X=0,  Y=line-16
+    //   right: T 128..151 of current line  → 48 px at X=304
+    //   centre (top/bottom only): T 0..127 → 256 px at X=48
+    //   paper lines 64..255: video48k draws bitmap; no centre border
+    // Finish border buffer up to the end of this scanline (absolute T).
+        // Pascal sets posicion := contador - 224 after processing; next line starts at 0.
+    // border_pos_ already advanced to absolute end of this line.
 
-    // Pascal maps drawn scanlines 16..295 → framebuffer Y = line-16.
-    if (line < 16 || line > 295) return;
+    if (line < 15 || line > 296) return;
+    if (line == 15) return;  // only buffered; drawn as left of line 16
+
     const int sy = line - 16;
     if (sy < 0 || sy >= kScreenHeight) return;
 
     uint32_t* dst = framebuffer_.data() + size_t(sy) * kScreenWidth;
-    const auto& brow = border_buf_[size_t(line)];
+    const auto& brow = border_buf_[size_t(line % kLinesPerFrame)];
 
     auto col_at = [&](uint8_t idx) -> uint32_t {
         if (idx < 16) return palette_[idx];
@@ -410,13 +400,12 @@ void Spectrum48k::render_line(int line) {
         return palette_[0];
     };
 
-    // Left border: T-states 200..223 of *previous* line → 48 pixels (2 px / T)
+    // Left border from previous line (T 200..223)
     if (line > 15) {
-        const auto& prev = border_buf_[size_t(line - 1)];
-        const int t0 = kTstatesPerLine - 24;
-        for (int f = 0; f < 24; ++f) {
-            const uint32_t c = col_at(prev[size_t(t0 + f)]);
-            const int px = f * 2;
+        const auto& prev = border_buf_[size_t((line - 1) % kLinesPerFrame)];
+        for (int f = 200; f <= 223; ++f) {
+            const uint32_t c = col_at(prev[size_t(f)]);
+            const int px = (f - 200) * 2;
             dst[px] = c;
             dst[px + 1] = c;
         }
@@ -427,7 +416,7 @@ void Spectrum48k::render_line(int line) {
 
     if (line >= 296) return;
 
-    // Right border: T-states 128..151 of current line → x 304..351
+    // Right border T 128..151
     for (int f = 128; f <= 151; ++f) {
         const uint32_t c = col_at(brow[size_t(f)]);
         const int px = 304 + (f - 128) * 2;
@@ -435,7 +424,7 @@ void Spectrum48k::render_line(int line) {
         dst[px + 1] = c;
     }
 
-    // Paper area (ULA lines 64..255) or top/bottom border centre (T 0..127)
+    // Paper / centre
     if (line >= 64 && line <= 255) {
         const int y = line - 64;
         const uint16_t pix_base = kScrTable[y];
@@ -452,10 +441,7 @@ void Spectrum48k::render_line(int line) {
             } else {
                 int ink = attrib & 7;
                 int paper = (attrib >> 3) & 7;
-                if (attrib & 0x40) {
-                    ink += 8;
-                    paper += 8;
-                }
+                if (attrib & 0x40) { ink += 8; paper += 8; }
                 if ((attrib & 0x80) && flash_) std::swap(ink, paper);
                 c_ink = palette_[ink];
                 c_paper = palette_[paper];
@@ -467,7 +453,7 @@ void Spectrum48k::render_line(int line) {
             }
         }
     } else {
-        // Top/bottom border: T-states 0..127 → 256 centre pixels
+        // Top/bottom border centre T 0..127
         for (int f = 0; f <= 127; ++f) {
             const uint32_t c = col_at(brow[size_t(f)]);
             const int px = 48 + f * 2;
@@ -480,10 +466,10 @@ void Spectrum48k::render_line(int line) {
 void Spectrum48k::run_frame() {
     line_ = 0;
     t_in_line_ = 0;
-    border_pos_ = 0;
+    border_pos_ = 0;  // absolute T within frame
     frame_t_ = 0;
-    // Seed this frame's border buffer with the current border colour so any
-    // line without an OUT still has a valid per-T colour.
+    // Seed buffer with current colour (Pascal leaves previous frame data; we
+    // start clean so every T-state has a defined colour until the next OUT).
     {
         const uint8_t col = border_index();
         for (auto& row : border_buf_) row.fill(col);

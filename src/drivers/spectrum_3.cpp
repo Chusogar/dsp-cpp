@@ -88,25 +88,27 @@ void Spectrum3::ulaplus_set_entry(uint8_t index, uint8_t value) {
 }
 
 uint8_t Spectrum3::border_index() const {
-    if (ulaplus_.active && ulaplus_.enabled) return uint8_t(16 + (border_ & 7));
+    if (ulaplus_.active && ulaplus_.enabled)
+        return uint8_t(16 + (border_ & 7));
     return uint8_t(border_ & 7);
 }
 
 uint32_t Spectrum3::border_colour() const {
     const uint8_t idx = border_index();
-    return idx < 16 ? palette_[idx] : palette_ext_[idx < 80 ? idx : 16];
+    if (idx < 16) return palette_[idx];
+    return palette_ext_[idx < 80 ? idx : 16];
 }
 
-void Spectrum3::border_fill_to(int t_end) {
-    if (line_ < 0 || line_ >= kLinesPerFrame) return;
-    int start = border_pos_;
-    if (t_end > kTstatesPerLine) t_end = kTstatesPerLine;
-    if (start >= t_end) return;
-    const uint8_t col = border_index();
-    auto& row = border_buf_[size_t(line_)];
-    for (int t = start; t < t_end; ++t) row[size_t(t)] = col;
-    border_pos_ = t_end;
+void Spectrum3::border_fill_to(int /*abs_t*/) {
+    // No-op with per-T painting; kept for API compatibility.
 }
+
+void Spectrum3::border_on_out() {
+    // Colour changes immediately; on_cycles paints border_buf_ every T-state
+    // with the current border_index().  No deferred fill needed.
+}
+
+
 
 bool Spectrum3::init(const std::string& rom_path, std::string* error) {
     std::vector<uint8_t> rom;
@@ -419,12 +421,6 @@ uint8_t Spectrum3::io_in(uint16_t port) {
 
 void Spectrum3::io_out(uint16_t port, uint8_t value) {
     if ((port & 1) == 0) {
-        {
-            int t = t_in_line_;
-            if (t < 0) t = 0;
-            if (t > kTstatesPerLine) t = kTstatesPerLine;
-            border_fill_to(t);
-        }
         border_ = value & 7;
         speaker_ = (value & 0x10) ? 0x10 : 0x00;
         beeper_level_ = (value & 0x10) ? int16_t(4096) : int16_t(-4096);
@@ -466,15 +462,28 @@ void Spectrum3::io_out(uint16_t port, uint8_t value) {
 }
 
 void Spectrum3::on_cycles(int cycles) {
+    for (int n = 0; n < cycles; ++n) {
+        if (line_ >= 0 && line_ < kLinesPerFrame &&
+            t_in_line_ >= 0 && t_in_line_ < kTstatesPerLine) {
+            border_buf_[size_t(line_)][size_t(t_in_line_)] = border_index();
+        }
+        ++t_in_line_;
+        ++frame_t_;
+        if (t_in_line_ >= kTstatesPerLine) {
+            t_in_line_ -= kTstatesPerLine;
+            render_line(line_);
+            ++line_;
+            if (line_ >= kLinesPerFrame) line_ = 0;
+        }
+    }
+
     if (tape_.is_playing()) ear_ = tape_.advance(cycles) ? 0x40 : 0x00;
 
-    // Interface 2: after ~10.5M T-states switch to upper 16K of cart ROM
     if (if2_present_ && !if2_switched_) {
         if2_delay_ += cycles;
         if (if2_delay_ > 10500000) if2_switched_ = true;
     }
 
-    // Mix AY + beeper @ sample rate
     audio_acc_ += int64_t(cycles) * kSampleRate;
     while (audio_acc_ >= int64_t(kClock)) {
         audio_acc_ -= int64_t(kClock);
@@ -482,27 +491,14 @@ void Spectrum3::on_cycles(int cycles) {
         const int32_t mixed = ay + beeper_level_;
         audio_.push_back(int16_t(std::clamp(mixed, int32_t(-32768), int32_t(32767))));
     }
-
-    frame_t_ += cycles;
-    t_in_line_ += cycles;
-    while (t_in_line_ >= kTstatesPerLine) {
-        t_in_line_ -= kTstatesPerLine;
-        render_line(line_);
-        ++line_;
-        if (line_ >= kLinesPerFrame) line_ = 0;
-        border_pos_ = 0;
-    }
 }
 
 void Spectrum3::render_line(int line) {
-    const int saved = line_;
-    line_ = line;
-    border_fill_to(kTstatesPerLine);
-    line_ = saved;
-    border_pos_ = 0;
-
-    if (line < 16 || line > 295) return;
-    const int sy = line - 16;
+    // Pascal borde_128_full: 228 T/line, Y=line-15, left T203..227, paper lines 63..254
+    
+    if (line < 14 || line > 296) return;
+    if (line == 14) return;  // only buffer fill; drawn as left of line 15
+    const int sy = line - 15;
     if (sy < 0 || sy >= kScreenHeight) return;
     uint32_t* dst = framebuffer_.data() + size_t(sy) * kScreenWidth;
     const auto& brow = border_buf_[size_t(line % kLinesPerFrame)];
@@ -513,14 +509,14 @@ void Spectrum3::render_line(int line) {
         return palette_[0];
     };
 
-    // Left border from previous line T 200-223 (scaled: 128k uses same 24T→48px)
-    // Map: 228-line buffer — left border still last 24 T of prev line ≈ 204-227
-    if (line > 15) {
+    // Left border: Pascal T 203..226 of previous line → 48 px
+    if (line > 14) {
         const auto& prev = border_buf_[size_t((line - 1) % kLinesPerFrame)];
         for (int f = 0; f < 24; ++f) {
-            const uint32_t c = col_at(prev[size_t(204 + f)]);
-            dst[f * 2] = c;
-            dst[f * 2 + 1] = c;
+            const uint32_t c = col_at(prev[size_t(203 + f)]);
+            const int px = f * 2;
+            dst[px] = c;
+            dst[px + 1] = c;
         }
     } else {
         const uint32_t c = border_colour();
@@ -536,7 +532,7 @@ void Spectrum3::render_line(int line) {
     }
 
     // Paper from display bank
-    if (line >= 63 && line <= 254) {
+    if (line >= 63 && line <= 254)  /* Pascal: skip centre border when linea>62 && linea<255 */ {
         const int y = line - 63;
         if (y >= 0 && y < 192) {
             const auto& vram = banks_[pantalla_];
