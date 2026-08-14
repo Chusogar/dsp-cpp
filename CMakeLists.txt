@@ -22,6 +22,7 @@ add_executable(dsp
   src/cpu/hd63701.cpp
   src/cpu/m6805.cpp
   src/cpu/lr35902.cpp
+  src/cpu/upd7801.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
@@ -30,6 +31,7 @@ add_executable(dsp
   src/sound/okim6295.cpp
   src/sound/ym2413.cpp
   src/sound/tms5220.cpp
+  src/sound/upd1771.cpp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/tms9918.cpp
@@ -66,7 +68,8 @@ add_executable(dsp
   src/machine/i2cmem.cpp
   src/drivers/sg1000.cpp
   src/machine/gb_mappers.cpp
-    
+  src/drivers/scv.cpp
+      
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
 )

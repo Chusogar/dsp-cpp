@@ -165,8 +165,18 @@ int SdlApp::run(Machine& machine) {
     std::vector<int16_t> samples;
     bool running = true;
     bool paused = false;
+    // F12 toggles unlimited speed: no frame/audio pacing, minimal present cost.
+    bool turbo = false;
+    int turbo_present_counter = 0;
     // Accumulator for sub-ms frame pacing when muted (avoids integer truncation drift).
     double frame_debt_ms = 0.0;
+
+    auto update_title = [&]() {
+        std::string t = std::string("DSP C++ - ") + machine.title();
+        if (paused) t += " [PAUSED]";
+        if (turbo) t += " [TURBO]";
+        SDL_SetWindowTitle(window, t.c_str());
+    };
 
     while (running) {
         SDL_Event event;
@@ -176,9 +186,25 @@ int SdlApp::run(Machine& machine) {
                 switch (event.key.keysym.sym) {
                     case SDLK_ESCAPE: running = false; break;
                     case SDLK_F3: machine.reset(); break;
-                    case SDLK_F2: paused = !paused; break;
+                    case SDLK_F2:
+                        paused = !paused;
+                        update_title();
+                        break;
+                    case SDLK_F6:
+                        machine.tape_toggle_play();
+                        break;
+                    case SDLK_F12:
+                        // Maximum speed: skip vsync/frame limit and audio pacing.
+                        turbo = !turbo;
+                        frame_debt_ms = 0.0;
+                        if (turbo && audio_device != 0) SDL_ClearQueuedAudio(audio_device);
+                        update_title();
+                        break;
                     case SDLK_p:
-                        if (!machine.uses_keyboard()) paused = !paused;
+                        if (!machine.uses_keyboard()) {
+                            paused = !paused;
+                            update_title();
+                        }
                         break;
                     default: break;
                 }
@@ -196,7 +222,7 @@ int SdlApp::run(Machine& machine) {
         // If the queue is already full enough, wait until it drains toward the
         // target. This keeps video locked to the audio clock and prevents
         // cumulative drift.
-        if (audio_device != 0) {
+        if (audio_device != 0 && !turbo) {
             for (;;) {
                 const uint32_t queued = SDL_GetQueuedAudioSize(audio_device);
                 if (queued < max_bytes) break;
@@ -213,8 +239,15 @@ int SdlApp::run(Machine& machine) {
                         if (event.key.keysym.sym == SDLK_F2 ||
                             (event.key.keysym.sym == SDLK_p && !machine.uses_keyboard())) {
                             paused = true;
+                            update_title();
                         }
                         if (event.key.keysym.sym == SDLK_F3) machine.reset();
+                        if (event.key.keysym.sym == SDLK_F12) {
+                            turbo = !turbo;
+                            frame_debt_ms = 0.0;
+                            if (turbo && audio_device != 0) SDL_ClearQueuedAudio(audio_device);
+                            update_title();
+                        }
                     }
                 }
                 if (!running || paused) break;
@@ -227,7 +260,7 @@ int SdlApp::run(Machine& machine) {
 
         samples.clear();
         machine.drain_audio(samples);
-        if (audio_device != 0 && !samples.empty()) {
+        if (!turbo && audio_device != 0 && !samples.empty()) {
             // Soft drop only if the queue is pathologically large (host too
             // slow). Prefer waiting (above) over discarding samples so pitch
             // and A/V stay locked.
@@ -237,32 +270,39 @@ int SdlApp::run(Machine& machine) {
             }
         }
 
-        SDL_UpdateTexture(texture, nullptr, machine.framebuffer(), width * 4);
-        SDL_RenderClear(renderer);
-        SDL_RenderCopy(renderer, texture, nullptr, nullptr);
-        SDL_RenderPresent(renderer);
+        // Turbo: present only every 4th frame to spend CPU on emulation, not GPU.
+        const bool do_present = !turbo || ((++turbo_present_counter & 3) == 0);
+        if (do_present) {
+            SDL_UpdateTexture(texture, nullptr, machine.framebuffer(), width * 4);
+            SDL_RenderClear(renderer);
+            SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+            SDL_RenderPresent(renderer);
+        }
 
         // --- Fallback / fine pacing when muted or queue is under-filled ---
-        if (audio_device == 0) {
-            // Classic wall-clock limiter with fractional accumulation to avoid
-            // long-term drift from integer millisecond truncation.
-            frame_debt_ms += frame_time_ms;
-            const int delay_ms = int(frame_debt_ms);
-            if (delay_ms > 0) {
-                SDL_Delay(uint32_t(delay_ms));
-                frame_debt_ms -= delay_ms;
-            }
-            // If we are behind, do not accumulate infinite debt.
-            if (frame_debt_ms < -frame_time_ms * 2.0) frame_debt_ms = 0.0;
-        } else {
-            // With audio open: if the queue is below the soft minimum, run the
-            // next frame immediately (no delay) so we refill. Otherwise sleep
-            // a tiny amount to yield CPU; the audio-wait loop at the top of
-            // the next iteration will do the real pacing.
-            const uint32_t queued = SDL_GetQueuedAudioSize(audio_device);
-            if (queued >= min_bytes) {
-                // Aim for roughly one frame of headroom without busy-waiting.
-                SDL_Delay(1);
+        // Skipped entirely in turbo mode for maximum emulation throughput.
+        if (!turbo) {
+            if (audio_device == 0) {
+                // Classic wall-clock limiter with fractional accumulation to avoid
+                // long-term drift from integer millisecond truncation.
+                frame_debt_ms += frame_time_ms;
+                const int delay_ms = int(frame_debt_ms);
+                if (delay_ms > 0) {
+                    SDL_Delay(uint32_t(delay_ms));
+                    frame_debt_ms -= delay_ms;
+                }
+                // If we are behind, do not accumulate infinite debt.
+                if (frame_debt_ms < -frame_time_ms * 2.0) frame_debt_ms = 0.0;
+            } else {
+                // With audio open: if the queue is below the soft minimum, run the
+                // next frame immediately (no delay) so we refill. Otherwise sleep
+                // a tiny amount to yield CPU; the audio-wait loop at the top of
+                // the next iteration will do the real pacing.
+                const uint32_t queued = SDL_GetQueuedAudioSize(audio_device);
+                if (queued >= min_bytes) {
+                    // Aim for roughly one frame of headroom without busy-waiting.
+                    SDL_Delay(1);
+                }
             }
         }
     }

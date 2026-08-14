@@ -35,9 +35,8 @@ bool read_plain_or_zip_file(const std::string& path, std::vector<uint8_t>& data,
     }
     RomLoader loader;
     if (!loader.open(path, error)) return false;
-    //data.reserve(max_size);
-    //return loader.load_first_file(data, error);
-	return false;
+    data.reserve(max_size);
+    return loader.load_first_file(data, error);
 }
 
 // CRCs from abrir_sg's cartridge case statement: some real SG-1000

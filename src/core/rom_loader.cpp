@@ -107,6 +107,29 @@ bool RomLoader::load_zip_index(std::string* error) {
     return true;
 }
 
+bool RomLoader::load_first_file(std::vector<uint8_t>& dest, std::string* error) const {
+    if (!is_zip_) {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        for (const auto& item : fs::directory_iterator(path_, ec)) {
+            if (!item.is_regular_file(ec)) continue;
+            if (read_whole_file(item.path().string(), dest)) return true;
+            if (error) *error = "cannot read " + item.path().string();
+            return false;
+        }
+        if (error) *error = path_ + ": no files found";
+        return false;
+    }
+    if (zip_index_.empty()) {
+        if (error) *error = path_ + ": empty zip archive";
+        return false;
+    }
+    const std::string& name = zip_index_.begin()->first;
+    if (read_file(name, dest)) return true;
+    if (error) *error = path_ + ": cannot extract " + name;
+    return false;
+}
+
 bool RomLoader::read_file(const std::string& name, std::vector<uint8_t>& out) const {
     if (!is_zip_) {
         namespace fs = std::filesystem;

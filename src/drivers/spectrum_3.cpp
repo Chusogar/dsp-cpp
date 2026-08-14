@@ -105,7 +105,7 @@ void Spectrum3::border_fill_to(int t_end) {
     const uint8_t col = border_index();
     auto& row = border_buf_[size_t(line_)];
     for (int t = start; t < t_end; ++t) row[size_t(t)] = col;
-    border_pos_ = uint8_t(t_end);
+    border_pos_ = t_end;
 }
 
 bool Spectrum3::init(const std::string& rom_path, std::string* error) {
@@ -420,7 +420,12 @@ uint8_t Spectrum3::io_in(uint16_t port) {
 
 void Spectrum3::io_out(uint16_t port, uint8_t value) {
     if ((port & 1) == 0) {
-        border_fill_to(t_in_line_);
+        {
+            int t = t_in_line_;
+            if (t < 0) t = 0;
+            if (t > kTstatesPerLine) t = kTstatesPerLine;
+            border_fill_to(t);
+        }
         border_ = value & 7;
         speaker_ = (value & 0x10) ? 0x10 : 0x00;
         beeper_level_ = (value & 0x10) ? int16_t(4096) : int16_t(-4096);
@@ -580,7 +585,14 @@ void Spectrum3::render_line(int line) {
 void Spectrum3::run_frame() {
     line_ = 0;
     t_in_line_ = 0;
+    border_pos_ = 0;
     frame_t_ = 0;
+    // Seed this frame's border buffer with the current border colour so any
+    // line without an OUT still has a valid per-T colour.
+    {
+        const uint8_t col = border_index();
+        for (auto& row : border_buf_) row.fill(col);
+    }
     border_pos_ = 0;
 
     cpu_.set_irq(IrqLine::Hold);
@@ -591,11 +603,17 @@ void Spectrum3::run_frame() {
         remaining -= ran;
         if (remaining < kTstatesPerFrame - 32) cpu_.set_irq(IrqLine::Clear);
     }
-    while (line_ < kScreenHeight) {
-        render_line(line_);
-        ++line_;
+    // Finish incomplete lines only — do not re-render (preserves per-T border).
+    if (line_ != 0 || t_in_line_ != 0) {
+        while (line_ < kLinesPerFrame) {
+            render_line(line_);
+            ++line_;
+        }
     }
-    line_ = t_in_line_ = frame_t_ = 0;
+    line_ = 0;
+    t_in_line_ = 0;
+    border_pos_ = 0;
+    frame_t_ = 0;
     flash_count_ = (flash_count_ + 1) & 0x0f;
     if (flash_count_ == 0) flash_ = !flash_;
 }

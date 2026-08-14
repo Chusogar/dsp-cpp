@@ -78,7 +78,7 @@ private:
 
     // ULA state
     uint8_t border_ = 7;
-    uint8_t border_pos_ = 0;  // T-state within line when colour last changed
+    int border_pos_ = 0;  // T-state within line when colour last changed
     // Per-T border colour index (ULA classic 0-15 or ULA+ 16-23)
     std::array<std::array<uint8_t, kTstatesPerLine>, kLinesPerFrame> border_buf_{};
     uint8_t speaker_ = 0;   // bit 4 of port $FE → 0x00 / 0x10

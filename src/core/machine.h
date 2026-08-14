@@ -83,6 +83,10 @@ public:
         return false;
     }
 
+    // Spectrum / CPC: toggle cassette play (F6). Default no-op.
+    virtual void tape_toggle_play() {}
+    virtual bool tape_loaded() const { return false; }
+
     const std::vector<std::string>& warnings() const { return warnings_; }
 
 protected:

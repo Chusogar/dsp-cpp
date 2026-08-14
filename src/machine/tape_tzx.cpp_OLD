@@ -726,16 +726,19 @@ void TapeTzx::next_block() {
     start_block();
 }
 
-void TapeTzx::start_gen_symbol(const Symbol& sym, bool apply_flags) {
-    // dsp-emulator: flags applied at block/byte start, not every intra-byte symbol.
-    //   0 = keep, 1 = toggle, 2 = force low, 3 = force high
-    if (apply_flags) {
-        switch (sym.flags & 3) {
-            case 0: break;
-            case 1: level_ ^= 0x40; break;
-            case 2: level_ = 0; break;
-            case 3: level_ = 0x40; break;
-        }
+void TapeTzx::start_gen_symbol(const Symbol& sym) {
+    // Match dsp-emulator / TZX symbol flags (bits 0-1) at the START of a symbol:
+    //   0 = keep current level
+    //   1 = toggle
+    //   2 = force low
+    //   3 = force high
+    // Further pulses always toggle (case 19/20).
+    const uint8_t pol = sym.flags & 3;
+    switch (pol) {
+        case 0: break;
+        case 1: level_ ^= 0x40; break;
+        case 2: level_ = 0; break;
+        case 3: level_ = 0x40; break;
     }
     sym_pulse_i_ = 0;
     if (sym.pulses.empty()) {
@@ -776,7 +779,7 @@ uint32_t TapeTzx::read_symbol_index(const Block& b, uint32_t symbol_i) const {
     return value;
 }
 
-void TapeTzx::advance_gen_data(bool apply_flags) {
+void TapeTzx::advance_gen_data() {
     const Block& b = blocks_[index_];
     if (b.symbols.empty() || data_pos_ >= b.totd) {
         estado_ = 5;
@@ -787,7 +790,12 @@ void TapeTzx::advance_gen_data(bool apply_flags) {
     uint32_t sym_i = read_symbol_index(b, uint32_t(data_pos_));
     if (sym_i >= b.symbols.size()) sym_i = 0;
     current_symbol_ = uint8_t(sym_i & 0xff);
-    start_gen_symbol(b.symbols[sym_i], apply_flags);
+    // For alphabets > 256 (shouldn't happen per TZX) clamp
+    if (sym_i < b.symbols.size()) {
+        start_gen_symbol(b.symbols[sym_i]);
+    } else {
+        start_gen_symbol(b.symbols[0]);
+    }
     estado_ = 20;
 }
 
@@ -873,7 +881,7 @@ void TapeTzx::start_block() {
                 pilot_repeat_left_ = b.pilot_stream.size() > 1 ? b.pilot_stream[1] : 1;
                 if (si < b.pilot_symbols.size()) {
                     current_symbol_ = si;
-                    start_gen_symbol(b.pilot_symbols[si], true);
+                    start_gen_symbol(b.pilot_symbols[si]);
                     estado_ = 19;
                 } else {
                     advance_gen_data();
@@ -1113,7 +1121,7 @@ int TapeTzx::advance(int tstates) {
                         pilot_repeat_left_ = b.pilot_stream[pilot_stream_i_ + 1];
                         if (si < b.pilot_symbols.size()) {
                             current_symbol_ = si;
-                            start_gen_symbol(b.pilot_symbols[si], true);
+                            start_gen_symbol(b.pilot_symbols[si]);
                         } else {
                             data_pos_ = 0;
                             advance_gen_data();
@@ -1146,7 +1154,7 @@ int TapeTzx::advance(int tstates) {
                             pilot_repeat_left_ = b.pilot_stream[pilot_stream_i_ + 1];
                             if (si < b.pilot_symbols.size()) {
                                 current_symbol_ = si;
-                                start_gen_symbol(b.pilot_symbols[si], true);
+                                start_gen_symbol(b.pilot_symbols[si]);
                             } else {
                                 data_pos_ = 0;
                                 advance_gen_data();
@@ -1159,42 +1167,25 @@ int TapeTzx::advance(int tstates) {
                 }
                 break;
             }
-            case 20: {  // generalized data — Pascal-compatible bit stream
+            case 20: {  // generalized data symbol pulses (Pascal-compatible)
                 const Symbol* sym = nullptr;
                 if (current_symbol_ < b.symbols.size()) sym = &b.symbols[current_symbol_];
-                bool need_next = false;
                 if (!sym || sym->pulses.empty()) {
-                    need_next = true;
-                } else {
-                    ++sym_pulse_i_;
-                    if (sym_pulse_i_ < sym->pulses.size() && sym->pulses[sym_pulse_i_] != 0) {
-                        level_ ^= 0x40;
-                        estados_left_ = int(sym->pulses[sym_pulse_i_] ? sym->pulses[sym_pulse_i_] : 1);
-                        break;
-                    }
-                    need_next = true;
-                }
-                if (need_next) {
-                    // end of symbol: always xor (Pascal)
-                    level_ ^= 0x40;
                     ++data_pos_;
-                    if (data_pos_ >= b.totd || b.symbols.empty()) {
-                        advance_gen_data(true);
-                        break;
-                    }
-                    const uint16_t asd = alphabet_size(uint8_t(b.asd));
-                    bool apply = true;
-                    if (asd <= 2) {
-                        // Flags only when entering a new byte (Pascal bit_actual)
-                        if (bit_mask_ > 1) {
-                            bit_mask_ >>= 1;
-                            apply = false;
-                        } else {
-                            bit_mask_ = 0x80;
-                            apply = true;
-                        }
-                    }
-                    advance_gen_data(apply);
+                    // Pascal: xor then start next symbol (flag may override)
+                    level_ ^= 0x40;
+                    advance_gen_data();
+                    break;
+                }
+                ++sym_pulse_i_;
+                if (sym_pulse_i_ < sym->pulses.size() && sym->pulses[sym_pulse_i_] != 0) {
+                    level_ ^= 0x40;
+                    estados_left_ = int(sym->pulses[sym_pulse_i_] ? sym->pulses[sym_pulse_i_] : 1);
+                } else {
+                    // end of symbol: Pascal always xors, then applies next symbol flags
+                    ++data_pos_;
+                    level_ ^= 0x40;
+                    advance_gen_data();
                 }
                 break;
             }

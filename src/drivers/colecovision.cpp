@@ -86,7 +86,7 @@ bool ColecoVision::load_media(const std::string& path, std::string* error) {
         RomLoader loader;
         if (!loader.open(path, error)) return false;
         data.reserve(kMaxCartridge);
-        //if (!loader.load_first_file(data, error)) return false;
+        if (!loader.load_first_file(data, error)) return false;
     }
 
     save_eeprom();  // flush whatever cartridge was previously inserted

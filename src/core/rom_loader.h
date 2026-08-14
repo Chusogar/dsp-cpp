@@ -24,6 +24,8 @@ public:
     // through `error`; a CRC mismatch is a warning and does not fail the load.
     bool load(const std::vector<RomEntry>& entries, std::vector<uint8_t>& dest,
               std::string* error);
+	
+	bool load_first_file(std::vector<uint8_t>& dest, std::string* error) const;
 
     const std::vector<std::string>& warnings() const { return warnings_; }
 

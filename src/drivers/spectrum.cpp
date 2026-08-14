@@ -113,7 +113,7 @@ void Spectrum48k::border_fill_to(int t_end) {
     const uint8_t col = border_index();
     auto& row = border_buf_[size_t(line_)];
     for (int t = start; t < t_end; ++t) row[size_t(t)] = col;
-    border_pos_ = uint8_t(t_end);
+    border_pos_ = t_end;
 }
 
 void Spectrum48k::border_on_out(uint8_t /*new_border_bits*/) {
@@ -331,7 +331,12 @@ uint8_t Spectrum48k::io_in(uint16_t port) {
 void Spectrum48k::io_out(uint16_t port, uint8_t value) {
     if ((port & 1) == 0) {
         // Full border: fill [border_pos_ .. t_in_line_) with previous colour.
-        border_fill_to(t_in_line_);
+        {
+            int t = t_in_line_;
+            if (t < 0) t = 0;
+            if (t > kTstatesPerLine) t = kTstatesPerLine;
+            border_fill_to(t);
+        }
         border_ = value & 7;
         // border_pos_ already at t_in_line_ — further T-states use new colour
         speaker_ = (value & 0x10) ? 0x10 : 0x00;
@@ -408,9 +413,10 @@ void Spectrum48k::render_line(int line) {
     // Left border: T-states 200..223 of *previous* line → 48 pixels (2 px / T)
     if (line > 15) {
         const auto& prev = border_buf_[size_t(line - 1)];
-        for (int f = 200; f <= 223; ++f) {
-            const uint32_t c = col_at(prev[size_t(f)]);
-            const int px = (f - 200) * 2;
+        const int t0 = kTstatesPerLine - 24;
+        for (int f = 0; f < 24; ++f) {
+            const uint32_t c = col_at(prev[size_t(t0 + f)]);
+            const int px = f * 2;
             dst[px] = c;
             dst[px + 1] = c;
         }
@@ -474,7 +480,14 @@ void Spectrum48k::render_line(int line) {
 void Spectrum48k::run_frame() {
     line_ = 0;
     t_in_line_ = 0;
+    border_pos_ = 0;
     frame_t_ = 0;
+    // Seed this frame's border buffer with the current border colour so any
+    // line without an OUT still has a valid per-T colour.
+    {
+        const uint8_t col = border_index();
+        for (auto& row : border_buf_) row.fill(col);
+    }
 
     // IRQ at start of frame (after a few T-states of line 0)
     cpu_.set_irq(IrqLine::Hold);
@@ -487,13 +500,18 @@ void Spectrum48k::run_frame() {
         if (remaining < kTstatesPerFrame - 32) cpu_.set_irq(IrqLine::Clear);
     }
 
-    // Finish any unfinished lines
-    while (line_ < kScreenHeight) {
-        render_line(line_);
-        ++line_;
+    // Finish any lines not yet rendered (if frame ended mid-line).
+    // Do NOT re-render lines already drawn — that would paint solid border and
+    // wipe per-T-state rainbow / loading effects.
+    if (line_ != 0 || t_in_line_ != 0) {
+        while (line_ < kLinesPerFrame) {
+            render_line(line_);
+            ++line_;
+        }
     }
     line_ = 0;
     t_in_line_ = 0;
+    border_pos_ = 0;
     frame_t_ = 0;
 
     flash_count_ = (flash_count_ + 1) & 0x0f;

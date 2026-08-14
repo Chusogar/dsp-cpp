@@ -185,9 +185,10 @@ private:
         size_t in_len,
         uint8_t initial_polarity);
 
-    void start_gen_symbol(const Symbol& sym, bool apply_flags = true);
+    void start_gen_symbol(
+        const Symbol& sym);
 
-    void advance_gen_data(bool apply_flags = true);
+    void advance_gen_data();
 
     static uint16_t alphabet_size(uint8_t raw) {
         return raw == 0 ? 256 : raw;

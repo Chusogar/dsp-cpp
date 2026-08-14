@@ -107,7 +107,7 @@ private:
     std::array<uint32_t, 80> palette_ext_{};
 
     uint8_t border_ = 7;
-    uint8_t border_pos_ = 0;
+    int border_pos_ = 0;
     std::array<std::array<uint8_t, kTstatesPerLine>, kLinesPerFrame> border_buf_{};
     uint8_t speaker_ = 0;
     uint8_t ear_ = 0;
