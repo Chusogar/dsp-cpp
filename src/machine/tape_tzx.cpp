@@ -301,6 +301,7 @@ bool TapeTzx::parse_tzx(const uint8_t* data, size_t size, std::string* error) {
                 if (!need(4)) return false;
                 b.pilot = rd16(data + pos); pos += 2;
                 b.pilot_pulses = rd16(data + pos); pos += 2;
+                b.pause_ms = 0;  // Pure Tone has no pause field
                 blocks_.push_back(std::move(b));
                 break;
             }
@@ -312,6 +313,7 @@ bool TapeTzx::parse_tzx(const uint8_t* data, size_t size, std::string* error) {
                     b.pulses.push_back(rd16(data + pos));
                     pos += 2;
                 }
+                b.pause_ms = 0;
                 blocks_.push_back(std::move(b));
                 break;
             }
@@ -819,9 +821,10 @@ void TapeTzx::start_block() {
             pulse_count_ = b.pilot_pulses;
             break;
         case BlockType::PureTone:
-            estado_ = 0;
-            estados_left_ = int(b.pilot);
-            pulse_count_ = b.pilot_pulses;
+            // Dedicated state 11: N pulses of length pilot, then pause — no sync/data
+            estado_ = 11;
+            estados_left_ = int(b.pilot ? b.pilot : 1);
+            pulse_count_ = b.pilot_pulses ? b.pilot_pulses : 1;
             break;
         case BlockType::PulseSeq:
             estado_ = 10;
@@ -834,10 +837,19 @@ void TapeTzx::start_block() {
             }
             break;
         case BlockType::PureData:
+            // Same bit engine as standard data (states 3/4) but no pilot/sync
             estado_ = 3;
+            data_pos_ = 0;
             if (!b.data.empty()) {
-                estados_left_ = int((b.data[0] & 0x80) ? b.one : b.zero);
                 bit_mask_ = 0x80;
+                // used_bits only on the final byte
+                if (b.data.size() == 1) {
+                    const uint8_t ub = b.used_bits ? b.used_bits : 8;
+                    last_bit_mask_ = uint8_t(1u << (8 - ub));
+                } else {
+                    last_bit_mask_ = 1;  // full 8 bits until last byte
+                }
+                estados_left_ = int((b.data[0] & 0x80) ? b.one : b.zero);
             } else {
                 next_block();
             }
@@ -1065,6 +1077,18 @@ int TapeTzx::advance(int tstates) {
             case 5:
                 next_block();
                 break;
+            case 11: {  // pure tone ($12): pulse_count_ half-waves of length pilot
+                level_ ^= 0x40;
+                if (pulse_count_ > 1) {
+                    --pulse_count_;
+                    estados_left_ = int(b.pilot ? b.pilot : 1);
+                } else {
+                    estado_ = 5;
+                    const uint32_t p = pause_tstates(uint16_t(b.pause_ms));
+                    estados_left_ = p ? int(p) : 1;
+                }
+                break;
+            }
             case 10:  // pulse sequence (also expanded $19 pilot)
                 level_ ^= 0x40;
                 ++pulse_index_;

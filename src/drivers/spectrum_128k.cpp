@@ -438,6 +438,7 @@ void Spectrum128k::io_out(uint16_t port, uint8_t value) {
 }
 
 void Spectrum128k::on_cycles(int cycles) {
+    maybe_start_tape_from_rom();
     if (tape_.is_playing()) ear_ = tape_.advance(cycles) ? 0x40 : 0x00;
 
     // Interface 2: after ~10.5M T-states switch to upper 16K of cart ROM
@@ -611,9 +612,17 @@ bool Spectrum128k::load_media(const std::string& path, std::string* error) {
 
 bool Spectrum128k::load_tape(const std::string& path, std::string* error) {
     if (!tape_.load_file(path, error)) return false;
-    tape_.play(true);
+    tape_.stop();
     return true;
 }
+
+void Spectrum128k::maybe_start_tape_from_rom() {
+    if (!tape_.is_loaded() || tape_.is_playing()) return;
+    const uint16_t pc = cpu_.pc();
+    if ((pc >= 0x04c2 && pc < 0x0800) || (pc >= 0x056c && pc < 0x0600))
+        tape_.play(true);
+}
+
 
 void Spectrum128k::tape_play() {
     if (tape_.is_loaded()) tape_.play(tape_.is_paused() ? false : true);

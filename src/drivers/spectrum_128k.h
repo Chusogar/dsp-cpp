@@ -48,6 +48,7 @@ public:
 
     bool load_tape(const std::string& path, std::string* error);
     void tape_play();
+    void maybe_start_tape_from_rom();
     void tape_stop();
     bool load_sna(const std::string& path, std::string* error);
     bool load_if2(const std::string& path, std::string* error);
