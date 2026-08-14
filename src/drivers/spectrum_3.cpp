@@ -196,7 +196,7 @@ void Spectrum3::apply_7ffd(uint8_t value) {
 void Spectrum3::apply_1ffd(uint8_t value) {
     port_1ffd_ = value;
     // bit 3 = disk motor
-    fdc_.set_motor((value & 0x08) ? 1 : 0);
+    fdc_.write_motor((value & 0x08) ? 1 : 0);
     update_memory_map();
 }
 
@@ -210,7 +210,7 @@ void Spectrum3::reset() {
     paging_enabled_ = true;
     special_paging_ = false;
     fdc_.reset();
-    fdc_.set_motor(0);
+    fdc_.write_motor(0);
     ay_select_ = 0;
     if2_switched_ = false;
     if2_delay_ = 0;
@@ -401,10 +401,9 @@ uint8_t Spectrum3::io_in(uint16_t port) {
     }
 
     // FDC +3
-    if (disk_present_) {
-        if ((port & 0xf002) == 0x2000) result = fdc_.read_status();  // 2ffd
-        if ((port & 0xf002) == 0x3000) result = fdc_.read_data();    // 3ffd
-    }
+    // uPD765 always present on +3 (same core as CPC 6128); disk may or may not be inserted
+    if ((port & 0xf002) == 0x2000) result = fdc_.read_status();  // 2ffd
+    if ((port & 0xf002) == 0x3000) result = fdc_.read_data();    // 3ffd
 
     // AY read $FFFD
     if ((port & 0xc002) == 0xc000) {
@@ -437,7 +436,7 @@ void Spectrum3::io_out(uint16_t port, uint8_t value) {
             apply_1ffd(value);
             break;
         case 0x3000:  // 3ffd FDC data
-            if (disk_present_) fdc_.write_data(value);
+            fdc_.write_data(value);
             break;
         case 0x4000: case 0x5000: case 0x6000: case 0x7000:  // 7ffd
             apply_7ffd(value);
@@ -635,7 +634,7 @@ bool Spectrum3::load_media(const std::string& path, std::string* error) {
     if (ends(".sna")) return load_sna(path, error);
     if (ends(".dsk")) {
         std::string err;
-        if (!fdc_.drive(0).load_dsk_file(path, &err)) {
+        if (!fdc_.load_disk(0, path, &err)) {
             if (error) *error = err;
             return false;
         }
@@ -766,7 +765,7 @@ void Spectrum3::unload_if2() {
 }
 
 bool Spectrum3::load_dsk(const std::string& path, std::string* error) {
-    if (!fdc_.drive(0).load_dsk_file(path, error)) return false;
+    if (!fdc_.load_disk(0, path, error)) return false;
     disk_present_ = true;
     return true;
 }

@@ -9,12 +9,12 @@
 #include "cpu/z80.h"
 #include "machine/tape_tzx.h"
 #include "sound/ay8910.h"
-#include "machine/upd765.h"
+#include "machine/nec765.h"
 
 namespace dsp {
 
 // ZX Spectrum +3, from spectrum_3.pas.
-// Z80 @ ~3.5469 MHz, ULA, AY-8912, +3 banking ($7FFD+$1FFD), uPD765 FDC.
+// Z80 @ ~3.5469 MHz, ULA, AY-8912, +3 banking ($7FFD+$1FFD), NEC765 FDC (same as CPC).
 class Spectrum3 : public Machine {
 public:
     static constexpr int kScreenWidth = 352;
@@ -90,7 +90,7 @@ private:
     bool paging_enabled_ = true;
     bool special_paging_ = false;
     bool disk_present_ = true;
-    Upd765 fdc_;
+    Nec765Fdc fdc_;  // same controller core as Amstrad CPC 6128
     uint8_t ay_select_ = 0;
 
     // Interface 2 ROM cartridge (32 KB)
