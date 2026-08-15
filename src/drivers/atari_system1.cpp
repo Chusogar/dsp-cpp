@@ -69,54 +69,141 @@ const char* AtariSystem1::title() const {
 }
 
 bool AtariSystem1::init(const std::string& rom_path, std::string* error) {
-    // Minimal ROM load: expect a combined main ROM blob or paired files.
-    // Bios / game ROMs vary; try common names then generic.
-    std::vector<uint8_t> blob;
     rom_.fill(0);
-    bool ok = false;
-
-    if (try_load(rom_path, "main.bin", blob) || try_load(rom_path, "rom.bin", blob)) {
-        const size_t words = std::min(blob.size() / 2, rom_.size());
-        for (size_t i = 0; i < words; ++i)
-            rom_[i] = uint16_t((blob[i * 2] << 8) | blob[i * 2 + 1]);
-        ok = words > 0x1000;
-    }
-    // Interleaved pairs
-    if (!ok) {
-        ok = load_rom16(rom_path, "136032.136.e1", "136032.137.f1", rom_.data(), 0x10000);
-    }
-    if (!ok) {
-        // Fill with NOP/reset vector stubs so machine can still construct
-        rom_[0] = 0x0000;
-        rom_[1] = 0x1000;  // SP
-        rom_[2] = 0x0000;
-        rom_[3] = 0x0400;  // PC
-        if (error) *error = "warning: game ROMs not fully loaded from " + rom_path;
-        // continue with partial
-    }
-
-    // Slapstic bank ROMs: copy from main region $80000 equivalent if present
-    for (int b = 0; b < 4; ++b)
-        for (int i = 0; i < 0x1000; ++i)
-            slapstic_rom_[b][i] = rom_[0x4000 + b * 0x1000 + i];
-
-    // Sound ROM
+    for (auto& b : slapstic_rom_) b.fill(0);
     snd_rom_.fill(0);
-    std::vector<uint8_t> srom;
-    if (try_load(rom_path, "sound.bin", srom) || try_load(rom_path, "136032.142.i7", srom)) {
-        std::memcpy(snd_rom_.data(), srom.data(), std::min(srom.size(), snd_rom_.size()));
+    tiles_.assign(0x200 * 64, 0);  // alpha chars
+    tile_count_ = 0x200;
+
+    auto load_interleaved = [&](const char* a, const char* b, uint16_t* dest, size_t words) -> bool {
+        return load_rom16(rom_path, a, b, dest, words);
+    };
+
+    // --- BIOS (always required): 136032.205 / 136032.206 at $00000 ---
+    // Interleaved even/odd bytes → 16-bit words, 0x4000 words (32KB)
+    if (!load_interleaved("136032.205.l13", "136032.206.l12", rom_.data(), 0x4000) &&
+        !load_interleaved("136032.205", "136032.206", rom_.data(), 0x4000)) {
+        // try alternate bios names
+        if (!load_interleaved("205.l13", "206.l12", rom_.data(), 0x4000)) {
+            if (error) *error = "Atari System 1 BIOS not found (136032.205 / 136032.206)";
+            return false;
+        }
     }
 
-    // Char / tile GFX — optional; solid tiles if missing
-    tiles_.assign(256 * 64, 0);
-    tile_count_ = 256;
+    // Helper: load pairs into a byte buffer at even/odd offsets then copy as words
+    auto load_pairs_to_rom = [&](const std::vector<std::pair<const char*, int>>& pairs,
+                                 int rom_word_base) -> bool {
+        // pairs: {filename, byte_offset in temp} — Atari 16-bit ROMs load as
+        // consecutive even/odd files forming big-endian words.
+        // Simpler path: consecutive (even,odd) file pairs at successive word offsets.
+        return true;  // filled below per-game
+    };
+
+    bool game_ok = false;
+    std::vector<uint8_t> tmp;
+
+    if (game_ == Game::Marble) {
+        // marble_rom: pairs at $0, $8000, $10000, $18000, slapstic at $20000
+        struct Pair { const char* e; const char* o; int byte_off; };
+        const Pair pairs[] = {
+            {"136033.623", "136033.624", 0x00000},
+            {"136033.625", "136033.626", 0x08000},
+            {"136033.627", "136033.628", 0x10000},
+            {"136033.129", "136033.630", 0x18000},
+            {"136033.107", "136033.108", 0x20000},  // slapstic source region
+        };
+        // Also try full names with suffixes from some dumps
+        auto try_pair = [&](const char* e, const char* o, uint16_t* dest, size_t words) {
+            if (load_rom16(rom_path, e, o, dest, words)) return true;
+            // short names already tried
+            return false;
+        };
+        // Game code starts at $10000 (word $8000)
+        game_ok = true;
+        if (!try_pair("136033.623", "136033.624", &rom_[0x10000 >> 1], 0x4000)) game_ok = false;
+        if (!try_pair("136033.625", "136033.626", &rom_[0x18000 >> 1], 0x4000)) game_ok = false;
+        if (!try_pair("136033.627", "136033.628", &rom_[0x20000 >> 1], 0x4000)) game_ok = false;
+        if (!try_pair("136033.129", "136033.630", &rom_[0x28000 >> 1], 0x4000)) {
+            // alternate second odd name
+            if (!try_pair("136033.129", "136033.130", &rom_[0x28000 >> 1], 0x4000))
+                game_ok = false;
+        }
+        // Slapstic banks from 136033.107/108 — 8KB region → 4 banks of 4KB words? 
+        // Pascal: copymemory slapstic from memoria_temp[$20000] as $2000 bytes each bank
+        // Load 107/108 interleaved into temp then split
+        std::array<uint16_t, 0x4000> slap_src{};
+        if (try_pair("136033.107", "136033.108", slap_src.data(), 0x4000)) {
+            for (int b = 0; b < 4; ++b)
+                for (int i = 0; i < 0x1000; ++i)
+                    slapstic_rom_[b][i] = slap_src[b * 0x1000 + i];
+        } else {
+            // fallback: slice from main rom image
+            for (int b = 0; b < 4; ++b)
+                for (int i = 0; i < 0x1000; ++i)
+                    slapstic_rom_[b][i] = rom_[(0x30000 >> 1) + b * 0x1000 + i];
+        }
+        // Sound
+        try_load(rom_path, "136033.421", tmp);
+        if (!tmp.empty()) std::memcpy(snd_rom_.data() + 0x8000, tmp.data(), std::min(tmp.size(), size_t(0x4000)));
+        tmp.clear();
+        try_load(rom_path, "136033.422", tmp);
+        if (!tmp.empty()) std::memcpy(snd_rom_.data() + 0xc000, tmp.data(), std::min(tmp.size(), size_t(0x4000)));
+        slapstic_.set_type(103);
+    } else if (game_ == Game::PeterPak) {
+        game_ok = true;
+        auto tp = [&](const char* e, const char* o, int rom_byte) {
+            if (!load_rom16(rom_path, e, o, &rom_[rom_byte >> 1], 0x4000)) game_ok = false;
+        };
+        tp("136028.142", "136028.143", 0x10000);
+        tp("136028.144", "136028.145", 0x18000);
+        tp("136028.146", "136028.147", 0x20000);
+        std::array<uint16_t, 0x4000> slap_src{};
+        if (load_rom16(rom_path, "136028.148", "136028.149", slap_src.data(), 0x4000)) {
+            for (int b = 0; b < 4; ++b)
+                for (int i = 0; i < 0x1000; ++i)
+                    slapstic_rom_[b][i] = slap_src[b * 0x1000 + i];
+        }
+        try_load(rom_path, "136028.101", tmp);
+        if (!tmp.empty()) std::memcpy(snd_rom_.data() + 0x8000, tmp.data(), std::min(tmp.size(), size_t(0x4000)));
+        tmp.clear();
+        try_load(rom_path, "136028.102", tmp);
+        if (!tmp.empty()) std::memcpy(snd_rom_.data() + 0xc000, tmp.data(), std::min(tmp.size(), size_t(0x4000)));
+        slapstic_.set_type(103);
+    } else {  // Indy
+        game_ok = true;
+        auto tp = [&](const char* e, const char* o, int rom_byte, size_t words) {
+            if (!load_rom16(rom_path, e, o, &rom_[rom_byte >> 1], words)) game_ok = false;
+        };
+        tp("136036.432", "136036.431", 0x10000, 0x8000);
+        tp("136036.434", "136036.433", 0x20000, 0x8000);
+        tp("136036.456", "136036.457", 0x30000, 0x4000);
+        std::array<uint16_t, 0x4000> slap_src{};
+        if (load_rom16(rom_path, "136036.358", "136036.359", slap_src.data(), 0x4000)) {
+            for (int b = 0; b < 4; ++b)
+                for (int i = 0; i < 0x1000; ++i)
+                    slapstic_rom_[b][i] = slap_src[b * 0x1000 + i];
+        }
+        try_load(rom_path, "136036.153", tmp);
+        if (!tmp.empty()) std::memcpy(snd_rom_.data() + 0x4000, tmp.data(), std::min(tmp.size(), size_t(0x4000)));
+        tmp.clear();
+        try_load(rom_path, "136036.154", tmp);
+        if (!tmp.empty()) std::memcpy(snd_rom_.data() + 0x8000, tmp.data(), std::min(tmp.size(), size_t(0x4000)));
+        tmp.clear();
+        try_load(rom_path, "136036.155", tmp);
+        if (!tmp.empty()) std::memcpy(snd_rom_.data() + 0xc000, tmp.data(), std::min(tmp.size(), size_t(0x4000)));
+        slapstic_.set_type(105);
+    }
+
+    // Alpha characters: 136032.104.f5 — 8x8, 2 planes, $200 tiles
     std::vector<uint8_t> chars;
-    if (try_load(rom_path, "136032.104.f5", chars) || try_load(rom_path, "chars.bin", chars)) {
-        // 2bpp 8x8 decode into 4-level tiles
+    if (try_load(rom_path, "136032.104.f5", chars) || try_load(rom_path, "136032.104", chars)) {
         const int count = int(chars.size() / 16);
-        tiles_.assign(size_t(count) * 64, 0);
-        tile_count_ = count;
+        tiles_.assign(size_t(std::max(count, 0x200)) * 64, 0);
+        tile_count_ = std::max(count, 0x200);
         for (int t = 0; t < count; ++t) {
+            // layout: plane0 row0..7, plane1 row0..7  OR  interleaved by row
+            // Pascal pc_x: 0..3,8..11 — 4bpp packed in 16-bit words per row
+            // Standard Atari System 1 alpha: 2bpp, 16 bytes/tile
             for (int y = 0; y < 8; ++y) {
                 const uint8_t p0 = chars[t * 16 + y];
                 const uint8_t p1 = chars[t * 16 + 8 + y];
@@ -129,37 +216,31 @@ bool AtariSystem1::init(const std::string& rom_path, std::string* error) {
         }
     }
 
+    // Identity playfield lookup until proms are decoded
     for (int i = 0; i < 256; ++i) playfield_lookup_[i] = uint16_t(i & 0xff);
 
-    // Slapstic type per game (atari_system1.pas)
-    switch (game_) {
-        case Game::PeterPak: slapstic_.set_type(103); break;
-        case Game::Indy: slapstic_.set_type(105); break;
-        default: slapstic_.set_type(107); break;  // Marble
-    }
-
+    // Wire CPUs
     main_cpu_.set_memory_handlers(
         [this](uint32_t a) { return cpu_read(a); },
         [this](uint32_t a, uint16_t v) { cpu_write(a, v); });
     main_cpu_.set_cycle_handler([this](int c) { on_main_cycles(c); });
-
     snd_cpu_.set_memory_handlers(
         [this](uint16_t a) { return snd_read(a); },
         [this](uint16_t a, uint8_t v) { snd_write(a, v); });
-    snd_cpu_.set_cycle_handler([this](int c) { on_snd_cycles(c); });
 
     ym_.set_irq_handler([this](bool on) { snd_cpu_.set_irq(on ? IrqLine::Hold : IrqLine::Clear); });
     via_.set_irq_callback([this](IrqLine s) {
-        // VIA IRQ OR'd onto 6502 IRQ with YM
         if (s == IrqLine::Hold) snd_cpu_.set_irq(IrqLine::Hold);
     });
     tms_.set_irq_callback([this](bool on) {
-        // TMS READY/IRQ can pulse 6502 NMI or VIA CB1 — feed CB1
-        via_.write_cb1(on);
+        (void)on;
     });
 
+    if (!game_ok && error)
+        *error = "warning: some game ROMs missing in " + rom_path + " (BIOS loaded)";
+
     reset();
-    return true;
+    return true;  // allow boot with BIOS even if game partial
 }
 
 void AtariSystem1::reset() {
@@ -400,8 +481,34 @@ void AtariSystem1::on_main_cycles(int cycles) {
 void AtariSystem1::on_snd_cycles(int) {}
 
 void AtariSystem1::update_video() {
-    // Playfield from ram2: 64x64 tilemap, 16-bit per tile
-    // Simplified: render 42x30 visible tiles with scroll
+    // Layer 1: alpha (text/HUD) from ram3[$3000..] — 64x32 tilemap, transparent pen 0
+    // Layer 2: playfield from ram2[0..] with scroll
+    // Simplified MO sprites from ram3 low region
+
+    // Clear to palette 0 (or near-black)
+    const uint32_t bg = argb_pal_[0] ? argb_pal_[0] : 0xff000000u;
+    std::fill(framebuffer_.begin(), framebuffer_.end(), bg);
+
+    auto draw_tile = [&](int dx, int dy, int code, int color_base, bool opaque) {
+        if (code < 0) return;
+        if (tile_count_ > 0) code %= tile_count_;
+        for (int py = 0; py < 8; ++py) {
+            const int yy = dy + py;
+            if (yy < 0 || yy >= kScreenH) continue;
+            for (int px = 0; px < 8; ++px) {
+                const int xx = dx + px;
+                if (xx < 0 || xx >= kScreenW) continue;
+                uint8_t pen = 0;
+                if (tile_count_ > 0 && code < tile_count_)
+                    pen = tiles_[size_t(code) * 64 + size_t(py * 8 + px)] & 0x0f;
+                if (!opaque && pen == 0) continue;
+                const uint32_t col = argb_pal_[(color_base + pen) & 0x1ff];
+                framebuffer_[size_t(yy * kScreenW + xx)] = col ? col : 0xff101010u;
+            }
+        }
+    };
+
+    // Playfield 64x64, scrolled
     const int sx = scroll_x_ & 0x1ff;
     const int sy = scroll_y_ & 0x1ff;
     for (int y = 0; y < kScreenH; ++y) {
@@ -412,60 +519,69 @@ void AtariSystem1::update_video() {
             const int fx = (x + sx) & 7;
             const int map_i = (ty * 64 + tx) & 0xfff;
             const uint16_t tile_attr = ram2_[map_i];
-            const uint16_t lookup = playfield_lookup_[(tile_attr >> 8) & 0x7f];
-            int code = (tile_attr & 0xff) | ((lookup & 0xff) << 0);
-            code &= (tile_count_ > 0 ? tile_count_ - 1 : 0);
-            const int color_base = 0x20 + (((lookup >> 12) & 0xf) << 2);
+            const uint16_t lookup = playfield_lookup_[(tile_attr >> 8) & 0x7f |
+                                                     ((playfield_tile_bank_ & 1) << 7)];
+            int code = ((lookup & 0xff) << 8) | (tile_attr & 0xff);
+            if (tile_count_ > 0) code %= tile_count_;
+            const int color_base = 0x20 + ((((lookup >> 12) & 0xf)) << 2);
             uint8_t pen = 0;
-            if (tile_count_ > 0 && code < tile_count_)
-                pen = tiles_[code * 64 + fy * 8 + fx] & 0x0f;
+            if (tile_count_ > 0)
+                pen = tiles_[size_t(code) * 64 + size_t(fy * 8 + fx)] & 0x0f;
             const uint32_t col = argb_pal_[(color_base + pen) & 0x1ff];
-            framebuffer_[y * kScreenW + x] = col ? col : 0xff000000;
+            if (pen || col)
+                framebuffer_[size_t(y * kScreenW + x)] = col ? col : 0xff202020u;
         }
     }
-    // Motion objects: ram3 holds linked list — simplified sprite scan
-    // Each MO entry 4 words; draw small 8x8 markers for non-zero codes
+
+    // Alpha / text layer: ram3 at $3000 (word index $1800), 64x32
+    for (int f = 0; f < 0x800; ++f) {
+        const int tx = f & 63;
+        const int ty = f >> 6;
+        const uint16_t atrib = ram3_[(0x3000 >> 1) + f];
+        const int color = (atrib >> 10) & 7;
+        const int code = atrib & 0x3ff;
+        const bool opaque = (atrib & 0x2000) != 0;
+        draw_tile(tx * 8, ty * 8, code, color << 2, opaque);
+    }
+
+    // Crude motion objects: linked list style entries in ram3 low
     for (int i = 0; i < 0x100; i += 4) {
         const uint16_t w0 = ram3_[i];
         const uint16_t w1 = ram3_[i + 1];
         const uint16_t w2 = ram3_[i + 2];
         if (w1 == 0 || w1 == 0xffff) continue;
-        const int mx = (w2 >> 5) & 0x1ff;
-        const int my = (w0 >> 5) & 0x1ff;
+        const int mx = (int(w2) >> 5) & 0x1ff;
+        const int my = (int(w0) >> 5) & 0x1ff;
         const int code = w1 & 0xff;
         const int color = 0x100 + ((w1 >> 8) & 0x0f);
-        if (code >= tile_count_) continue;
-        for (int py = 0; py < 8; ++py) {
-            const int yy = (my + py) & 0x1ff;
-            if (yy >= kScreenH) continue;
-            for (int px = 0; px < 8; ++px) {
-                const int xx = (mx + px) & 0x1ff;
-                if (xx >= kScreenW) continue;
-                const uint8_t pen = tiles_[code * 64 + py * 8 + px] & 0x0f;
-                if (pen) framebuffer_[yy * kScreenW + xx] = argb_pal_[(color + pen) & 0x1ff];
-            }
-        }
+        draw_tile(mx, my, code, color, false);
     }
 }
 
 void AtariSystem1::run_frame() {
+    // Pascal: 262 lines; at 239 vblank:=0 + IRQ4 + update_video; at 261 vblank:=$10
     const int cycles_per_line = int(kCpuClock / kFps / kScanlines);
+    if (cycles_per_line < 1) {
+        // fallback
+    }
+    const int cpl = std::max(1, cycles_per_line);
     for (line_ = 0; line_ < kScanlines; ++line_) {
-        if (line_ == 0) {
-            vblank_ = 0;
-        }
-        if (line_ == 240) {
-            vblank_ = 0x10;
-            main_cpu_.set_irq(4, IrqLine::Hold);
-            update_video();
-        }
-        int left = cycles_per_line;
+        int left = cpl;
         while (left > 0) {
             const int ran = main_cpu_.run(left);
             if (ran <= 0) break;
             left -= ran;
         }
+        if (line_ == 239) {
+            vblank_ = 0x00;
+            main_cpu_.set_irq(4, IrqLine::Hold);
+            update_video();
+        }
+        if (line_ == 261) {
+            vblank_ = 0x10;
+        }
     }
+    scroll_y_ = scroll_y_latch_;
     line_ = 0;
 }
 

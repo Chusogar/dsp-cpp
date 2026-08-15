@@ -1,75 +1,45 @@
 #include "cpu/lr35902.h"
 
-#include <array>
-
 namespace dsp {
-namespace {
 
-// Machine-cycle * 4 timing tables from lr35902.pas (gb_t / gb_cb_t).
-// CB table values are the *extra* cycles beyond the base $CB fetch (4 T);
-// the Pascal core adds them on top of gb_t[$CB]=0 effectively via estados_demas.
-constexpr uint8_t kMain[256] = {
-    // 0x00
-    4, 12, 8, 8, 4, 4, 8, 4, 20, 8, 8, 8, 4, 4, 8, 4,
-    // 0x10
-    4, 12, 8, 8, 4, 4, 8, 4, 12, 8, 8, 8, 4, 4, 8, 4,
-    // 0x20
-    8, 12, 8, 8, 4, 4, 8, 4, 8, 8, 8, 8, 4, 4, 8, 4,
-    // 0x30
-    8, 12, 8, 8, 12, 12, 12, 4, 8, 8, 8, 8, 4, 4, 8, 4,
-    // 0x40
-    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
-    // 0x50
-    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
-    // 0x60
-    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
-    // 0x70
-    8, 8, 8, 8, 8, 8, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4,
-    // 0x80
-    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
-    // 0x90
-    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
-    // 0xA0
-    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
-    // 0xB0
-    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
-    // 0xC0
-    8, 12, 12, 16, 12, 16, 8, 16, 8, 16, 12, 0, 12, 24, 8, 16,
-    // 0xD0
-    8, 12, 12, 4, 12, 16, 8, 16, 8, 16, 12, 4, 12, 4, 8, 16,
-    // 0xE0
-    12, 12, 8, 4, 4, 16, 8, 16, 16, 4, 16, 4, 4, 4, 8, 16,
-    // 0xF0
-    12, 12, 8, 4, 4, 16, 8, 16, 12, 8, 16, 4, 4, 4, 8, 16,
+// gb_t: base T-state cost of every main-table opcode.
+const uint8_t LR35902::kCycles[256] = {
+     4,12, 8, 8, 4, 4, 8, 4,20, 8, 8, 8, 4, 4, 8, 4,  // 0
+     4,12, 8, 8, 4, 4, 8, 4,12, 8, 8, 8, 4, 4, 8, 4,  // 1
+     8,12, 8, 8, 4, 4, 8, 4, 8, 8, 8, 8, 4, 4, 8, 4,  // 2
+     8,12, 8, 8,12,12,12, 4, 8, 8, 8, 8, 4, 4, 8, 4,  // 3
+     4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,  // 4
+     4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,  // 5
+     4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,  // 6
+     8, 8, 8, 8, 8, 8, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4,  // 7
+     4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,  // 8
+     4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,  // 9
+     4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,  // a
+     4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,  // b
+     8,12,12,16,12,16, 8,16, 8,16,12, 0,12,24, 8,16,  // c
+     8,12,12, 4,12,16, 8,16, 8,16,12, 4,12, 4, 8,16,  // d
+    12,12, 8, 4, 4,16, 8,16,16, 4,16, 4, 4, 4, 8,16,  // e
+    12,12, 8, 4, 4,16, 8,16,12, 8,16, 4, 4, 4, 8,16,  // f
 };
 
-// Full CB instruction cost (already includes the CB prefix byte).
-// Pascal stores only the extra part and adds it; here we use absolute totals
-// matching the documented GB timings: 8 for reg ops, 12 for BIT (HL), 16 for
-// RMW (HL).
-constexpr uint8_t kCb[256] = {
-    // RLC/RRC/RL/RR/SLA/SRA/SWAP/SRL  (8 reg, 16 (HL))
-    8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  // 0x00
-    8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  // 0x10
-    8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  // 0x20
-    8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  // 0x30
-    // BIT (8 reg, 12 (HL))
-    8, 8, 8, 8, 8, 8, 12, 8, 8, 8, 8, 8, 8, 8, 12, 8,  // 0x40
-    8, 8, 8, 8, 8, 8, 12, 8, 8, 8, 8, 8, 8, 8, 12, 8,  // 0x50
-    8, 8, 8, 8, 8, 8, 12, 8, 8, 8, 8, 8, 8, 8, 12, 8,  // 0x60
-    8, 8, 8, 8, 8, 8, 12, 8, 8, 8, 8, 8, 8, 8, 12, 8,  // 0x70
-    // RES / SET (8 reg, 16 (HL))
-    8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  // 0x80
-    8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  // 0x90
-    8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  // 0xA0
-    8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  // 0xB0
-    8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  // 0xC0
-    8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  // 0xD0
-    8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  // 0xE0
-    8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  // 0xF0
+const uint8_t LR35902::kCyclesCb[256] = {
+     8, 8, 8, 8, 8, 8,16, 8, 8, 8, 8, 8, 8, 8,16, 8,  // 0
+     8, 8, 8, 8, 8, 8,16, 8, 8, 8, 8, 8, 8, 8,16, 8,  // 1
+     8, 8, 8, 8, 8, 8,16, 8, 8, 8, 8, 8, 8, 8,16, 8,  // 2
+     8, 8, 8, 8, 8, 8,16, 8, 8, 8, 8, 8, 8, 8,16, 8,  // 3
+     8, 8, 8, 8, 8, 8,12, 8, 8, 8, 8, 8, 8, 8,12, 8,  // 4
+     8, 8, 8, 8, 8, 8,12, 8, 8, 8, 8, 8, 8, 8,12, 8,  // 5
+     8, 8, 8, 8, 8, 8,12, 8, 8, 8, 8, 8, 8, 8,12, 8,  // 6
+     8, 8, 8, 8, 8, 8,12, 8, 8, 8, 8, 8, 8, 8,12, 8,  // 7
+     8, 8, 8, 8, 8, 8,16, 8, 8, 8, 8, 8, 8, 8,16, 8,  // 8
+     8, 8, 8, 8, 8, 8,16, 8, 8, 8, 8, 8, 8, 8,16, 8,  // 9
+     8, 8, 8, 8, 8, 8,16, 8, 8, 8, 8, 8, 8, 8,16, 8,  // a
+     8, 8, 8, 8, 8, 8,16, 8, 8, 8, 8, 8, 8, 8,16, 8,  // b
+     8, 8, 8, 8, 8, 8,16, 8, 8, 8, 8, 8, 8, 8,16, 8,  // c
+     8, 8, 8, 8, 8, 8,16, 8, 8, 8, 8, 8, 8, 8,16, 8,  // d
+     8, 8, 8, 8, 8, 8,16, 8, 8, 8, 8, 8, 8, 8,16, 8,  // e
+     8, 8, 8, 8, 8, 8,16, 8, 8, 8, 8, 8, 8, 8,16, 8,  // f
 };
-
-}  // namespace
 
 LR35902::LR35902(uint32_t clock) : clock_(clock) {}
 
@@ -79,1038 +49,528 @@ void LR35902::set_memory_handlers(ReadHandler read, WriteHandler write) {
 }
 
 void LR35902::reset() {
-    a = f = b = c = d = e = h = l = 0;
+    speed = 0;
+    change_speed = false;
+    changed_speed = false;
     sp = 0;
-    pc_ = 0;
-    ime_ = false;
+    pc = 0;
+    a = b = c = d = e = h = l = 0;
+    fz = fn = fh = fc = false;
+    ime = false;
     after_ei_ = false;
-    halted_ = false;
-    speed_ = 0;
-    change_speed_ = false;
-    changed_speed_ = false;
-    vblank_ena_ = lcdstat_ena_ = timer_ena_ = serial_ena_ = joystick_ena_ = false;
-    vblank_req_ = lcdstat_req_ = timer_req_ = serial_req_ = joystick_req_ = false;
-    cycles_ = executed_ = 0;
+    halt_ = false;
+    vblank_ena = lcdstat_ena = timer_ena = serial_ena = joystick_ena = false;
+    vblank_req = lcdstat_req = timer_req = serial_req = joystick_req = false;
 }
 
-uint8_t LR35902::fetch() {
-    return rd(pc_++);
-}
-
+uint8_t LR35902::fetch8() { return rd(pc++); }
 uint16_t LR35902::fetch16() {
-    uint8_t lo = fetch();
-    uint8_t hi = fetch();
-    return uint16_t((hi << 8) | lo);
+    uint16_t v = uint16_t(rd(pc) | (rd(uint16_t(pc + 1)) << 8));
+    pc = uint16_t(pc + 2);
+    return v;
+}
+void LR35902::push16(uint16_t value) {
+    sp = uint16_t(sp - 2);
+    wr(sp, uint8_t(value & 0xff));
+    wr(uint16_t(sp + 1), uint8_t(value >> 8));
+}
+uint16_t LR35902::pop16() {
+    uint16_t v = uint16_t(rd(sp) | (rd(uint16_t(sp + 1)) << 8));
+    sp = uint16_t(sp + 2);
+    return v;
 }
 
-void LR35902::push(uint16_t value) {
-    sp = uint16_t(sp - 1);
-    wr(sp, uint8_t(value >> 8));
-    sp = uint16_t(sp - 1);
-    wr(sp, uint8_t(value));
+uint8_t LR35902::get_f() const {
+    return uint8_t((fz ? 0x80 : 0) | (fn ? 0x40 : 0) | (fh ? 0x20 : 0) | (fc ? 0x10 : 0));
+}
+void LR35902::set_f(uint8_t value) {
+    fz = (value & 0x80) != 0;
+    fn = (value & 0x40) != 0;
+    fh = (value & 0x20) != 0;
+    fc = (value & 0x10) != 0;
 }
 
-uint16_t LR35902::pop() {
-    uint8_t lo = rd(sp);
-    sp = uint16_t(sp + 1);
-    uint8_t hi = rd(sp);
-    sp = uint16_t(sp + 1);
-    return uint16_t((hi << 8) | lo);
+uint8_t LR35902::inc8(uint8_t v) {
+    uint8_t r = uint8_t(v + 1);
+    fz = r == 0;
+    fn = false;
+    fh = (v & 0x0f) == 0x0f;
+    return r;
+}
+uint8_t LR35902::dec8(uint8_t v) {
+    uint8_t r = uint8_t(v - 1);
+    fz = r == 0;
+    fn = true;
+    fh = (v & 0x0f) == 0;
+    return r;
+}
+void LR35902::add_a(uint8_t v) {
+    int sum = a + v;
+    fh = ((a & 0xf) + (v & 0xf)) > 0xf;
+    fc = sum > 0xff;
+    a = uint8_t(sum);
+    fz = a == 0;
+    fn = false;
+}
+void LR35902::adc_a(uint8_t v) {
+    int carry = fc ? 1 : 0;
+    int sum = a + v + carry;
+    fh = ((a & 0xf) + (v & 0xf) + carry) > 0xf;
+    fc = sum > 0xff;
+    a = uint8_t(sum);
+    fz = a == 0;
+    fn = false;
+}
+void LR35902::sub_a(uint8_t v) {
+    fh = (a & 0xf) < (v & 0xf);
+    fc = a < v;
+    a = uint8_t(a - v);
+    fz = a == 0;
+    fn = true;
+}
+void LR35902::sbc_a(uint8_t v) {
+    int carry = fc ? 1 : 0;
+    int diff = a - v - carry;
+    fh = ((a & 0xf) - (v & 0xf) - carry) < 0;
+    fc = diff < 0;
+    a = uint8_t(diff);
+    fz = a == 0;
+    fn = true;
+}
+void LR35902::and_a(uint8_t v) {
+    a = uint8_t(a & v);
+    fz = a == 0;
+    fn = false;
+    fh = true;
+    fc = false;
+}
+void LR35902::or_a(uint8_t v) {
+    a = uint8_t(a | v);
+    fz = a == 0;
+    fn = false;
+    fh = false;
+    fc = false;
+}
+void LR35902::xor_a(uint8_t v) {
+    a = uint8_t(a ^ v);
+    fz = a == 0;
+    fn = false;
+    fh = false;
+    fc = false;
+}
+void LR35902::cp_a(uint8_t v) {
+    fh = (a & 0xf) < (v & 0xf);
+    fc = a < v;
+    uint8_t r = uint8_t(a - v);
+    fz = r == 0;
+    fn = true;
+}
+void LR35902::add_hl(uint16_t v) {
+    uint16_t hl = uint16_t((h << 8) | l);
+    uint32_t sum = uint32_t(hl) + v;
+    fh = ((hl & 0xfff) + (v & 0xfff)) > 0xfff;
+    fc = sum > 0xffff;
+    hl = uint16_t(sum);
+    h = uint8_t(hl >> 8);
+    l = uint8_t(hl & 0xff);
+    fn = false;
+}
+uint8_t LR35902::rlc(uint8_t v) {
+    fc = (v & 0x80) != 0;
+    v = uint8_t((v << 1) | (v >> 7));
+    fz = v == 0;
+    fn = false;
+    fh = false;
+    return v;
+}
+uint8_t LR35902::rrc(uint8_t v) {
+    fc = (v & 1) != 0;
+    v = uint8_t((v >> 1) | (v << 7));
+    fz = v == 0;
+    fn = false;
+    fh = false;
+    return v;
+}
+uint8_t LR35902::rl(uint8_t v) {
+    uint8_t carry_in = fc ? 1 : 0;
+    fc = (v & 0x80) != 0;
+    v = uint8_t((v << 1) | carry_in);
+    fz = v == 0;
+    fn = false;
+    fh = false;
+    return v;
+}
+uint8_t LR35902::rr(uint8_t v) {
+    uint8_t carry_in = fc ? 0x80 : 0;
+    fc = (v & 1) != 0;
+    v = uint8_t((v >> 1) | carry_in);
+    fz = v == 0;
+    fn = false;
+    fh = false;
+    return v;
+}
+uint8_t LR35902::sla(uint8_t v) {
+    fc = (v & 0x80) != 0;
+    v = uint8_t(v << 1);
+    fz = v == 0;
+    fn = false;
+    fh = false;
+    return v;
+}
+uint8_t LR35902::sra(uint8_t v) {
+    fc = (v & 1) != 0;
+    v = uint8_t((v >> 1) | (v & 0x80));
+    fz = v == 0;
+    fn = false;
+    fh = false;
+    return v;
+}
+uint8_t LR35902::srl(uint8_t v) {
+    fc = (v & 1) != 0;
+    v = uint8_t(v >> 1);
+    fz = v == 0;
+    fn = false;
+    fh = false;
+    return v;
+}
+uint8_t LR35902::swap(uint8_t v) {
+    v = uint8_t((v << 4) | (v >> 4));
+    fz = v == 0;
+    fn = false;
+    fh = false;
+    fc = false;
+    return v;
+}
+void LR35902::bit(uint8_t n, uint8_t v) {
+    fz = ((v >> n) & 1) == 0;
+    fn = false;
+    fh = true;
 }
 
-void LR35902::charge(int tstates) {
-    cycles_ += tstates;
-    executed_ += tstates;
-    if (cycle_handler_) cycle_handler_(tstates);
+int LR35902::service_interrupt() {
+    struct Src {
+        bool ena;
+        bool& req;
+        uint16_t vector;
+    };
+    Src sources[5] = {
+        {vblank_ena, vblank_req, 0x40},   {lcdstat_ena, lcdstat_req, 0x48},
+        {timer_ena, timer_req, 0x50},     {serial_ena, serial_req, 0x58},
+        {joystick_ena, joystick_req, 0x60},
+    };
+    for (Src& src : sources) {
+        if (src.ena && src.req) {
+            int extra = 0;
+            if (halt_) extra = 4;
+            halt_ = false;
+            if (ime) {
+                ime = false;
+                src.req = false;
+                push16(pc);
+                pc = src.vector;
+                extra += 20;
+                interrupts_serviced++;
+            }
+            return extra;
+        }
+    }
+    return 0;
 }
 
-// ---- ALU -----------------------------------------------------------------
+int LR35902::run(int cycles) {
+    int total = 0;
+    while (total < cycles) {
+        bool check_interrupts = !after_ei_;
+        after_ei_ = false;
+        int extra = check_interrupts ? service_interrupt() : 0;
 
-void LR35902::add_a(uint8_t value) {
-    unsigned r1 = (a & 0x0f) + (value & 0x0f);
-    unsigned r2 = a + value;
-    a = uint8_t(r2);
-    set_z(a == 0);
-    set_n(false);
-    set_h(r1 > 0x0f);
-    set_c(r2 > 0xff);
+        if (halt_) {
+            int c = 4 + extra;
+            if (cycle_handler_) cycle_handler_(c);
+            total += c;
+            continue;
+        }
+
+        uint8_t opcode = fetch8();
+        if (on_fetch) on_fetch(uint16_t(pc - 1));
+        extra_cycles_ = 0;
+        exec(opcode);
+        int c = kCycles[opcode] + extra_cycles_ + extra;
+        if (cycle_handler_) cycle_handler_(c);
+        total += c;
+    }
+    return total;
 }
-
-void LR35902::adc_a(uint8_t value) {
-    unsigned carry = flag_c() ? 1u : 0u;
-    unsigned r1 = (a & 0x0f) + (value & 0x0f) + carry;
-    unsigned r2 = a + value + carry;
-    a = uint8_t(r2);
-    set_z((r2 & 0xff) == 0);
-    set_n(false);
-    set_h(r1 > 0x0f);
-    set_c(r2 > 0xff);
-}
-
-void LR35902::sub_a(uint8_t value) {
-    unsigned r1 = (a & 0x0f) - (value & 0x0f);
-    unsigned r2 = a - value;
-    a = uint8_t(r2);
-    set_z(a == 0);
-    set_n(true);
-    set_h(r1 > 0x0f);
-    set_c(r2 > 0xff);
-}
-
-void LR35902::sbc_a(uint8_t value) {
-    unsigned carry = flag_c() ? 1u : 0u;
-    unsigned r1 = (a & 0x0f) - (value & 0x0f) - carry;
-    unsigned r2 = a - value - carry;
-    a = uint8_t(r2);
-    set_z(a == 0);
-    set_n(true);
-    set_h(r1 > 0x0f);
-    set_c(r2 > 0xff);
-}
-
-void LR35902::and_a(uint8_t value) {
-    a &= value;
-    set_z(a == 0);
-    set_n(false);
-    set_h(true);
-    set_c(false);
-}
-
-void LR35902::xor_a(uint8_t value) {
-    a ^= value;
-    set_z(a == 0);
-    set_n(false);
-    set_h(false);
-    set_c(false);
-}
-
-void LR35902::or_a(uint8_t value) {
-    a |= value;
-    set_z(a == 0);
-    set_n(false);
-    set_h(false);
-    set_c(false);
-}
-
-void LR35902::cp_a(uint8_t value) {
-    unsigned r1 = (a & 0x0f) - (value & 0x0f);
-    unsigned r2 = a - value;
-    set_z((r2 & 0xff) == 0);
-    set_n(true);
-    set_h(r1 > 0x0f);
-    set_c(r2 > 0xff);
-}
-
-uint8_t LR35902::inc8(uint8_t value) {
-    uint8_t res = uint8_t(value + 1);
-    set_n(false);
-    set_z(res == 0);
-    set_h((res & 0x0f) == 0);
-    return res;
-}
-
-uint8_t LR35902::dec8(uint8_t value) {
-    uint8_t res = uint8_t(value - 1);
-    set_n(true);
-    set_z(res == 0);
-    set_h((res & 0x0f) == 0x0f);
-    return res;
-}
-
-void LR35902::add_hl(uint16_t value) {
-    unsigned r1 = hl() + value;
-    unsigned r2 = (hl() & 0x0fff) + (value & 0x0fff);
-    set_n(false);
-    set_c(r1 > 0xffff);
-    set_h(r2 > 0x0fff);
-    set_hl(uint16_t(r1));
-}
-
-// ---- rotates / shifts ----------------------------------------------------
-
-uint8_t LR35902::rlc(uint8_t value) {
-    uint8_t res = uint8_t((value << 1) | (value >> 7));
-    set_c((res & 1) != 0);
-    set_z(res == 0);
-    set_n(false);
-    set_h(false);
-    return res;
-}
-
-uint8_t LR35902::rrc(uint8_t value) {
-    uint8_t res = uint8_t((value >> 1) | (value << 7));
-    set_c((res & 0x80) != 0);
-    set_z(res == 0);
-    set_n(false);
-    set_h(false);
-    return res;
-}
-
-uint8_t LR35902::rl(uint8_t value) {
-    uint8_t carry_in = flag_c() ? 1 : 0;
-    set_c((value & 0x80) != 0);
-    uint8_t res = uint8_t((value << 1) | carry_in);
-    set_z(res == 0);
-    set_n(false);
-    set_h(false);
-    return res;
-}
-
-uint8_t LR35902::rr(uint8_t value) {
-    uint8_t carry_in = flag_c() ? 0x80 : 0;
-    set_c((value & 1) != 0);
-    uint8_t res = uint8_t((value >> 1) | carry_in);
-    set_z(res == 0);
-    set_n(false);
-    set_h(false);
-    return res;
-}
-
-uint8_t LR35902::sla(uint8_t value) {
-    set_c((value & 0x80) != 0);
-    uint8_t res = uint8_t(value << 1);
-    set_z(res == 0);
-    set_n(false);
-    set_h(false);
-    return res;
-}
-
-uint8_t LR35902::sra(uint8_t value) {
-    set_c((value & 1) != 0);
-    uint8_t res = uint8_t((value >> 1) | (value & 0x80));
-    set_z(res == 0);
-    set_n(false);
-    set_h(false);
-    return res;
-}
-
-uint8_t LR35902::swap(uint8_t value) {
-    uint8_t res = uint8_t((value >> 4) | (value << 4));
-    set_z(res == 0);
-    set_n(false);
-    set_h(false);
-    set_c(false);
-    return res;
-}
-
-uint8_t LR35902::srl(uint8_t value) {
-    set_c((value & 1) != 0);
-    uint8_t res = uint8_t(value >> 1);
-    set_z(res == 0);
-    set_n(false);
-    set_h(false);
-    return res;
-}
-
-void LR35902::bit(uint8_t index, uint8_t value) {
-    set_z((value & (1u << index)) == 0);
-    set_n(false);
-    set_h(true);
-}
-
-// ---- CB prefix -----------------------------------------------------------
 
 void LR35902::exec_cb() {
-    const uint8_t op = fetch();
-    cycles_ = kCb[op];
-
-    const uint8_t reg = op & 7;
-    const uint8_t group = op >> 3;
-
-    auto read_r = [&](uint8_t r) -> uint8_t {
-        switch (r) {
+    uint8_t op = fetch8();
+    uint8_t reg = op & 7;
+    uint8_t kind = op >> 3;
+    auto get = [&]() -> uint8_t {
+        switch (reg) {
             case 0: return b;
             case 1: return c;
             case 2: return d;
             case 3: return e;
             case 4: return h;
             case 5: return l;
-            case 6: return rd(hl());
+            case 6: return rd(uint16_t((h << 8) | l));
             default: return a;
         }
     };
-    auto write_r = [&](uint8_t r, uint8_t v) {
-        switch (r) {
+    auto set = [&](uint8_t v) {
+        switch (reg) {
             case 0: b = v; break;
             case 1: c = v; break;
             case 2: d = v; break;
             case 3: e = v; break;
             case 4: h = v; break;
             case 5: l = v; break;
-            case 6: wr(hl(), v); break;
+            case 6: wr(uint16_t((h << 8) | l), v); break;
             default: a = v; break;
         }
     };
-
-    if (group < 8) {
-        // rotates / shifts / swap
-        uint8_t v = read_r(reg);
-        switch (group) {
-            case 0: v = rlc(v); break;
-            case 1: v = rrc(v); break;
-            case 2: v = rl(v); break;
-            case 3: v = rr(v); break;
-            case 4: v = sla(v); break;
-            case 5: v = sra(v); break;
-            case 6: v = swap(v); break;
-            case 7: v = srl(v); break;
+    uint8_t v = get();
+    if (kind < 8) {
+        switch (kind) {
+            case 0: set(rlc(v)); break;
+            case 1: set(rrc(v)); break;
+            case 2: set(rl(v)); break;
+            case 3: set(rr(v)); break;
+            case 4: set(sla(v)); break;
+            case 5: set(sra(v)); break;
+            case 6: set(swap(v)); break;
+            default: set(srl(v)); break;
         }
-        write_r(reg, v);
-    } else if (group < 16) {
-        // BIT
-        bit(uint8_t(group - 8), read_r(reg));
-    } else if (group < 24) {
-        // RES
-        write_r(reg, uint8_t(read_r(reg) & ~(1u << (group - 16))));
+    } else if (kind < 16) {
+        bit(uint8_t(kind - 8), v);
+    } else if (kind < 24) {
+        set(uint8_t(v & ~(1 << (kind - 16))));  // RES
     } else {
-        // SET
-        write_r(reg, uint8_t(read_r(reg) | (1u << (group - 24))));
+        set(uint8_t(v | (1 << (kind - 24))));  // SET
+    }
+    extra_cycles_ = int(kCyclesCb[op]);  // kCycles[0xCB] is 0, this is the full cost
+}
+
+// 8-bit register access for the ALU/LD blocks that repeat every register
+// (opcodes $40-$bf and the ALU-immediate/(HL)/reg forms use the same B,C,D,
+// E,H,L,(HL),A ordering as the CB table above).
+uint8_t LR35902::reg8(uint8_t index) const {
+    switch (index) {
+        case 0: return b;
+        case 1: return c;
+        case 2: return d;
+        case 3: return e;
+        case 4: return h;
+        case 5: return l;
+        case 6: return rd(uint16_t((h << 8) | l));
+        default: return a;
+    }
+}
+void LR35902::set_reg8(uint8_t index, uint8_t value) {
+    switch (index) {
+        case 0: b = value; break;
+        case 1: c = value; break;
+        case 2: d = value; break;
+        case 3: e = value; break;
+        case 4: h = value; break;
+        case 5: l = value; break;
+        case 6: wr(uint16_t((h << 8) | l), value); break;
+        default: a = value; break;
     }
 }
 
-// ---- interrupts ----------------------------------------------------------
+void LR35902::exec(uint8_t op) {
+    uint16_t hl = uint16_t((h << 8) | l);
+    switch (op) {
+        // 0x00-0x0F
+        case 0x00: break;  // NOP
+        case 0x01: { uint16_t v = fetch16(); b = uint8_t(v >> 8); c = uint8_t(v); break; }
+        case 0x02: wr(uint16_t((b << 8) | c), a); break;
+        case 0x03: { uint16_t v = uint16_t(((b << 8) | c) + 1); b = uint8_t(v >> 8); c = uint8_t(v); break; }
+        case 0x04: b = inc8(b); break;
+        case 0x05: b = dec8(b); break;
+        case 0x06: b = fetch8(); break;
+        case 0x07: fc = (a & 0x80) != 0; a = uint8_t((a << 1) | (a >> 7)); fz = fn = fh = false; break;  // RLCA
+        case 0x08: { uint16_t addr = fetch16(); wr(addr, uint8_t(sp & 0xff)); wr(uint16_t(addr + 1), uint8_t(sp >> 8)); break; }
+        case 0x09: add_hl(uint16_t((b << 8) | c)); break;
+        case 0x0a: a = rd(uint16_t((b << 8) | c)); break;
+        case 0x0b: { uint16_t v = uint16_t(((b << 8) | c) - 1); b = uint8_t(v >> 8); c = uint8_t(v); break; }
+        case 0x0c: c = inc8(c); break;
+        case 0x0d: c = dec8(c); break;
+        case 0x0e: c = fetch8(); break;
+        case 0x0f: fc = (a & 1) != 0; a = uint8_t((a >> 1) | (a << 7)); fz = fn = fh = false; break;  // RRCA
 
-int LR35902::service_interrupts() {
-    if (after_ei_) return 0;
+        // 0x10-0x1F
+        case 0x10:  // STOP
+            fetch8();
+            if (change_speed) { speed ^= 1; change_speed = false; changed_speed = true; }
+            break;
+        case 0x11: { uint16_t v = fetch16(); d = uint8_t(v >> 8); e = uint8_t(v); break; }
+        case 0x12: wr(uint16_t((d << 8) | e), a); break;
+        case 0x13: { uint16_t v = uint16_t(((d << 8) | e) + 1); d = uint8_t(v >> 8); e = uint8_t(v); break; }
+        case 0x14: d = inc8(d); break;
+        case 0x15: d = dec8(d); break;
+        case 0x16: d = fetch8(); break;
+        case 0x17: { bool carry_in = fc; fc = (a & 0x80) != 0; a = uint8_t((a << 1) | (carry_in ? 1 : 0)); fz = fn = fh = false; break; }  // RLA
+        case 0x18: pc = uint16_t(pc + 1 + int8_t(fetch8())); break;  // JR n
+        case 0x19: add_hl(uint16_t((d << 8) | e)); break;
+        case 0x1a: a = rd(uint16_t((d << 8) | e)); break;
+        case 0x1b: { uint16_t v = uint16_t(((d << 8) | e) - 1); d = uint8_t(v >> 8); e = uint8_t(v); break; }
+        case 0x1c: e = inc8(e); break;
+        case 0x1d: e = dec8(e); break;
+        case 0x1e: e = fetch8(); break;
+        case 0x1f: { bool carry_in = fc; fc = (a & 1) != 0; a = uint8_t((a >> 1) | (carry_in ? 0x80 : 0)); fz = fn = fh = false; break; }  // RRA
 
-    auto try_irq = [&](bool ena, bool& req, uint16_t vector) -> int {
-        if (!(ena && req)) return 0;
-        int extra = 0;
-        if (halted_) extra = 4;  // +4 T when leaving HALT for an IRQ
-        halted_ = false;
-        if (ime_) {
-            ime_ = false;
-            req = false;
-            push(pc_);
-            pc_ = vector;
-            extra += 20;
+        // 0x20-0x2F
+        case 0x20: { int8_t rel = int8_t(fetch8()); if (!fz) { pc = uint16_t(pc + rel); extra_cycles_ += 4; } break; }
+        case 0x21: { uint16_t v = fetch16(); h = uint8_t(v >> 8); l = uint8_t(v); break; }
+        case 0x22: wr(hl, a); hl++; h = uint8_t(hl >> 8); l = uint8_t(hl); break;
+        case 0x23: { uint16_t v = uint16_t(hl + 1); h = uint8_t(v >> 8); l = uint8_t(v); break; }
+        case 0x24: h = inc8(h); break;
+        case 0x25: h = dec8(h); break;
+        case 0x26: h = fetch8(); break;
+        case 0x27: {  // DAA
+            int t = a;
+            if (!fn) {
+                if (fh || (t & 0xf) > 9) t += 0x6;
+                if (fc || t > 0x9f) t += 0x60;
+            } else {
+                if (fh) { t -= 6; if (!fc) t &= 0xff; }
+                if (fc) t -= 0x60;
+            }
+            fh = false;
+            if (t & 0x100) fc = true;
+            a = uint8_t(t & 0xff);
+            fz = a == 0;
+            break;
         }
-        return extra;
-    };
+        case 0x28: { int8_t rel = int8_t(fetch8()); if (fz) { pc = uint16_t(pc + rel); extra_cycles_ += 4; } break; }
+        case 0x29: add_hl(hl); break;
+        case 0x2a: a = rd(hl); hl++; h = uint8_t(hl >> 8); l = uint8_t(hl); break;
+        case 0x2b: { uint16_t v = uint16_t(hl - 1); h = uint8_t(v >> 8); l = uint8_t(v); break; }
+        case 0x2c: l = inc8(l); break;
+        case 0x2d: l = dec8(l); break;
+        case 0x2e: l = fetch8(); break;
+        case 0x2f: a = uint8_t(~a); fn = fh = true; break;  // CPL
 
-    if (int e = try_irq(vblank_ena_, vblank_req_, 0x40)) return e;
-    if (int e = try_irq(lcdstat_ena_, lcdstat_req_, 0x48)) return e;
-    if (int e = try_irq(timer_ena_, timer_req_, 0x50)) return e;
-    if (int e = try_irq(serial_ena_, serial_req_, 0x58)) return e;
-    if (int e = try_irq(joystick_ena_, joystick_req_, 0x60)) return e;
-    return 0;
-}
+        // 0x30-0x3F
+        case 0x30: { int8_t rel = int8_t(fetch8()); if (!fc) { pc = uint16_t(pc + rel); extra_cycles_ += 4; } break; }
+        case 0x31: sp = fetch16(); break;
+        case 0x32: wr(hl, a); hl--; h = uint8_t(hl >> 8); l = uint8_t(hl); break;
+        case 0x33: sp++; break;
+        case 0x34: wr(hl, inc8(rd(hl))); break;
+        case 0x35: wr(hl, dec8(rd(hl))); break;
+        case 0x36: wr(hl, fetch8()); break;
+        case 0x37: fc = true; fn = fh = false; break;  // SCF
+        case 0x38: { int8_t rel = int8_t(fetch8()); if (fc) { pc = uint16_t(pc + rel); extra_cycles_ += 4; } break; }
+        case 0x39: add_hl(sp); break;
+        case 0x3a: a = rd(hl); hl--; h = uint8_t(hl >> 8); l = uint8_t(hl); break;
+        case 0x3b: sp--; break;
+        case 0x3c: a = inc8(a); break;
+        case 0x3d: a = dec8(a); break;
+        case 0x3e: a = fetch8(); break;
+        case 0x3f: fc = !fc; fn = fh = false; break;  // CCF
 
-// ---- main loop -----------------------------------------------------------
+        // 0x40-0x7F: LD r,r' and HALT
+        case 0x76: halt_ = true; break;
 
-int LR35902::run(int cycles) {
-    executed_ = 0;
-    while (executed_ < cycles) {
-        cycles_ = 0;
-        cycles_ += service_interrupts();
-        after_ei_ = false;
+        // 0x80-0xBF: ALU A,r
+        case 0xc0: if (!fz) { pc = pop16(); extra_cycles_ += 12; } break;
+        case 0xc1: { uint16_t v = pop16(); b = uint8_t(v >> 8); c = uint8_t(v); break; }
+        case 0xc2: { uint16_t addr = fetch16(); if (!fz) { pc = addr; extra_cycles_ += 4; } break; }
+        case 0xc3: pc = fetch16(); break;
+        case 0xc4: { uint16_t addr = fetch16(); if (!fz) { push16(pc); pc = addr; extra_cycles_ += 12; } break; }
+        case 0xc5: push16(uint16_t((b << 8) | c)); break;
+        case 0xc6: add_a(fetch8()); break;
+        case 0xc7: push16(pc); pc = 0x00; break;
+        case 0xc8: if (fz) { pc = pop16(); extra_cycles_ += 12; } break;
+        case 0xc9: pc = pop16(); break;
+        case 0xca: { uint16_t addr = fetch16(); if (fz) { pc = addr; extra_cycles_ += 4; } break; }
+        case 0xcb: exec_cb(); break;
+        case 0xcc: { uint16_t addr = fetch16(); if (fz) { push16(pc); pc = addr; extra_cycles_ += 12; } break; }
+        case 0xcd: { uint16_t addr = fetch16(); push16(pc); pc = addr; break; }
+        case 0xce: adc_a(fetch8()); break;
+        case 0xcf: push16(pc); pc = 0x08; break;
 
-        if (halted_) {
-            // While halted the CPU still burns 4 T-states per "instruction"
-            // and re-fetches the HALT opcode (PC was not advanced past it).
-            // Pascal does: if halt then pc := pc - 1 before the fetch.
-            // Equivalent: keep PC on the HALT byte and re-execute it as NOP.
-            // We charge 4 T and leave PC alone (pointing at next byte after
-            // the original HALT fetch). To match Pascal exactly:
-            // Pascal decrements PC so the next fetch re-reads HALT ($76),
-            // which is a no-op that costs 4 T and does not clear halt until
-            // an interrupt arrives.
-            pc_ = uint16_t(pc_ - 1);
+        case 0xd0: if (!fc) { pc = pop16(); extra_cycles_ += 12; } break;
+        case 0xd1: { uint16_t v = pop16(); d = uint8_t(v >> 8); e = uint8_t(v); break; }
+        case 0xd2: { uint16_t addr = fetch16(); if (!fc) { pc = addr; extra_cycles_ += 4; } break; }
+        case 0xd4: { uint16_t addr = fetch16(); if (!fc) { push16(pc); pc = addr; extra_cycles_ += 12; } break; }
+        case 0xd5: push16(uint16_t((d << 8) | e)); break;
+        case 0xd6: sub_a(fetch8()); break;
+        case 0xd7: push16(pc); pc = 0x10; break;
+        case 0xd8: if (fc) { pc = pop16(); extra_cycles_ += 12; } break;
+        case 0xd9: pc = pop16(); ime = true; after_ei_ = true; break;  // RETI (matches gb.pas: one-instruction delay, same as EI)
+        case 0xda: { uint16_t addr = fetch16(); if (fc) { pc = addr; extra_cycles_ += 4; } break; }
+        case 0xdc: { uint16_t addr = fetch16(); if (fc) { push16(pc); pc = addr; extra_cycles_ += 12; } break; }
+        case 0xde: sbc_a(fetch8()); break;
+        case 0xdf: push16(pc); pc = 0x18; break;
+
+        case 0xe0: wr(uint16_t(0xff00 + fetch8()), a); break;  // LDH (n),A
+        case 0xe1: { uint16_t v = pop16(); h = uint8_t(v >> 8); l = uint8_t(v); break; }
+        case 0xe2: wr(uint16_t(0xff00 + c), a); break;  // LD (C),A
+        case 0xe5: push16(hl); break;
+        case 0xe6: and_a(fetch8()); break;
+        case 0xe7: push16(pc); pc = 0x20; break;
+        case 0xe8: {  // ADD SP,n
+            int8_t rel = int8_t(fetch8());
+            fz = fn = false;
+            fc = ((sp & 0xff) + (uint8_t(rel) & 0xff)) > 0xff;
+            fh = ((sp & 0xf) + (uint8_t(rel) & 0xf)) > 0xf;
+            sp = uint16_t(sp + rel);
+            break;
         }
+        case 0xe9: pc = hl; break;  // JP (HL)
+        case 0xea: wr(fetch16(), a); break;
+        case 0xee: xor_a(fetch8()); break;
+        case 0xef: push16(pc); pc = 0x28; break;
 
-        const uint8_t op = fetch();
-        cycles_ += kMain[op];
-
-        switch (op) {
-            case 0x00:  // NOP
-                break;
-            case 0x01:  // LD BC,nn
-                set_bc(fetch16());
-                break;
-            case 0x02:  // LD (BC),A
-                wr(bc(), a);
-                break;
-            case 0x03:  // INC BC
-                set_bc(uint16_t(bc() + 1));
-                break;
-            case 0x04:  // INC B
-                b = inc8(b);
-                break;
-            case 0x05:  // DEC B
-                b = dec8(b);
-                break;
-            case 0x06:  // LD B,n
-                b = fetch();
-                break;
-            case 0x07: {  // RLCA
-                set_c((a & 0x80) != 0);
-                a = uint8_t((a << 1) | (a >> 7));
-                set_z(false);
-                set_n(false);
-                set_h(false);
-                break;
-            }
-            case 0x08: {  // LD (nn),SP
-                uint16_t addr = fetch16();
-                wr(addr, uint8_t(sp));
-                wr(uint16_t(addr + 1), uint8_t(sp >> 8));
-                break;
-            }
-            case 0x09:  // ADD HL,BC
-                add_hl(bc());
-                break;
-            case 0x0A:  // LD A,(BC)
-                a = rd(bc());
-                break;
-            case 0x0B:  // DEC BC
-                set_bc(uint16_t(bc() - 1));
-                break;
-            case 0x0C:  // INC C
-                c = inc8(c);
-                break;
-            case 0x0D:  // DEC C
-                c = dec8(c);
-                break;
-            case 0x0E:  // LD C,n
-                c = fetch();
-                break;
-            case 0x0F: {  // RRCA
-                set_c((a & 1) != 0);
-                a = uint8_t((a >> 1) | (a << 7));
-                set_z(false);
-                set_n(false);
-                set_h(false);
-                break;
-            }
-            case 0x10: {  // STOP
-                fetch();  // discarded operand
-                if (change_speed_) {
-                    speed_ ^= 1;
-                    change_speed_ = false;
-                    changed_speed_ = true;
-                }
-                break;
-            }
-            case 0x11:  // LD DE,nn
-                set_de(fetch16());
-                break;
-            case 0x12:  // LD (DE),A
-                wr(de(), a);
-                break;
-            case 0x13:  // INC DE
-                set_de(uint16_t(de() + 1));
-                break;
-            case 0x14:  // INC D
-                d = inc8(d);
-                break;
-            case 0x15:  // DEC D
-                d = dec8(d);
-                break;
-            case 0x16:  // LD D,n
-                d = fetch();
-                break;
-            case 0x17: {  // RLA
-                uint8_t carry_in = flag_c() ? 1 : 0;
-                set_c((a & 0x80) != 0);
-                a = uint8_t((a << 1) | carry_in);
-                set_z(false);
-                set_n(false);
-                set_h(false);
-                break;
-            }
-            case 0x18: {  // JR n
-                int8_t off = int8_t(fetch());
-                pc_ = uint16_t(pc_ + off);
-                break;
-            }
-            case 0x19:  // ADD HL,DE
-                add_hl(de());
-                break;
-            case 0x1A:  // LD A,(DE)
-                a = rd(de());
-                break;
-            case 0x1B:  // DEC DE
-                set_de(uint16_t(de() - 1));
-                break;
-            case 0x1C:  // INC E
-                e = inc8(e);
-                break;
-            case 0x1D:  // DEC E
-                e = dec8(e);
-                break;
-            case 0x1E:  // LD E,n
-                e = fetch();
-                break;
-            case 0x1F: {  // RRA
-                uint8_t carry_in = flag_c() ? 0x80 : 0;
-                set_c((a & 1) != 0);
-                a = uint8_t((a >> 1) | carry_in);
-                set_z(false);
-                set_n(false);
-                set_h(false);
-                break;
-            }
-            case 0x20: {  // JR NZ,n
-                int8_t off = int8_t(fetch());
-                if (!flag_z()) {
-                    pc_ = uint16_t(pc_ + off);
-                    cycles_ += 4;
-                }
-                break;
-            }
-            case 0x21:  // LD HL,nn
-                set_hl(fetch16());
-                break;
-            case 0x22:  // LD (HL+),A
-                wr(hl(), a);
-                set_hl(uint16_t(hl() + 1));
-                break;
-            case 0x23:  // INC HL
-                set_hl(uint16_t(hl() + 1));
-                break;
-            case 0x24:  // INC H
-                h = inc8(h);
-                break;
-            case 0x25:  // DEC H
-                h = dec8(h);
-                break;
-            case 0x26:  // LD H,n
-                h = fetch();
-                break;
-            case 0x27: {  // DAA
-                // Game Boy DAA (matches the Pascal / Pan Docs behaviour).
-                uint8_t adj = 0;
-                bool c = flag_c();
-                if (!flag_n()) {
-                    if (flag_c() || a > 0x99) {
-                        adj |= 0x60;
-                        c = true;
-                    }
-                    if (flag_h() || (a & 0x0f) > 0x09) adj |= 0x06;
-                } else {
-                    if (flag_c()) adj |= 0x60;
-                    if (flag_h()) adj |= 0x06;
-                }
-                a = uint8_t(a + (flag_n() ? -adj : adj));
-                set_z(a == 0);
-                set_h(false);
-                set_c(c);
-                break;
-            }
-            case 0x28: {  // JR Z,n
-                int8_t off = int8_t(fetch());
-                if (flag_z()) {
-                    pc_ = uint16_t(pc_ + off);
-                    cycles_ += 4;
-                }
-                break;
-            }
-            case 0x29:  // ADD HL,HL
-                add_hl(hl());
-                break;
-            case 0x2A:  // LD A,(HL+)
-                a = rd(hl());
-                set_hl(uint16_t(hl() + 1));
-                break;
-            case 0x2B:  // DEC HL
-                set_hl(uint16_t(hl() - 1));
-                break;
-            case 0x2C:  // INC L
-                l = inc8(l);
-                break;
-            case 0x2D:  // DEC L
-                l = dec8(l);
-                break;
-            case 0x2E:  // LD L,n
-                l = fetch();
-                break;
-            case 0x2F:  // CPL
-                a = uint8_t(~a);
-                set_n(true);
-                set_h(true);
-                break;
-            case 0x30: {  // JR NC,n
-                int8_t off = int8_t(fetch());
-                if (!flag_c()) {
-                    pc_ = uint16_t(pc_ + off);
-                    cycles_ += 4;
-                }
-                break;
-            }
-            case 0x31:  // LD SP,nn
-                sp = fetch16();
-                break;
-            case 0x32:  // LD (HL-),A
-                wr(hl(), a);
-                set_hl(uint16_t(hl() - 1));
-                break;
-            case 0x33:  // INC SP
-                sp = uint16_t(sp + 1);
-                break;
-            case 0x34: {  // INC (HL)
-                uint8_t v = inc8(rd(hl()));
-                wr(hl(), v);
-                break;
-            }
-            case 0x35: {  // DEC (HL)
-                uint8_t v = dec8(rd(hl()));
-                wr(hl(), v);
-                break;
-            }
-            case 0x36:  // LD (HL),n
-                wr(hl(), fetch());
-                break;
-            case 0x37:  // SCF
-                set_n(false);
-                set_h(false);
-                set_c(true);
-                break;
-            case 0x38: {  // JR C,n
-                int8_t off = int8_t(fetch());
-                if (flag_c()) {
-                    pc_ = uint16_t(pc_ + off);
-                    cycles_ += 4;
-                }
-                break;
-            }
-            case 0x39:  // ADD HL,SP
-                add_hl(sp);
-                break;
-            case 0x3A:  // LD A,(HL-)
-                a = rd(hl());
-                set_hl(uint16_t(hl() - 1));
-                break;
-            case 0x3B:  // DEC SP
-                sp = uint16_t(sp - 1);
-                break;
-            case 0x3C:  // INC A
-                a = inc8(a);
-                break;
-            case 0x3D:  // DEC A
-                a = dec8(a);
-                break;
-            case 0x3E:  // LD A,n
-                a = fetch();
-                break;
-            case 0x3F:  // CCF
-                set_c(!flag_c());
-                set_n(false);
-                set_h(false);
-                break;
-
-            // LD r,r' and ALU on registers --------------------------------
-            case 0x40: break;  // LD B,B
-            case 0x41: b = c; break;
-            case 0x42: b = d; break;
-            case 0x43: b = e; break;
-            case 0x44: b = h; break;
-            case 0x45: b = l; break;
-            case 0x46: b = rd(hl()); break;
-            case 0x47: b = a; break;
-            case 0x48: c = b; break;
-            case 0x49: break;  // LD C,C
-            case 0x4A: c = d; break;
-            case 0x4B: c = e; break;
-            case 0x4C: c = h; break;
-            case 0x4D: c = l; break;
-            case 0x4E: c = rd(hl()); break;
-            case 0x4F: c = a; break;
-            case 0x50: d = b; break;
-            case 0x51: d = c; break;
-            case 0x52: break;  // LD D,D
-            case 0x53: d = e; break;
-            case 0x54: d = h; break;
-            case 0x55: d = l; break;
-            case 0x56: d = rd(hl()); break;
-            case 0x57: d = a; break;
-            case 0x58: e = b; break;
-            case 0x59: e = c; break;
-            case 0x5A: e = d; break;
-            case 0x5B: break;  // LD E,E
-            case 0x5C: e = h; break;
-            case 0x5D: e = l; break;
-            case 0x5E: e = rd(hl()); break;
-            case 0x5F: e = a; break;
-            case 0x60: h = b; break;
-            case 0x61: h = c; break;
-            case 0x62: h = d; break;
-            case 0x63: h = e; break;
-            case 0x64: break;  // LD H,H
-            case 0x65: h = l; break;
-            case 0x66: h = rd(hl()); break;
-            case 0x67: h = a; break;
-            case 0x68: l = b; break;
-            case 0x69: l = c; break;
-            case 0x6A: l = d; break;
-            case 0x6B: l = e; break;
-            case 0x6C: l = h; break;
-            case 0x6D: break;  // LD L,L
-            case 0x6E: l = rd(hl()); break;
-            case 0x6F: l = a; break;
-            case 0x70: wr(hl(), b); break;
-            case 0x71: wr(hl(), c); break;
-            case 0x72: wr(hl(), d); break;
-            case 0x73: wr(hl(), e); break;
-            case 0x74: wr(hl(), h); break;
-            case 0x75: wr(hl(), l); break;
-            case 0x76:  // HALT
-                halted_ = true;
-                break;
-            case 0x77: wr(hl(), a); break;
-            case 0x78: a = b; break;
-            case 0x79: a = c; break;
-            case 0x7A: a = d; break;
-            case 0x7B: a = e; break;
-            case 0x7C: a = h; break;
-            case 0x7D: a = l; break;
-            case 0x7E: a = rd(hl()); break;
-            case 0x7F: break;  // LD A,A
-
-            case 0x80: add_a(b); break;
-            case 0x81: add_a(c); break;
-            case 0x82: add_a(d); break;
-            case 0x83: add_a(e); break;
-            case 0x84: add_a(h); break;
-            case 0x85: add_a(l); break;
-            case 0x86: add_a(rd(hl())); break;
-            case 0x87: add_a(a); break;
-            case 0x88: adc_a(b); break;
-            case 0x89: adc_a(c); break;
-            case 0x8A: adc_a(d); break;
-            case 0x8B: adc_a(e); break;
-            case 0x8C: adc_a(h); break;
-            case 0x8D: adc_a(l); break;
-            case 0x8E: adc_a(rd(hl())); break;
-            case 0x8F: adc_a(a); break;
-            case 0x90: sub_a(b); break;
-            case 0x91: sub_a(c); break;
-            case 0x92: sub_a(d); break;
-            case 0x93: sub_a(e); break;
-            case 0x94: sub_a(h); break;
-            case 0x95: sub_a(l); break;
-            case 0x96: sub_a(rd(hl())); break;
-            case 0x97: sub_a(a); break;
-            case 0x98: sbc_a(b); break;
-            case 0x99: sbc_a(c); break;
-            case 0x9A: sbc_a(d); break;
-            case 0x9B: sbc_a(e); break;
-            case 0x9C: sbc_a(h); break;
-            case 0x9D: sbc_a(l); break;
-            case 0x9E: sbc_a(rd(hl())); break;
-            case 0x9F: sbc_a(a); break;
-            case 0xA0: and_a(b); break;
-            case 0xA1: and_a(c); break;
-            case 0xA2: and_a(d); break;
-            case 0xA3: and_a(e); break;
-            case 0xA4: and_a(h); break;
-            case 0xA5: and_a(l); break;
-            case 0xA6: and_a(rd(hl())); break;
-            case 0xA7: and_a(a); break;
-            case 0xA8: xor_a(b); break;
-            case 0xA9: xor_a(c); break;
-            case 0xAA: xor_a(d); break;
-            case 0xAB: xor_a(e); break;
-            case 0xAC: xor_a(h); break;
-            case 0xAD: xor_a(l); break;
-            case 0xAE: xor_a(rd(hl())); break;
-            case 0xAF: xor_a(a); break;
-            case 0xB0: or_a(b); break;
-            case 0xB1: or_a(c); break;
-            case 0xB2: or_a(d); break;
-            case 0xB3: or_a(e); break;
-            case 0xB4: or_a(h); break;
-            case 0xB5: or_a(l); break;
-            case 0xB6: or_a(rd(hl())); break;
-            case 0xB7: or_a(a); break;
-            case 0xB8: cp_a(b); break;
-            case 0xB9: cp_a(c); break;
-            case 0xBA: cp_a(d); break;
-            case 0xBB: cp_a(e); break;
-            case 0xBC: cp_a(h); break;
-            case 0xBD: cp_a(l); break;
-            case 0xBE: cp_a(rd(hl())); break;
-            case 0xBF: cp_a(a); break;
-
-            case 0xC0:  // RET NZ
-                if (!flag_z()) {
-                    pc_ = pop();
-                    cycles_ += 12;
-                }
-                break;
-            case 0xC1:  // POP BC
-                set_bc(pop());
-                break;
-            case 0xC2: {  // JP NZ,nn
-                uint16_t addr = fetch16();
-                if (!flag_z()) {
-                    pc_ = addr;
-                    cycles_ += 4;
-                }
-                break;
-            }
-            case 0xC3:  // JP nn
-                pc_ = fetch16();
-                break;
-            case 0xC4: {  // CALL NZ,nn
-                uint16_t addr = fetch16();
-                if (!flag_z()) {
-                    push(pc_);
-                    pc_ = addr;
-                    cycles_ += 12;
-                }
-                break;
-            }
-            case 0xC5:  // PUSH BC
-                push(bc());
-                break;
-            case 0xC6:  // ADD A,n
-                add_a(fetch());
-                break;
-            case 0xC7:  // RST 00
-                push(pc_);
-                pc_ = 0x00;
-                break;
-            case 0xC8:  // RET Z
-                if (flag_z()) {
-                    pc_ = pop();
-                    cycles_ += 12;
-                }
-                break;
-            case 0xC9:  // RET
-                pc_ = pop();
-                break;
-            case 0xCA: {  // JP Z,nn
-                uint16_t addr = fetch16();
-                if (flag_z()) {
-                    pc_ = addr;
-                    cycles_ += 4;
-                }
-                break;
-            }
-            case 0xCB:  // CB prefix
-                // kMain[0xCB] is 0; exec_cb sets the real cost.
-                cycles_ = 0;
-                exec_cb();
-                break;
-            case 0xCC: {  // CALL Z,nn
-                uint16_t addr = fetch16();
-                if (flag_z()) {
-                    push(pc_);
-                    pc_ = addr;
-                    cycles_ += 12;
-                }
-                break;
-            }
-            case 0xCD: {  // CALL nn
-                uint16_t addr = fetch16();
-                push(pc_);
-                pc_ = addr;
-                break;
-            }
-            case 0xCE:  // ADC A,n
-                adc_a(fetch());
-                break;
-            case 0xCF:  // RST 08
-                push(pc_);
-                pc_ = 0x08;
-                break;
-            case 0xD0:  // RET NC
-                if (!flag_c()) {
-                    pc_ = pop();
-                    cycles_ += 12;
-                }
-                break;
-            case 0xD1:  // POP DE
-                set_de(pop());
-                break;
-            case 0xD2: {  // JP NC,nn
-                uint16_t addr = fetch16();
-                if (!flag_c()) {
-                    pc_ = addr;
-                    cycles_ += 4;
-                }
-                break;
-            }
-            case 0xD3:  // illegal
-                break;
-            case 0xD4: {  // CALL NC,nn
-                uint16_t addr = fetch16();
-                if (!flag_c()) {
-                    push(pc_);
-                    pc_ = addr;
-                    cycles_ += 12;
-                }
-                break;
-            }
-            case 0xD5:  // PUSH DE
-                push(de());
-                break;
-            case 0xD6:  // SUB n
-                sub_a(fetch());
-                break;
-            case 0xD7:  // RST 10
-                push(pc_);
-                pc_ = 0x10;
-                break;
-            case 0xD8:  // RET C
-                if (flag_c()) {
-                    pc_ = pop();
-                    cycles_ += 12;
-                }
-                break;
-            case 0xD9:  // RETI
-                pc_ = pop();
-                ime_ = true;
-                break;
-            case 0xDA: {  // JP C,nn
-                uint16_t addr = fetch16();
-                if (flag_c()) {
-                    pc_ = addr;
-                    cycles_ += 4;
-                }
-                break;
-            }
-            case 0xDB:  // illegal
-                break;
-            case 0xDC: {  // CALL C,nn
-                uint16_t addr = fetch16();
-                if (flag_c()) {
-                    push(pc_);
-                    pc_ = addr;
-                    cycles_ += 12;
-                }
-                break;
-            }
-            case 0xDD:  // illegal
-                break;
-            case 0xDE:  // SBC A,n
-                sbc_a(fetch());
-                break;
-            case 0xDF:  // RST 18
-                push(pc_);
-                pc_ = 0x18;
-                break;
-            case 0xE0:  // LDH (n),A  == LD ($FF00+n),A
-                wr(uint16_t(0xFF00 + fetch()), a);
-                break;
-            case 0xE1:  // POP HL
-                set_hl(pop());
-                break;
-            case 0xE2:  // LD (C),A  == LD ($FF00+C),A
-                wr(uint16_t(0xFF00 + c), a);
-                break;
-            case 0xE3:  // illegal
-            case 0xE4:
-                break;
-            case 0xE5:  // PUSH HL
-                push(hl());
-                break;
-            case 0xE6:  // AND n
-                and_a(fetch());
-                break;
-            case 0xE7:  // RST 20
-                push(pc_);
-                pc_ = 0x20;
-                break;
-            case 0xE8: {  // ADD SP,n
-                int8_t off = int8_t(fetch());
-                unsigned r1 = (sp & 0xff) + uint8_t(off);
-                unsigned r2 = (sp & 0x0f) + (uint8_t(off) & 0x0f);
-                set_z(false);
-                set_n(false);
-                set_c(r1 > 0xff);
-                set_h(r2 > 0x0f);
-                sp = uint16_t(sp + off);
-                break;
-            }
-            case 0xE9:  // JP (HL)
-                pc_ = hl();
-                break;
-            case 0xEA:  // LD (nn),A
-                wr(fetch16(), a);
-                break;
-            case 0xEB:
-            case 0xEC:
-            case 0xED:
-                break;
-            case 0xEE:  // XOR n
-                xor_a(fetch());
-                break;
-            case 0xEF:  // RST 28
-                push(pc_);
-                pc_ = 0x28;
-                break;
-            case 0xF0:  // LDH A,(n)
-                a = rd(uint16_t(0xFF00 + fetch()));
-                break;
-            case 0xF1: {  // POP AF  (low nibble of F always 0)
-                uint16_t v = pop();
-                a = uint8_t(v >> 8);
-                f = uint8_t(v & 0xF0);
-                break;
-            }
-            case 0xF2:  // LD A,(C)
-                a = rd(uint16_t(0xFF00 + c));
-                break;
-            case 0xF3:  // DI
-                ime_ = false;
-                break;
-            case 0xF4:
-                break;
-            case 0xF5:  // PUSH AF
-                push(uint16_t((a << 8) | (f & 0xF0)));
-                break;
-            case 0xF6:  // OR n
-                or_a(fetch());
-                break;
-            case 0xF7:  // RST 30
-                push(pc_);
-                pc_ = 0x30;
-                break;
-            case 0xF8: {  // LD HL,SP+n
-                int8_t off = int8_t(fetch());
-                unsigned r1 = (sp & 0xff) + uint8_t(off);
-                unsigned r2 = (sp & 0x0f) + (uint8_t(off) & 0x0f);
-                set_z(false);
-                set_n(false);
-                set_c(r1 > 0xff);
-                set_h(r2 > 0x0f);
-                set_hl(uint16_t(sp + off));
-                break;
-            }
-            case 0xF9:  // LD SP,HL
-                sp = hl();
-                break;
-            case 0xFA:  // LD A,(nn)
-                a = rd(fetch16());
-                break;
-            case 0xFB:  // EI
-                ime_ = true;
-                after_ei_ = true;
-                break;
-            case 0xFC:
-            case 0xFD:
-                break;
-            case 0xFE:  // CP n
-                cp_a(fetch());
-                break;
-            case 0xFF:  // RST 38
-                push(pc_);
-                pc_ = 0x38;
-                break;
+        case 0xf0: a = rd(uint16_t(0xff00 + fetch8())); break;  // LDH A,(n)
+        case 0xf1: set_f(uint8_t(rd(sp) & 0xf0)); a = rd(uint16_t(sp + 1)); sp = uint16_t(sp + 2); break;  // POP AF
+        case 0xf2: a = rd(uint16_t(0xff00 + c)); break;  // LD A,(C)
+        case 0xf3: ime = false; after_ei_ = false; break;  // DI
+        case 0xf5: push16(uint16_t((a << 8) | get_f())); break;  // PUSH AF
+        case 0xf6: or_a(fetch8()); break;
+        case 0xf7: push16(pc); pc = 0x30; break;
+        case 0xf8: {  // LD HL,SP+n
+            fz = fn = false;
+            uint8_t rel = fetch8();
+            fc = ((sp & 0xff) + rel) > 0xff;
+            fh = ((sp & 0xf) + (rel & 0xf)) > 0xf;
+            hl = uint16_t(sp + int8_t(rel));
+            h = uint8_t(hl >> 8);
+            l = uint8_t(hl);
+            break;
         }
+        case 0xf9: sp = hl; break;  // LD SP,HL
+        case 0xfa: a = rd(fetch16()); break;
+        case 0xfb: ime = true; after_ei_ = true; break;  // EI
+        case 0xfe: cp_a(fetch8()); break;
+        case 0xff: push16(pc); pc = 0x38; break;
 
-        // Deliver cycles in 4-T slices so the GB timer / LCD can tick mid-op
-        // the same way the Pascal core does (despues_instruccion every 4 T).
-        if (cycle_handler_) {
-            for (int left = cycles_; left > 0; left -= 4) {
-                const int slice = left >= 4 ? 4 : left;
-                cycle_handler_(slice);
+        default:
+            // 0x40-0x7f (LD r,r') and 0x80-0xbf (ALU A,r) share the same
+            // "destination/operation in bits 3-5, source register in bits
+            // 0-2" layout as the CB table, so they are decoded uniformly
+            // here instead of as 128 separate cases.
+            if (op >= 0x40 && op <= 0x7f) {
+                set_reg8(uint8_t((op >> 3) & 7), reg8(uint8_t(op & 7)));
+            } else if (op >= 0x80 && op <= 0xbf) {
+                uint8_t v = reg8(uint8_t(op & 7));
+                switch ((op >> 3) & 7) {
+                    case 0: add_a(v); break;
+                    case 1: adc_a(v); break;
+                    case 2: sub_a(v); break;
+                    case 3: sbc_a(v); break;
+                    case 4: and_a(v); break;
+                    case 5: xor_a(v); break;
+                    case 6: or_a(v); break;
+                    default: cp_a(v); break;
+                }
             }
-        }
-        executed_ += cycles_;
+            break;
     }
-    return executed_;
 }
 
 }  // namespace dsp

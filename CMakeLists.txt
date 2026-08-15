@@ -66,7 +66,10 @@ add_executable(dsp
   src/drivers/colecovision.cpp
   src/machine/i2cmem.cpp
   src/drivers/sg1000.cpp
-  src/machine/gb_mappers.cpp
+  src/drivers/gameboy.cpp
+  src/machine/gb_mapper.cpp
+  src/sound/gb_apu.cpp
+  src/video/gb_ppu.cpp
   src/drivers/scv.cpp
       
   src/core/rom_loader.cpp

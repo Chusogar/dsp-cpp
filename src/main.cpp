@@ -31,7 +31,7 @@
 #include "drivers/pv1000.h"
 #include "drivers/colecovision.h"
 #include "drivers/sg1000.h"
-//#include "drivers/gameboy.h"
+#include "drivers/gameboy.h"
 //#include "drivers/nes.h"
 
 #include "frontend/sdl_app.h"
@@ -43,20 +43,35 @@ struct DipSetting {
     uint8_t value;
 };
 
+void print_supported_emulators() {
+    std::printf(
+        "Supported emulators (--game NAME):\n"
+        "\n"
+        "  Arcade:\n"
+        "    bagman, mikie, gauntlet, mrdo, ddragon, ddragon2,\n"
+        "    elevator, junglek, indydoom, peter, marble,\n"
+        "    tapper, tron, shollow, domino, wacko, dotron, timber\n"
+        "\n"
+        "  Computers:\n"
+        "    spectrum48, spectrum128, plus3,\n"
+        "    cpc464, cpc664, cpc6128, msx\n"
+        "\n"
+        "  Consoles:\n"
+        "    sms, gamegear, pv1000, coleco, sg1000, gb\n"
+        "\n");
+}
+
 void print_usage(const char* program) {
     std::printf(
-        "Usage: %s [options] <romset.zip | rom directory>\n"
-        "\n"
-        "Games: sms, bagman (default), mikie, gauntlet, ddragon, ddragon2, elevator,\n"
-        "       junglek, spectrum48, cpc464, cpc664, cpc6128\n"
-        "\n"
+        "Usage: %s --game NAME [options] <romset.zip | rom directory>\n"
+        "\n",
+        program);
+    print_supported_emulators();
+    std::printf(
         "Options:\n"
-        "  --game NAME        game to run: sms, bagman, mikie, gauntlet, ddragon,\n"
-        "                     ddragon2, elevator, junglek, spectrum48, cpc464,\n"
-        "                     cpc664 or cpc6128\n"
+        "  --game NAME        emulator / game to run (required; see list above)\n"
         "  --tape FILE        ZX Spectrum or Amstrad CPC tape image (.tap/.tzx/.cdt)\n"
-        "  --disk FILE        Amstrad CPC .dsk/.edsk floppy image (664/6128, needs\n"
-        "                     amsdos.rom); use CAT / RUN\"filename\" from BASIC\n"
+        "  --disk FILE        Amstrad CPC / Spectrum +3 .dsk/.edsk floppy image\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
         "                     bank, mikie has three (0=A, 1=B, 2=C); cpc: 0=colour(1)/\n"
@@ -73,8 +88,7 @@ void print_usage(const char* program) {
         "          1/2 start, 5/6 insert coin, P pause, F3 reset, Esc quit.\n"
         "On the Spectrum the host keyboard is the Spectrum keyboard (Left Shift is\n"
         "caps shift, Left Ctrl symbol shift, cursor keys the caps shift arrows) and\n"
-        "pause moves to F2.\n",
-        program);
+        "pause moves to F2.\n");
 }
 
 // Guesses the game from the ROM set name when --game is not given.
@@ -123,7 +137,7 @@ std::string guess_game(const std::string& rom_path) {
     if (lowered.find("pv1000") != std::string::npos) return "pv1000";
 	if (lowered.find("coleco") != std::string::npos) return "coleco";
 	if (lowered.find("sg1000") != std::string::npos) return "sg1000";
-	//if (lowered.find("gb") != std::string::npos) return "gb";
+	if (lowered.find("gb") != std::string::npos) return "gb";
 	//if (lowered.find("nes") != std::string::npos) return "nes";
     
 
@@ -180,7 +194,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "pv1000") return std::make_unique<dsp::Pv1000>();
 	if (game == "coleco") return std::make_unique<dsp::ColecoVision>();
 	if (game == "sg1000") return std::make_unique<dsp::Sg1000>();
-	//if (game == "gb") return std::make_unique<dsp::GameBoy>();
+	if (game == "gb") return std::make_unique<dsp::GameBoy>();
 	//if (game == "nes") return std::make_unique<dsp::Nes>();
 	
 
@@ -245,15 +259,27 @@ int main(int argc, char** argv) {
         }
     }
 
+    // No --game: list supported emulators and exit
+    if (game.empty()) {
+        std::printf("%s: specify an emulator with --game NAME\n\n", argv[0]);
+        print_supported_emulators();
+        std::printf("Example: %s --game spectrum48 roms/\n"
+                    "         %s --game bagman bagman.zip\n"
+                    "Use --help for all options.\n",
+                    argv[0], argv[0]);
+        return 1;
+    }
+
     if (options.rom_path.empty()) {
+        std::fprintf(stderr, "missing ROM path (zip or directory)\n\n");
         print_usage(argv[0]);
         return 1;
     }
-    if (game.empty()) game = guess_game(options.rom_path);
 
     std::unique_ptr<dsp::Machine> machine = create_machine(game);
     if (machine == nullptr) {
-        std::fprintf(stderr, "unknown game: %s\n", game.c_str());
+        std::fprintf(stderr, "unknown game: %s\n\n", game.c_str());
+        print_supported_emulators();
         return 1;
     }
 

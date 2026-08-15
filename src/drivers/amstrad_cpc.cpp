@@ -51,7 +51,7 @@ const std::vector<KeyBit> kRow0 = {{Key::Up, 0xfe}, {Key::Right, 0xfd}, {Key::Do
 const std::vector<KeyBit> kRow1 = {{Key::Left, 0xfe}};
 const std::vector<KeyBit> kRow2 = {
     {Key::Enter, 0xfb}, {Key::LeftShift, 0xdf}, {Key::LeftCtrl, 0x7f}};
-const std::vector<KeyBit> kRow3 = {{Key::P, 0xf7}/*, {Key::C, 0xfb}*/};
+const std::vector<KeyBit> kRow3 = {{Key::P, 0xf7}, {Key::F1, 0xfb}};
 const std::vector<KeyBit> kRow4 = {{Key::Num0, 0xfe}, {Key::Num9, 0xfd}, {Key::O, 0xfb},
                                    {Key::I, 0xf7},    {Key::L, 0xef},    {Key::K, 0xdf},
                                    {Key::M, 0xbf}};

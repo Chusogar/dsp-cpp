@@ -387,7 +387,7 @@ void Msx1::set_inputs(const MachineInputs& inputs) {
     if (inputs.key(Key::LeftShift)) keypad_[6] &= 0xfe;
     if (inputs.key(Key::LeftCtrl)) keypad_[6] &= 0xfd;
     if (inputs.key(Key::CapsLock)) keypad_[6] &= 0xf7;
-    if (inputs.key(Key::Num1) && rshift) keypad_[6] &= 0xdf;
+    if (inputs.key(Key::F1) /*&& rshift*/) keypad_[6] &= 0xdf;
     if (inputs.key(Key::Num2) && rshift) keypad_[6] &= 0xbf;
     if (inputs.key(Key::Num3) && rshift) keypad_[6] &= 0x7f;
     // P7
