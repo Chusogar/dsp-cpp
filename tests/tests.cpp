@@ -945,7 +945,7 @@ void test_gbc_boot_rom_map() {
 void test_gbc_ppu_lcdc0_and_priority() {
     dsp::GbPpu ppu;
     ppu.reset(true);
-    ppu.set_lcdc(0x80);  // display on, LCDC.0 clear, no sprites, unsigned tiles
+    ppu.set_lcdc(0x90);  // display on, LCDC.0 clear, unsigned tiles at $8000
     ppu.set_scy(0);
     ppu.set_scx(0);
     // Tile 0: both planes $FF → colour 3. Distinct BG colour 3 = red.
@@ -976,7 +976,7 @@ void test_gbc_ppu_lcdc0_and_priority() {
     ppu.oam_write(1, 8);   // x → screen 0
     ppu.oam_write(2, 1);   // tile
     ppu.oam_write(3, 0);   // in front, pal 0
-    ppu.set_lcdc(0x82);    // display + sprites, LCDC.0 still clear
+    ppu.set_lcdc(0x92);    // display + sprites + unsigned tiles, LCDC.0 still clear
     ppu.render_scanline(0, line);
     check(line[0] == cgb_rgb(0x001f), "BG attr.7 hides sprites regardless of LCDC.0");
 
@@ -984,7 +984,7 @@ void test_gbc_ppu_lcdc0_and_priority() {
     ppu.set_vbk(1);
     ppu.vram_write(0x1800, 0x00);
     ppu.set_vbk(0);
-    ppu.set_lcdc(0x83);
+    ppu.set_lcdc(0x93);
     ppu.render_scanline(0, line);
     check(line[0] == cgb_rgb(0x03e0), "in-front sprites cover BG when LCDC.0 is set and attr.7 is clear");
 }
