@@ -18,6 +18,7 @@
 #include "drivers/atari_system1.h"
 #include "drivers/mcr.h"
 #include "drivers/dec0.h"
+#include "drivers/snk.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -52,7 +53,8 @@ void print_supported_emulators() {
         "    bagman, mikie, gauntlet, mrdo, ddragon, ddragon2,\n"
         "    elevator, junglek, indydoom, peter, marble,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
-		"    robocop, baddudes, hippodrm, slyspy, bouldash\n"
+		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
+        "    ikari, athena, tnk3, aso\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3,\n"
@@ -131,7 +133,11 @@ std::string guess_game(const std::string& rom_path) {
     if (lowered.find("slyspy") != std::string::npos || lowered.find("secretag") != std::string::npos) {
         return "slyspy";
     }
-    if (lowered.find("bouldash") != std::string::npos) return "bouldash";
+	if (lowered.find("bouldash") != std::string::npos) return "bouldash";
+    if (lowered.find("ikari") != std::string::npos) return "ikari";
+    if (lowered.find("athena") != std::string::npos) return "athena";
+    if (lowered.find("tnk3") != std::string::npos) return "tnk3";
+    if (lowered.find("aso") != std::string::npos) return "aso";
     
     
     // Computers
@@ -202,6 +208,11 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
         return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::SlySpy);
     }
     if (game == "bouldash") return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::BoulderDash);
+
+    if (game == "ikari") return std::make_unique<dsp::Snk>(dsp::Snk::Game::Ikari);
+    if (game == "athena") return std::make_unique<dsp::Snk>(dsp::Snk::Game::Athena);
+    if (game == "tnk3") return std::make_unique<dsp::Snk>(dsp::Snk::Game::Tnk3);
+    if (game == "aso") return std::make_unique<dsp::Snk>(dsp::Snk::Game::Aso);
     
 
 	// computers

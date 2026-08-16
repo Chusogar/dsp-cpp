@@ -3,7 +3,8 @@
 C++17 + SDL2 port of [dsp-emulator](https://github.com/leniad/dsp-emulator) (Free Pascal).
 Supported games: **Bagman** (Valadon Automation, 1982), **Mikie** (Konami, 1984),
 **Gauntlet** (Atari, 1985), **Double Dragon** and **Double Dragon II** (Technos, 1987/1988),
-**Elevator Action** and **Jungle King** (Taito, 1983, Taito SJ hardware).
+**Elevator Action** and **Jungle King** (Taito, 1983, Taito SJ hardware),
+**Ikari Warriors**, **Athena**, **TNK III** and **ASO** (SNK, 1985–1986).
 It also emulates the **ZX Spectrum 48K** home computer (Sinclair, 1982).
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
@@ -33,6 +34,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Double Dragon driver | `src/arcade/doubledragon_hw.pas` | Both variants: banked ROM, shared RAM, scroll, sprites, sound CPUs |
 | M6805/M68705 MCU | `src/cpu/m6805.pas` | MC68705P3 protection MCU of Elevator Action |
 | Taito SJ driver | `src/arcade/taitosj_hw.pas` | Main and sound Z80, four AY-3-8910, DAC, MCU handshake, three tile layers with per column scroll, sprites and PROM priorities |
+| SNK driver | `src/arcade/snk_hw.pas` | Three Z80s, YM3526, Ikari/Athena/TNK III/ASO video (chars, tiles, 16x16 and 32x32 sprites, hardflags) |
 | Spectrum ULA | `src/computer/spectrum_hw.pas` | Keyboard matrix, border, one bit beeper, EAR input, contended timing |
 | Spectrum driver | `src/computer/spectrum_hw.pas`, `spectrum_misc.pas` | 48K memory map, display file with attributes and flash, Kempston joystick |
 | Tape player | `src/misc/tap_tzx.pas` | `.tap` blocks and `.tzx` images (turbo, pure tone/data, direct recording, pauses, loops), hooked to the ROM loader |
@@ -64,11 +66,12 @@ holding the individual files:
 ./build/dsp --game ddragon2 /path/to/ddragon2.zip
 ./build/dsp --game elevator /path/to/elevator.zip
 ./build/dsp --game junglek /path/to/junglek.zip
+./build/dsp --game ikari /path/to/ikari.zip
 ./build/dsp --game spectrum48 --tape /path/to/game.tzx /path/to/48.rom
 ```
 
 The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
-`ddragon2`, `elevator`, `junglek` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
+`ddragon2`, `elevator`, `junglek`, `ikari`, `athena`, `tnk3`, `aso` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 (SLAPSTIC 104) and the two player `136041-xxx` set (SLAPSTIC 107).
 
 Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
@@ -78,7 +81,7 @@ Options:
 
 ```
 --game NAME        machine to run: bagman, mikie, gauntlet, ddragon, ddragon2,
-                   elevator, junglek or spectrum48
+                   elevator, junglek, ikari, athena, tnk3, aso or spectrum48
 --scale N          window scale factor (default 3)
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
                    mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
@@ -123,6 +126,18 @@ Jungle King ROM set: `kn21-1.bin`, `kn22-1.bin`, `kn43.bin`, `kn24.bin`, `kn25.b
 
 Neither set has been run here with real ROMs yet: the driver is only checked against a
 synthetic set, so this hardware is still unverified.
+
+### SNK (Ikari Warriors, Athena, TNK III, ASO)
+
+Three Z80s (main and sub at 3.35 MHz, sound at 4 MHz) driving one or two YM3526 chips.
+Ikari Warriors is a portrait 216x288 game with 16x16 and 32x32 sprites and a hardflags
+collision port; Athena is 288x216; TNK III and ASO draw 288x216 and rotate the picture
+270 degrees. DIP banks are 0=A, 1=B and 2=C (bonus life). Ikari defaults are
+`--dip 0:0x3b --dip 1:0x4b --dip 2:0x34`. Button 2 / 3 step the rotary stick on Ikari
+and TNK III.
+
+The Ikari set accepts both the old `1.rom` / `7.rom` / `7122er.prm` names and the
+MAME 0.221 `1.4p` / `p7.3b` / `a6002-1.1k` names.
 
 ### ZX Spectrum 48K
 

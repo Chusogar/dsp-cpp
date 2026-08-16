@@ -15,6 +15,8 @@ struct GfxLayout {
     int char_increment = 0;  // bit distance between two consecutive elements
     // Rotates every decoded element 90 degrees clockwise (rot90 in convert_gfx).
     bool rotate_cw = false;
+    // Rotates every decoded element 90 degrees counter-clockwise (rol90 / Rotatel).
+    bool rotate_ccw = false;
     std::vector<int> plane_offsets;
     std::vector<int> x_offsets;
     std::vector<int> y_offsets;
