@@ -135,6 +135,14 @@ const std::array<Cps1::BankMap, 14> kBanks = {{
 const int kPt2X[32] = {4,  0,  12, 8,  20, 16, 28, 24, 36, 32, 44, 40, 52, 48, 60, 56,
                        68, 64, 76, 72, 84, 80, 92, 88, 100, 96, 108, 104, 116, 112, 124, 120};
 
+// gfx RAM is 0x18000 words. 0x17fff is not a contiguous bitmask (bit 15 is
+// clear), so `& 0x17fff` aliases 0xa000 to 0x2000 and breaks the palette.
+constexpr uint32_t kVramWords = 0x18000;
+
+uint32_t vram_index(uint32_t word) { return word % kVramWords; }
+
+uint32_t vram_index_from_byte(uint32_t byte_addr) { return (byte_addr >> 1) % kVramWords; }
+
 bool load_raw(RomLoader& loader, const std::vector<RomEntry>& entries, std::vector<uint8_t>& dest,
               std::string* error) {
     return loader.load(entries, dest, error);
@@ -385,8 +393,7 @@ void Cps1::run_frame() {
             update_video();
             uint32_t base = cps1_sprites_;
             for (int i = 0; i < 0x400; i++) {
-                uint32_t index = (base + uint32_t(i)) & 0x17fff;
-                sprite_buffer_[size_t(i)] = vram_[index];
+                sprite_buffer_[size_t(i)] = vram_[vram_index(base + uint32_t(i))];
             }
         }
         main_cpu_.run(main_cycles);
@@ -657,20 +664,17 @@ void Cps1::pal_calc() {
     for (int page = 0; page < 6; page++) {
         if ((cps1_palcltr_ & (1 << page)) != 0) {
             for (int offset = 0; offset < 0x200; offset++) {
-                if (palette_dirty_[size_t(pos_buf)]) {
-                    palette_dirty_[size_t(pos_buf)] = 0;
-                    uint32_t pos = uint32_t(pos_buf * 2) + cps1_pal_;
-                    uint16_t pal = vram_[(pos >> 1) & 0x17fff];
-                    int bright = 0xf + int((pal >> 12) << 1);
-                    int r = (((pal >> 8) & 0xf) * 0x11 * bright) / 0x2d;
-                    int g = (((pal >> 4) & 0xf) * 0x11 * bright) / 0x2d;
-                    int b = (((pal >> 0) & 0xf) * 0x11 * bright) / 0x2d;
-                    palette_[size_t(page * 0x200 + offset)] =
-                        0xff000000u | (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b);
-                    if (page >= 1 && page < 4) {
-                        color_dirty_[size_t((offset >> 4) + (page - 1) * 0x20)] = 1;
-                    }
-                }
+                uint32_t idx = vram_index_from_byte(uint32_t(pos_buf) * 2u + cps1_pal_);
+                uint16_t pal = vram_[idx];
+                int bright = 0xf + int((pal >> 12) << 1);
+                int r = (((pal >> 8) & 0xf) * 0x11 * bright) / 0x2d;
+                int g = (((pal >> 4) & 0xf) * 0x11 * bright) / 0x2d;
+                int b = (((pal >> 0) & 0xf) * 0x11 * bright) / 0x2d;
+                if (r > 255) r = 255;
+                if (g > 255) g = 255;
+                if (b > 255) b = 255;
+                palette_[size_t(page * 0x200 + offset)] =
+                    0xff000000u | (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b);
                 pos_buf++;
             }
         } else if (pos_buf != 0) {
@@ -732,7 +736,7 @@ void Cps1::blit_scrolled(const std::vector<uint32_t>& src, int src_w, int src_h,
 void Cps1::blit_rowscroll() {
     std::array<uint16_t, 0x400> rows{};
     for (int i = 0; i < 0x400; i++) {
-        uint32_t index = (cps1_rowscroll_ + cps1_rowscrollstart_ + uint32_t(i)) & 0x17fff;
+        uint32_t index = vram_index(cps1_rowscroll_ + cps1_rowscrollstart_ + uint32_t(i));
         rows[size_t(i)] = vram_[index];
     }
     for (int y = 0; y < kWorkSize; y++) {
@@ -819,8 +823,8 @@ void Cps1::draw_layer(int nlayer, bool sprite_next) {
             int sy = y + ((scroll_y1_ & 0x1f8) / 8);
             int pos = (sy & 0x1f) + ((sx & 0x3f) << 5) + ((sy & 0x20) << 6);
             uint32_t address = cps1_scroll1_ + uint32_t(pos * 4);
-            uint16_t atrib = vram_[((address + 2) >> 1) & 0x17fff];
-            int nchar = gfx_bank(kScroll1, vram_[(address >> 1) & 0x17fff]);
+            uint16_t atrib = vram_[vram_index_from_byte(address + 2)];
+            int nchar = gfx_bank(kScroll1, vram_[vram_index_from_byte(address)]);
             if (nchar < 0) {
                 clear_tile(scroll1_, 448, 248, x * 8, y * 8, 8);
                 if (sprite_next) clear_tile(priority_, 1024, 1024, x * 8, y * 8, 8);
@@ -853,8 +857,8 @@ void Cps1::draw_layer(int nlayer, bool sprite_next) {
             int y = f / 0x40;
             int pos = (y & 0xf) + ((x & 0x3f) << 4) + ((y & 0x30) << 6);
             uint32_t address = cps1_scroll2_ + uint32_t(pos * 4);
-            uint16_t atrib = vram_[((address + 2) >> 1) & 0x17fff];
-            int nchar = gfx_bank(kScroll2, vram_[(address >> 1) & 0x17fff]);
+            uint16_t atrib = vram_[vram_index_from_byte(address + 2)];
+            int nchar = gfx_bank(kScroll2, vram_[vram_index_from_byte(address)]);
             if (nchar < 0) {
                 clear_tile(scroll2_, 1024, 1024, x * 16, y * 16, 16);
                 if (sprite_next) clear_tile(priority_, 1024, 1024, x * 16, y * 16, 16);
@@ -890,8 +894,8 @@ void Cps1::draw_layer(int nlayer, bool sprite_next) {
             int sy = y + ((scroll_y3_ & 0x7e0) / 32);
             int pos = (sy & 0x07) + ((sx & 0x3f) << 3) + ((sy & 0x38) << 6);
             uint32_t address = cps1_scroll3_ + uint32_t(pos * 4);
-            uint16_t atrib = vram_[((address + 2) >> 1) & 0x17fff];
-            int nchar = gfx_bank(kScroll3, vram_[(address >> 1) & 0x17fff]);
+            uint16_t atrib = vram_[vram_index_from_byte(address + 2)];
+            int nchar = gfx_bank(kScroll3, vram_[vram_index_from_byte(address)]);
             if (nchar < 0) {
                 clear_tile(scroll3_, 480, 320, x * 32, y * 32, 32);
                 if (sprite_next) clear_tile(priority_, 1024, 1024, x * 32, y * 32, 32);
@@ -960,7 +964,7 @@ void Cps1::copy_final() {
 }
 
 void Cps1::update_video() {
-    if (pal_change_) pal_calc();
+    pal_calc();
     uint32_t fill = palette_[0xbff];
     if ((fill & 0xff000000u) == 0) fill = 0xff000000u;
     std::fill(composite_.begin(), composite_.end(), fill);
@@ -1630,6 +1634,7 @@ bool Cps1::load_roms(const std::string& rom_path, std::string* error) {
     }
     if (!oki.empty()) oki_.set_rom(std::move(oki));
     if (gfx.size() < gfx_size) gfx.resize(gfx_size, 0);
+    if (gfx.size() > gfx_size) gfx.resize(gfx_size);
     cps1_gfx_decode(gfx);
     decode_graphics(gfx, chars, tiles16, tiles32);
     warnings_ = loader.warnings();
