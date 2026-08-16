@@ -23,6 +23,9 @@ add_executable(dsp
   src/cpu/m6805.cpp
   src/cpu/lr35902.cpp
   src/cpu/upd7801.cpp
+  src/cpu/hu6280.cpp
+  src/cpu/mcs51.cpp
+ 
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
@@ -32,9 +35,15 @@ add_executable(dsp
   src/sound/ym2413.cpp
   src/sound/tms5220.cpp
   src/sound/upd1771.cpp
+  src/sound/fmopn.cpp
+  src/sound/ym2203.cpp
+  src/sound/ym3812.cpp
+    
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/tms9918.cpp
+  src/video/deco_bac06.cpp
+  
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/via6522.cpp
@@ -52,6 +61,7 @@ add_executable(dsp
   src/drivers/mrdo.cpp
   src/drivers/atari_system1.cpp
   src/drivers/mcr.cpp
+  src/drivers/dec0.cpp
       
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp

@@ -17,6 +17,7 @@
 #include "drivers/mrdo.h"
 #include "drivers/atari_system1.h"
 #include "drivers/mcr.h"
+#include "drivers/dec0.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -50,7 +51,8 @@ void print_supported_emulators() {
         "  Arcade:\n"
         "    bagman, mikie, gauntlet, mrdo, ddragon, ddragon2,\n"
         "    elevator, junglek, indydoom, peter, marble,\n"
-        "    tapper, tron, shollow, domino, wacko, dotron, timber\n"
+        "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
+		"    robocop, baddudes, hippodrm, slyspy, bouldash\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3,\n"
@@ -118,6 +120,19 @@ std::string guess_game(const std::string& rom_path) {
 	if (lowered.find("timber") != std::string::npos) return "timber";
 
 	if (lowered.find("mrdo") != std::string::npos) return "mrdo";
+
+	if (lowered.find("robocop") != std::string::npos) return "robocop";
+    if (lowered.find("baddudes") != std::string::npos || lowered.find("drgninja") != std::string::npos) {
+        return "baddudes";
+    }
+    if (lowered.find("hippodr") != std::string::npos || lowered.find("ffantasy") != std::string::npos) {
+        return "hippodrm";
+    }
+    if (lowered.find("slyspy") != std::string::npos || lowered.find("secretag") != std::string::npos) {
+        return "slyspy";
+    }
+    if (lowered.find("bouldash") != std::string::npos) return "bouldash";
+    
     
     // Computers
 	if (lowered.find("spectrum") != std::string::npos || lowered.find("48.rom") != std::string::npos) {
@@ -175,7 +190,19 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "wacko") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Wacko);
 	if (game == "dotron") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Dotron);
 	if (game == "timber") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Timber);
-	
+
+	if (game == "robocop") return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::Robocop);
+    if (game == "baddudes" || game == "drgninja") {
+        return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::BadDudes);
+    }
+    if (game == "hippodrm" || game == "hippodrome") {
+        return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::Hippodrome);
+    }
+    if (game == "slyspy" || game == "secretag") {
+        return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::SlySpy);
+    }
+    if (game == "bouldash") return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::BoulderDash);
+    
 
 	// computers
     if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48k>();
