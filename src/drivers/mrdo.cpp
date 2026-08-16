@@ -36,7 +36,8 @@ const std::vector<RomEntry> kSpriteRoms = {
     {"k5-06.bin", 0x1000, 0x1000, 0xb1f68b04},
 };
 
-// convert_gfx(..., flipx=false, flipy=true): reverse the Y offsets.
+// convert_gfx(..., rot90=false, rol90=true): decode with pc_y/ps_y as written,
+// then Rotatel (90 degrees counter-clockwise). Reversing Y is a flip, not a rotate.
 GfxLayout char_layout() {
     GfxLayout layout;
     layout.width = 8;
@@ -44,9 +45,10 @@ GfxLayout char_layout() {
     layout.total = 512;
     layout.planes = 2;
     layout.char_increment = 8 * 8;
+    layout.rotate_ccw = true;
     layout.plane_offsets = {0, 512 * 8 * 8};
     layout.x_offsets = {7, 6, 5, 4, 3, 2, 1, 0};
-    layout.y_offsets = {7 * 8, 6 * 8, 5 * 8, 4 * 8, 3 * 8, 2 * 8, 1 * 8, 0 * 8};
+    layout.y_offsets = {0 * 8, 1 * 8, 2 * 8, 3 * 8, 4 * 8, 5 * 8, 6 * 8, 7 * 8};
     return layout;
 }
 
@@ -57,11 +59,12 @@ GfxLayout sprite_layout() {
     layout.total = 128;
     layout.planes = 2;
     layout.char_increment = 64 * 8;
+    layout.rotate_ccw = true;
     layout.plane_offsets = {4, 0};
     layout.x_offsets = {3,     2,     1,     0,     8 + 3, 8 + 2, 8 + 1, 8 + 0,
                         16 + 3, 16 + 2, 16 + 1, 16 + 0, 24 + 3, 24 + 2, 24 + 1, 24 + 0};
-    layout.y_offsets = {30 * 16, 28 * 16, 26 * 16, 24 * 16, 22 * 16, 20 * 16, 18 * 16, 16 * 16,
-                        14 * 16, 12 * 16, 10 * 16, 8 * 16,  6 * 16,  4 * 16,  2 * 16,  0 * 16};
+    layout.y_offsets = {0 * 16,  2 * 16,  4 * 16,  6 * 16,  8 * 16,  10 * 16, 12 * 16, 14 * 16,
+                        16 * 16, 18 * 16, 20 * 16, 22 * 16, 24 * 16, 26 * 16, 28 * 16, 30 * 16};
     return layout;
 }
 
@@ -176,7 +179,7 @@ void MrDo::reset() {
     in1_ = 0xff;
     dirty_bg_.fill(true);
     dirty_fg_.fill(true);
-    bg_opaque_.fill(0xff000000u);
+    bg_opaque_.fill(palette_[0] != 0 ? palette_[0] : 0xff000000u);
     fg_opaque_.fill(kTransparent);
     bg_trans_.fill(kTransparent);
     fg_trans_.fill(kTransparent);
@@ -272,7 +275,8 @@ void MrDo::draw_bg_tile(int offset) {
                 bg_opaque_[row + size_t(x)] = rgb;
                 bg_trans_[row + size_t(x)] = kTransparent;
             } else {
-                bg_opaque_[row + size_t(x)] = 0xff000000u;
+                // put_gfx_block(..., color 0) fills with paleta[0], not the colour key.
+                bg_opaque_[row + size_t(x)] = palette_[0];
                 bg_trans_[row + size_t(x)] = (pen == 0) ? kTransparent : rgb;
             }
         }
@@ -312,15 +316,16 @@ void MrDo::draw_sprite(int index) {
     const int code = memory_[base] & 0x7f;
     const uint8_t attrib = memory_[base + 2];
     const int color = (attrib & 0x0f) << 2;
-    const int pos_y = 240 - memory_[base + 3];
-    const int pos_x = 256 - pos_x_raw;
+    // y is a byte in mrdo_hw.pas, so 240-sprite_y wraps; actualiza_gfx_sprite
+    // then masks with sprite_mask (255) and wraps at the 256x256 playfield edge.
+    const int pos_y = (240 - memory_[base + 3]) & 0xff;
+    const int pos_x = (256 - pos_x_raw) & 0xff;
     const bool flip_x = (attrib & 0x20) != 0;
     const bool flip_y = (attrib & 0x10) != 0;
     const uint8_t* pixels = sprites_.element(code);
 
     for (int y = 0; y < 16; y++) {
-        const int screen_y = pos_y + y;
-        if (screen_y < 0 || screen_y >= 256) continue;
+        const int screen_y = (pos_y + y) & 0xff;
         const int source_y = flip_y ? (15 - y) : y;
         for (int x = 0; x < 16; x++) {
             const int source_x = flip_x ? (15 - x) : x;
