@@ -749,17 +749,27 @@ void AmstradCpc::port_c_write(uint8_t value)
     ppi_state_.port_c = value;
 
     //
-    // PC0-PC3 = línea de teclado
+    // PC0-PC3 = keyboard row select
     //
     ppi_state_.keyb_line = value & 0x0f;
 
     //
-    // PC4 = motor cassette
+    // PC4 = cassette motor
     //
-    ppi_state_.tape_motor = (value & 0x10) != 0;
+    // Mirror tape_timer_exec() from the original amstrad_cpc.pas: when the
+    // firmware turns the motor on, start the virtual tape; when it turns it
+    // off, stop it. Without this the SpectrumTape player never leaves the
+    // paused state and CDT/TZX loading does nothing.
+    const bool motor_on = (value & 0x10) != 0;
+    if (motor_on != ppi_state_.tape_motor) {
+        ppi_state_.tape_motor = motor_on;
+        if (tape_.loaded()) {
+            tape_.set_playing(motor_on);
+        }
+    }
 
     //
-    // PC6-PC7 = control AY
+    // PC6-PC7 = AY control
     //
     const uint8_t new_ay_control =
         uint8_t((value >> 6) & 0x03);
