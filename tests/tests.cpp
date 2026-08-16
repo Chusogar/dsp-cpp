@@ -8,7 +8,9 @@
 #include "cpu/m6805.h"
 #include "cpu/m6809.h"
 #include "cpu/m68000.h"
+#include "cpu/tms7000.h"
 #include "cpu/z80.h"
+#include "drivers/exelv.h"
 #include "drivers/spectrum.h"
 #include "machine/bagman_pal.h"
 #include "machine/slapstic.h"
@@ -21,6 +23,7 @@
 #include "sound/ym2151.h"
 #include "video/atari_mo.h"
 #include "video/gfx.h"
+#include "video/tms3556.h"
 
 namespace {
 
@@ -863,6 +866,103 @@ void test_spectrum_ula() {
     check(spectrum.io_in(0x001f) == 0x11, "the Kempston joystick answers on A5 low");
 }
 
+void test_tms7000_mov_add_call() {
+    dsp::Tms7000 cpu(4915200, dsp::Tms7000::Chip::Tms7020);
+    std::vector<uint8_t> rom(0x800, 0x00);
+    // Reset vector at $FFFE -> $F800
+    rom[0x7fe] = 0xf8;
+    rom[0x7ff] = 0x00;
+    // MOV %$12,A / ADD %$34,A / CALL $F810 / IDLE
+    // $F800:
+    rom[0x000] = 0x22;
+    rom[0x001] = 0x12;  // MOV %12, A
+    rom[0x002] = 0x28;
+    rom[0x003] = 0x34;  // ADD %34, A
+    rom[0x004] = 0x8e;
+    rom[0x005] = 0xf8;
+    rom[0x006] = 0x10;  // CALL $F810
+    rom[0x007] = 0x01;  // IDLE
+    // $F810: MOV %$42, B / RETS
+    rom[0x010] = 0x52;
+    rom[0x011] = 0x42;
+    rom[0x012] = 0x0a;
+    cpu.set_internal_rom(rom.data(), rom.size());
+    cpu.reset();
+    cpu.run(200);
+    check(cpu.a() == 0x46, "tms7000 MOV+ADD leaves 0x46 in A");
+    check(cpu.b() == 0x42, "tms7000 CALL/RETS runs the callee");
+    check(cpu.idle(), "tms7000 IDLE stops at the idle opcode");
+}
+
+void test_tms7000_lvdp_and_int1() {
+    dsp::Tms7000 cpu(4915200, dsp::Tms7000::Chip::Tms7020);
+    cpu.set_exl_lvdp(true);
+    uint8_t vram_port = 0x5a;
+    cpu.set_memory_handlers([&](uint16_t a) -> uint8_t {
+        if (a == 0x0124) return vram_port;
+        if (a == 0x0128) return 0xff;
+        return 0xff;
+    }, [](uint16_t, uint8_t) {});
+    std::vector<uint8_t> rom(0x800, 0x00);
+    rom[0x7fe] = 0xf8;
+    rom[0x7ff] = 0x00;
+    rom[0x000] = 0xd7;
+    rom[0x001] = 0x28;  // LVDP (discards the immediate)
+    rom[0x002] = 0x01;  // IDLE
+    cpu.set_internal_rom(rom.data(), rom.size());
+    cpu.reset();
+    cpu.run(40);
+    check(cpu.a() == 0x5a, "EXL LVDP reads the TMS3556 VRAM port into A");
+
+    dsp::Tms7000 irq_cpu(4915200, dsp::Tms7000::Chip::Tms7020);
+    std::vector<uint8_t> irq_rom(0x800, 0x00);
+    irq_rom[0x7fe] = 0xf8;
+    irq_rom[0x7ff] = 0x00;
+    irq_rom[0x7fc] = 0xf8;  // INT1 vector $FFFC
+    irq_rom[0x7fd] = 0x20;
+    irq_rom[0x000] = 0x05;  // EINT
+    irq_rom[0x001] = 0xa2;
+    irq_rom[0x002] = 0x01;
+    irq_rom[0x003] = 0x00;  // MOVP %$01, P0  (enable INT1)
+    irq_rom[0x004] = 0x01;  // IDLE
+    irq_rom[0x020] = 0x22;
+    irq_rom[0x021] = 0xaa;  // MOV %$AA, A
+    irq_rom[0x022] = 0x01;
+    irq_cpu.set_internal_rom(irq_rom.data(), irq_rom.size());
+    irq_cpu.reset();
+    irq_cpu.run(40);
+    irq_cpu.set_input_line(dsp::Tms7000::kInt1, dsp::IrqLine::Hold);
+    irq_cpu.run(40);
+    check(irq_cpu.a() == 0xaa, "tms7000 INT1 vectors through $FFFC");
+}
+
+void test_tms3556_background() {
+    dsp::Tms3556 vdp;
+    vdp.reset();
+    vdp.reg_w(0x07);  // select CM4
+    vdp.reg_w(0xe0);  // background colour 7 (white)
+    for (int i = 0; i < dsp::Tms3556::kScanlines * 2; i++) vdp.interrupt();
+    const uint32_t* fb = vdp.framebuffer();
+    const uint32_t white = dsp::Tms3556::rgb3(7);
+    check(fb[10] == white, "tms3556 off-mode fills the border with CM4 background");
+}
+
+void test_exelv_dummy_bios() {
+    dsp::Exelv missing(dsp::Exelv::Model::Exl100);
+    std::string error;
+    check(!missing.init("/tmp/dsp-exl-missing-bios", &error),
+          "EXL-100 init fails without the TMS7020 BIOS");
+
+    dsp::Exelv machine(dsp::Exelv::Model::Exl100);
+    machine.install_dummy_bios();
+    machine.reset();
+    check(machine.bios_loaded(), "dummy EXL BIOS installs");
+    check(machine.screen_width() == 336 && machine.screen_height() == 252,
+          "EXL-100 reports the TMS3556 336x252 framebuffer");
+    for (int i = 0; i < 2; i++) machine.run_frame();
+    check(machine.debug_pc() >= 0xf800, "dummy BIOS idles in internal ROM");
+}
+
 }  // namespace
 
 int main() {
@@ -899,6 +999,10 @@ int main() {
     test_spectrum_tape();
     test_spectrum_tzx();
     test_spectrum_ula();
+    test_tms7000_mov_add_call();
+    test_tms7000_lvdp_and_int1();
+    test_tms3556_background();
+    test_exelv_dummy_bios();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

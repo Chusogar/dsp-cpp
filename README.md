@@ -37,6 +37,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Spectrum driver | `src/computer/spectrum_hw.pas`, `spectrum_misc.pas` | 48K memory map, display file with attributes and flash, Kempston joystick |
 | Tape player | `src/misc/tap_tzx.pas` | `.tap` blocks and `.tzx` images (turbo, pure tone/data, direct recording, pauses, loops), hooked to the ROM loader |
 | Front end | `src/misc/main_engine.pas` | SDL2 window, texture, audio queue, keyboard |
+| TMS7000 CPU | new (MAME `tms7000` behaviour) | TMS7020/7040/7041/7042, EXL LVDP opcode |
+| TMS3556 VDP | new (MAME `tms3556` behaviour) | Text 40×25, bitmap 320×250, mixed, 8 colours |
+| EXL-100 / EXELTEL | new (MAME `exelv.cpp`) | Dual TMS7000, mailbox, IR keyboard, TMS5220, cartridge |
 
 ## Building
 
@@ -65,10 +68,13 @@ holding the individual files:
 ./build/dsp --game elevator /path/to/elevator.zip
 ./build/dsp --game junglek /path/to/junglek.zip
 ./build/dsp --game spectrum48 --tape /path/to/game.tzx /path/to/48.rom
+./build/dsp --game exl100 /path/to/exl100.zip
+./build/dsp --game exl100 --tape /path/to/exelbas.bin /path/to/exl100.zip
+./build/dsp --game exeltel /path/to/exeltel.zip
 ```
 
 The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
-`ddragon2`, `elevator`, `junglek` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
+`ddragon2`, `elevator`, `junglek`, `spectrum48`, `exl100` or `exeltel`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 (SLAPSTIC 104) and the two player `136041-xxx` set (SLAPSTIC 107).
 
 Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
@@ -78,7 +84,7 @@ Options:
 
 ```
 --game NAME        machine to run: bagman, mikie, gauntlet, ddragon, ddragon2,
-                   elevator, junglek or spectrum48
+                   elevator, junglek, spectrum48, exl100 or exeltel
 --scale N          window scale factor (default 3)
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
                    mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
@@ -88,8 +94,42 @@ Options:
 --fullscreen       start in full screen
 --screenshot FILE  headless mode: render frames and write FILE (BMP)
 --frames N         frames to run in headless mode (default 300)
---tape FILE        tape image to insert, .tap or .tzx (spectrum48)
+--tape FILE        tape image to insert, .tap or .tzx (spectrum48);
+                   EXL-100 / EXELTEL cartridge (.bin/.rom)
 ```
+
+### Exelvision EXL-100 and EXELTEL
+
+French home computers from 1984/1986. They are not in dsp-emulator; this port
+follows MAME `exelv.cpp`. Each machine has a custom TMS7020 (EXL-100) or TMS7040
+(EXELTEL) at 4.9152 MHz with the SWAP R opcode replaced by LVDP (VRAM peek), a
+TMS7041/7042 I/O CPU talking through a 74LS374 mailbox, a TMS3556 VDP
+(40×25 text / 320×250 bitmap, 8 colours, 32 KiB VRAM) and a TMS5220C speech
+synthesizer. The keyboard and joysticks are infrared.
+
+ROMs are **not** shipped. MAME set names:
+
+* EXL-100 (`exl100.zip`): `exl100in.bin` (TMS7020, CRC `049109a3`) and
+  `exl100_7041.bin` (TMS7041, CRC `38f6fc7a`).
+* EXELTEL (`exeltel.zip`): `exeltel_7040.bin` (TMS7040, CRC `2792f02f`),
+  `exeltel_7042.bin` (I/O CPU, bad dump in MAME), `exeltel14.bin` (64 KiB
+  system ROM) and optionally `cm62312.bin` (speech).
+
+[RetroBIOS](https://github.com/Abdess/retrobios) does not currently publish an
+Exelvision pack; drop the MAME zips next to the emulator. Without the I/O CPU
+ROM the driver HLE's the "I/O initialized" mailbox byte so the main CPU can
+continue. Load a cartridge with `--tape` or by placing a `.bin`/`.rom` beside
+the BIOS. Exel Basic (`exelbas`) is the usual way to get a prompt.
+
+```bash
+./build/dsp --game exl100 /path/to/exl100.zip
+./build/dsp --game exl100 --tape /path/to/exelbas.bin /path/to/exl100.zip
+./build/dsp --game exeltel /path/to/exeltel.zip
+```
+
+The host keyboard is the infrared keyboard (AZERTY layout as in MAME). Cursor
+keys and Left Ctrl (CTL) work; FCT is Right Ctrl. Cassette motor control is not
+emulated; port B bit 3 still feeds a 1-bit DAC into the speaker.
 
 ### Taito SJ (Elevator Action, Jungle King)
 
