@@ -20,6 +20,9 @@ public:
 
     void set_memory_handlers(ReadHandler read, WriteHandler write);
     void set_io_handlers(InHandler in, OutHandler out);
+    // Optional opcode map (M1 fetches). Immediates and data still use `read`.
+    // Used by Kabuki-encrypted Z80s (CPS1 QSound). When empty, fetch uses `read`.
+    void set_opcode_read(ReadHandler handler) { opcode_read_ = std::move(handler); }
     // Called after every instruction with the number of elapsed T states.
     void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
 
@@ -110,7 +113,9 @@ private:
 
     uint32_t clock_;
     ReadHandler read_;
+    ReadHandler opcode_read_;
     WriteHandler write_;
+    bool fetching_opcode_ = true;
     InHandler in_;
     OutHandler out_;
     CycleHandler cycle_handler_;

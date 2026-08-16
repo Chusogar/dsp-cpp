@@ -18,6 +18,7 @@
 #include "drivers/atari_system1.h"
 #include "drivers/mcr.h"
 #include "drivers/dec0.h"
+#include "drivers/cps1.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -52,7 +53,9 @@ void print_supported_emulators() {
         "    bagman, mikie, gauntlet, mrdo, ddragon, ddragon2,\n"
         "    elevator, junglek, indydoom, peter, marble,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
-		"    robocop, baddudes, hippodrm, slyspy, bouldash\n"
+		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
+        "    ghouls, ffight, kod, sf2, strider, 3wonders, captcomm,\n"
+        "    knights, sf2ce, dino, punisher, willow, 1941, nemo\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3,\n"
@@ -131,7 +134,25 @@ std::string guess_game(const std::string& rom_path) {
     if (lowered.find("slyspy") != std::string::npos || lowered.find("secretag") != std::string::npos) {
         return "slyspy";
     }
-    if (lowered.find("bouldash") != std::string::npos) return "bouldash";
+	if (lowered.find("bouldash") != std::string::npos) return "bouldash";
+    if (lowered.find("ghouls") != std::string::npos) return "ghouls";
+    if (lowered.find("ffight") != std::string::npos || lowered.find("finalfight") != std::string::npos) {
+        return "ffight";
+    }
+    if (lowered.find("kod") != std::string::npos) return "kod";
+    if (lowered.find("sf2ce") != std::string::npos) return "sf2ce";
+    if (lowered.find("sf2") != std::string::npos) return "sf2";
+    if (lowered.find("strider") != std::string::npos) return "strider";
+    if (lowered.find("3wonders") != std::string::npos || lowered.find("wonder3") != std::string::npos) {
+        return "3wonders";
+    }
+    if (lowered.find("captcomm") != std::string::npos) return "captcomm";
+    if (lowered.find("knights") != std::string::npos) return "knights";
+    if (lowered.find("dino") != std::string::npos) return "dino";
+    if (lowered.find("punisher") != std::string::npos) return "punisher";
+    if (lowered.find("willow") != std::string::npos) return "willow";
+    if (lowered.find("1941") != std::string::npos) return "1941";
+    if (lowered.find("nemo") != std::string::npos) return "nemo";
     
     
     // Computers
@@ -202,6 +223,25 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
         return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::SlySpy);
     }
     if (game == "bouldash") return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::BoulderDash);
+
+    if (game == "ghouls") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Ghouls);
+    if (game == "ffight" || game == "finalfight") {
+        return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Ffight);
+    }
+    if (game == "kod") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Kod);
+    if (game == "sf2") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Sf2);
+    if (game == "strider") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Strider);
+    if (game == "3wonders" || game == "wonder3") {
+        return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Wonder3);
+    }
+    if (game == "captcomm") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Captcomm);
+    if (game == "knights") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Knights);
+    if (game == "sf2ce") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Sf2ce);
+    if (game == "dino") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Dino);
+    if (game == "punisher") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Punisher);
+    if (game == "willow") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Willow);
+    if (game == "1941") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Ca1941);
+    if (game == "nemo") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Nemo);
     
 
 	// computers
