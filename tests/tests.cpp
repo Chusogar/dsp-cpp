@@ -208,29 +208,32 @@ bool write_cpc_dummy_rom(const std::string& dir) {
     emit_ga(rom, pc, 0x81);
     // Pens: paper black, ink bright yellow, border black.
     emit_ga(rom, pc, 0x00);
-    emit_ga(rom, pc, 0x54);  // hardware colour 20
+    emit_ga(rom, pc, 0x44);  // paper: hardware colour 4 (blue)
     emit_ga(rom, pc, 0x01);
-    emit_ga(rom, pc, 0x4b);  // hardware colour 11
+    emit_ga(rom, pc, 0x4b);  // ink: hardware colour 11 (white)
     emit_ga(rom, pc, 0x10);
-    emit_ga(rom, pc, 0x54);
+    emit_ga(rom, pc, 0x54);  // border: hardware colour 20 (black)
 
     constexpr uint8_t kCrtc[14] = {63, 40, 46, 0x8e, 38, 0, 25, 30, 0, 7, 0, 0, 0x30, 0};
     for (uint8_t r = 0; r < 14; r++) emit_crtc(rom, pc, r, kCrtc[r]);
 
-    // Fill 16K of video RAM at 0xC000 with 0xF0 (mode 1: three ink pixels, one paper).
-    rom[pc++] = 0x21;
+    // Fill 16K of video RAM at 0xC000 with 0xE0 (mode 1: three ink pixels, one paper).
+    // Writes only: LDIR would *read* 0xC000, which is the upper ROM while it is paged in.
+    rom[pc++] = 0x21;  // ld hl,0xc000
     rom[pc++] = 0x00;
     rom[pc++] = 0xc0;
-    rom[pc++] = 0x11;
-    rom[pc++] = 0x01;
-    rom[pc++] = 0xc0;
-    rom[pc++] = 0x01;
-    rom[pc++] = 0xff;
-    rom[pc++] = 0x3f;
-    rom[pc++] = 0x36;
-    rom[pc++] = 0xf0;
-    rom[pc++] = 0xed;
-    rom[pc++] = 0xb0;
+    rom[pc++] = 0x01;  // ld bc,0x4000
+    rom[pc++] = 0x00;
+    rom[pc++] = 0x40;
+    const size_t fill_loop = pc;
+    rom[pc++] = 0x36;  // ld (hl),0xe0
+    rom[pc++] = 0xe0;
+    rom[pc++] = 0x23;  // inc hl
+    rom[pc++] = 0x0b;  // dec bc
+    rom[pc++] = 0x78;  // ld a,b
+    rom[pc++] = 0xb1;  // or c
+    rom[pc++] = 0x20;  // jr nz,fill_loop
+    rom[pc++] = uint8_t(int(fill_loop) - int(pc + 1));
     rom[pc++] = 0x18;
     rom[pc++] = 0xfe;  // jr $
 
@@ -255,7 +258,7 @@ void test_amstrad_crtc_does_not_tear() {
         return;
     }
 
-    for (int frame = 0; frame < 12; frame++) cpc.run_frame();
+    for (int frame = 0; frame < 30; frame++) cpc.run_frame();
 
     const uint32_t* first = cpc.framebuffer();
     const int width = cpc.screen_width();
@@ -275,9 +278,9 @@ void test_amstrad_crtc_does_not_tear() {
     // Mode 1 0xF0 paints three ink pixels and one paper pixel per byte, so a
     // visible scanline must contain that 4-pixel cadence rather than speckle.
     bool found_pattern = false;
-    for (int y = 40; y < 180 && !found_pattern; y++) {
+    for (int y = 0; y < height && !found_pattern; y++) {
         const uint32_t* row = second + y * width;
-        for (int x = 20; x + 7 < width - 20; x += 4) {
+        for (int x = 0; x + 3 < width; x++) {
             if (row[x] == row[x + 1] && row[x] == row[x + 2] && row[x] != row[x + 3]) {
                 found_pattern = true;
                 break;
