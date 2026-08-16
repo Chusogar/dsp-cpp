@@ -525,6 +525,7 @@ int Z80::run(int cycles) {
             continue;
         }
 
+        if (instruction_hook_) instruction_hook_(pc_);
         uint8_t opcode = fetch();
         r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
         cycles_ += kMain[opcode];

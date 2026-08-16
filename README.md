@@ -145,6 +145,20 @@ need the loader to be running, and the CSW (`$18`) and generalized data (`$19`) 
 are skipped. A "stop the tape" block only pauses for two seconds, because the machine
 restarts the tape whenever the loader runs.
 
+### Midway MCR (Tapper, Tron, …)
+
+`--game tapper` (also `tron`, `shollow`, `domino`, `wacko`, `dotron`, `timber`) is the
+Midway MCR-II/III board from `mcr_hw.pas`: dual Z80, Z80 CTC daisy IRQs, SSIO sound
+(two AY-3-8910 plus the 14024 `/SINT` clock) and 16×16 tiles with 32×32 sprites.
+Point it at a MAME merged `tapper.zip`.
+
+```bash
+./build/dsp --game tapper /path/to/tapper.zip
+./build/dsp --game tapper --screenshot tapper.bmp --frames 180 /path/to/tapper.zip
+```
+
+Start is player 1 `1` / player 2 `2`, coin is `5`/`6`, Tapper pours with Ctrl/Space.
+
 ### Controls
 
 | Key | Action |

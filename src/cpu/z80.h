@@ -15,6 +15,7 @@ public:
     using InHandler = std::function<uint8_t(uint16_t)>;
     using OutHandler = std::function<void(uint16_t, uint8_t)>;
     using CycleHandler = std::function<void(int)>;
+    using InstructionHook = std::function<void(uint16_t pc)>;
 
     explicit Z80(uint32_t clock);
 
@@ -22,6 +23,8 @@ public:
     void set_io_handlers(InHandler in, OutHandler out);
     // Called after every instruction with the number of elapsed T states.
     void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
+    // Called immediately before the next opcode fetch (PC still points at the opcode).
+    void set_instruction_hook(InstructionHook handler) { instruction_hook_ = std::move(handler); }
 
     void reset();
     // Runs until at least `cycles` T states have elapsed, returns the amount executed.
@@ -114,6 +117,7 @@ private:
     InHandler in_;
     OutHandler out_;
     CycleHandler cycle_handler_;
+    InstructionHook instruction_hook_;
 
     int cycles_ = 0;      // T states consumed by the instruction being executed
     int executed_ = 0;    // T states consumed in the current run() call
