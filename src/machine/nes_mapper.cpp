@@ -361,9 +361,102 @@ void NesMapper::mapper11_write(uint16_t, uint8_t value) {
     if (last_chr != 0) set_chr_8(value >> 4);
 }
 
+void NesMapper::mapper13_write(uint16_t, uint8_t value) { chr_map[1] = value & 3; }
+
+void NesMapper::mapper15_write(uint16_t address, uint8_t value) {
+    if (last_prg <= 0 || !cpu_mem_) return;
+    const int tempb = (value & 0x3f) % last_prg;
+    switch (address & 3) {
+        case 0:
+            set_prg_16(0x8000, tempb);
+            set_prg_16(0xc000, tempb | 1);
+            break;
+        case 1:
+            set_prg_16(0x8000, tempb);
+            set_prg_16(0xc000, ((value & 0x3f) | 7) % last_prg);
+            break;
+        case 2:
+            std::memcpy(cpu_mem_ + 0x8000, &prg[size_t(tempb)][0x2000 * ((value & 0x80) >> 7)],
+                        0x2000);
+            std::memcpy(cpu_mem_ + 0xa000, cpu_mem_ + 0x8000, 0x2000);
+            std::memcpy(cpu_mem_ + 0xc000, cpu_mem_ + 0x8000, 0x2000);
+            std::memcpy(cpu_mem_ + 0xe000, cpu_mem_ + 0x8000, 0x2000);
+            break;
+        case 3:
+            set_prg_16(0x8000, tempb);
+            std::memcpy(cpu_mem_ + 0xc000, cpu_mem_ + 0x8000, 0x4000);
+            break;
+        default:
+            break;
+    }
+    if (ppu_) ppu_->mirror = (value & 0x40) == 0 ? NesPpu::Vertical : NesPpu::Horizontal;
+}
+
+void NesMapper::mapper34_write(uint16_t address, uint8_t value) {
+    if (address < 0x8000 && cpu_mem_) cpu_mem_[address] = value;
+    if (address == 0x7ffd) {
+        regs_[0] = value & 1;
+    } else if (address == 0x7ffe) {
+        regs_[1] = value & 0x0f;
+    } else if (address == 0x7fff) {
+        regs_[2] = value & 0x0f;
+    } else if (last_chr == 0) {
+        regs_[0] = value & 0x03;
+    }
+    set_prg_32(regs_[0]);
+    if (last_chr != 0) {
+        set_chr_4(0x0000, regs_[1]);
+        set_chr_4(0x1000, regs_[2]);
+    }
+}
+
 void NesMapper::mapper66_write(uint16_t, uint8_t value) {
     set_chr_8(value & 0x03);
     set_prg_32((value & 0x30) >> 4);
+}
+
+void NesMapper::mapper68_write(uint16_t address, uint8_t value) {
+    switch ((address >> 12) & 0x0f) {
+        case 0x8: set_chr_2(0x0000, value); break;
+        case 0x9: set_chr_2(0x0800, value); break;
+        case 0xa: set_chr_2(0x1000, value); break;
+        case 0xb: set_chr_2(0x1800, value); break;
+        case 0xc:
+            if (chr_extra_ena_ && ppu_ && last_chr > 0) {
+                const int tempb = (0x80 | (value & 0x7f)) % (last_chr << 3);
+                std::memcpy(ppu_->name_table(0), &chr[size_t(tempb >> 3)][0x400 * (tempb & 7)],
+                            0x400);
+            }
+            break;
+        case 0xd:
+            if (chr_extra_ena_ && ppu_ && last_chr > 0) {
+                const int tempb = (0x80 | (value & 0x7f)) % (last_chr << 3);
+                std::memcpy(ppu_->name_table(1), &chr[size_t(tempb >> 3)][0x400 * (tempb & 7)],
+                            0x400);
+            }
+            break;
+        case 0xe:
+            if (ppu_) {
+                switch (value & 3) {
+                    case 0: ppu_->mirror = NesPpu::Vertical; break;
+                    case 1: ppu_->mirror = NesPpu::Horizontal; break;
+                    default: ppu_->mirror = NesPpu::Low; break;
+                }
+            }
+            chr_extra_ena_ = (value & 0x10) != 0;
+            break;
+        case 0xf:
+            set_prg_16(0x8000, value & 0x0f);
+            prg_ram_enable = (value & 0x10) != 0;
+            break;
+        default:
+            break;
+    }
+}
+
+void NesMapper::mapper70_write(uint16_t, uint8_t value) {
+    set_chr_8(value & 0x0f);
+    set_prg_16(0x8000, (value & 0xf0) >> 4);
 }
 
 void NesMapper::mapper71_write(uint16_t address, uint8_t value) {
@@ -374,9 +467,117 @@ void NesMapper::mapper71_write(uint16_t address, uint8_t value) {
     }
 }
 
+void NesMapper::mapper76_write(uint16_t address, uint8_t value) {
+    address &= 0x8001;
+    if (address == 0x8000) {
+        regs_[0] = value & 7;
+        return;
+    }
+    if (address != 0x8001) return;
+    switch (regs_[0]) {
+        case 2: set_chr_2(0x0000, value & 0x3f); break;
+        case 3: set_chr_2(0x0800, value & 0x3f); break;
+        case 4: set_chr_2(0x1000, value & 0x3f); break;
+        case 5: set_chr_2(0x1800, value & 0x3f); break;
+        case 6: set_prg_8(0x8000, value & 0x3f); break;
+        case 7: set_prg_8(0xa000, value & 0x3f); break;
+        default: break;
+    }
+}
+
+void NesMapper::mapper79_write(uint16_t address, uint8_t value) {
+    if ((address & 0xe100) == 0x4100) {
+        set_prg_32((value >> 3) & 1);
+        set_chr_8(value & 0x07);
+    }
+}
+
 void NesMapper::mapper87_write(uint16_t, uint8_t value) {
     value = uint8_t((value >> 1) | ((value & 1) << 1));
     set_chr_8(value);
+}
+
+void NesMapper::mapper88_write(uint16_t address, uint8_t value) {
+    address &= 0x8001;
+    if (address == 0x8000) {
+        regs_[0] = value;
+        return;
+    }
+    if (address != 0x8001) return;
+    switch (regs_[0] & 7) {
+        case 0: set_chr_2(0x0000, (value >> 1) & 0x3f); break;
+        case 1: set_chr_2(0x0800, (value >> 1) & 0x3f); break;
+        case 2: set_chr_1(0x1000, value | 0x40); break;
+        case 3: set_chr_1(0x1400, value | 0x40); break;
+        case 4: set_chr_1(0x1800, value | 0x40); break;
+        case 5: set_chr_1(0x1c00, value | 0x40); break;
+        case 6: set_prg_8(0x8000, value & 0x0f); break;
+        case 7: set_prg_8(0xa000, value & 0x0f); break;
+        default: break;
+    }
+}
+
+void NesMapper::mapper93_write(uint16_t, uint8_t value) {
+    set_prg_16(0x8000, (value & 0x70) >> 4);
+    if (ppu_) ppu_->write_chr = (value & 1) != 0;
+}
+
+void NesMapper::mapper94_write(uint16_t, uint8_t value) {
+    set_prg_16(0x8000, (value >> 2) & 0x07);
+}
+
+void NesMapper::mapper95_nametable() {
+    if (!ppu_) return;
+    switch (regs_[1] + (regs_[2] << 1)) {
+        case 0: ppu_->mirror = NesPpu::Low; break;
+        case 1: ppu_->mirror = NesPpu::Horizontal; break;
+        case 2: ppu_->mirror = NesPpu::Map95; break;
+        case 3: ppu_->mirror = NesPpu::High; break;
+        default: break;
+    }
+}
+
+void NesMapper::mapper95_write(uint16_t address, uint8_t value) {
+    address &= 0x8001;
+    if (address == 0x8000) {
+        regs_[0] = value & 7;
+        return;
+    }
+    if (address != 0x8001) return;
+    switch (regs_[0]) {
+        case 0:
+            set_chr_2(0x0000, (value >> 1) & 0x1f);
+            regs_[1] = (value >> 5) & 1;
+            mapper95_nametable();
+            break;
+        case 1:
+            set_chr_2(0x0800, (value >> 1) & 0x1f);
+            regs_[2] = (value >> 5) & 1;
+            mapper95_nametable();
+            break;
+        case 2: set_chr_1(0x1000, value & 0x3f); break;
+        case 3: set_chr_1(0x1400, value & 0x3f); break;
+        case 4: set_chr_1(0x1800, value & 0x3f); break;
+        case 5: set_chr_1(0x1c00, value & 0x3f); break;
+        case 6: set_prg_8(0x8000, value & 0x0f); break;
+        case 7: set_prg_8(0xa000, value & 0x0f); break;
+        default: break;
+    }
+}
+
+void NesMapper::mapper113_write(uint16_t address, uint8_t value) {
+    if ((address & 0xe100) == 0x4100) {
+        if (ppu_) ppu_->mirror = (value & 0x80) ? NesPpu::Horizontal : NesPpu::Vertical;
+        set_prg_32((value >> 3) & 7);
+        set_chr_8((value & 7) | ((value >> 3) & 8));
+    }
+}
+
+void NesMapper::mapper180_write(uint16_t, uint8_t value) { set_prg_16(0xc000, value & 0x07); }
+
+void NesMapper::mapper184_write(uint16_t, uint8_t value) {
+    set_chr_4(0x0000, value & 0x07);
+    set_chr_4(0x1000, 4 | ((value >> 4) & 0x07));
 }
 
 void NesMapper::mapper185_write(uint16_t, uint8_t value) {
@@ -411,6 +612,66 @@ void NesMapper::mapper206_write(uint16_t address, uint8_t value) {
     }
 }
 
+void NesMapper::mapper_mmc6_write(uint16_t address, uint8_t value) {
+    address &= 0xe001;
+    switch (address) {
+        case 0x8000:
+            if ((value & 0x40) != (regs_[0] & 0x40)) mapper4_update_prg(value);
+            if ((value & 0x80) != (regs_[0] & 0x80)) mapper4_update_chr(value);
+            prg_ram_enable = (value & 0x20) != 0;
+            regs_[0] = value;
+            break;
+        case 0x8001:
+            dregs_[regs_[0] & 7] = value;
+            mapper4_update_prg(regs_[0]);
+            mapper4_update_chr(regs_[0]);
+            break;
+        case 0xa000:
+            if (ppu_ && ppu_->mirror != NesPpu::FourScreen) {
+                ppu_->mirror = (value & 1) == 0 ? NesPpu::Vertical : NesPpu::Horizontal;
+            }
+            break;
+        case 0xa001:
+            regs_[3] = value;
+            break;
+        case 0xc000:
+            regs_[2] = value;
+            break;
+        case 0xc001:
+            reload_ = true;
+            break;
+        case 0xe000:
+            irq_ena_ = false;
+            if (irq_) irq_(IrqLine::Clear);
+            break;
+        case 0xe001:
+            irq_ena_ = true;
+            break;
+        default:
+            break;
+    }
+}
+
+uint8_t NesMapper::mapper_mmc6_ram_read(uint16_t address) const {
+    if (!prg_ram_enable || (regs_[3] & 0xa0) == 0) return uint8_t(address & 0xff);
+    if (address <= 0x6fff) return uint8_t(address & 0xff);
+    if (!cpu_mem_) return 0;
+    if ((address & 0x0200) == 0) {
+        return (regs_[3] & 0x20) ? cpu_mem_[0x7000 + (address & 0x1ff)] : 0;
+    }
+    return (regs_[3] & 0x80) ? cpu_mem_[0x7200 + (address & 0x1ff)] : 0;
+}
+
+void NesMapper::mapper_mmc6_ram_write(uint16_t address, uint8_t value) {
+    if (!prg_ram_enable || !cpu_mem_) return;
+    if (address <= 0x6fff) return;
+    if ((address & 0x0200) == 0) {
+        if ((regs_[3] & 0x30) == 0x30) cpu_mem_[0x7000 + (address & 0x1ff)] = value;
+        return;
+    }
+    if ((regs_[3] & 0xc0) == 0xc0) cpu_mem_[0x7200 + (address & 0x1ff)] = value;
+}
+
 bool NesMapper::set_mapper(int mapper_num, int sub) {
     mapper = mapper_num;
     submapper = sub;
@@ -435,7 +696,13 @@ bool NesMapper::set_mapper(int mapper_num, int sub) {
             write_rom_ = &NesMapper::mapper3_write;
             break;
         case 4:
-            write_rom_ = &NesMapper::mapper4_write;
+            if (sub == 1) {
+                read_prg_ram_ = &NesMapper::mapper_mmc6_ram_read;
+                write_prg_ram_ = &NesMapper::mapper_mmc6_ram_write;
+                write_rom_ = &NesMapper::mapper_mmc6_write;
+            } else {
+                write_rom_ = &NesMapper::mapper4_write;
+            }
             line_ack_ = &NesMapper::mapper4_line;
             break;
         case 7:
@@ -452,14 +719,59 @@ bool NesMapper::set_mapper(int mapper_num, int sub) {
         case 11:
             write_rom_ = &NesMapper::mapper11_write;
             break;
+        case 13:
+            write_rom_ = &NesMapper::mapper13_write;
+            if (ppu_) ppu_->write_chr = true;
+            break;
+        case 15:
+            write_rom_ = &NesMapper::mapper15_write;
+            break;
+        case 34:
+            write_rom_ = &NesMapper::mapper34_write;
+            write_prg_ram_ = &NesMapper::mapper34_write;
+            break;
         case 66:
             write_rom_ = &NesMapper::mapper66_write;
+            break;
+        case 68:
+            write_rom_ = &NesMapper::mapper68_write;
+            break;
+        case 70:
+            write_rom_ = &NesMapper::mapper70_write;
             break;
         case 71:
             write_rom_ = &NesMapper::mapper71_write;
             break;
+        case 76:
+            write_rom_ = &NesMapper::mapper76_write;
+            break;
+        case 79:
+        case 146:
+            write_expansion_ = &NesMapper::mapper79_write;
+            break;
         case 87:
             write_prg_ram_ = &NesMapper::mapper87_write;
+            break;
+        case 88:
+            write_rom_ = &NesMapper::mapper88_write;
+            break;
+        case 93:
+            write_rom_ = &NesMapper::mapper93_write;
+            break;
+        case 94:
+            write_rom_ = &NesMapper::mapper94_write;
+            break;
+        case 95:
+            write_rom_ = &NesMapper::mapper95_write;
+            break;
+        case 113:
+            write_expansion_ = &NesMapper::mapper113_write;
+            break;
+        case 180:
+            write_rom_ = &NesMapper::mapper180_write;
+            break;
+        case 184:
+            write_prg_ram_ = &NesMapper::mapper184_write;
             break;
         case 185:
             write_rom_ = &NesMapper::mapper185_write;
@@ -487,6 +799,7 @@ void NesMapper::reset() {
     regs_.fill(0);
     chr_map[0] = 0;
     chr_map[1] = 1;
+    chr_extra_ena_ = false;
     switch (mapper) {
         case 1:
             prg_ram_writable = true;
@@ -495,6 +808,16 @@ void NesMapper::reset() {
             set_prg_16(0xc000, last_prg - 1);
             break;
         case 2:
+        case 70:
+        case 76:
+        case 79:
+        case 88:
+        case 93:
+        case 94:
+        case 95:
+        case 146:
+        case 180:
+        case 206:
             set_prg_16(0x8000, 0);
             set_prg_16(0xc000, last_prg - 1);
             break;
@@ -513,6 +836,8 @@ void NesMapper::reset() {
             set_prg_16(0xc000, last_prg - 1);
             break;
         case 7:
+        case 15:
+        case 184:
             set_prg_32(0);
             break;
         case 9:
@@ -529,16 +854,25 @@ void NesMapper::reset() {
             set_prg_32(0);
             if (last_chr != 0) set_chr_8(0);
             break;
+        case 34:
+            regs_[0] = 0;
+            regs_[1] = 0;
+            regs_[2] = 1;
+            prg_ram_enable = true;
+            prg_ram_writable = true;
+            set_prg_32(last_prg >> 1);
+            break;
         case 66:
             set_prg_32(0);
             if (last_chr != 0) set_chr_8(0);
             break;
-        case 71:
-            if (last_prg > 0) set_prg_16(0xc000, last_prg - 1);
-            break;
-        case 206:
+        case 68:
             set_prg_16(0x8000, 0);
             set_prg_16(0xc000, last_prg - 1);
+            prg_ram_writable = true;
+            break;
+        case 71:
+            if (last_prg > 0) set_prg_16(0xc000, last_prg - 1);
             break;
         default:
             break;

@@ -1,6 +1,8 @@
 // Minimal self contained checks for the ported components.
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -339,9 +341,9 @@ void test_m68000_interrupt() {
 
 std::vector<uint8_t> m6502_memory;
 
-dsp::M6502 make_m6502() {
+dsp::M6502 make_m6502(dsp::M6502::Type type = dsp::M6502::Type::Nmos) {
     m6502_memory.assign(0x10000, 0);
-    dsp::M6502 cpu(1789772);
+    dsp::M6502 cpu(1789772, type);
     cpu.set_memory_handlers([](uint16_t address) { return m6502_memory[address]; },
                             [](uint16_t address, uint8_t value) { m6502_memory[address] = value; });
     return cpu;
@@ -410,6 +412,49 @@ void test_m6502_pushed_flags() {
     cpu.run(60);
     check((m6502_memory[0x30] & 0x30) == 0x20,
           "an interrupt pushes the flags with the break bit clear");
+}
+
+void test_m6502_nes_decimal_and_unofficial() {
+    dsp::M6502 nmos = make_m6502();
+    // sed / clc / lda #$09 / adc #$01
+    load_6502(0x1000, {0xf8, 0x18, 0xa9, 0x09, 0x69, 0x01, 0x4c, 0x06, 0x10});
+    nmos.reset();
+    nmos.run(12);
+    check(nmos.a == 0x10, "NMOS ADC uses decimal mode after SED");
+
+    dsp::M6502 nes = make_m6502(dsp::M6502::Type::Nes);
+    load_6502(0x1000, {0xf8, 0x18, 0xa9, 0x09, 0x69, 0x01, 0x4c, 0x06, 0x10});
+    nes.reset();
+    nes.run(12);
+    check(nes.a == 0x0a, "the 2A03 ignores decimal mode on ADC");
+
+    dsp::M6502 slo = make_m6502();
+    m6502_memory[0x20] = 0x01;
+    // lda #$80 / slo $20 / jmp *
+    load_6502(0x1000, {0xa9, 0x80, 0x07, 0x20, 0x4c, 0x04, 0x10});
+    slo.reset();
+    slo.run(12);
+    check(m6502_memory[0x20] == 0x02, "SLO shifts the memory byte");
+    check(slo.a == 0x82, "SLO ORs the shifted byte into A");
+    check(slo.p.c == false, "SLO copies the old high bit into C");
+
+    dsp::M6502 lax = make_m6502();
+    m6502_memory[0x20] = 0x5a;
+    // lax $20 / jmp *
+    load_6502(0x1000, {0xa7, 0x20, 0x4c, 0x02, 0x10});
+    lax.reset();
+    lax.run(8);
+    check(lax.a == 0x5a && lax.x == 0x5a, "LAX loads A and X from memory");
+
+    dsp::M6502 dcp = make_m6502();
+    m6502_memory[0x20] = 0x10;
+    // lda #$0f / dcp $20,x / jmp *   (X starts at 0)
+    load_6502(0x1000, {0xa9, 0x0f, 0xd7, 0x20, 0x4c, 0x04, 0x10});
+    dcp.reset();
+    dcp.run(12);
+    check(m6502_memory[0x20] == 0x0f, "DCP decrements the memory byte");
+    check(dcp.p.z, "DCP compares A with the decremented byte");
+    check(dcp.p.c, "DCP sets carry when A >= memory");
 }
 
 void test_slapstic() {
@@ -935,6 +980,119 @@ void test_nes_unsupported_mapper() {
     check(error.find("mapper") != std::string::npos, "the error names the mapper");
 }
 
+std::vector<uint8_t> make_ines(int mapper, int prg_banks, int chr_banks, int submapper = 0) {
+    std::vector<uint8_t> rom(16 + size_t(prg_banks) * 0x4000 + size_t(chr_banks) * 0x2000, 0);
+    rom[0] = 'N';
+    rom[1] = 'E';
+    rom[2] = 'S';
+    rom[3] = 0x1a;
+    rom[4] = uint8_t(prg_banks);
+    rom[5] = uint8_t(chr_banks);
+    rom[6] = uint8_t((mapper & 0x0f) << 4);
+    if (submapper != 0) {
+        rom[7] = uint8_t(0x08 | (mapper & 0xf0));
+        rom[8] = uint8_t((submapper & 0x0f) << 4);
+    } else {
+        rom[7] = uint8_t(mapper & 0xf0);
+    }
+    const size_t last = 16 + size_t(prg_banks - 1) * 0x4000;
+    rom[last + 0x3ffc] = 0x00;
+    rom[last + 0x3ffd] = 0xc0;
+    rom[last] = 0x4c;  // JMP $C000
+    rom[last + 1] = 0x00;
+    rom[last + 2] = 0xc0;
+    return rom;
+}
+
+void ppu_set_address(dsp::Nes& nes, uint16_t address) {
+    nes.debug_read(0x2002);
+    nes.debug_write(0x2006, uint8_t(address >> 8));
+    nes.debug_write(0x2006, uint8_t(address));
+}
+
+uint8_t ppu_read_byte(dsp::Nes& nes, uint16_t address) {
+    ppu_set_address(nes, address);
+    nes.debug_read(0x2007);
+    return nes.debug_read(0x2007);
+}
+
+void ppu_write_byte(dsp::Nes& nes, uint16_t address, uint8_t value) {
+    ppu_set_address(nes, address);
+    nes.debug_write(0x2007, value);
+}
+
+void test_nes_simple_mappers() {
+    std::string error;
+
+    auto uxrom = make_ines(2, 2, 0);
+    uxrom[16] = 0xaa;
+    uxrom[16 + 0x4000] = 0xbb;
+    dsp::Nes mapper2;
+    check(mapper2.load_ines(uxrom, &error), "a mapper 2 iNES image loads");
+    check(mapper2.debug_read(0x8000) == 0xaa, "UxROM maps PRG bank 0 at $8000");
+    mapper2.debug_write(0x8000, 1);
+    check(mapper2.debug_read(0x8000) == 0xbb, "UxROM switches the $8000 bank");
+    check(mapper2.debug_read(0xc000) == 0xbb, "UxROM keeps the last bank at $C000");
+
+    dsp::Nes mapper13;
+    check(mapper13.load_ines(make_ines(13, 1, 0), &error), "a mapper 13 iNES image loads");
+    ppu_write_byte(mapper13, 0x1000, 0x11);
+    mapper13.debug_write(0x8000, 2);
+    ppu_write_byte(mapper13, 0x1000, 0x22);
+    mapper13.debug_write(0x8000, 1);
+    check(ppu_read_byte(mapper13, 0x1000) == 0x11, "CPROM bank 1 keeps its CHR RAM");
+    mapper13.debug_write(0x8000, 2);
+    check(ppu_read_byte(mapper13, 0x1000) == 0x22, "CPROM switches the $1000 CHR page");
+
+    auto nina = make_ines(79, 2, 2);
+    nina[16] = 0x11;
+    nina[16 + 0x4000] = 0x22;
+    nina[16 + 0x8000] = 0xa0;               // CHR bank 0
+    nina[16 + 0x8000 + 0x2000] = 0xa1;      // CHR bank 1
+    dsp::Nes mapper79;
+    check(mapper79.load_ines(nina, &error), "a mapper 79 iNES image loads");
+    mapper79.debug_write(0x4100, 0x09);  // PRG bank 1, CHR bank 1
+    check(mapper79.debug_read(0x8000) == 0x22, "NINA-03 switches 32K PRG from $4100");
+    check(ppu_read_byte(mapper79, 0x0000) == 0xa1, "NINA-03 switches 8K CHR from $4100");
+
+    dsp::Nes mmc3;
+    check(mmc3.load_ines(make_ines(4, 2, 1), &error), "a mapper 4 iNES image loads");
+    mmc3.debug_write(0x6000, 0x5a);
+    check(mmc3.debug_read(0x6000) == 0x5a, "MMC3 PRG-RAM at $6000 is writable");
+
+    dsp::Nes mmc6;
+    check(mmc6.load_ines(make_ines(4, 2, 1, 1), &error), "MMC6 (mapper 4 submapper 1) loads");
+    mmc6.debug_write(0x6000, 0x5a);
+    check(mmc6.debug_read(0x6000) == 0x00, "MMC6 $6000-$6FFF stays open bus");
+    mmc6.debug_write(0x8000, 0x20);
+    mmc6.debug_write(0xa001, 0xf0);
+    mmc6.debug_write(0x7000, 0xa5);
+    mmc6.debug_write(0x7200, 0x5a);
+    check(mmc6.debug_read(0x7000) == 0xa5, "MMC6 bank 0 PRG-RAM is at $7000");
+    check(mmc6.debug_read(0x7200) == 0x5a, "MMC6 bank 1 PRG-RAM is at $7200");
+
+    const int extra[] = {15, 34, 68, 70, 76, 88, 93, 94, 95, 113, 180, 184};
+    for (int mapper : extra) {
+        dsp::Nes nes;
+        check(nes.load_ines(make_ines(mapper, 2, 2), &error),
+              ("mapper " + std::to_string(mapper) + " loads").c_str());
+        check(nes.debug_mapper() == mapper,
+              ("mapper " + std::to_string(mapper) + " is selected").c_str());
+    }
+}
+
+void test_nes_nestest_if_present() {
+    std::ifstream in("/tmp/nestest.nes", std::ios::binary);
+    if (!in) return;
+    std::vector<uint8_t> rom((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    dsp::Nes nes;
+    std::string error;
+    check(nes.load_ines(rom, &error), "nestest.nes loads");
+    nes.debug_set_pc(0xc000);
+    for (int frame = 0; frame < 90; ++frame) nes.run_frame();
+    check(nes.debug_read(0x02) == 0x00, "nestest reports no failed opcode in $02");
+}
+
 }  // namespace
 
 int main() {
@@ -955,6 +1113,7 @@ int main() {
     test_m6502_arithmetic();
     test_m6502_stack_and_interrupts();
     test_m6502_pushed_flags();
+    test_m6502_nes_decimal_and_unofficial();
     test_slapstic();
     test_ym2151();
     test_pokey();
@@ -974,6 +1133,8 @@ int main() {
     test_nes_apu_status();
     test_nes_ines_and_memory();
     test_nes_unsupported_mapper();
+    test_nes_simple_mappers();
+    test_nes_nestest_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

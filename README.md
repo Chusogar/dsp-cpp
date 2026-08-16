@@ -38,7 +38,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Tape player | `src/misc/tap_tzx.pas` | `.tap` blocks and `.tzx` images (turbo, pure tone/data, direct recording, pauses, loops), hooked to the ROM loader |
 | NES PPU | `src/consolas/nes_ppu.pas` | 2C02: nametables, sprites, loopy scroll, YUV palette |
 | NES APU | `src/cpu/n2a03.pas` | 2A03 squares/triangle/noise/DPCM, resampled to 44100 Hz |
-| NES mappers | `src/consolas/nes_mappers.pas` | 0, 1 (MMC1), 2, 3, 4 (MMC3), 7, 9, 10, 11, 66, 71, 87, 185, 206 |
+| NES mappers | `src/consolas/nes_mappers.pas` | 0, 1 (MMC1), 2, 3, 4 (MMC3/MMC6), 7, 9–11, 13, 15, 34, 66, 68, 70, 71, 76, 79/146, 87, 88, 93–95, 113, 180, 184, 185, 206 |
 | NES driver | `src/consolas/nes.pas` | NTSC 256×240, iNES carts (plain or zipped), two controllers |
 | Front end | `src/misc/main_engine.pas` | SDL2 window, texture, audio queue, keyboard |
 
@@ -158,11 +158,14 @@ NTSC NES, ported from `nes.pas`. Give it an iNES (`.nes`) ROM, plain or inside a
 ./build/dsp /path/to/game.nes
 ```
 
-Mappers 0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM), 4 (MMC3), 7 (AxROM), 9/10 (MMC2/4),
-11, 66, 71, 87, 185 and 206 are implemented. CHR-RAM carts (header CHR = 0) work.
-Player 1 uses the arrows plus Ctrl/Alt for A/B, `1` for Start and `5` for Select
-(the arcade coin button). There is no BIOS; the CPU starts at the cartridge reset
-vector.
+The 2A03 CPU ignores decimal mode and implements the unofficial opcodes from
+`m6502.pas`. Mappers 0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM), 4 (MMC3, MMC6 as
+NES 2.0 submapper 1), 7 (AxROM), 9/10 (MMC2/4), 11, 13, 15, 34, 66, 68, 70, 71,
+76, 79/146, 87, 88, 93, 94, 95, 113, 180, 184, 185 and 206 are implemented.
+CHR-RAM carts (header CHR = 0) work. Player 1 uses the arrows plus Ctrl/Alt for
+A/B, `1` for Start and `5` for Select (the arcade coin button). There is no BIOS;
+the CPU starts at the cartridge reset vector. IRQ-heavy boards (VRC, FME-7, …)
+are still rejected at load time.
 
 ### Controls
 

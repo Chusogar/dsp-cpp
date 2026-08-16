@@ -50,6 +50,7 @@ public:
     uint8_t debug_read(uint16_t address) { return read_byte(address); }
     void debug_write(uint16_t address, uint8_t value) { write_byte(address, value); }
     uint16_t debug_pc() const { return cpu_.pc(); }
+    void debug_set_pc(uint16_t value) { cpu_.set_pc(value); }
     int debug_mapper() const { return mapper_.mapper; }
     uint8_t debug_ppu_status() const { return ppu_.status; }
 
@@ -60,7 +61,7 @@ private:
     void run_cpu(double cycles);
     void apply_crc_patches(uint32_t crc, uint32_t chr_crc, int& mapper, int& submapper);
 
-    M6502 cpu_;
+    M6502 cpu_{kClock, M6502::Type::Nes};
     NesPpu ppu_;
     NesApu apu_;
     NesMapper mapper_;

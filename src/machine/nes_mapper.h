@@ -82,11 +82,29 @@ private:
     void mapper9_ppu(uint16_t address);
     void mapper10_write(uint16_t address, uint8_t value);
     void mapper11_write(uint16_t address, uint8_t value);
+    void mapper13_write(uint16_t address, uint8_t value);
+    void mapper15_write(uint16_t address, uint8_t value);
+    void mapper34_write(uint16_t address, uint8_t value);
     void mapper66_write(uint16_t address, uint8_t value);
+    void mapper68_write(uint16_t address, uint8_t value);
+    void mapper70_write(uint16_t address, uint8_t value);
     void mapper71_write(uint16_t address, uint8_t value);
+    void mapper76_write(uint16_t address, uint8_t value);
+    void mapper79_write(uint16_t address, uint8_t value);
     void mapper87_write(uint16_t address, uint8_t value);
+    void mapper88_write(uint16_t address, uint8_t value);
+    void mapper93_write(uint16_t address, uint8_t value);
+    void mapper94_write(uint16_t address, uint8_t value);
+    void mapper95_write(uint16_t address, uint8_t value);
+    void mapper113_write(uint16_t address, uint8_t value);
+    void mapper180_write(uint16_t address, uint8_t value);
+    void mapper184_write(uint16_t address, uint8_t value);
     void mapper185_write(uint16_t address, uint8_t value);
     void mapper206_write(uint16_t address, uint8_t value);
+    void mapper_mmc6_write(uint16_t address, uint8_t value);
+    uint8_t mapper_mmc6_ram_read(uint16_t address) const;
+    void mapper_mmc6_ram_write(uint16_t address, uint8_t value);
+    void mapper95_nametable();
 
     uint8_t* cpu_mem_ = nullptr;
     NesPpu* ppu_ = nullptr;
@@ -110,6 +128,7 @@ private:
     int counter_ = 0;
     bool irq_ena_ = false;
     bool reload_ = false;
+    bool chr_extra_ena_ = false;
 };
 
 }  // namespace dsp

@@ -39,7 +39,7 @@ bool read_plain_or_zip_file(const std::string& path, std::vector<uint8_t>& data,
 
 }  // namespace
 
-Nes::Nes() : cpu_(kClock), apu_(kClock) {
+Nes::Nes() : apu_(kClock) {
     cpu_.set_memory_handlers([this](uint16_t a) { return read_byte(a); },
                              [this](uint16_t a, uint8_t v) { write_byte(a, v); });
     cpu_.set_cycle_handler([this](int cycles) { on_cpu_cycles(cycles); });

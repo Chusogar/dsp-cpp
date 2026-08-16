@@ -8,7 +8,8 @@
 
 namespace dsp {
 
-// MOS 6502, ported from m6502.pas (NMOS variant used by the Atari sound boards).
+// MOS 6502, ported from m6502.pas. Type::Nmos is the arcade variant (BCD on);
+// Type::Nes is the 2A03 (decimal mode ignored, same undocumented opcodes).
 class M6502 {
 public:
     using ReadHandler = std::function<uint8_t(uint16_t)>;
@@ -20,7 +21,9 @@ public:
         bool dec = false, irq_disable = false, z = false, c = false;
     };
 
-    explicit M6502(uint32_t clock);
+    enum class Type { Nmos, Nes };
+
+    explicit M6502(uint32_t clock, Type type = Type::Nmos);
 
     void set_memory_handlers(ReadHandler read, WriteHandler write);
     void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
@@ -63,6 +66,7 @@ private:
     void branch(bool condition, uint8_t offset);
 
     uint32_t clock_;
+    Type type_ = Type::Nmos;
     uint16_t pc_ = 0;
     uint16_t address_ = 0;  // effective address of the current instruction
     int extra_cycles_ = 0;
