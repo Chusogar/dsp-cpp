@@ -216,54 +216,52 @@ bool AmstradCpc::load_media(const std::string& path,
 bool AmstradCpc::load_sna(const std::string& path,
                           std::string* error)
 {
+    // CPC .SNA loader modelled on abrir_sna_cpc() from dsp-emulator
+    // (src/misc/snapshot.pas) and the official CPC SNA format.
     std::vector<uint8_t> buf;
 
     if (!load_binary_file(path, buf)) {
-        if (error)
-            *error = "cannot open SNA: " + path;
+        if (error) *error = "cannot open SNA: " + path;
         return false;
     }
 
     if (buf.size() < 0x100) {
-        if (error)
-            *error = "invalid SNA";
+        if (error) *error = "invalid SNA";
         return false;
     }
 
     const uint8_t* h = buf.data();
 
     if (std::memcmp(h, "MV - SNA", 8) != 0) {
-        if (error)
-            *error = "not a CPC snapshot";
+        if (error) *error = "not a CPC snapshot";
         return false;
     }
 
     const uint8_t version = h[0x10];
-
-    if ((version < 1) || (version > 3)) {
-        if (error)
-            *error = "unsupported CPC SNA version";
+    if (version < 1 || version > 3) {
+        if (error) *error = "unsupported CPC SNA version";
         return false;
     }
 
+    // Offset 0x6b: memory dump size in KB (64 or 128). Version 3 can store
+    // compressed chunks with mem_size==0; those are not supported yet.
     const uint16_t mem_kb = rd16le(h + 0x6b);
     const size_t mem_size = size_t(mem_kb) * 1024;
 
-    if (buf.size() < (0x100 + mem_size)) {
-        if (error)
-            *error = "truncated snapshot";
+    if (mem_kb != 0 && mem_kb != 64 && mem_kb != 128) {
+        if (error) *error = "unsupported SNA memory size";
         return false;
     }
-
+    if (mem_kb != 0 && buf.size() < (0x100 + mem_size)) {
+        if (error) *error = "truncated snapshot";
+        return false;
+    }
     if (mem_size > ram_.size()) {
-        if (error)
-            *error = "snapshot requires more RAM than current CPC model";
+        if (error) *error = "snapshot requires more RAM than current CPC model";
         return false;
     }
 
-    //
-    // Reinicialización parcial.
-    //
+    // Partial re-init (keep ROMs and model).
     cpu_.reset();
     ay_.reset();
     ppi_.reset();
@@ -272,215 +270,177 @@ bool AmstradCpc::load_sna(const std::string& path,
     ga_ = GateArray{};
     crt_ = Crtc{};
     ppi_state_ = Ppi{};
-
     ppi_state_.keyb_val.fill(0xff);
 
     irq_asserted_ = false;
     iff1_before_ = false;
     mod_address_ = false;
-
     cpc_line_ = 0;
 
     audio_.clear();
     audio_accumulator_ = 0;
     tape_accumulator_ = 0;
 
-    //
-    // ------------------------------
-    // Z80
-    // ------------------------------
-    //
+    // ------------------------------------------------------------------
+    // Z80 registers (offsets 0x11..0x2d)
+    // ------------------------------------------------------------------
     cpu_.f = h[0x11];
     cpu_.a = h[0x12];
-
     cpu_.c = h[0x13];
     cpu_.b = h[0x14];
-
     cpu_.e = h[0x15];
     cpu_.d = h[0x16];
-
     cpu_.l = h[0x17];
     cpu_.h = h[0x18];
-
     cpu_.r = h[0x19];
     cpu_.i = h[0x1a];
-
     cpu_.iff1 = (h[0x1b] & 1) != 0;
     cpu_.iff2 = (h[0x1c] & 1) != 0;
-
     cpu_.ix = rd16le(h + 0x1d);
     cpu_.iy = rd16le(h + 0x1f);
-
     cpu_.sp = rd16le(h + 0x21);
-
     cpu_.set_pc(rd16le(h + 0x23));
-
     cpu_.im = h[0x25] & 3;
-
     cpu_.f2 = h[0x26];
     cpu_.a2 = h[0x27];
-
     cpu_.c2 = h[0x28];
     cpu_.b2 = h[0x29];
-
     cpu_.e2 = h[0x2a];
     cpu_.d2 = h[0x2b];
-
     cpu_.l2 = h[0x2c];
     cpu_.h2 = h[0x2d];
-
     cpu_.halted = false;
-
     cpu_.set_irq(IrqLine::Clear);
-
     iff1_before_ = cpu_.iff1;
 
-    //
-    // ------------------------------
-    // Gate Array
-    // ------------------------------
-    //
+    // ------------------------------------------------------------------
+    // Gate Array: pen + palette, then multi-config via write_ga()
+    // (matches write_ga(0, $80 + (ga_conf and $3f)) in Pascal)
+    // ------------------------------------------------------------------
     ga_.pen = h[0x2e] & 0x1f;
-
     for (int i = 0; i < 17; i++) {
         ga_.pal[size_t(i)] = h[0x2f + i] & 0x1f;
     }
 
     const uint8_t ga_ctrl = h[0x40];
-
-    ga_.video_mode = ga_ctrl & 3;
-    ga_.nvideo = ga_.video_mode;
-
-    ga_.rom_low = (ga_ctrl & 0x04) == 0;
-    ga_.rom_high = (ga_ctrl & 0x08) == 0;
-
+    // Force the GA multi-config path (bits 7-6 = 10) without resetting IRQ
+    // counter: video mode + ROM enables.
+    write_ga(uint8_t(0x80 | (ga_ctrl & 0x3f)));
+    // write_ga may clear lines_count on bit4; restore defaults then v3 fields.
     ga_.change_video = false;
     ga_.lines_count = 0;
     ga_.lines_sync = 0;
+    // Ensure video_mode/nvideo/rom flags match the snapshot even if write_ga
+    // deferred the mode change.
+    ga_.video_mode = ga_ctrl & 3;
+    ga_.nvideo = ga_.video_mode;
+    ga_.rom_low = (ga_ctrl & 0x04) == 0;
+    ga_.rom_high = (ga_ctrl & 0x08) == 0;
 
-    //
-    // ------------------------------
-    // Banking CPC6128
-    // ------------------------------
-    //
-    ga_.marco = {0,1,2,3};
+    // ------------------------------------------------------------------
+    // RAM banking (offset 0x41) — write_ram() in Pascal
+    // ------------------------------------------------------------------
+    ga_.marco = {0, 1, 2, 3};
     ga_.marco_latch = 0;
+    write_ram_banking(uint8_t(0xc0 | (h[0x41] & 7)));
 
-    if (model_ == Model::CPC6128) {
-        write_ram_banking(uint8_t(0xc0 | (h[0x41] & 7)));
-    }
-
-    //
-    // ------------------------------
-    // CRTC
-    // ------------------------------
-    //
+    // ------------------------------------------------------------------
+    // CRTC (index 0x42, regs 0x43..0x54)
+    // ------------------------------------------------------------------
     crt_ = Crtc{};
-
     for (int r = 0; r < 18; r++) {
         crt_.reg = uint8_t(r);
         write_crtc(1, h[0x43 + r]);
     }
-
     crt_.reg = h[0x42] & 0x1f;
-
+    // Derived fields (same as abrir_sna_cpc)
+    if (crt_.regs[1] < 50) {
+        crt_.pixel_visible = uint16_t(crt_.regs[1] * 8);
+    } else {
+        crt_.pixel_visible = uint16_t(49 * 8);
+    }
+    crt_.borde = uint16_t((kScreenWidth - crt_.pixel_visible) / 2);
+    crt_.char_total = uint16_t((crt_.regs[0] + 1) * 8);
     crt_.line_address =
-        uint16_t((uint16_t(crt_.regs[12]) << 8) |
-                  crt_.regs[13]);
+        uint16_t((uint16_t(crt_.regs[12]) << 8) | crt_.regs[13]);
+    crt_.state_refresh_address = crt_.line_address;
+    crt_.end_of_line_address = crt_.line_address;
 
-    crt_.state_refresh_address =
-        crt_.line_address;
-
-    crt_.end_of_line_address =
-        crt_.line_address;
-
-    //
-    // ------------------------------
-    // ROM seleccionada
-    // ------------------------------
-    //
+    // ------------------------------------------------------------------
+    // Upper ROM select (offset 0x55) — cpc_outbyte($df00, rom_config)
+    // ------------------------------------------------------------------
     {
         const uint8_t selected = h[0x55] & 0x0f;
-
-        ga_.rom_selected =
-            rom_enabled_[selected]
-                ? selected
-                : 0;
+        ga_.rom_selected = rom_enabled_[selected] ? selected : 0;
     }
 
-    //
-    // ------------------------------
-    // PPI 8255
-    // ------------------------------
-    //
-    ppi_state_.port_a_read_latch  = h[0x56];
+    // ------------------------------------------------------------------
+    // PPI 8255 (A=0x56, B=0x57, C=0x58, control=0x59)
+    // Pascal: port_a latch, port_c_write(ppi_c), out $f782,control
+    // ------------------------------------------------------------------
+    ppi_state_.port_a_read_latch = h[0x56];
     ppi_state_.port_a_write_latch = h[0x56];
 
-    ppi_state_.port_c = h[0x58];
-
-    ppi_state_.keyb_line =
-        h[0x58] & 0x0f;
-
-    ppi_state_.tape_motor =
-        (h[0x58] & 0x10) != 0;
-
-    ppi_state_.ay_control =
-        uint8_t((h[0x58] >> 6) & 0x03);
-
+    // Control word first so subsequent port writes go to the right direction.
     ppi_.write(3, h[0x59]);
     ppi_.write(0, h[0x56]);
     ppi_.write(1, h[0x57]);
-    ppi_.write(2, h[0x58]);
+    // Use the real port_c path so keyb_line / tape_motor / ay_control update.
+    port_c_write(h[0x58]);
 
-    //
-    // ------------------------------
-    // AY-3-8912
-    // ------------------------------
-    //
-    // Restauración mínima:
-    // el estado completo depende de la API
-    // interna de AY8910.
-    //
-    ppi_state_.port_a_write_latch = h[0x56];
+    // ------------------------------------------------------------------
+    // AY-3-8912 registers (index 0x5a, data 0x5b..0x6a)
+    // Pascal: for f:=0 to $f do set_reg(f, ay_regs[f]); control(ay_control)
+    // ------------------------------------------------------------------
+    for (int reg = 0; reg < 16; reg++) {
+        ay_.control(uint8_t(reg));
+        ay_.write(h[0x5b + reg]);
+    }
+    ay_.control(h[0x5a] & 0x0f);
+    // Keep PPI AY bus state coherent with the selected register.
+    ppi_state_.ay_control = 3;  // inactive / inactive after restore
     update_ay();
 
-    //
-    // ------------------------------
-    // RAM
-    // ------------------------------
-    //
-    std::fill(ram_.begin(),
-              ram_.end(),
-              0);
+    // ------------------------------------------------------------------
+    // Version 3: GA interrupt state (official SNA offsets)
+    //   0xB2 = GA vsync delay counter (lines_sync)
+    //   0xB3 = GA interrupt scanline counter (lines_count)
+    //   0xB4 = interrupt request flag
+    // Matches abrir_sna_cpc() / cpc_sna.ga_lines_* / irq
+    // ------------------------------------------------------------------
+    if (version == 3) {
+        ga_.lines_sync = h[0xb2];
+        ga_.lines_count = h[0xb3];
+        if (h[0xb4] != 0) {
+            cpu_.set_irq(IrqLine::Assert);
+            irq_asserted_ = true;
+        } else {
+            cpu_.set_irq(IrqLine::Clear);
+            irq_asserted_ = false;
+        }
+    }
 
-    std::memcpy(
-        ram_.data(),
-        buf.data() + 0x100,
-        mem_size);
+    // ------------------------------------------------------------------
+    // RAM dump (linear physical order, same as Caprice / dsp-emulator)
+    // ------------------------------------------------------------------
+    std::fill(ram_.begin(), ram_.end(), 0);
+    if (mem_size > 0) {
+        std::memcpy(ram_.data(), buf.data() + 0x100, mem_size);
+    }
 
-    //
-    // ------------------------------
-    // Estado vídeo
-    // ------------------------------
-    //
+    // ------------------------------------------------------------------
+    // Video frame buffer: fill with border colour
+    // ------------------------------------------------------------------
     build_palette();
+    const uint8_t border_pen = ga_.pal[0x10] & 0x1f;
+    framebuffer_.assign(size_t(kScreenWidth) * kScreenHeight,
+                        palette_[border_pen]);
 
-    const uint8_t border_pen =
-        ga_.pal[0x10] & 0x1f;
-
-    framebuffer_.assign(
-        size_t(kScreenWidth) * kScreenHeight,
-        palette_[border_pen]);
-
-    std::printf(
-        "Loaded CPC SNA '%s' version=%u RAM=%uKB\n",
-        path.c_str(),
-        unsigned(version),
-        unsigned(mem_kb));
+    std::printf("Loaded CPC SNA '%s' version=%u RAM=%uKB\n", path.c_str(),
+                unsigned(version), unsigned(mem_kb));
 
     return true;
 }
-
 
 
 uint8_t& AmstradCpc::ram(int page, uint16_t offset) {
