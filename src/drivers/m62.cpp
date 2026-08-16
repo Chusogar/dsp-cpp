@@ -791,7 +791,7 @@ void IremM62::draw_tile_8(int dest_x, int dest_y, int code, int color, bool flip
                 dest[size_t(py * kWorkWidth + px)] = kTransparent;
                 continue;
             }
-            dest[size_t(py * kWorkWidth + px)] = palette_[size_t((color + pen) & 0x2ff)];
+            dest[size_t(py * kWorkWidth + px)] = palette_[size_t(color + pen)];
         }
     }
 }
@@ -810,7 +810,7 @@ void IremM62::draw_tile_12(int dest_x, int dest_y, int code, int color,
                 dest[size_t(py * kWorkWidth + px)] = kTransparent;
                 continue;
             }
-            dest[size_t(py * kWorkWidth + px)] = palette_[size_t((color + pen) & 0x2ff)];
+            dest[size_t(py * kWorkWidth + px)] = palette_[size_t(color + pen)];
         }
     }
 }
@@ -828,8 +828,8 @@ void IremM62::draw_sprite_tile(int code, int color, bool flip_x, bool flip_y, in
             int source_x = flip_x ? (15 - x) : x;
             uint8_t pen = pixels[source_y * 16 + source_x];
             if (pen == 0) continue;
-            composite_[size_t(dest_y * kWorkWidth + dest_x)] =
-                palette_[size_t((color + pen) & 0x2ff)];
+            // Sprite colour banks live at palette 256+. Do not mask the index to 8 bits.
+            composite_[size_t(dest_y * kWorkWidth + dest_x)] = palette_[size_t(color + pen)];
         }
     }
 }
@@ -973,7 +973,7 @@ void IremM62::update_video_spelunker() {
             for (int column = 0; column < 8; column++) {
                 uint8_t pen = pixels[row * 8 + column];
                 layer1_[size_t((y * 8 + row) * kWorkWidth + x * 8 + column)] =
-                    palette_[size_t((palette_base + pen) & 0x2ff)];
+                    palette_[size_t(palette_base + pen)];
             }
         }
     }
