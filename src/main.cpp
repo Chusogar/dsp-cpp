@@ -18,6 +18,7 @@
 #include "drivers/atari_system1.h"
 #include "drivers/mcr.h"
 #include "drivers/dec0.h"
+#include "drivers/m72.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -52,7 +53,8 @@ void print_supported_emulators() {
         "    bagman, mikie, gauntlet, mrdo, ddragon, ddragon2,\n"
         "    elevator, junglek, indydoom, peter, marble,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
-		"    robocop, baddudes, hippodrm, slyspy, bouldash\n"
+		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
+        "    rtype, hharry, rtype2\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3,\n"
@@ -132,6 +134,9 @@ std::string guess_game(const std::string& rom_path) {
         return "slyspy";
     }
     if (lowered.find("bouldash") != std::string::npos) return "bouldash";
+    if (lowered.find("rtype2") != std::string::npos) return "rtype2";
+    if (lowered.find("hharry") != std::string::npos) return "hharry";
+    if (lowered.find("rtype") != std::string::npos) return "rtype";
     
     
     // Computers
@@ -202,6 +207,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
         return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::SlySpy);
     }
     if (game == "bouldash") return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::BoulderDash);
+    if (game == "rtype") return std::make_unique<dsp::M72>(dsp::M72::Game::Rtype);
+    if (game == "hharry") return std::make_unique<dsp::M72>(dsp::M72::Game::Hharry);
+    if (game == "rtype2") return std::make_unique<dsp::M72>(dsp::M72::Game::Rtype2);
     
 
 	// computers

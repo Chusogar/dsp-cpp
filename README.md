@@ -3,7 +3,8 @@
 C++17 + SDL2 port of [dsp-emulator](https://github.com/leniad/dsp-emulator) (Free Pascal).
 Supported games: **Bagman** (Valadon Automation, 1982), **Mikie** (Konami, 1984),
 **Gauntlet** (Atari, 1985), **Double Dragon** and **Double Dragon II** (Technos, 1987/1988),
-**Elevator Action** and **Jungle King** (Taito, 1983, Taito SJ hardware).
+**Elevator Action** and **Jungle King** (Taito, 1983, Taito SJ hardware),
+and Irem **M72** (**R-Type**, **Hammerin' Harry**, **R-Type II**).
 It also emulates the **ZX Spectrum 48K** home computer (Sinclair, 1982).
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
@@ -33,6 +34,8 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Double Dragon driver | `src/arcade/doubledragon_hw.pas` | Both variants: banked ROM, shared RAM, scroll, sprites, sound CPUs |
 | M6805/M68705 MCU | `src/cpu/m6805.pas` | MC68705P3 protection MCU of Elevator Action |
 | Taito SJ driver | `src/arcade/taitosj_hw.pas` | Main and sound Z80, four AY-3-8910, DAC, MCU handshake, three tile layers with per column scroll, sprites and PROM priorities |
+| NEC V20/V30 CPU | `src/cpu/nec_v20_v30.pas` | R-Type main CPU, 20-bit segmented addressing |
+| M72 driver | `src/arcade/m72_hw.pas` | R-Type, Hammerin' Harry and R-Type II: V30 + Z80, YM2151, tiled FG/BG with priority, sprites |
 | Spectrum ULA | `src/computer/spectrum_hw.pas` | Keyboard matrix, border, one bit beeper, EAR input, contended timing |
 | Spectrum driver | `src/computer/spectrum_hw.pas`, `spectrum_misc.pas` | 48K memory map, display file with attributes and flash, Kempston joystick |
 | Tape player | `src/misc/tap_tzx.pas` | `.tap` blocks and `.tzx` images (turbo, pure tone/data, direct recording, pauses, loops), hooked to the ROM loader |
@@ -68,7 +71,7 @@ holding the individual files:
 ```
 
 The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
-`ddragon2`, `elevator`, `junglek` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
+`ddragon2`, `elevator`, `junglek`, `rtype`, `hharry`, `rtype2` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 (SLAPSTIC 104) and the two player `136041-xxx` set (SLAPSTIC 107).
 
 Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
@@ -78,7 +81,7 @@ Options:
 
 ```
 --game NAME        machine to run: bagman, mikie, gauntlet, ddragon, ddragon2,
-                   elevator, junglek or spectrum48
+                   elevator, junglek, rtype, hharry, rtype2 or spectrum48
 --scale N          window scale factor (default 3)
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
                    mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
@@ -103,6 +106,22 @@ order of the four layers for every priority code.
 ./build/dsp --game elevator /path/to/elevator.zip
 ./build/dsp --game junglek /path/to/junglek.zip
 ```
+
+### Irem M72 (R-Type, Hammerin' Harry, R-Type II)
+
+The board runs an 8 MHz NEC V30, a 3.579545 MHz Z80 with a YM2151, and (on Harry
+and R-Type II) a DAC sample ROM. Video is two 8x8 tilemaps with a per-tile
+priority bit plus 16x16 sprites.
+
+```bash
+./build/dsp --game rtype /path/to/rtype.zip
+./build/dsp --game hharry /path/to/hharry.zip
+./build/dsp --game rtype2 /path/to/rtype2.zip
+```
+
+R-Type has no dedicated sound ROM: the V30 copies the Z80 program into shared
+RAM at `$e0000`. DIP bank 0 is the low byte of the board ID / DSW word
+(`$fdfb` on R-Type).
 
 DIP banks: 0 = A (bonus/finish bonus on bits 0-1, lives on bits 3-4, flip screen on
 bit 6, cabinet on bit 7), 1 = B (coin A and coin B), 2 = C (difficulty or bonus life on
