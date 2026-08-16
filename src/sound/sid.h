@@ -5,7 +5,7 @@
 
 namespace dsp {
 
-struct Sid;
+class Sid;
 struct SidOperator;
 
 using SidOutFn = int8_t (*)(SidOperator&);
@@ -115,8 +115,6 @@ private:
     void init_waveforms(Type type);
     void enve_emu_init(uint32_t update_freq, bool measured);
 
-    Type type_ = Type6581;
-    uint32_t clock_ = 0;
     uint16_t zero16bit_ = 0;
     std::array<uint16_t, 256 * 4> mix16mono_{};
 };

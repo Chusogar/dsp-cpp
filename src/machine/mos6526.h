@@ -56,7 +56,6 @@ private:
     void update_interrupt();
     void clock_pipeline();
 
-    uint32_t clock_ = 0;
     bool tod_stopped_ = true;
     bool irq_ = false;
     bool icr_read_ = false;

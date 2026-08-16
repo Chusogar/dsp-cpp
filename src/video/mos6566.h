@@ -54,7 +54,6 @@ private:
     uint8_t update_mc(uint16_t line);
     void paint_line();
 
-    uint32_t clock_ = 0;
     uint16_t linea_ = 0;
     uint16_t irq_raster_ = 0;
     uint16_t rc_ = 7;

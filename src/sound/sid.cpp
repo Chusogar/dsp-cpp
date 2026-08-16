@@ -20,7 +20,6 @@ constexpr uint8_t kEnveSustain = 8;
 constexpr uint8_t kEnveRelease = 10;
 constexpr uint8_t kEnveSustainDecay = 12;
 constexpr uint8_t kEnveMute = 14;
-constexpr uint8_t kEnveStartShortAttack = 16;
 constexpr uint8_t kEnveShortAttack = 16;
 constexpr uint8_t kEnveAlter = 32;
 constexpr int kAttackTabLen = 255;
@@ -674,7 +673,7 @@ void Sid::enve_emu_init(uint32_t update_freq, bool measured) {
     }
 }
 
-Sid::Sid(uint32_t clock, Type type) : type_(type), clock_(clock) {
+Sid::Sid(uint32_t clock, Type type) {
     const int rev[3] = {2, 1, 0};
     for (int v = 0; v < 3; v++) {
         optr[size_t(v)].chip = this;

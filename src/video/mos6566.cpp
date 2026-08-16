@@ -17,7 +17,8 @@ uint32_t Mos6566::palette_color(int index) {
     return 0xff000000u | uint32_t(rgb);
 }
 
-Mos6566::Mos6566(uint32_t clock) : clock_(clock) {
+Mos6566::Mos6566(uint32_t clock) {
+    (void)clock;
     for (int i = 0; i < 16; i++) palette_[size_t(i)] = palette_color(i);
     for (int v = 0; v < 256; v++) {
         uint16_t exp = 0;

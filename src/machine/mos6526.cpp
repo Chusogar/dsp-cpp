@@ -11,7 +11,7 @@ uint8_t bcd_increment(uint8_t value) {
 
 }  // namespace
 
-Mos6526::Mos6526(uint32_t clock) : clock_(clock) {}
+Mos6526::Mos6526(uint32_t clock) { (void)clock; }
 
 void Mos6526::set_calls(PortRead pa_read, PortRead pb_read, PortWrite pa_write, PortWrite pb_write,
                         IrqCallback irq) {
