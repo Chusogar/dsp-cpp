@@ -1,6 +1,8 @@
 // Minimal self contained checks for the ported components.
 #include <cstdio>
 #include <cstring>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "cpu/hd63701.h"
@@ -9,18 +11,22 @@
 #include "cpu/m6809.h"
 #include "cpu/m68000.h"
 #include "cpu/z80.h"
+#include "drivers/c64.h"
 #include "drivers/spectrum.h"
 #include "machine/bagman_pal.h"
+#include "machine/mos6526.h"
 #include "machine/slapstic.h"
 #include "machine/spectrum_tape.h"
 #include "sound/ay8910.h"
 #include "sound/msm5205.h"
 #include "sound/okim6295.h"
 #include "sound/pokey.h"
+#include "sound/sid.h"
 #include "sound/sn76496.h"
 #include "sound/ym2151.h"
 #include "video/atari_mo.h"
 #include "video/gfx.h"
+#include "video/mos6566.h"
 
 namespace {
 
@@ -863,6 +869,98 @@ void test_spectrum_ula() {
     check(spectrum.io_in(0x001f) == 0x11, "the Kempston joystick answers on A5 low");
 }
 
+void test_c64_cia_timer() {
+    dsp::Mos6526 cia(985248);
+    bool irq = false;
+    cia.set_calls(nullptr, nullptr, nullptr, nullptr,
+                  [&](dsp::IrqLine state) { irq = state == dsp::IrqLine::Assert; });
+    cia.reset();
+    cia.write(0x0d, 0x81);  // enable timer A IRQ
+    cia.write(0x04, 0x20);  // latch lo
+    cia.write(0x05, 0x00);  // latch hi (loads while stopped)
+    cia.write(0x0e, 0x01);  // start timer A
+    cia.sync(200);
+    check(irq, "CIA timer A raises IRQ after the latch expires");
+    const uint8_t icr = cia.read(0x0d);
+    check((icr & 0x01) != 0, "CIA ICR reports timer A");
+}
+
+void test_c64_vic_raster() {
+    dsp::Mos6566 vic(985248);
+    vic.reset();
+    vic.write(0x12, 50);
+    vic.write(0x11, 0x1b);
+    check((vic.read(0x11) & 0x1b) == 0x1b, "VIC $D011 keeps the written control bits");
+    vic.update(50);
+    check(vic.read(0x12) == 50, "VIC $D012 follows the current raster line");
+    check((vic.read(0x11) & 0x80) == 0, "raster MSB is clear on line 50");
+    vic.update(260);
+    check((vic.read(0x11) & 0x80) != 0, "raster MSB is set on line 260");
+}
+
+void test_c64_sid_triangle() {
+    dsp::Sid sid(985248);
+    sid.reset();
+    sid.write(0x00, 0x44);
+    sid.write(0x01, 0x1d);
+    sid.write(0x18, 0x0f);
+    sid.write(0x05, 0x09);
+    sid.write(0x06, 0xf0);
+    sid.write(0x04, 0x11);
+    int nonzero = 0;
+    for (int i = 0; i < 4000; i++) {
+        if (sid.update() != 0) nonzero++;
+    }
+    check(nonzero > 100, "SID triangle write produces a non-silent waveform");
+}
+
+void test_c64_pla_and_keyboard() {
+    auto machine = std::make_unique<dsp::C64>();
+    machine->init_synthetic_roms();
+    check(machine->peek(0xfffc) == 0x00, "PLA mode 7 maps KERNAL at $E000");
+    check(machine->peek(0xfffd) == 0xc0, "KERNAL reset vector is visible");
+    machine->poke(0xd800, 0x0a);
+    check(machine->peek(0xd800) == 0x0a, "writes to $D800 hit colour RAM");
+    machine->poke(0xd020, 0x02);
+    check((machine->peek(0xd020) & 0x0f) == 0x02, "VIC border colour is readable");
+
+    dsp::MachineInputs inputs;
+    inputs.keys[size_t(dsp::Key::A)] = true;
+    machine->set_inputs(inputs);
+    machine->poke(0xdc00, 0xfd);  // select keyboard column 1
+    check((machine->peek(0xdc01) & 0x04) == 0, "A is reported on CIA1 PB bit 2");
+
+    machine->poke(0xc000, 0xa9);
+    machine->poke(0xc001, 0x42);
+    machine->poke(0xc002, 0x8d);
+    machine->poke(0xc003, 0x00);
+    machine->poke(0xc004, 0xc4);
+    machine->poke(0xc005, 0x4c);
+    machine->poke(0xc006, 0x00);
+    machine->poke(0xc007, 0xc0);
+    machine->set_pc(0xc000);
+    for (int i = 0; i < 3; i++) machine->run_frame();
+    check(machine->peek(0xc400) == 0x42, "a poked program can STA into RAM");
+}
+
+void test_c64_prg_media() {
+    auto machine = std::make_unique<dsp::C64>();
+    machine->init_synthetic_roms();
+    const char* path = "/tmp/dsp_c64_test.prg";
+    const uint8_t prg[] = {0x00, 0xc0, 0xee, 0x00, 0xc4, 0x4c, 0x00, 0xc0};
+    std::FILE* f = std::fopen(path, "wb");
+    check(f != nullptr, "can create a temporary PRG");
+    if (f) {
+        std::fwrite(prg, 1, sizeof(prg), f);
+        std::fclose(f);
+    }
+    std::string error;
+    check(machine->load_media(path, &error), "PRG load_media succeeds");
+    machine->set_pc(0xc000);
+    for (int i = 0; i < 5; i++) machine->run_frame();
+    check(machine->peek(0xc400) != 0, "PRG payload runs and increments $C400");
+}
+
 }  // namespace
 
 int main() {
@@ -899,6 +997,11 @@ int main() {
     test_spectrum_tape();
     test_spectrum_tzx();
     test_spectrum_ula();
+    test_c64_cia_timer();
+    test_c64_vic_raster();
+    test_c64_sid_triangle();
+    test_c64_pla_and_keyboard();
+    test_c64_prg_media();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

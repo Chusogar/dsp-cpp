@@ -34,6 +34,7 @@ public:
 
     uint32_t clock() const { return clock_; }
     uint16_t pc() const { return pc_; }
+    void set_pc(uint16_t value) { pc_ = value; }
 
     uint8_t a = 0, x = 0, y = 0, sp = 0xfd;
     Flags p;
