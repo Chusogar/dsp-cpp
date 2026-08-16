@@ -249,6 +249,33 @@ uint32_t rgb4(uint8_t nibble) {
     return value;
 }
 
+// Irem M62 color PROMs are 256x4. Each gun uses a 4-bit resistor network
+// (bit0=2.2k, bit1=1k, bit2=470, bit3=220) with a 470 ohm pulldown, matching
+// MAME m62_v.cpp. Character and sprite palettes are independent; m62_hw.pas
+// incorrectly mixed the character PROM low nibble into every sprite color.
+const std::vector<std::vector<double>>& m62_prom_weights() {
+    static const std::vector<int> resistances = {2200, 1000, 470, 220};
+    static const std::vector<std::vector<double>> weights = compute_resistor_weights(
+        0, 255, -1.0,
+        {{resistances, 470, 0}, {resistances, 470, 0}, {resistances, 470, 0}});
+    return weights;
+}
+
+uint32_t decode_m62_prom_rgb(const std::vector<uint8_t>& prom, int index) {
+    auto bits_at = [&](int offset) {
+        uint8_t data = 0;
+        size_t pos = size_t(index + offset);
+        if (pos < prom.size()) data = prom[pos];
+        return std::vector<int>{(data >> 0) & 1, (data >> 1) & 1, (data >> 2) & 1,
+                                (data >> 3) & 1};
+    };
+    const auto& weights = m62_prom_weights();
+    int red = combine_weights(weights[0], bits_at(0));
+    int green = combine_weights(weights[1], bits_at(0x100));
+    int blue = combine_weights(weights[2], bits_at(0x200));
+    return 0xff000000u | (uint32_t(red) << 16) | (uint32_t(green) << 8) | uint32_t(blue);
+}
+
 }  // namespace
 
 IremM62::IremM62(Game game)
@@ -453,18 +480,8 @@ void IremM62::decode_tiles(const std::vector<uint8_t>& rom, int count) {
 void IremM62::build_palette(const std::vector<uint8_t>& prom) {
     palette_.fill(0xff000000u);
     for (int index = 0; index < 0x100; index++) {
-        uint8_t red = uint8_t(prom.size() > size_t(index) ? prom[size_t(index)] : 0);
-        uint8_t green = uint8_t(prom.size() > size_t(index + 0x100) ? prom[size_t(index + 0x100)] : 0);
-        uint8_t blue = uint8_t(prom.size() > size_t(index + 0x200) ? prom[size_t(index + 0x200)] : 0);
-        palette_[size_t(index)] = 0xff000000u | (rgb4(red) << 16) | (rgb4(green) << 8) | rgb4(blue);
-        uint8_t sred = uint8_t(prom.size() > size_t(index + 0x300) ? prom[size_t(index + 0x300)] : 0);
-        uint8_t sgreen =
-            uint8_t(prom.size() > size_t(index + 0x400) ? prom[size_t(index + 0x400)] : 0);
-        uint8_t sblue = uint8_t(prom.size() > size_t(index + 0x500) ? prom[size_t(index + 0x500)] : 0);
-        // Matches cargar_paleta in m62_hw.pas, including the mixed low nibbles.
-        palette_[size_t(index + 0x100)] = 0xff000000u | (uint32_t((sred & 0x0f) << 4 | (red & 0x0f)) << 16) |
-                                          (uint32_t((sgreen & 0x0f) << 4 | (green & 0x0f)) << 8) |
-                                          uint32_t((sblue & 0x0f) << 4 | (blue & 0x0f));
+        palette_[size_t(index)] = decode_m62_prom_rgb(prom, index);
+        palette_[size_t(index + 0x100)] = decode_m62_prom_rgb(prom, index + 0x300);
     }
 }
 
@@ -478,12 +495,7 @@ void IremM62::build_palette_spl2(const std::vector<uint8_t>& prom) {
             0xff000000u | (rgb4(packed) << 16) | (uint32_t(green) << 8) | rgb4(blue);
     }
     for (int index = 0; index < 0x100; index++) {
-        uint8_t red = uint8_t(prom.size() > size_t(index + 0x400) ? prom[size_t(index + 0x400)] : 0);
-        uint8_t green =
-            uint8_t(prom.size() > size_t(index + 0x500) ? prom[size_t(index + 0x500)] : 0);
-        uint8_t blue = uint8_t(prom.size() > size_t(index + 0x600) ? prom[size_t(index + 0x600)] : 0);
-        palette_[size_t(index + 0x200)] =
-            0xff000000u | (rgb4(red) << 16) | (rgb4(green) << 8) | rgb4(blue);
+        palette_[size_t(index + 0x200)] = decode_m62_prom_rgb(prom, index + 0x400);
     }
 }
 
