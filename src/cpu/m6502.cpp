@@ -630,8 +630,8 @@ int M6502::run(int cycles) {
                 a = uint8_t(x & read(address_));
                 set_nz(a);
                 break;
-            case 0xa3: case 0xa7: case 0xaf: case 0xb3:
-            case 0xb7: case 0xbf:  // lax
+            case 0xa3: case 0xaf: case 0xb3:
+            case 0xb7: case 0xbf:  // lax ($a7 is implicit in the Pascal table)
                 a = x = read(address_);
                 set_nz(a);
                 break;
