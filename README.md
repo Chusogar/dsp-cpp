@@ -154,14 +154,21 @@ restarts the tape whenever the loader runs.
 The handheld is a 65C02 (G65SC02 inside **Mikey**) at 16 MHz with wait states, 64 KiB
 of shared DRAM, and **Suzy** for sprites, 16-bit math and the cartridge port. Mikey
 also owns the eight timers (HBL/VBL), 16-colour 12-bit palette, LCD DMA (160×102),
-four-channel polynomial sound and the cart address shifter. There is no Atari boot
-ROM in this tree: a tiny open bootstrap at `$FE00` copies the first 256 bytes of the
-cartridge to `$0200` and jumps there, which is enough for homebrew `.lnx` images.
-Commercial games that depend on the encrypted Atari ROM will not start.
+four-channel polynomial sound and the cart address shifter.
+
+The 512-byte Mikey boot ROM is the same `lynxboot.img` dump Handy and Mednafen use
+(CRC `0d973c9d` or `e1ffecb6`). It is not shipped in this tree. Put it next to the
+cartridge, in the ROM directory, or pass it as the positional path:
 
 ```bash
-./build/dsp --game lynx /path/to/game.lnx
+# https://github.com/Abdess/retrobios/blob/main/bios/Atari/Lynx/lynxboot.img
+./build/dsp --game lynx /path/to/roms/          # directory with lynxboot.img + game.lnx
+./build/dsp --game lynx /path/to/game.lnx       # looks for lynxboot.img beside the cart
 ```
+
+Without that file a tiny open bootstrap is mapped instead, which is enough for
+raw homebrew that expects the first 256 bytes at `$0200`. Commercial carts need
+the Atari ROM.
 
 Lynx controls: arrows, Left Ctrl/Space = A, Left Alt/Z = B, X = Option 1, 1 = Option 2,
 5 = Pause.

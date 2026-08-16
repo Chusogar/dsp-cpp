@@ -1,6 +1,7 @@
 #include "drivers/atari_lynx.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -10,6 +11,30 @@
 
 namespace dsp {
 namespace {
+
+std::string lower_copy(std::string value) {
+    for (char& character : value) character = char(std::tolower(static_cast<unsigned char>(character)));
+    return value;
+}
+
+const char* kBiosNames[] = {"lynxboot.img", "lynx.bin", "lynxa.bin", "lynx.rom"};
+
+bool is_bios_filename(const std::string& path) {
+    const std::string name = lower_copy(std::filesystem::path(path).filename().string());
+    for (const char* candidate : kBiosNames) {
+        if (name == candidate) return true;
+    }
+    return false;
+}
+
+bool looks_like_bios(const std::vector<uint8_t>& data, const std::string& path) {
+    if (data.size() != 0x200) return false;
+    if (is_bios_filename(path)) return true;
+    const uint32_t crc = crc32_of(data.data(), data.size());
+    if (crc == 0x0d973c9d || crc == 0xe1ffecb6) return true;
+    const uint16_t reset = uint16_t(data[0x1fc] | (data[0x1fd] << 8));
+    return reset == 0xff80;
+}
 
 bool read_plain_or_zip_file(const std::string& path, std::vector<uint8_t>& data, size_t max_size,
                             std::string* error) {
@@ -96,7 +121,7 @@ void assemble_boot_rom(std::array<uint8_t, 0x200>& rom) {
 }  // namespace
 
 AtariLynx::AtariLynx() : cpu_(kCpuClock) {
-    assemble_boot_rom(boot_rom_);
+    install_fallback_bios();
     cpu_.set_cmos(true);
     cpu_.set_memory_handlers([this](uint16_t a) { return read_byte(a); },
                              [this](uint16_t a, uint8_t v) { write_byte(a, v); });
@@ -111,12 +136,100 @@ AtariLynx::AtariLynx() : cpu_(kCpuClock) {
 }
 
 bool AtariLynx::init(const std::string& rom_path, std::string*) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    search_bios(rom_path);
+    if (!rom_path.empty() && fs::is_directory(rom_path, ec)) {
+        std::string cart_error;
+        if (!load_cart_from_directory(rom_path, &cart_error) && !cart_error.empty()) {
+            warnings_.push_back(cart_error);
+        }
+        reset();
+        return true;
+    }
+    if (!rom_path.empty() && is_bios_filename(rom_path)) {
+        reset();
+        return true;
+    }
     reset();
     if (!rom_path.empty()) {
         std::string cart_error;
         if (!load_media(rom_path, &cart_error)) warnings_.push_back(cart_error);
     }
     return true;
+}
+
+void AtariLynx::install_fallback_bios() {
+    assemble_boot_rom(boot_rom_);
+    bios_loaded_ = false;
+}
+
+bool AtariLynx::install_bios(const std::vector<uint8_t>& data, std::string* error) {
+    if (data.size() != 0x200) {
+        if (error) *error = "Lynx BIOS must be 512 bytes (lynxboot.img)";
+        return false;
+    }
+    std::copy(data.begin(), data.end(), boot_rom_.begin());
+    bios_loaded_ = true;
+    const uint32_t crc = crc32_of(data.data(), data.size());
+    if (crc != 0x0d973c9d && crc != 0xe1ffecb6) {
+        warnings_.push_back("unrecognised Lynx BIOS CRC " + std::to_string(crc));
+    }
+    return true;
+}
+
+bool AtariLynx::load_bios(const std::string& path, std::string* error) {
+    std::vector<uint8_t> data;
+    if (!read_plain_or_zip_file(path, data, 0x200, error)) return false;
+    return install_bios(data, error);
+}
+
+void AtariLynx::search_bios(const std::string& rom_path) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (rom_path.empty()) return;
+
+    auto try_path = [this](const fs::path& path) {
+        if (path.empty()) return false;
+        std::string ignored;
+        return load_bios(path.string(), &ignored);
+    };
+
+    const fs::path input(rom_path);
+    if (fs::is_regular_file(input, ec) && is_bios_filename(rom_path)) {
+        if (try_path(input)) return;
+    }
+    if (fs::is_directory(input, ec)) {
+        for (const char* name : kBiosNames) {
+            if (try_path(input / name)) return;
+        }
+        RomLoader loader;
+        std::string ignored;
+        if (loader.open(rom_path, &ignored)) {
+            std::vector<uint8_t> dest(0x200, 0);
+            const std::vector<RomEntry> entries = {
+                {"lynxboot.img|lynx.bin|lynxa.bin|lynx.rom", 0x200, 0, 0},
+            };
+            if (loader.load(entries, dest, &ignored) && install_bios(dest, &ignored)) return;
+        }
+        return;
+    }
+    if (fs::is_regular_file(input, ec)) {
+        for (const char* name : kBiosNames) {
+            if (try_path(input.parent_path() / name)) return;
+        }
+    }
+}
+
+bool AtariLynx::load_cart_from_directory(const std::string& directory, std::string* error) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    for (const auto& item : fs::directory_iterator(directory, ec)) {
+        if (!item.is_regular_file(ec)) continue;
+        const std::string ext = lower_copy(item.path().extension().string());
+        if (ext == ".lnx" || ext == ".lyx") return load_media(item.path().string(), error);
+    }
+    return false;
 }
 
 bool AtariLynx::load_media(const std::string& path, std::string* error) {
@@ -126,6 +239,7 @@ bool AtariLynx::load_media(const std::string& path, std::string* error) {
         if (error) *error = "empty Lynx cartridge";
         return false;
     }
+    if (looks_like_bios(data, path)) return install_bios(data, error);
 
     granularity_ = 0x400;
     audin_offset_ = 0;

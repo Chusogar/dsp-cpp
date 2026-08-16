@@ -15,9 +15,9 @@ namespace dsp {
 // Atari Lynx (1989). 65C02 inside Mikey at 16 MHz with wait states (effective
 // 4 MHz), 64 KiB shared DRAM, Suzy sprite/math coprocessor at $FC00 and Mikey
 // timers/LCD/sound/UART at $FD00. MAPCTL at $FFF9 overlays those windows and
-// the 512-byte bootstrap ROM at $FE00. Cartridges are sequential ROM shifted
-// through Suzy RCART0 ($FCB2) with a 74HC164/4040 address generator clocked
-// from Mikey SYSCTL1/IODAT.
+// the 512-byte bootstrap ROM at $FE00 (`lynxboot.img`, the same dump Handy and
+// Mednafen use). Cartridges are sequential ROM shifted through Suzy RCART0
+// ($FCB2) with a 74HC164/4040 address generator clocked from Mikey SYSCTL1.
 class AtariLynx : public Machine {
 public:
     static constexpr uint32_t kSystemClock = 16000000;
@@ -51,6 +51,13 @@ public:
 
     bool load_media(const std::string& path, std::string* error) override;
 
+    // Handy/Mednafen `lynxboot.img` (512 bytes, CRC 0d973c9d or e1ffecb6).
+    bool load_bios(const std::string& path, std::string* error);
+    bool bios_loaded() const { return bios_loaded_; }
+
+    uint16_t debug_pc() const { return cpu_.pc(); }
+    uint8_t debug_iodir() const { return mikey_.iodir(); }
+
 private:
     uint8_t read_byte(uint16_t address);
     void write_byte(uint16_t address, uint8_t value);
@@ -58,6 +65,10 @@ private:
     void present_frame();
     uint8_t cart_read();
     void cart_strobe(uint8_t sysctl, uint8_t iodat);
+    void install_fallback_bios();
+    bool install_bios(const std::vector<uint8_t>& data, std::string* error);
+    void search_bios(const std::string& rom_path);
+    bool load_cart_from_directory(const std::string& directory, std::string* error);
 
     M6502 cpu_;
     LynxSuzy suzy_;
@@ -65,6 +76,7 @@ private:
 
     std::array<uint8_t, 0x10000> ram_{};
     std::array<uint8_t, 0x200> boot_rom_{};
+    bool bios_loaded_ = false;
     std::array<uint32_t, kScreenWidth * kScreenHeight> framebuffer_{};
 
     std::vector<uint8_t> cart_;

@@ -1,6 +1,7 @@
 // Minimal self contained checks for the ported components.
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <vector>
 
@@ -517,14 +518,17 @@ std::vector<uint8_t> make_lynx_bars_cart() {
 
 void test_atari_lynx_bars() {
     const std::vector<uint8_t> image = make_lynx_bars_cart();
-    const char* path = "/tmp/dsp-lynx-bars.lnx";
+    namespace fs = std::filesystem;
+    const fs::path dir = "/tmp/dsp-lynx-test-bars";
+    fs::create_directories(dir);
+    const fs::path path = dir / "bars.lnx";
     {
         std::ofstream out(path, std::ios::binary);
         out.write(reinterpret_cast<const char*>(image.data()), std::streamsize(image.size()));
     }
     dsp::AtariLynx lynx;
     std::string error;
-    check(lynx.init(path, &error), "the Lynx driver accepts a .lnx image");
+    check(lynx.init(path.string(), &error), "the Lynx driver accepts a .lnx image");
     for (int frame = 0; frame < 8; frame++) lynx.run_frame();
     const uint32_t* fb = lynx.framebuffer();
     int coloured = 0;
@@ -534,6 +538,20 @@ void test_atari_lynx_bars() {
     check(coloured > 1000, "the Lynx test cart paints colour bars through Mikey DMA");
     check(lynx.screen_width() == 160 && lynx.screen_height() == 102,
           "the Lynx LCD is 160x102");
+}
+
+void test_atari_lynx_bios() {
+    dsp::AtariLynx lynx;
+    std::string error;
+    if (!lynx.load_bios("/tmp/lynxboot.img", &error)) {
+        std::printf("skip: lynxboot.img not found (%s)\n", error.c_str());
+        return;
+    }
+    lynx.reset();
+    check(lynx.bios_loaded(), "lynxboot.img is mapped as the Mikey boot ROM");
+    check(lynx.debug_pc() == 0xff80, "the Atari BIOS reset vector is $FF80");
+    for (int frame = 0; frame < 2; frame++) lynx.run_frame();
+    check(lynx.debug_iodir() == 0x03, "the Atari BIOS programs IODIR before overlaying MAPCTL");
 }
 
 void test_slapstic() {
@@ -1014,6 +1032,7 @@ int main() {
     test_lynx_suzy_math();
     test_lynx_suzy_blit();
     test_atari_lynx_bars();
+    test_atari_lynx_bios();
     test_slapstic();
     test_ym2151();
     test_pokey();
