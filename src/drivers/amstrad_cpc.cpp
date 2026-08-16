@@ -69,6 +69,117 @@ const std::vector<KeyBit> kRow8 = {{Key::Num1, 0xfe}, {Key::Num2, 0xfd}, {Key::E
                                    {Key::CapsLock, 0xbf}, {Key::Z, 0x7f}};
 const std::vector<KeyBit> kRow9 = {{Key::Backspace, 0x7f}};
 
+// CPC Gate Array wait-state tables, z80t_*_a in amstrad_cpc.pas. Almost every
+// opcode is stretched to a multiple of 4 T-states so the CRTC (one character
+// clock every 4 T) stays locked to the CPU.
+constexpr uint8_t kCpcMain[256] = {
+    4, 12, 8, 8, 4, 4, 8, 4, 4, 12, 8, 8, 4, 4, 8, 4,
+    12, 12, 8, 8, 4, 4, 8, 4, 12, 12, 8, 8, 4, 4, 8, 4,
+    8, 12, 20, 8, 4, 4, 8, 4, 8, 12, 20, 8, 4, 4, 8, 4,
+    8, 12, 16, 8, 12, 12, 12, 4, 8, 12, 16, 8, 4, 4, 8, 4,
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
+    8, 8, 8, 8, 8, 8, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4,
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
+    8, 12, 12, 12, 12, 16, 8, 16, 8, 12, 12, 4, 12, 20, 8, 16,
+    8, 12, 12, 12, 12, 16, 8, 16, 8, 4, 12, 12, 12, 4, 8, 16,
+    8, 12, 12, 24, 12, 16, 8, 16, 8, 4, 12, 4, 12, 4, 8, 16,
+    8, 12, 12, 4, 12, 16, 8, 16, 8, 8, 12, 4, 12, 4, 8, 16};
+
+constexpr uint8_t kCpcCb[256] = {
+    4, 4, 4, 4, 4, 4, 12, 4, 4, 4, 4, 4, 4, 4, 12, 4,
+    4, 4, 4, 4, 4, 4, 12, 4, 4, 4, 4, 4, 4, 4, 12, 4,
+    4, 4, 4, 4, 4, 4, 12, 4, 4, 4, 4, 4, 4, 4, 12, 4,
+    4, 4, 4, 4, 4, 4, 12, 4, 4, 4, 4, 4, 4, 4, 12, 4,
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
+    4, 4, 4, 4, 4, 4, 12, 4, 4, 4, 4, 4, 4, 4, 12, 4,
+    4, 4, 4, 4, 4, 4, 12, 4, 4, 4, 4, 4, 4, 4, 12, 4,
+    4, 4, 4, 4, 4, 4, 12, 4, 4, 4, 4, 4, 4, 4, 12, 4,
+    4, 4, 4, 4, 4, 4, 12, 4, 4, 4, 4, 4, 4, 4, 12, 4,
+    4, 4, 4, 4, 4, 4, 12, 4, 4, 4, 4, 4, 4, 4, 12, 4,
+    4, 4, 4, 4, 4, 4, 12, 4, 4, 4, 4, 4, 4, 4, 12, 4,
+    4, 4, 4, 4, 4, 4, 12, 4, 4, 4, 4, 4, 4, 4, 12, 4,
+    4, 4, 4, 4, 4, 4, 12, 4, 4, 4, 4, 4, 4, 4, 12, 4};
+
+constexpr uint8_t kCpcEd[256] = {
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    12, 12, 12, 20, 4, 12, 4, 8, 12, 12, 12, 20, 4, 12, 4, 8,
+    12, 12, 12, 20, 4, 12, 4, 8, 12, 12, 12, 20, 4, 12, 4, 8,
+    12, 12, 12, 20, 4, 12, 4, 16, 12, 12, 12, 20, 4, 12, 4, 16,
+    12, 12, 12, 20, 4, 12, 4, 4, 12, 12, 12, 20, 4, 12, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    16, 12, 16, 16, 4, 4, 4, 4, 16, 12, 16, 16, 4, 4, 4, 4,
+    16, 12, 16, 16, 4, 4, 4, 4, 16, 12, 16, 16, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4};
+
+constexpr uint8_t kCpcIndex[256] = {
+    4, 12, 8, 8, 4, 4, 8, 4, 4, 12, 8, 8, 4, 4, 8, 4,
+    12, 12, 8, 8, 4, 4, 8, 4, 12, 12, 8, 8, 4, 4, 8, 4,
+    8, 12, 20, 8, 4, 4, 8, 4, 8, 12, 20, 8, 4, 4, 8, 4,
+    8, 12, 16, 8, 20, 20, 20, 4, 8, 12, 16, 8, 4, 4, 8, 4,
+    4, 4, 4, 4, 4, 4, 16, 4, 4, 4, 4, 4, 4, 4, 16, 4,
+    4, 4, 4, 4, 4, 4, 16, 4, 4, 4, 4, 4, 4, 4, 16, 4,
+    4, 4, 4, 4, 4, 4, 16, 4, 4, 4, 4, 4, 4, 4, 16, 4,
+    16, 16, 16, 16, 16, 16, 4, 16, 4, 4, 4, 4, 4, 4, 16, 4,
+    4, 4, 4, 4, 4, 4, 16, 4, 4, 4, 4, 4, 4, 4, 16, 4,
+    4, 4, 4, 4, 4, 4, 16, 4, 4, 4, 4, 4, 4, 4, 16, 4,
+    4, 4, 4, 4, 4, 4, 16, 4, 4, 4, 4, 4, 4, 4, 16, 4,
+    4, 4, 4, 4, 4, 4, 16, 4, 4, 4, 4, 4, 4, 4, 16, 4,
+    8, 12, 12, 12, 12, 16, 8, 16, 8, 12, 12, 8, 12, 20, 8, 16,
+    8, 12, 12, 12, 12, 16, 8, 16, 8, 4, 12, 12, 12, 4, 8, 16,
+    8, 12, 12, 24, 12, 16, 8, 16, 8, 4, 12, 4, 12, 4, 8, 16,
+    8, 12, 12, 4, 12, 16, 8, 16, 8, 8, 12, 4, 12, 4, 8, 16};
+
+constexpr uint8_t kCpcIndexCb[256] = {
+    16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
+    16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
+    16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
+    16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
+    12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
+    12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
+    16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
+    16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
+    16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
+    16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
+    16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
+    16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
+    16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
+    16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16};
+
+constexpr uint8_t kCpcExtra[256] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0,
+    4, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    4, 8, 4, 4, 0, 0, 0, 0, 4, 8, 4, 4, 0, 0, 0, 0,
+    8, 0, 0, 0, 8, 0, 0, 0, 8, 0, 0, 0, 8, 0, 0, 0,
+    8, 0, 0, 0, 8, 0, 0, 0, 8, 0, 0, 0, 8, 0, 0, 0,
+    8, 0, 0, 0, 8, 0, 0, 0, 8, 0, 0, 0, 8, 0, 0, 0,
+    8, 0, 0, 0, 8, 0, 0, 0, 8, 0, 0, 0, 8, 0, 0, 0};
+
 }  // namespace
 
 AmstradCpc::AmstradCpc(Model model) : model_(model), cpu_(kCpuClock), ay_(kAyClock, 0.8f) {
@@ -79,6 +190,9 @@ AmstradCpc::AmstradCpc(Model model) : model_(model), cpu_(kCpuClock), ay_(kAyClo
     cpu_.set_io_handlers([this](uint16_t port) { return read_port(port); },
                          [this](uint16_t port, uint8_t value) { write_port(port, value); });
     cpu_.set_cycle_handler([this](int cycles) { on_cycles(cycles); });
+    cpu_.set_timing_tables(kCpcMain, kCpcCb, kCpcIndex, kCpcIndexCb, kCpcEd, kCpcExtra);
+    cpu_.set_irq_cycle_align(4);
+    cpu_.set_irq_ack_callback([this] { on_irq_ack(); });
 
     ay_.set_port_handlers([this] { return keyboard_scan(); }, nullptr, nullptr, nullptr);
     ppi_.set_port_handlers(
@@ -273,9 +387,9 @@ bool AmstradCpc::load_sna(const std::string& path,
     ppi_state_.keyb_val.fill(0xff);
 
     irq_asserted_ = false;
-    iff1_before_ = false;
     mod_address_ = false;
     cpc_line_ = 0;
+    video_acc_ = 0;
 
     audio_.clear();
     audio_accumulator_ = 0;
@@ -311,7 +425,6 @@ bool AmstradCpc::load_sna(const std::string& path,
     cpu_.h2 = h[0x2d];
     cpu_.halted = false;
     cpu_.set_irq(IrqLine::Clear);
-    iff1_before_ = cpu_.iff1;
 
     // ------------------------------------------------------------------
     // Gate Array: pen + palette, then multi-config via write_ga()
@@ -475,8 +588,8 @@ void AmstradCpc::reset() {
     ppi_state_.keyb_val.fill(0xff);
     mod_address_ = false;
     irq_asserted_ = false;
-    iff1_before_ = false;
     cpc_line_ = 0;
+    video_acc_ = 0;
 
     crt_ = Crtc{};
     crt_.char_total = 64 * 8;
@@ -903,12 +1016,13 @@ void AmstradCpc::draw_pixels() {
 }
 
 void AmstradCpc::advance_video(int cycles) {
-    // Matches the reference's `estados_t shr 2`: any remainder below 4 T-states
-    // is dropped rather than carried over, the same approximation the source
-    // engine uses (the CRTC clock is only ever advanced in whole character
-    // clocks per instruction).
-    const int ticks = cycles / 4;
-    for (int i = 0; i < ticks; i++) {
+    // Carry leftover T-states across instructions. The Pascal engine can drop
+    // the remainder (`estados_t shr 2`) because the CPC wait-state tables make
+    // almost every opcode a multiple of 4; without that carry, standard Z80
+    // timings (LD A,n = 7, etc.) make the CRTC drift and paint random lines.
+    video_acc_ += cycles;
+    while (video_acc_ >= 4) {
+        video_acc_ -= 4;
         if (crt_.pant_x < crt_.char_total && crt_.line_is_visible && !crt_.state_vsync &&
             !crt_.state_hsync) {
             draw_pixels();
@@ -973,18 +1087,6 @@ void AmstradCpc::on_cycles(int cycles) {
     tape_accumulator_ -= tape_cycles * 8;
     tape_.advance(int(tape_cycles));
 
-    // Detect the CPU actually taking the maskable interrupt (iff1 goes from
-    // set to clear while the gate array line is asserted: DI cannot be the
-    // cause, since an asserted+enabled IRQ always pre-empts the next opcode
-    // fetch), mirroring amstrad_raised_z80's CLEAR_LINE-on-acknowledge.
-    const bool iff1_now = cpu_.iff1;
-    if (irq_asserted_ && iff1_before_ && !iff1_now) {
-        cpu_.set_irq(IrqLine::Clear);
-        irq_asserted_ = false;
-        ga_.lines_count = uint8_t(ga_.lines_count & 0x1f);
-    }
-    iff1_before_ = iff1_now;
-
     advance_video(cycles);
 
     audio_accumulator_ += int64_t(cycles) * kSampleRate;
@@ -994,6 +1096,14 @@ void AmstradCpc::on_cycles(int cycles) {
         if (tape_.playing() && tape_.ear()) sample += 4000;
         audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
     }
+}
+
+void AmstradCpc::on_irq_ack() {
+    // amstrad_raised_z80: mask the 52-line counter, drop the GA IRQ, and let
+    // set_irq_cycle_align(4) stretch IM1/IM2 to a multiple of 4 T-states.
+    ga_.lines_count = uint8_t(ga_.lines_count & 0x1f);
+    cpu_.set_irq(IrqLine::Clear);
+    irq_asserted_ = false;
 }
 
 void AmstradCpc::run_frame() { cpu_.run(kCyclesPerFrame); }
