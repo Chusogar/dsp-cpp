@@ -31,9 +31,14 @@ public:
 
     void set_irq(IrqLine state) { irq_request_ = state; }
     void set_nmi(IrqLine state);
+    // NES PPU NMI: one-instruction delay, same as n2a03 `after_ei:=true`.
+    void delay_interrupts() { after_ei_ = true; }
+    // OAM DMA steals 513 (+1 if odd) cycles from the current timeslice.
+    void steal_cycles(int cycles);
 
     uint32_t clock() const { return clock_; }
     uint16_t pc() const { return pc_; }
+    void set_pc(uint16_t value) { pc_ = value; }
 
     uint8_t a = 0, x = 0, y = 0, sp = 0xfd;
     Flags p;
@@ -61,6 +66,7 @@ private:
     uint16_t pc_ = 0;
     uint16_t address_ = 0;  // effective address of the current instruction
     int extra_cycles_ = 0;
+    int stolen_cycles_ = 0;
 
     IrqLine irq_request_ = IrqLine::Clear;
     IrqLine nmi_request_ = IrqLine::Clear;

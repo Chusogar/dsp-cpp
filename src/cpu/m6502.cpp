@@ -80,6 +80,7 @@ void M6502::reset() {
     irq_request_ = IrqLine::Clear;
     nmi_request_ = IrqLine::Clear;
     nmi_state_ = IrqLine::Clear;
+    stolen_cycles_ = 0;
 }
 
 uint8_t M6502::get_flags() const {
@@ -557,8 +558,17 @@ int M6502::run(int cycles) {
         const int elapsed = kCycles[instruction] + extra_cycles_;
         executed += elapsed;
         if (cycle_handler_) cycle_handler_(elapsed);
+        if (stolen_cycles_ != 0) {
+            executed += stolen_cycles_;
+            if (cycle_handler_) cycle_handler_(stolen_cycles_);
+            stolen_cycles_ = 0;
+        }
     }
     return executed;
+}
+
+void M6502::steal_cycles(int cycles) {
+    if (cycles > 0) stolen_cycles_ += cycles;
 }
 
 }  // namespace dsp

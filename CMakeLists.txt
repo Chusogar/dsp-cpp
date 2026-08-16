@@ -38,11 +38,13 @@ add_executable(dsp
   src/sound/fmopn.cpp
   src/sound/ym2203.cpp
   src/sound/ym3812.cpp
+  src/sound/nes_apu.cpp
     
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/tms9918.cpp
   src/video/deco_bac06.cpp
+  src/video/nes_ppu.cpp
   
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
@@ -80,6 +82,8 @@ add_executable(dsp
   src/machine/gb_mapper.cpp
   src/sound/gb_apu.cpp
   src/video/gb_ppu.cpp
+  src/machine/nes_mapper.cpp
+  src/drivers/nes.cpp
   src/drivers/scv.cpp
       
   src/core/rom_loader.cpp
@@ -105,8 +109,10 @@ add_executable(dsp_tests
   src/sound/pokey.cpp
   src/sound/msm5205.cpp
   src/sound/okim6295.cpp
+  src/sound/nes_apu.cpp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
+  src/video/nes_ppu.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/spectrum_tape.cpp
@@ -115,6 +121,8 @@ add_executable(dsp_tests
   src/machine/nec765.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
+  src/machine/nes_mapper.cpp
+  src/drivers/nes.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

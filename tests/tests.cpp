@@ -1,6 +1,7 @@
 // Minimal self contained checks for the ported components.
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "cpu/hd63701.h"
@@ -9,6 +10,7 @@
 #include "cpu/m6809.h"
 #include "cpu/m68000.h"
 #include "cpu/z80.h"
+#include "drivers/nes.h"
 #include "drivers/spectrum.h"
 #include "machine/bagman_pal.h"
 #include "machine/slapstic.h"
@@ -16,6 +18,7 @@
 #include "sound/ay8910.h"
 #include "sound/msm5205.h"
 #include "sound/okim6295.h"
+#include "sound/nes_apu.h"
 #include "sound/pokey.h"
 #include "sound/sn76496.h"
 #include "sound/ym2151.h"
@@ -863,6 +866,75 @@ void test_spectrum_ula() {
     check(spectrum.io_in(0x001f) == 0x11, "the Kempston joystick answers on A5 low");
 }
 
+std::vector<uint8_t> make_nrom_cart() {
+    std::vector<uint8_t> rom(16 + 0x4000, 0);
+    rom[0] = 'N';
+    rom[1] = 'E';
+    rom[2] = 'S';
+    rom[3] = 0x1a;
+    rom[4] = 1;  // 16 KiB PRG
+    rom[5] = 0;  // CHR RAM
+    rom[6] = 0;  // horizontal mirroring, mapper 0
+    rom[16 + 0] = 0x78;        // SEI
+    rom[16 + 1] = 0x4c;        // JMP $8000
+    rom[16 + 2] = 0x00;
+    rom[16 + 3] = 0x80;
+    rom[16 + 0x3ffc] = 0x00;  // reset vector
+    rom[16 + 0x3ffd] = 0x80;
+    rom[16 + 0x3ffa] = 0x00;  // NMI vector
+    rom[16 + 0x3ffb] = 0x80;
+    return rom;
+}
+
+void test_nes_apu_status() {
+    dsp::NesApu apu;
+    apu.reset();
+    const uint8_t first = apu.read(0x4015);
+    check((first & 0x0f) == 0, "APU $4015 reports no pulse/tri/noise lengths after reset");
+    check((apu.read(0x4015) & 0x40) == 0, "reading $4015 clears the frame IRQ flag");
+
+    apu.write(0x4015, 0x01);
+    apu.write(0x4000, 0x3f);
+    apu.write(0x4002, 0x00);
+    apu.write(0x4003, 0x00);  // length index 0 -> 10
+    check((apu.read(0x4015) & 0x01) != 0, "enabling pulse 1 and writing $4003 sets length");
+    apu.write(0x4015, 0x00);
+    check((apu.read(0x4015) & 0x01) == 0, "clearing $4015 bit 0 kills the length counter");
+}
+
+void test_nes_ines_and_memory() {
+    dsp::Nes nes;
+    std::string error;
+    check(nes.load_ines(make_nrom_cart(), &error), "a mapper 0 iNES image loads");
+    check(nes.debug_mapper() == 0, "mapper 0 is selected from the iNES header");
+    check(nes.debug_pc() == 0x8000, "reset fetches the iNES reset vector");
+
+    nes.debug_write(0x0000, 0x5a);
+    check(nes.debug_read(0x0800) == 0x5a, "CPU RAM is mirrored every 2 KiB");
+    check(nes.debug_read(0x1800) == 0x5a, "the $1800 mirror sees the same byte");
+    nes.debug_write(0x07ff, 0xa5);
+    check(nes.debug_read(0x1fff) == 0xa5, "the last RAM mirror is $1fff -> $07ff");
+
+    nes.debug_read(0x2002);  // arm the $2006/5 toggle, matching a $2002 read
+    nes.debug_write(0x2006, 0x3f);
+    nes.debug_write(0x2006, 0x00);
+    nes.debug_write(0x2007, 0x30);
+    nes.debug_write(0x2001, 0x1e);
+    nes.run_frame();
+    const uint32_t pixel = nes.framebuffer()[0];
+    check((pixel & 0xff000000) == 0xff000000, "the PPU writes opaque backdrop pixels");
+}
+
+void test_nes_unsupported_mapper() {
+    auto rom = make_nrom_cart();
+    rom[6] = 0x50;  // mapper 5 in the low nibble of flags6
+    rom[7] = 0x00;
+    dsp::Nes nes;
+    std::string error;
+    check(!nes.load_ines(rom, &error), "mapper 5 is rejected");
+    check(error.find("mapper") != std::string::npos, "the error names the mapper");
+}
+
 }  // namespace
 
 int main() {
@@ -899,6 +971,9 @@ int main() {
     test_spectrum_tape();
     test_spectrum_tzx();
     test_spectrum_ula();
+    test_nes_apu_status();
+    test_nes_ines_and_memory();
+    test_nes_unsupported_mapper();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
