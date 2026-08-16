@@ -99,6 +99,7 @@ add_executable(dsp_tests
   src/cpu/m68000.cpp
   src/cpu/hd63701.cpp
   src/cpu/m6805.cpp
+  src/cpu/lr35902.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
@@ -115,6 +116,10 @@ add_executable(dsp_tests
   src/machine/nec765.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
+  src/drivers/gameboy.cpp
+  src/machine/gb_mapper.cpp
+  src/sound/gb_apu.cpp
+  src/video/gb_ppu.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

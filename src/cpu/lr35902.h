@@ -39,6 +39,11 @@ public:
     // Runs until at least `cycles` T states have elapsed, returns the amount executed.
     int run(int cycles);
 
+    // Extra T-states charged to the current (or next) instruction, matching
+    // lr35902.pas's `estados_demas`. Used by CGB general-purpose VRAM DMA,
+    // which stalls the CPU for `(220 shr speed) + 8*(length/16)`.
+    void add_stall_cycles(int n) { stall_cycles_ += n; }
+
     uint32_t clock() const { return clock_; }
 
     // Registers, public to keep driver hooks simple (matches Z80's style).
@@ -110,6 +115,7 @@ private:
     bool halt_ = false;
     bool after_ei_ = false;  // suppresses the interrupt check for one instruction after EI
     int extra_cycles_ = 0;   // conditional-branch bonus / CB-prefixed instruction cost
+    int stall_cycles_ = 0;   // estados_demas: GDMA and similar machine stalls
 
     static const uint8_t kCycles[256];
     static const uint8_t kCyclesCb[256];

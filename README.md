@@ -145,6 +145,19 @@ need the loader to be running, and the CSW (`$18`) and generalized data (`$19`) 
 are skipped. A "stop the tape" block only pauses for two seconds, because the machine
 restarts the tape whenever the loader runs.
 
+### Game Boy / Game Boy Color
+
+`--game gb` loads a `.gb` / `.gbc` cartridge (plain or zipped). The machine is
+chosen from header byte `$0143` the same way `gb.pas` does: bit 7 set (`$80`
+CGB-enhanced or `$C0` CGB-exclusive) runs as Game Boy Color; otherwise it is
+a DMG Game Boy. Optional boot ROMs (`dmg_boot.bin`, `cgb_boot.bin`) may sit
+next to the cartridge; without them the CPU is left in `reset_gb`'s post-boot
+state so games still start at `$0100`.
+
+```bash
+./build/dsp --game gb /path/to/game.gbc
+```
+
 ### Controls
 
 | Key | Action |

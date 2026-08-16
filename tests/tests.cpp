@@ -1,6 +1,9 @@
 // Minimal self contained checks for the ported components.
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "cpu/hd63701.h"
@@ -9,6 +12,7 @@
 #include "cpu/m6809.h"
 #include "cpu/m68000.h"
 #include "cpu/z80.h"
+#include "drivers/gameboy.h"
 #include "drivers/spectrum.h"
 #include "machine/bagman_pal.h"
 #include "machine/slapstic.h"
@@ -20,6 +24,7 @@
 #include "sound/sn76496.h"
 #include "sound/ym2151.h"
 #include "video/atari_mo.h"
+#include "video/gb_ppu.h"
 #include "video/gfx.h"
 
 namespace {
@@ -863,6 +868,178 @@ void test_spectrum_ula() {
     check(spectrum.io_in(0x001f) == 0x11, "the Kempston joystick answers on A5 low");
 }
 
+// Nintendo logo at cart $0104, copied from gb.pas's main_logo / abrir_gb.
+const uint8_t kGbLogo[0x30] = {
+    0xce, 0xed, 0x66, 0x66, 0xcc, 0x0d, 0x00, 0x0b, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0c, 0x00, 0x0d,
+    0x00, 0x08, 0x11, 0x1f, 0x88, 0x89, 0x00, 0x0e, 0xdc, 0xcc, 0x6e, 0xe6, 0xdd, 0xdd, 0xd9, 0x99,
+    0xbb, 0xbb, 0x67, 0x63, 0x6e, 0x0e, 0xec, 0xcc, 0xdd, 0xdc, 0x99, 0x9f, 0xbb, 0xb9, 0x33, 0x3e,
+};
+
+std::vector<uint8_t> make_gb_rom(uint8_t cgb_flag) {
+    std::vector<uint8_t> rom(0x8000, 0x00);
+    rom[0x100] = 0x18;  // jr -2, idle at the post-boot entry point
+    rom[0x101] = 0xfe;
+    std::memcpy(rom.data() + 0x104, kGbLogo, sizeof(kGbLogo));
+    rom[0x143] = cgb_flag;
+    rom[0x147] = 0x00;
+    rom[0x148] = 0x00;
+    rom[0x149] = 0x00;
+    return rom;
+}
+
+bool load_gb_rom(dsp::GameBoy& gb, const std::vector<uint8_t>& rom, const char* path) {
+    std::ofstream out(path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(rom.data()), std::streamsize(rom.size()));
+    out.close();
+    std::string error;
+    return gb.load_media(path, &error);
+}
+
+uint32_t cgb_rgb(uint16_t bgr555) {
+    uint8_t r = uint8_t((bgr555 & 0x1f) << 3);
+    uint8_t g = uint8_t(((bgr555 >> 5) & 0x1f) << 3);
+    uint8_t b = uint8_t(((bgr555 >> 10) & 0x1f) << 3);
+    return 0xff000000u | (uint32_t(r) << 16) | (uint32_t(g) << 8) | b;
+}
+
+void test_gbc_cart_detection() {
+    auto gb = std::make_unique<dsp::GameBoy>();
+    check(load_gb_rom(*gb, make_gb_rom(0x80), "/tmp/dsp_cpp_gbc_80.gb"), "load $80 cart");
+    check(gb->debug_is_cgb(), "$80 carts run as Game Boy Color without a boot ROM");
+    check(std::strcmp(gb->title(), "Game Boy Color") == 0, "title is Game Boy Color for $80");
+    check(gb->debug_state().a == 0x01, "CGB post-boot A is $01 (gb.pas, not hardware)");
+
+    check(load_gb_rom(*gb, make_gb_rom(0xc0), "/tmp/dsp_cpp_gbc_c0.gb"), "load $c0 cart");
+    check(gb->debug_is_cgb(), "$c0 carts run as Game Boy Color");
+
+    check(load_gb_rom(*gb, make_gb_rom(0x00), "/tmp/dsp_cpp_gb_dmg.gb"), "load DMG cart");
+    check(!gb->debug_is_cgb(), "$00 carts stay on DMG");
+    check(std::strcmp(gb->title(), "Game Boy") == 0, "title is Game Boy for DMG");
+}
+
+void test_gbc_boot_rom_map() {
+    auto gb = std::make_unique<dsp::GameBoy>();
+    check(load_gb_rom(*gb, make_gb_rom(0x80), "/tmp/dsp_cpp_gbc_boot.gb"), "load cart for boot map");
+
+    std::vector<uint8_t> boot(0x900, 0xaa);
+    boot[0x000] = 0xa5;
+    boot[0x100] = 0x11;  // hole: must not be visible at CPU $0100
+    boot[0x200] = 0x5a;
+    gb->debug_set_cgb_boot_rom(boot);
+    gb->reset();
+    check(gb->debug_boot_rom_enabled(), "CGB boot ROM enables the BIOS map");
+    check(gb->debug_read(0x0000) == 0xa5, "CGB boot $0000 is bios_rom[address]");
+    check(gb->debug_read(0x0200) == 0x5a, "CGB boot $0200 is bios_rom[$200], not packed offset $100");
+    check(gb->debug_read(0x0100) == 0x18, "CGB boot leaves $0100-$01FF as the cart");
+
+    std::vector<uint8_t> packed(0x800, 0xbb);
+    packed[0x000] = 0xa5;
+    packed[0x100] = 0x5a;  // concatenated gbc_boot.2
+    gb->debug_set_cgb_boot_rom(packed);
+    gb->reset();
+    check(gb->debug_read(0x0000) == 0xa5, "packed CGB boot still maps $0000");
+    check(gb->debug_read(0x0200) == 0x5a, "packed CGB boot remaps $0200 to file offset $100");
+    check(gb->debug_read(0x0100) == 0x18, "packed CGB boot still leaves the cart at $0100");
+}
+
+void test_gbc_ppu_lcdc0_and_priority() {
+    dsp::GbPpu ppu;
+    ppu.reset(true);
+    ppu.set_lcdc(0x80);  // display on, LCDC.0 clear, no sprites, unsigned tiles
+    ppu.set_scy(0);
+    ppu.set_scx(0);
+    // Tile 0: both planes $FF → colour 3. Distinct BG colour 3 = red.
+    for (int i = 0; i < 16; i++) ppu.vram_write(uint16_t(i), 0xff);
+    ppu.set_bg_pal_index(6);
+    ppu.write_bg_pal_data(0x1f, false);
+    ppu.set_bg_pal_index(7);
+    ppu.write_bg_pal_data(0x00, false);
+
+    uint32_t line[dsp::GbPpu::kScreenWidth];
+    ppu.render_scanline(0, line);
+    check(line[0] == cgb_rgb(0x001f), "LCDC.0 does not blank the CGB background");
+
+    // Attr bit 7 + non-zero BG pixel hides an in-front sprite even with LCDC.0 clear.
+    ppu.set_vbk(1);
+    ppu.vram_write(0x1800, 0x80);  // BG map (0,0) attr: priority
+    ppu.set_vbk(0);
+    // Sprite tile 1: plane 0 = $FF, plane 1 = 0 → colour 1, green.
+    for (int i = 0; i < 8; i++) {
+        ppu.vram_write(uint16_t(16 + i * 2), 0xff);
+        ppu.vram_write(uint16_t(16 + i * 2 + 1), 0x00);
+    }
+    ppu.set_obj_pal_index(2);
+    ppu.write_obj_pal_data(0xe0, false);
+    ppu.set_obj_pal_index(3);
+    ppu.write_obj_pal_data(0x03, false);
+    ppu.oam_write(0, 16);  // y
+    ppu.oam_write(1, 8);   // x → screen 0
+    ppu.oam_write(2, 1);   // tile
+    ppu.oam_write(3, 0);   // in front, pal 0
+    ppu.set_lcdc(0x82);    // display + sprites, LCDC.0 still clear
+    ppu.render_scanline(0, line);
+    check(line[0] == cgb_rgb(0x001f), "BG attr.7 hides sprites regardless of LCDC.0");
+
+    // Same sprite, no attr.7, LCDC.0 set: sprite wins.
+    ppu.set_vbk(1);
+    ppu.vram_write(0x1800, 0x00);
+    ppu.set_vbk(0);
+    ppu.set_lcdc(0x83);
+    ppu.render_scanline(0, line);
+    check(line[0] == cgb_rgb(0x03e0), "in-front sprites cover BG when LCDC.0 is set and attr.7 is clear");
+}
+
+void test_gbc_io_hdma_and_unused_oam() {
+    auto gb = std::make_unique<dsp::GameBoy>();
+    check(load_gb_rom(*gb, make_gb_rom(0x80), "/tmp/dsp_cpp_gbc_io.gb"), "load cart for CGB I/O");
+
+    gb->debug_write(0xfea0, 0x42);
+    check(gb->debug_read(0xfea0) == 0x42, "CGB $FEA0-$FECF is RAM");
+    gb->debug_write(0xfed0, 0x99);
+    check(gb->debug_read(0xfec0) == 0x99, "CGB $FED0-$FEFF echoes $FEC0+(addr&$F)");
+    check(gb->debug_read(0xfed0) == 0x99, "CGB $FED0 reads the echo");
+
+    // GDMA: 16 bytes from WRAM $C000 to VRAM $8000.
+    for (int i = 0; i < 16; i++) gb->debug_write(uint16_t(0xc000 + i), uint8_t(0x70 + i));
+    gb->debug_write(0xff51, 0xc0);
+    gb->debug_write(0xff52, 0x00);
+    gb->debug_write(0xff53, 0x00);
+    gb->debug_write(0xff54, 0x00);
+    gb->debug_write(0xff55, 0x00);  // general-purpose DMA, one block
+    check(gb->debug_read(0x8000) == 0x70, "GDMA copies the first byte into VRAM");
+    check(gb->debug_read(0x800f) == 0x7f, "GDMA copies a full 16-byte block");
+
+    // HDMA: one more block during HBlank of a visible line.
+    for (int i = 0; i < 16; i++) gb->debug_write(uint16_t(0xc010 + i), uint8_t(0x80 + i));
+    gb->debug_write(0xff51, 0xc0);
+    gb->debug_write(0xff52, 0x10);
+    gb->debug_write(0xff53, 0x00);
+    gb->debug_write(0xff54, 0x10);
+    gb->debug_write(0xff55, 0x80);  // HBlank DMA, size 0 → one block
+    gb->run_frame();
+    check(gb->debug_read(0x8010) == 0x80, "HDMA copies one block during HBlank");
+    check(gb->debug_hdma_size() == 0xff, "HDMA ends with size $FF");
+
+    // WRAM $C1A4 hack from gbc_despues_instruccion.
+    gb->debug_write(0xc1a4, 0x12);
+    gb->debug_write(0xd1a4, 0x12);
+    gb->run_frame();
+    check(gb->debug_read(0xc1a4) == 0xed, "equal WRAM $C1A4/$D1A4 is forced to $ED");
+
+    // DMG $FEA0 reads as 0.
+    check(load_gb_rom(*gb, make_gb_rom(0x00), "/tmp/dsp_cpp_gb_fea0.gb"), "load DMG cart for $FEA0");
+    gb->debug_write(0xfea0, 0x42);
+    check(gb->debug_read(0xfea0) == 0, "DMG $FEA0-$FEFF reads as 0");
+}
+
+void test_gbc_oam_dma_from_vram() {
+    auto gb = std::make_unique<dsp::GameBoy>();
+    check(load_gb_rom(*gb, make_gb_rom(0x80), "/tmp/dsp_cpp_gbc_oamdma.gb"), "load cart for OAM DMA");
+    gb->debug_write(0x8000, 0x55);
+    gb->debug_write(0xff46, 0x80);  // OAM DMA from VRAM
+    check(gb->debug_read(0xfe00) == 0xff, "OAM DMA from VRAM yields $FF");
+}
+
 }  // namespace
 
 int main() {
@@ -899,6 +1076,11 @@ int main() {
     test_spectrum_tape();
     test_spectrum_tzx();
     test_spectrum_ula();
+    test_gbc_cart_detection();
+    test_gbc_boot_rom_map();
+    test_gbc_ppu_lcdc0_and_priority();
+    test_gbc_io_hdma_and_unused_oam();
+    test_gbc_oam_dma_from_vram();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

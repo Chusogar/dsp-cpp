@@ -59,6 +59,8 @@ void LR35902::reset() {
     ime = false;
     after_ei_ = false;
     halt_ = false;
+    extra_cycles_ = 0;
+    stall_cycles_ = 0;
     vblank_ena = lcdstat_ena = timer_ena = serial_ena = joystick_ena = false;
     vblank_req = lcdstat_req = timer_req = serial_req = joystick_req = false;
 }
@@ -295,7 +297,9 @@ int LR35902::run(int cycles) {
         if (on_fetch) on_fetch(uint16_t(pc - 1));
         extra_cycles_ = 0;
         exec(opcode);
-        int c = kCycles[opcode] + extra_cycles_ + extra;
+        int stall = stall_cycles_;
+        stall_cycles_ = 0;
+        int c = kCycles[opcode] + extra_cycles_ + extra + stall;
         if (cycle_handler_) cycle_handler_(c);
         total += c;
     }
