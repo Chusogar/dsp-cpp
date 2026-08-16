@@ -9,6 +9,8 @@
 namespace dsp {
 
 // MOS 6502, ported from m6502.pas (NMOS variant used by the Atari sound boards).
+// Optional G65SC02/65C02 mode covers the extra Lynx opcodes (BRA, STZ, PHX/PHY,
+// TRB/TSB, BIT imm, INC/DEC A, JMP (abs,X), (zp)).
 class M6502 {
 public:
     using ReadHandler = std::function<uint8_t(uint16_t)>;
@@ -24,6 +26,15 @@ public:
 
     void set_memory_handlers(ReadHandler read, WriteHandler write);
     void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
+
+    // WDC/GTE 65C02 (and the Lynx G65SC02) extra opcodes: BRA, STZ, PHX/PHY,
+    // TRB/TSB, BIT imm/zp,x/abs,x, INC/DEC A, JMP (abs,X), (zp) and the CMOS
+    // decimal N/Z behaviour. NMOS remains the default so Gauntlet is unchanged.
+    void set_cmos(bool enabled) { cmos_ = enabled; }
+    bool cmos() const { return cmos_; }
+
+    void set_halted(bool halted) { halted_ = halted; }
+    bool halted() const { return halted_; }
 
     void reset();
     // Runs until at least `cycles` cycles have elapsed, returns the amount executed.
@@ -66,6 +77,8 @@ private:
     IrqLine nmi_request_ = IrqLine::Clear;
     IrqLine nmi_state_ = IrqLine::Clear;
     bool after_ei_ = false;  // cli/sei/plp delay the interrupt one instruction
+    bool cmos_ = false;
+    bool halted_ = false;
 
     ReadHandler read_;
     WriteHandler write_;

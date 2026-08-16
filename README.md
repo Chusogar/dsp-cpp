@@ -4,7 +4,8 @@ C++17 + SDL2 port of [dsp-emulator](https://github.com/leniad/dsp-emulator) (Fre
 Supported games: **Bagman** (Valadon Automation, 1982), **Mikie** (Konami, 1984),
 **Gauntlet** (Atari, 1985), **Double Dragon** and **Double Dragon II** (Technos, 1987/1988),
 **Elevator Action** and **Jungle King** (Taito, 1983, Taito SJ hardware).
-It also emulates the **ZX Spectrum 48K** home computer (Sinclair, 1982).
+It also emulates the **ZX Spectrum 48K** home computer (Sinclair, 1982) and consoles
+including the **Atari Lynx** (1989).
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
 explains the port workflow and comes with a driver skeleton (`tools/new_driver.py`).
@@ -22,7 +23,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Bagman driver | `src/arcade/bagman_hw.pas` | Memory map, video, inputs, DIP switches |
 | Mikie driver | `src/arcade/mikie_hw.pas` | M6809 + sound Z80, PROM colour lookup tables, sprites |
 | M68000/68010 CPU | `src/cpu/m68000.pas` | Gauntlet main CPU |
-| M6502 CPU | `src/cpu/m6502.pas` | Gauntlet sound CPU |
+| M6502 CPU | `src/cpu/m6502.pas` | Gauntlet sound CPU; optional 65C02 CMOS opcodes for the Lynx |
+| Lynx Suzy / Mikey | new | Sprite blitter, math coprocessor, timers, LCD DMA, 4-channel sound |
+| Atari Lynx driver | new | 64 KiB DRAM, MAPCTL, LNX/LYX carts, 160×102 LCD |
 | YM2151 FM, POKEY | `src/snd/fm_2151.pas`, `src/snd/pokey.pas` | Gauntlet sound board |
 | SLAPSTIC | `src/arcade/misc/slapstic.pas` | Types 101-107, bank switched protected ROM |
 | Atari motion objects | `src/arcade/misc/atari_mo.pas` | SLIP based sprite lists |
@@ -65,10 +68,11 @@ holding the individual files:
 ./build/dsp --game elevator /path/to/elevator.zip
 ./build/dsp --game junglek /path/to/junglek.zip
 ./build/dsp --game spectrum48 --tape /path/to/game.tzx /path/to/48.rom
+./build/dsp --game lynx /path/to/game.lnx
 ```
 
 The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
-`ddragon2`, `elevator`, `junglek` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
+`ddragon2`, `elevator`, `junglek`, `spectrum48` or `lynx`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 (SLAPSTIC 104) and the two player `136041-xxx` set (SLAPSTIC 107).
 
 Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
@@ -144,6 +148,23 @@ signal level changes, jumps and loops. Games that only play under a custom loade
 need the loader to be running, and the CSW (`$18`) and generalized data (`$19`) blocks
 are skipped. A "stop the tape" block only pauses for two seconds, because the machine
 restarts the tape whenever the loader runs.
+
+### Atari Lynx
+
+The handheld is a 65C02 (G65SC02 inside **Mikey**) at 16 MHz with wait states, 64 KiB
+of shared DRAM, and **Suzy** for sprites, 16-bit math and the cartridge port. Mikey
+also owns the eight timers (HBL/VBL), 16-colour 12-bit palette, LCD DMA (160×102),
+four-channel polynomial sound and the cart address shifter. There is no Atari boot
+ROM in this tree: a tiny open bootstrap at `$FE00` copies the first 256 bytes of the
+cartridge to `$0200` and jumps there, which is enough for homebrew `.lnx` images.
+Commercial games that depend on the encrypted Atari ROM will not start.
+
+```bash
+./build/dsp --game lynx /path/to/game.lnx
+```
+
+Lynx controls: arrows, Left Ctrl/Space = A, Left Alt/Z = B, X = Option 1, 1 = Option 2,
+5 = Pause.
 
 ### Controls
 

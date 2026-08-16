@@ -1,6 +1,7 @@
 // Minimal self contained checks for the ported components.
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <vector>
 
 #include "cpu/hd63701.h"
@@ -9,8 +10,10 @@
 #include "cpu/m6809.h"
 #include "cpu/m68000.h"
 #include "cpu/z80.h"
+#include "drivers/atari_lynx.h"
 #include "drivers/spectrum.h"
 #include "machine/bagman_pal.h"
+#include "machine/lynx_suzy.h"
 #include "machine/slapstic.h"
 #include "machine/spectrum_tape.h"
 #include "sound/ay8910.h"
@@ -407,6 +410,130 @@ void test_m6502_pushed_flags() {
     cpu.run(60);
     check((m6502_memory[0x30] & 0x30) == 0x20,
           "an interrupt pushes the flags with the break bit clear");
+}
+
+void test_m65c02_opcodes() {
+    dsp::M6502 cpu = make_m6502();
+    cpu.set_cmos(true);
+    m6502_memory[0x0010] = 0x80;
+    m6502_memory[0x0011] = 0x20;
+    m6502_memory[0x0021] = 0xff;
+    // lda #$aa / stz $21 / inc / phx / ldx #$00 / plx / sta ($10) / bra +2 / nop / lda $2080
+    load_6502(0x1000, {0xa9, 0xaa, 0x64, 0x21, 0x1a, 0xda, 0xa2, 0x00, 0xfa, 0x92, 0x10, 0x80,
+                       0x01, 0xea, 0xad, 0x80, 0x20, 0x4c, 0x11, 0x10});
+    cpu.reset();
+    cpu.run(80);
+    check(m6502_memory[0x21] == 0, "65C02 stz writes zero");
+    check(cpu.a == 0xab, "65C02 inc a then lda ($10) via the stored pointer");
+    check(cpu.x == 0, "65C02 phx/plx restore x");
+    check(m6502_memory[0x2080] == 0xab, "65C02 sta (zp) writes through the pointer");
+}
+
+void test_lynx_suzy_math() {
+    dsp::LynxSuzy suzy;
+    suzy.reset();
+    suzy.write(0x52, 0x04);  // MATH_D, clears C
+    suzy.write(0x54, 0x10);  // MATH_B, clears A
+    suzy.write(0x55, 0x00);  // MATH_A starts 0x0010 * 0x0004
+    check(suzy.read(0x60) == 0x40, "Suzy multiply stores the low byte in MATH_H");
+    check(suzy.read(0x61) == 0x00, "Suzy multiply high bytes are zero for a small product");
+
+    suzy.write(0x60, 0x64);  // MATH_H = 100, clears G
+    suzy.write(0x62, 0x00);  // MATH_F, clears E
+    suzy.write(0x56, 0x05);  // MATH_P = 5, clears N
+    suzy.write(0x63, 0x00);  // MATH_E starts 100 / 5
+    check(suzy.read(0x52) == 0x14, "Suzy divide 100/5 writes 20 to MATH_D");
+    check(suzy.read(0x6c) == 0x00, "Suzy divide remainder is zero");
+}
+
+void test_lynx_suzy_blit() {
+    std::vector<uint8_t> ram(0x10000, 0);
+    dsp::LynxSuzy suzy;
+    suzy.set_ram(ram.data());
+    suzy.reset();
+    suzy.write(0x08, 0x00);  // VIDBAS $4000
+    suzy.write(0x09, 0x40);
+    suzy.write(0x28, 0x80);
+    suzy.write(0x2a, 0x80);
+    ram[0x0300] = 0xc0;  // 4 bpp background sprite
+    ram[0x0301] = 0x90;  // packed, reload width/height
+    ram[0x0302] = 0x00;
+    ram[0x0303] = 0x00;
+    ram[0x0304] = 0x00;  // end of SCB list
+    ram[0x0305] = 0x00;
+    ram[0x0306] = 0x04;  // sprite data at $0400
+    ram[0x0307] = 0x00;
+    ram[0x0308] = 0x00;  // x
+    ram[0x0309] = 0x00;
+    ram[0x030a] = 0x00;  // y
+    ram[0x030b] = 0x00;
+    ram[0x030c] = 0x01;  // width 1.0
+    ram[0x030d] = 0x00;
+    ram[0x030e] = 0x01;  // height 1.0
+    ram[0x030f] = 0x01;
+    ram[0x0310] = 0x23;
+    ram[0x0311] = 0x45;
+    ram[0x0312] = 0x67;
+    ram[0x0400] = 0x03;  // line length
+    ram[0x0401] = 0x12;  // pens 1 and 2
+    ram[0x0402] = 0x34;  // pens 3 and 4
+    ram[0x0403] = 0x00;  // end of sprite
+    suzy.write(0x10, 0x00);
+    suzy.write(0x11, 0x03);  // SCBNEXT = $0300
+    suzy.write(0x90, 0x01);  // SUZYBUSEN
+    suzy.write(0x91, 0x01);  // SPRGO
+    check((ram[0x4000] >> 4) == 1, "Suzy packed blit writes the first pen into the video buffer");
+    check((ram[0x4000] & 0x0f) == 2, "Suzy packed blit writes the second pen");
+    check((ram[0x4001] >> 4) == 3, "Suzy packed blit continues across bytes");
+}
+
+std::vector<uint8_t> make_lynx_bars_cart() {
+    std::vector<uint8_t> header(64, 0);
+    header[0] = 'L';
+    header[1] = 'Y';
+    header[2] = 'N';
+    header[3] = 'X';
+    header[4] = 0x00;
+    header[5] = 0x04;  // 1024-byte pages
+    const char* name = "DSP-CPP BARS";
+    std::memcpy(header.data() + 10, name, std::strlen(name));
+    const uint8_t program[] = {
+        0xa2, 0xff, 0x9a, 0xa9, 0x04, 0x8d, 0xf9, 0xff, 0xa9, 0x9e, 0x8d, 0x00, 0xfd, 0xa9,
+        0x18, 0x8d, 0x01, 0xfd, 0xa9, 0x68, 0x8d, 0x08, 0xfd, 0xa9, 0x1f, 0x8d, 0x09, 0xfd,
+        0xa9, 0x0f, 0x8d, 0xa1, 0xfd, 0xa9, 0xff, 0x8d, 0xb1, 0xfd, 0xa9, 0x0f, 0x8d, 0xb2,
+        0xfd, 0x8d, 0xa3, 0xfd, 0xa9, 0xf0, 0x8d, 0xb4, 0xfd, 0xa9, 0x0f, 0x8d, 0xa5, 0xfd,
+        0xa9, 0x0f, 0x8d, 0xb5, 0xfd, 0xa9, 0x00, 0x8d, 0x94, 0xfd, 0xa9, 0x40, 0x8d, 0x95,
+        0xfd, 0xa9, 0x0d, 0x8d, 0x92, 0xfd, 0xa9, 0x00, 0x85, 0x10, 0xa9, 0x40, 0x85, 0x11,
+        0xa2, 0x66, 0xa9, 0x00, 0x85, 0x12, 0xa9, 0x08, 0x85, 0x13, 0xa5, 0x12, 0x0a, 0x0a,
+        0x0a, 0x0a, 0x05, 0x12, 0x85, 0x14, 0xa9, 0x0a, 0x85, 0x15, 0xa5, 0x14, 0x92, 0x10,
+        0xe6, 0x10, 0xd0, 0x02, 0xe6, 0x11, 0xc6, 0x15, 0xd0, 0xf2, 0xe6, 0x12, 0xc6, 0x13,
+        0xd0, 0xde, 0xca, 0xd0, 0xd3, 0x4c, 0x83, 0x02,
+    };
+    std::vector<uint8_t> cart = header;
+    cart.insert(cart.end(), std::begin(program), std::end(program));
+    cart.resize(64 + 1024, 0);
+    return cart;
+}
+
+void test_atari_lynx_bars() {
+    const std::vector<uint8_t> image = make_lynx_bars_cart();
+    const char* path = "/tmp/dsp-lynx-bars.lnx";
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(image.data()), std::streamsize(image.size()));
+    }
+    dsp::AtariLynx lynx;
+    std::string error;
+    check(lynx.init(path, &error), "the Lynx driver accepts a .lnx image");
+    for (int frame = 0; frame < 8; frame++) lynx.run_frame();
+    const uint32_t* fb = lynx.framebuffer();
+    int coloured = 0;
+    for (int i = 0; i < lynx.screen_width() * lynx.screen_height(); i++) {
+        if ((fb[i] & 0x00ffffff) != 0) coloured++;
+    }
+    check(coloured > 1000, "the Lynx test cart paints colour bars through Mikey DMA");
+    check(lynx.screen_width() == 160 && lynx.screen_height() == 102,
+          "the Lynx LCD is 160x102");
 }
 
 void test_slapstic() {
@@ -883,6 +1010,10 @@ int main() {
     test_m6502_arithmetic();
     test_m6502_stack_and_interrupts();
     test_m6502_pushed_flags();
+    test_m65c02_opcodes();
+    test_lynx_suzy_math();
+    test_lynx_suzy_blit();
+    test_atari_lynx_bars();
     test_slapstic();
     test_ym2151();
     test_pokey();
