@@ -1,14 +1,22 @@
 // Minimal self contained checks for the ported components.
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "cpu/hd63701.h"
+#include "cpu/irq_line.h"
 #include "cpu/m6502.h"
 #include "cpu/m6805.h"
 #include "cpu/m6809.h"
 #include "cpu/m68000.h"
+#include "cpu/upd7801.h"
 #include "cpu/z80.h"
+#include "drivers/scv.h"
+#include "sound/upd1771.h"
 #include "drivers/spectrum.h"
 #include "machine/bagman_pal.h"
 #include "machine/slapstic.h"
@@ -863,6 +871,157 @@ void test_spectrum_ula() {
     check(spectrum.io_in(0x001f) == 0x11, "the Kempston joystick answers on A5 low");
 }
 
+dsp::Upd7801 make_7801(std::vector<uint8_t>& memory) {
+    dsp::Upd7801 cpu(4000000);
+    cpu.set_memory_handlers([&memory](uint16_t address) { return memory[address]; },
+                            [&memory](uint16_t address, uint8_t value) { memory[address] = value; });
+    cpu.reset();
+    return cpu;
+}
+
+void test_upd7801_mvi_add_skip_call() {
+    auto memory = make_memory();
+    dsp::Upd7801 cpu = make_7801(memory);
+    // MVI A,0x0f / ADI 0x01 / HALT
+    const uint8_t program[] = {0x69, 0x0f, 0x46, 0x01, 0x01};
+    std::memcpy(memory.data(), program, sizeof(program));
+    cpu.run(7 + 7);
+    check(cpu.a() == 0x10, "upd7801 MVI A + ADI leaves 0x10");
+    check(!cpu.cy(), "upd7801 ADI 0x0f+1 does not set carry");
+
+    auto skipped = make_memory();
+    dsp::Upd7801 skip_cpu = make_7801(skipped);
+    // MVI A,5 / GTI 3 / MVI A,0x99 / HALT  — GTI should skip the second MVI
+    const uint8_t skip_prog[] = {0x69, 0x05, 0x27, 0x03, 0x69, 0x99, 0x01};
+    std::memcpy(skipped.data(), skip_prog, sizeof(skip_prog));
+    skip_cpu.run(80);
+    check(skip_cpu.a() == 0x05, "upd7801 GTI skips the next instruction");
+
+    auto stacked = make_memory();
+    dsp::Upd7801 call_cpu = make_7801(stacked);
+    // LXI SP,$FF80 / CALL $0010 / HALT, and at $0010: MVI A,$42 / RET
+    stacked[0x0000] = 0x04;
+    stacked[0x0001] = 0x80;
+    stacked[0x0002] = 0xFF;
+    stacked[0x0003] = 0x44;
+    stacked[0x0004] = 0x10;
+    stacked[0x0005] = 0x00;
+    stacked[0x0006] = 0x01;
+    stacked[0x0010] = 0x69;
+    stacked[0x0011] = 0x42;
+    stacked[0x0012] = 0x08;
+    call_cpu.run(200);
+    check(call_cpu.a() == 0x42, "upd7801 CALL/RET returns with A from the callee");
+    check(call_cpu.pc() == 0x0006, "upd7801 RET comes back to the HALT after CALL");
+}
+
+void test_upd7801_ei_delay_and_intf2() {
+    auto memory = make_memory();
+    dsp::Upd7801 cpu = make_7801(memory);
+    // LXI SP,$FF80 / MVI A,$F7 / MOV MKL,A / EI / NOP / MVI A,$99 / HALT
+    // INTF2 vector at $0020: MVI A,$42 / HALT
+    const uint8_t program[] = {0x04, 0x80, 0xFF, 0x69, 0xF7, 0x4D, 0xC3, 0x48, 0x20,
+                               0x00, 0x69, 0x99, 0x01};
+    std::memcpy(memory.data(), program, sizeof(program));
+    memory[0x0020] = 0x69;
+    memory[0x0021] = 0x42;
+    memory[0x0022] = 0x01;
+    cpu.set_input_line(dsp::Upd7801::kIntf2, dsp::IrqLine::Assert);
+    cpu.run(400);
+    check(cpu.a() == 0x42, "upd7801 takes INTF2 after EI delay and vectors to $0020");
+}
+
+void test_upd1771_tone() {
+    dsp::Upd1771 sound(6000000, 10.0f);
+    sound.write(2);
+    sound.write(0);
+    sound.write(0x40);
+    sound.write(0x1F);
+    for (int i = 0; i < 20000; i++) sound.run_cycles(100, 2000000);
+    std::vector<int16_t> samples;
+    sound.take_samples(samples);
+    bool non_zero = false;
+    for (int16_t s : samples) {
+        if (s != 0) {
+            non_zero = true;
+            break;
+        }
+    }
+    check(!samples.empty(), "upd1771 produces samples");
+    check(non_zero, "upd1771 tone packet is audible");
+}
+
+void write_scv_bios(const std::string& dir, const uint8_t* program, size_t program_n) {
+    namespace fs = std::filesystem;
+    fs::create_directories(dir);
+    std::vector<uint8_t> bios(0x1000, 0);
+    std::memcpy(bios.data(), program, program_n);
+    std::vector<uint8_t> chr(0x400, 0);
+    for (int i = 0; i < 8; i++) chr[size_t(i)] = 0xFF;
+    {
+        std::ofstream out(dir + "/upd7801g.s01", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bios.data()), std::streamsize(bios.size()));
+    }
+    {
+        std::ofstream out(dir + "/epochtv.chr", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(chr.data()), std::streamsize(chr.size()));
+    }
+}
+
+void test_scv_init_and_block_graphics() {
+    dsp::Scv missing;
+    std::string error;
+    check(!missing.init("/tmp/dsp-scv-missing-bios", &error),
+          "SCV init fails without the BIOS pair");
+
+    const uint8_t program[] = {
+        0x04, 0x80, 0xFF,  // LXI SP,$FF80
+        0x68, 0x34,        // MVI V,$34
+        0x69, 0x03,        // MVI A,$03  block graphics
+        0x38, 0x00,        // STAW $3400
+        0x69, 0x00,        // MVI A,$00  gr_bg = 0
+        0x38, 0x01,        // STAW $3401
+        0x68, 0x30,        // MVI V,$30
+        0x69, 0xFF,        // MVI A,$FF  both 8x8 blocks colour 15
+        0x38, 0x63,        // STAW $3063  tile (3,3)
+        0x01,              // HALT
+    };
+    const std::string dir = "/tmp/dsp-scv-block";
+    write_scv_bios(dir, program, sizeof(program));
+
+    auto scv = std::make_unique<dsp::Scv>();
+    error.clear();
+    check(scv->init(dir, &error), "SCV init loads a dummy BIOS from a directory");
+    check(scv->bios_loaded(), "SCV reports the BIOS as loaded");
+    check(scv->screen_width() == 192 && scv->screen_height() == 222,
+          "SCV visible size is 192x222");
+    for (int i = 0; i < 4; i++) scv->run_frame();
+    const uint32_t* fb = scv->framebuffer();
+    check(fb[25 * 192 + 0] == 0xFFFFFFFF, "SCV block graphics draw white in the cropped window");
+    check(fb[0] == 0xFF00009B, "SCV background uses palette colour 0");
+}
+
+void test_scv_cartridge_window() {
+    const uint8_t program[] = {
+        0x04, 0x80, 0xFF,  // LXI SP,$FF80
+        0x68, 0x80,        // MVI V,$80
+        0x28, 0x00,        // LDAW $8000
+        0x01,              // HALT
+    };
+    const std::string dir = "/tmp/dsp-scv-cart";
+    write_scv_bios(dir, program, sizeof(program));
+    std::vector<uint8_t> cart(0x2000, 0xA5);
+    {
+        std::ofstream out(dir + "/game.bin", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(cart.data()), std::streamsize(cart.size()));
+    }
+    auto scv = std::make_unique<dsp::Scv>();
+    std::string error;
+    check(scv->init(dir, &error), "SCV init loads a dummy 8 KiB cartridge beside the BIOS");
+    for (int i = 0; i < 2; i++) scv->run_frame();
+    check(scv->debug_a() == 0xA5, "SCV maps an 8 KiB cart at $8000");
+}
+
 }  // namespace
 
 int main() {
@@ -899,6 +1058,11 @@ int main() {
     test_spectrum_tape();
     test_spectrum_tzx();
     test_spectrum_ula();
+    test_upd7801_mvi_add_skip_call();
+    test_upd7801_ei_delay_and_intf2();
+    test_upd1771_tone();
+    test_scv_init_and_block_graphics();
+    test_scv_cartridge_window();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

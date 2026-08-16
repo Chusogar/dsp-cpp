@@ -99,12 +99,14 @@ add_executable(dsp_tests
   src/cpu/m68000.cpp
   src/cpu/hd63701.cpp
   src/cpu/m6805.cpp
+  src/cpu/upd7801.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
   src/sound/pokey.cpp
   src/sound/msm5205.cpp
   src/sound/okim6295.cpp
+  src/sound/upd1771.cpp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/machine/bagman_pal.cpp
@@ -115,6 +117,7 @@ add_executable(dsp_tests
   src/machine/nec765.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
+  src/drivers/scv.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

@@ -37,6 +37,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Spectrum driver | `src/computer/spectrum_hw.pas`, `spectrum_misc.pas` | 48K memory map, display file with attributes and flash, Kempston joystick |
 | Tape player | `src/misc/tap_tzx.pas` | `.tap` blocks and `.tzx` images (turbo, pure tone/data, direct recording, pauses, loops), hooked to the ROM loader |
 | Front end | `src/misc/main_engine.pas` | SDL2 window, texture, audio queue, keyboard |
+| µPD7801 CPU | `src/cpu/upd7810.pas` (`CPU_7801`) | Epoch Super Cassette Vision CPU, 4 MHz crystal /2 |
+| µPD1771C | `src/snd/upd1771.pas` | SCV tone / noise / ADPCM sound |
+| Super Cassette Vision | `src/consolas/super_cassette_vision.pas` | BIOS + cartridge map, 192×222 video, keyboard and two joysticks |
 
 ## Building
 
@@ -65,10 +68,11 @@ holding the individual files:
 ./build/dsp --game elevator /path/to/elevator.zip
 ./build/dsp --game junglek /path/to/junglek.zip
 ./build/dsp --game spectrum48 --tape /path/to/game.tzx /path/to/48.rom
+./build/dsp --game scv /path/to/scv.zip
 ```
 
 The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
-`ddragon2`, `elevator`, `junglek` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
+`ddragon2`, `elevator`, `junglek`, `spectrum48` or `scv`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 (SLAPSTIC 104) and the two player `136041-xxx` set (SLAPSTIC 107).
 
 Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
@@ -78,7 +82,7 @@ Options:
 
 ```
 --game NAME        machine to run: bagman, mikie, gauntlet, ddragon, ddragon2,
-                   elevator, junglek or spectrum48
+                   elevator, junglek, spectrum48 or scv
 --scale N          window scale factor (default 3)
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
                    mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
@@ -145,6 +149,22 @@ need the loader to be running, and the CSW (`$18`) and generalized data (`$19`) 
 are skipped. A "stop the tape" block only pauses for two seconds, because the machine
 restarts the tape whenever the loader runs.
 
+### Super Cassette Vision
+
+Epoch's Super Cassette Vision (1984) needs the 4 KiB BIOS `upd7801g.s01`
+(CRC `7ac06182`) and the 1 KiB character ROM `epochtv.chr` (CRC `db521533`).
+Give a directory or zip that holds both, or put them next to the cartridge:
+
+```bash
+./build/dsp --game scv /path/to/scv.zip
+./build/dsp --game scv /path/to/AstroWars.bin
+```
+
+The cartridge is the positional ROM path (plain `.bin`, a zip, or a split
+`.0`/`.1` pair). Extra RAM and the Pole Position II mapper follow the same CRCs
+as `super_cassette_vision.pas`. The host keyboard supplies 0–9, Q, W and P
+(pause); the arrows and buttons are the two joysticks.
+
 ### Controls
 
 | Key | Action |
@@ -198,8 +218,8 @@ cmake --build build --target dsp_zexdoc
 ## Layout
 
 ```
-src/cpu/        Z80, M6809, M6502, M68000, HD63701 and M6805 cores
-src/sound/      AY-3-8910 and SN76496
+src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805 and µPD7801 cores
+src/sound/      AY-3-8910, SN76496, µPD1771C and the other arcade chips
 src/video/      graphics decoding and resistor based palette helpers
 src/machine/    Bagman PAL16R6, SLAPSTIC, Spectrum tape player
 src/drivers/    the machines themselves (memory map, video, inputs)

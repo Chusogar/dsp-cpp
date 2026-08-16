@@ -55,6 +55,7 @@ void Upd1771::reset() {
     salida_ = 0;
     ack_timer_ = -1;
     sample_acc_ = 0;
+    chip_phase_ = 0;
     samples_.clear();
 }
 
@@ -175,10 +176,9 @@ void Upd1771::internal_tick() {
 void Upd1771::run_cycles(int cpu_cycles, uint32_t cpu_clock) {
     // Chip internal rate = clock/4
     const double chip_hz = double(clock_) / 4.0;
-    static double phase = 0;
-    phase += double(cpu_cycles) * chip_hz / double(cpu_clock);
-    while (phase >= 1.0) {
-        phase -= 1.0;
+    chip_phase_ += double(cpu_cycles) * chip_hz / double(cpu_clock);
+    while (chip_phase_ >= 1.0) {
+        chip_phase_ -= 1.0;
         internal_tick();
     }
     sample_acc_ += double(cpu_cycles) * double(kSampleRate);
