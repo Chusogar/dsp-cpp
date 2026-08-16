@@ -55,8 +55,11 @@ public:
     bool bios_loaded() const { return bios_loaded_; }
     uint16_t debug_pc() const { return maincpu_.pc(); }
     uint8_t debug_a() const { return maincpu_.a(); }
+    uint16_t debug_sub_pc() const { return subcpu_.pc(); }
+    uint8_t debug_wx319() const { return wx319_; }
     Tms3556& vdp() { return vdp_; }
     Tms7000& maincpu() { return maincpu_; }
+    Tms7000& subcpu() { return subcpu_; }
 
     // Test helper: install dummy internal ROMs (IDLE + reset vector).
     void install_dummy_bios();

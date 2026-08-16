@@ -68,6 +68,7 @@ public:
     uint8_t sr() const { return sr_; }
     uint8_t a() const { return ram_at(0); }
     uint8_t b() const { return ram_at(1); }
+    uint8_t iocnt0() const { return io_control_[0]; }
     bool idle() const { return idle_state_; }
 
     void set_pc(uint16_t value) { pc_ = value; }

@@ -41,7 +41,9 @@ public:
 
     uint8_t* vram() { return vram_.data(); }
     const uint8_t* vram() const { return vram_.data(); }
-    int scanline() const { return scanline_; }
+    uint8_t control_reg(int index) const {
+        return (index >= 0 && index < 8) ? control_regs_[size_t(index)] : 0;
+    }
 
     static uint32_t rgb3(uint8_t color);
 

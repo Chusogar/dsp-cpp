@@ -251,6 +251,9 @@ void Exelv::reset() {
     cass_bit_ = 1;
     vdp_.reset();
     speech_.reset();
+    // TMS5220 /INT is idle-low after reset; the 7041 BIOS spins on PA.3 until it
+    // sees that (BTJOP %$08, P4) before it can send the mailbox init byte.
+    speech_irq_ = true;
     maincpu_.reset();
     if (sub_present_) {
         subcpu_.reset();
@@ -326,7 +329,7 @@ uint8_t Exelv::tms7041_porta_r() {
 }
 
 void Exelv::tms7041_portb_w(uint8_t data) {
-    speech_.set_wsq((data & 0x01) != 0);
+    speech_.strobe_ws_rs(data & 0x03);
     if ((tms7041_portb_ & 0x04) && !(data & 0x04)) {
         maincpu_.set_input_line(Tms7000::kInt1, IrqLine::Hold);
     }
@@ -474,7 +477,7 @@ void Exelv::run_frame() {
         vdp_.interrupt();
         int remain = cycles_per_line;
         while (remain > 0) {
-            const int slice = std::min(remain, 48);
+            const int slice = std::min(remain, 16);
             maincpu_.run(slice);
             if (sub_present_) subcpu_.run(slice);
             remain -= slice;

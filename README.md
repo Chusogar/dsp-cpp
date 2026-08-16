@@ -116,10 +116,15 @@ ROMs are **not** shipped. MAME set names:
   system ROM) and optionally `cm62312.bin` (speech).
 
 [RetroBIOS](https://github.com/Abdess/retrobios) does not currently publish an
-Exelvision pack; drop the MAME zips next to the emulator. Without the I/O CPU
-ROM the driver HLE's the "I/O initialized" mailbox byte so the main CPU can
-continue. Load a cartridge with `--tape` or by placing a `.bin`/`.rom` beside
-the BIOS. Exel Basic (`exelbas`) is the usual way to get a prompt.
+Exelvision pack. The MAME 0.193 merged set on Archive.org includes `exl100.zip`
+(TMS7020 + TMS7041, with the EXELTEL files in a nested folder):
+
+https://archive.org/download/MAME_0.193_ROMs_merged/MAME_0.193_ROMs_merged.zip/MAME%200.193%20ROMs%20%28merged%29%2Fexl100.zip
+
+Without the I/O CPU ROM the driver HLE's the "I/O initialized" mailbox byte so
+the main CPU can continue. Load a cartridge with `--tape` or by placing a
+`.bin`/`.rom` beside the BIOS. Exel Basic (`exelbas`) is the usual way to get a
+prompt. BIOS-only boot shows the Exelvision butterfly logo.
 
 ```bash
 ./build/dsp --game exl100 /path/to/exl100.zip

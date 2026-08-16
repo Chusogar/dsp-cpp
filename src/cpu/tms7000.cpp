@@ -192,18 +192,17 @@ void Tms7000::reset() {
 void Tms7000::set_input_line(int extline, IrqLine state) {
     if (extline != kInt1 && extline != kInt3) return;
     const bool pulse = (state == IrqLine::Hold || state == IrqLine::Pulse);
-    bool irqstate = (state != IrqLine::Clear);
-    if (irq_state_[extline] != irqstate) {
-        irq_state_[extline] = irqstate;
-        flag_ext_interrupt(extline);
-        if (irq_state_[extline]) {
-            if (extline == kInt3) timer_capture_latch_[0] = uint16_t(timer_decrementer_[0]);
-            check_interrupts();
-        }
+    const bool irqstate = (state != IrqLine::Clear);
+    if (irqstate && !irq_state_[extline]) {
+        irq_state_[extline] = true;
+        io_control_[0] |= uint8_t(0x02 << (4 * extline));
+        if (extline == kInt3) timer_capture_latch_[0] = uint16_t(timer_decrementer_[0]);
+        check_interrupts();
     }
-    if (pulse) {
+    if (!irqstate || pulse) {
+        // INT1/INT3 flags are latched in IOCNT0; the pin going idle must not
+        // drop a pending request the BIOS has not enabled yet.
         irq_state_[extline] = false;
-        flag_ext_interrupt(extline);
     }
 }
 
@@ -222,7 +221,6 @@ void Tms7000::check_interrupts() {
         const int bank = irqline > 2 ? 1 : 0;
         if (((io_control_[bank] >> shift) & 3) == 3) {
             io_control_[bank] &= uint8_t(~(0x02 << shift));
-            if (irqline == 0 || irqline == 2) flag_ext_interrupt(irqline / 2);
             do_interrupt(irqline);
             return;
         }

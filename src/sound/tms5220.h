@@ -25,6 +25,9 @@ public:
     // Active-low strobes (Gauntlet / System 1 sound board)
     void set_wsq(bool level);   // write strobe: falling edge commits data_latch_
     void set_rsq(bool level);   // reset strobe: low holds chip in reset
+    // EXL-100 I/O CPU: bit0=WS, bit1=RS, both active-low. RS is a status
+    // read strobe (not a reset). Either edge makes /RDY busy for a few cycles.
+    void strobe_ws_rs(uint8_t ws_rs);
     bool readyq() const;        // active-low ready (true = not ready / busy)
     void set_data_latch(uint8_t value) { data_latch_ = value; }
     void set_volume(float v) { volume_ = v; }
@@ -77,6 +80,8 @@ private:
     uint8_t data_latch_ = 0;
     bool wsq_ = true;
     bool rsq_ = true;
+    bool rs_read_ = true;
+    int ready_delay_ = 0;
     float volume_ = 1.0f;
 };
 
