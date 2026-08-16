@@ -153,7 +153,10 @@ restarts the tape whenever the loader runs.
 
 Epoch's Super Cassette Vision (1984) needs the 4 KiB BIOS `upd7801g.s01`
 (CRC `7ac06182`) and the 1 KiB character ROM `epochtv.chr` (CRC `db521533`).
-Give a directory or zip that holds both, or put them next to the cartridge:
+Those two files are the MAME `scv.zip` set (for example
+[Abdess/retrobios](https://github.com/Abdess/retrobios) ships them under
+`bios/Epoch/Super Cassette Vision/`). Give a directory or zip that holds both,
+or put them next to the cartridge:
 
 ```bash
 ./build/dsp --game scv /path/to/scv.zip
