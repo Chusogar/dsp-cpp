@@ -3,7 +3,9 @@
 C++17 + SDL2 port of [dsp-emulator](https://github.com/leniad/dsp-emulator) (Free Pascal).
 Supported games: **Bagman** (Valadon Automation, 1982), **Mikie** (Konami, 1984),
 **Gauntlet** (Atari, 1985), **Double Dragon** and **Double Dragon II** (Technos, 1987/1988),
-**Elevator Action** and **Jungle King** (Taito, 1983, Taito SJ hardware).
+**Elevator Action** and **Jungle King** (Taito, 1983, Taito SJ hardware),
+**Kung-Fu Master**, **Spelunker**, **Spelunker II**, **Lode Runner** and **Lode Runner II**
+(Irem M62 hardware).
 It also emulates the **ZX Spectrum 48K** home computer (Sinclair, 1982).
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
@@ -33,6 +35,8 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Double Dragon driver | `src/arcade/doubledragon_hw.pas` | Both variants: banked ROM, shared RAM, scroll, sprites, sound CPUs |
 | M6805/M68705 MCU | `src/cpu/m6805.pas` | MC68705P3 protection MCU of Elevator Action |
 | Taito SJ driver | `src/arcade/taitosj_hw.pas` | Main and sound Z80, four AY-3-8910, DAC, MCU handshake, three tile layers with per column scroll, sprites and PROM priorities |
+| M6803 MCU | `src/cpu/m680x.pas` (`TCPU_M6803`) | Irem M62 sound CPU: 128 bytes of internal RAM, ports 1-4, no internal ROM |
+| Irem M62 driver | `src/arcade/m62_hw.pas` | Kung-Fu Master, Spelunker, Spelunker II, Lode Runner and Lode Runner II: Z80, M6803, two AY-3-8910, two MSM5205, tiles and multi-height sprites |
 | Spectrum ULA | `src/computer/spectrum_hw.pas` | Keyboard matrix, border, one bit beeper, EAR input, contended timing |
 | Spectrum driver | `src/computer/spectrum_hw.pas`, `spectrum_misc.pas` | 48K memory map, display file with attributes and flash, Kempston joystick |
 | Tape player | `src/misc/tap_tzx.pas` | `.tap` blocks and `.tzx` images (turbo, pure tone/data, direct recording, pauses, loops), hooked to the ROM loader |
@@ -68,7 +72,8 @@ holding the individual files:
 ```
 
 The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
-`ddragon2`, `elevator`, `junglek` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
+`ddragon2`, `elevator`, `junglek`, `kungfum`, `spelunkr`, `spelunk2`, `ldrun`,
+`ldrun2` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 (SLAPSTIC 104) and the two player `136041-xxx` set (SLAPSTIC 107).
 
 Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
@@ -78,7 +83,8 @@ Options:
 
 ```
 --game NAME        machine to run: bagman, mikie, gauntlet, ddragon, ddragon2,
-                   elevator, junglek or spectrum48
+                   elevator, junglek, kungfum, spelunkr, spelunk2, ldrun,
+                   ldrun2 or spectrum48
 --scale N          window scale factor (default 3)
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
                    mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
@@ -123,6 +129,34 @@ Jungle King ROM set: `kn21-1.bin`, `kn22-1.bin`, `kn43.bin`, `kn24.bin`, `kn25.b
 
 Neither set has been run here with real ROMs yet: the driver is only checked against a
 synthetic set, so this hardware is still unverified.
+
+### Irem M62 (Kung-Fu Master, Spelunker, Lode Runner)
+
+Irem's M62 board runs a Z80 (3.072 MHz on Kung-Fu Master, 4 MHz on the others) and an
+M6803 sound CPU at 3.579545 MHz / 4 with two AY-3-8910 and two MSM5205 ADPCM chips.
+The sound CPU streams ADPCM nibbles; the first MSM5205 clocks the second in slave
+mode and pulses NMI so the 6803 can feed the next sample. Video is an 8x8 (or 12x8
+on Spelunker) tilemap plus 16x16 sprites that the height PROM can stack into 32 or
+64 pixel tall objects. Kung-Fu Master is 256x256 with a status bar that does not
+scroll; the other games are 384x256.
+
+```bash
+./build/dsp --game kungfum /path/to/kungfum.zip
+./build/dsp --game spelunkr /path/to/spelunkr.zip
+./build/dsp --game spelunk2 /path/to/spelunk2.zip
+./build/dsp --game ldrun /path/to/ldrun.zip
+./build/dsp --game ldrun2 /path/to/ldrun2.zip
+```
+
+DIP banks: 0 = A (gameplay / coinage), 1 = B (cabinet, flip screen, service). The
+Pascal driver finishes initialisation with `--dip 0:0xff --dip 1:0xfd`.
+
+Kung-Fu Master ROM set: `a-4e-c.bin`, `a-4d-c.bin`, `g-4c-a.bin`, `g-4d-a.bin`,
+`g-4e-a.bin`, `a-3e-.bin`, `a-3f-.bin`, `a-3h-.bin`, `b-4k-.bin` through
+`b-4a-.bin`, plus the colour and sprite-height PROMs `g-1j-.bin`, `g-1f-.bin`,
+`g-1h-.bin`, `b-1m-.bin`, `b-1n-.bin`, `b-1l-.bin`, `b-5f-.bin`.
+
+None of these sets has been run here with real ROMs yet.
 
 ### ZX Spectrum 48K
 

@@ -62,6 +62,7 @@ add_executable(dsp
   src/drivers/atari_system1.cpp
   src/drivers/mcr.cpp
   src/drivers/dec0.cpp
+  src/drivers/m62.cpp
       
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp

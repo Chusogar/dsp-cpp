@@ -663,6 +663,30 @@ void test_hd63701_interrupts() {
           "an NMI jumps through the vector at $fffc even with I set");
 }
 
+dsp::HD63701 make_m6803(std::vector<uint8_t>& memory, const std::vector<uint8_t>& program) {
+    dsp::HD63701 cpu(1000000, dsp::HD63701::Type::M6803);
+    cpu.set_memory_handlers([&memory](uint16_t address) { return memory[address]; },
+                            [&memory](uint16_t address, uint8_t value) { memory[address] = value; });
+    std::copy(program.begin(), program.end(), memory.begin() + 0xf000);
+    memory[0xfffe] = 0xf0;
+    memory[0xffff] = 0x00;
+    cpu.reset();
+    return cpu;
+}
+
+void test_m6803_memory_map() {
+    auto memory = make_memory();
+    // ldaa #$12 / staa $50 / staa $200 / ldab $50 / addb $200
+    dsp::HD63701 cpu =
+        make_m6803(memory, {0x86, 0x12, 0x97, 0x50, 0xb7, 0x02, 0x00, 0xd6, 0x50, 0xfb, 0x02, 0x00});
+    check(cpu.pc() == 0xf000, "the M6803 takes the reset vector from external memory");
+    cpu.run(30);
+    check(cpu.a == 0x12, "the M6803 loads an immediate value");
+    check(memory[0x50] == 0, "M6803 internal RAM at $50 is not on the external bus");
+    check(memory[0x200] == 0x12, "M6803 writes above $100 reach external memory");
+    check(cpu.b == 0x24, "the M6803 reads internal RAM and external memory");
+}
+
 void test_msm5205() {
     dsp::MSM5205 chip(384000, 48, 4);
     check(chip.sample_frequency() == 8000, "the MSM5205 prescaler sets the sample rate");
@@ -680,6 +704,23 @@ void test_msm5205() {
     check(chip.output() > 0, "positive ADPCM nibbles push the output up");
     chip.set_reset(true);
     check(chip.output() == 0, "resetting the MSM5205 silences it");
+}
+
+void test_msm5205_streaming() {
+    dsp::MSM5205 chip(384000, 96, 4);
+    check(chip.sample_frequency() == 4000, "S96 selects a 4 kHz VCLK");
+    int clocks = 0;
+    chip.set_vclk_handler([&]() { clocks++; });
+    chip.reset();
+    chip.data_w(0x07);
+    chip.set_reset(false);
+    chip.vclk();
+    check(clocks == 1, "a streaming VCLK still runs the handler");
+    check(chip.output() > 0, "data_w nibbles are decoded without a sample ROM");
+    chip.set_reset(true);
+    chip.vclk();
+    check(clocks == 2, "the VCLK handler fires while the chip is held in reset");
+    check(chip.output() == 0, "reset on a streaming chip silences the output");
 }
 
 void test_okim6295() {
@@ -891,10 +932,12 @@ int main() {
     test_hd63701_ports();
     test_hd63701_hd63701_only_opcodes();
     test_hd63701_interrupts();
+    test_m6803_memory_map();
     test_m6805_arithmetic();
     test_m6805_bit_branches();
     test_m6805_interrupt();
     test_msm5205();
+    test_msm5205_streaming();
     test_okim6295();
     test_spectrum_tape();
     test_spectrum_tzx();

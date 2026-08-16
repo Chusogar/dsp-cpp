@@ -18,6 +18,7 @@
 #include "drivers/atari_system1.h"
 #include "drivers/mcr.h"
 #include "drivers/dec0.h"
+#include "drivers/m62.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -52,7 +53,8 @@ void print_supported_emulators() {
         "    bagman, mikie, gauntlet, mrdo, ddragon, ddragon2,\n"
         "    elevator, junglek, indydoom, peter, marble,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
-		"    robocop, baddudes, hippodrm, slyspy, bouldash\n"
+		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
+		"    kungfum, spelunkr, spelunk2, ldrun, ldrun2\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3,\n"
@@ -132,6 +134,15 @@ std::string guess_game(const std::string& rom_path) {
         return "slyspy";
     }
     if (lowered.find("bouldash") != std::string::npos) return "bouldash";
+    if (lowered.find("kungfum") != std::string::npos || lowered.find("kungfu") != std::string::npos) {
+        return "kungfum";
+    }
+    if (lowered.find("spelunk2") != std::string::npos) return "spelunk2";
+    if (lowered.find("spelunk") != std::string::npos) return "spelunkr";
+    if (lowered.find("ldrun2") != std::string::npos) return "ldrun2";
+    if (lowered.find("ldrun") != std::string::npos || lowered.find("loderunner") != std::string::npos) {
+        return "ldrun";
+    }
     
     
     // Computers
@@ -202,7 +213,22 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
         return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::SlySpy);
     }
     if (game == "bouldash") return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::BoulderDash);
-    
+
+    if (game == "kungfum" || game == "kungfu") {
+        return std::make_unique<dsp::IremM62>(dsp::IremM62::Game::KungFuMaster);
+    }
+    if (game == "spelunkr" || game == "spelunker") {
+        return std::make_unique<dsp::IremM62>(dsp::IremM62::Game::Spelunker);
+    }
+    if (game == "spelunk2" || game == "spelunker2") {
+        return std::make_unique<dsp::IremM62>(dsp::IremM62::Game::Spelunker2);
+    }
+    if (game == "ldrun" || game == "loderunner") {
+        return std::make_unique<dsp::IremM62>(dsp::IremM62::Game::LodeRunner);
+    }
+    if (game == "ldrun2" || game == "loderunner2") {
+        return std::make_unique<dsp::IremM62>(dsp::IremM62::Game::LodeRunner2);
+    }
 
 	// computers
     if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48k>();

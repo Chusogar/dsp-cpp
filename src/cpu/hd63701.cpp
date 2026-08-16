@@ -27,6 +27,26 @@ const uint8_t kMode[256] = {
     8, 8, 8, 7, 8, 8, 8, 3, 8, 8, 8, 8, 7, 3, 7, 3,           // f0
 };
 
+// Base cycle count of every opcode (ciclos_6803 in m680x.pas).
+const uint8_t kCycles6803[256] = {
+    99, 2, 99, 99, 3, 3, 2, 2, 3, 3, 2, 2, 2, 2, 2, 2,        // 00
+    2, 2, 99, 99, 99, 99, 2, 2, 99, 2, 99, 2, 99, 99, 99, 99, // 10
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,           // 20
+    3, 3, 4, 4, 3, 3, 3, 3, 5, 5, 3, 10, 4, 10, 9, 12,        // 30
+    2, 99, 99, 2, 2, 99, 2, 2, 2, 2, 2, 99, 2, 2, 99, 2,      // 40
+    2, 99, 99, 2, 2, 99, 2, 2, 2, 2, 2, 99, 2, 2, 99, 2,      // 50
+    6, 99, 99, 6, 6, 99, 6, 6, 6, 6, 6, 99, 6, 6, 3, 6,       // 60
+    6, 99, 99, 6, 6, 99, 6, 6, 6, 6, 6, 99, 6, 6, 3, 6,       // 70
+    2, 2, 2, 4, 2, 2, 2, 99, 2, 2, 2, 2, 4, 6, 3, 99,         // 80
+    3, 3, 3, 5, 3, 3, 3, 3, 3, 3, 3, 3, 5, 5, 4, 4,           // 90
+    4, 4, 4, 6, 4, 4, 4, 4, 4, 4, 4, 4, 6, 6, 5, 5,           // a0
+    4, 4, 4, 6, 4, 4, 4, 4, 4, 4, 4, 4, 6, 6, 5, 5,           // b0
+    2, 2, 2, 4, 2, 2, 2, 99, 2, 2, 2, 2, 3, 99, 3, 99,        // c0
+    3, 3, 3, 5, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4,           // d0
+    4, 4, 4, 6, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5,           // e0
+    4, 4, 4, 6, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5,           // f0
+};
+
 // Base cycle count of every opcode (ciclos_63701 in m680x.pas).
 const uint8_t kCycles[256] = {
     99, 1, 99, 99, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,        // 00
@@ -59,7 +79,7 @@ inline uint32_t make_dword(uint16_t high, uint16_t low) {
 
 }  // namespace
 
-HD63701::HD63701(uint32_t clock) : clock_(clock) {
+HD63701::HD63701(uint32_t clock, Type type) : clock_(clock), type_(type) {
     read_ = [](uint16_t) { return uint8_t(0xff); };
     write_ = [](uint16_t, uint8_t) {};
     port_in_.fill(0xff);
@@ -243,6 +263,12 @@ void HD63701::write_io(uint8_t reg, uint8_t value) {
 }
 
 uint8_t HD63701::read(uint16_t address) {
+    if (type_ == Type::M6803) {
+        if (address <= 0x0007) return read_io(uint8_t(address));
+        if (address >= 0x0040 && address <= 0x00ff) return internal_ram_[address];
+        if (address >= 0x0100) return read_(address);
+        return 0xff;
+    }
     if (address <= 0x001f) return read_io(uint8_t(address));
     if (address >= 0x0040 && address <= 0x01ff) return internal_ram_[address];
     if (address >= 0x0200 && address <= 0xbfff) return read_(address);
@@ -251,6 +277,18 @@ uint8_t HD63701::read(uint16_t address) {
 }
 
 void HD63701::write(uint16_t address, uint8_t value) {
+    if (type_ == Type::M6803) {
+        if (address <= 0x0007) {
+            write_io(uint8_t(address), value);
+            return;
+        }
+        if (address >= 0x0040 && address <= 0x00ff) {
+            internal_ram_[address] = value;
+            return;
+        }
+        if (address >= 0x0100 && address <= 0xefff) write_(address, value);
+        return;
+    }
     if (address <= 0x001f) {
         write_io(uint8_t(address), value);
         return;
@@ -1010,11 +1048,15 @@ int HD63701::run(int cycles) {
             default: break;
         }
 
-        int elapsed = kCycles[opcode] + extra_cycles_;
+        const uint8_t* cycles = (type_ == Type::M6803) ? kCycles6803 : kCycles;
+        int elapsed = cycles[opcode] + extra_cycles_;
         if (elapsed >= 99) elapsed = 1;  // invalid opcode
         executed += elapsed;
-        counter_ += uint32_t(elapsed);
-        if (counter_ >= timer_next_) check_timer_event();
+        if (type_ != Type::M6803) {
+            counter_ += uint32_t(elapsed);
+            if (counter_ >= timer_next_) check_timer_event();
+        }
+        if (cycle_handler_) cycle_handler_(elapsed);
     }
     return executed;
 }

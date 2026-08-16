@@ -42,10 +42,15 @@ void MSM5205::reset() {
     position_ = 0;
     end_ = 0;
     data_value_ = -1;
+    data_ = 0;
     reset_ = true;
     idle_ = true;
     signal_ = 0;
     step_ = 0;
+}
+
+void MSM5205::data_w(uint8_t value) {
+    data_ = bits_ == 4 ? uint8_t(value & 0x0f) : uint8_t((value & 0x07) << 1);
 }
 
 void MSM5205::set_reset(bool state) {
@@ -77,6 +82,24 @@ void MSM5205::decode(uint8_t nibble) {
 }
 
 void MSM5205::vclk() {
+    if (vclk_handler_) vclk_handler_();
+    if (rom_.empty()) {
+        // Streaming mode: decode the nibble previously written with data_w().
+        // The VCLK still fires while reset is held (Irem M62 uses that NMI).
+        if (reset_) {
+            signal_ = 0;
+            step_ = 0;
+            data_value_ = -1;
+            return;
+        }
+        signal_ += diff_table()[size_t(step_ * 16 + (data_ & 0x0f))];
+        if (signal_ > 2047) signal_ = 2047;
+        else if (signal_ < -2048) signal_ = -2048;
+        step_ += kIndexShift[size_t(data_ & 0x07)];
+        if (step_ > 48) step_ = 48;
+        else if (step_ < 0) step_ = 0;
+        return;
+    }
     if (idle_) return;
     if (data_value_ != -1) {
         decode(uint8_t(data_value_ & 0x0f));
