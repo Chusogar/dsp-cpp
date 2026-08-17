@@ -7,10 +7,10 @@ namespace dsp {
 
 // Yamaha V9938, ported from zxtiny `zxm/msx2.c`. 128 KiB VRAM, MSX2 screen
 // modes 0–8, sprites, palette, and the command engine (instant, not
-// cycle-accurate). Framebuffer is 288×240 including the PAL border.
+// cycle-accurate). Framebuffer is 544×240 including the PAL border.
 class V9938 {
 public:
-    static constexpr int kPaperWidth = 256;
+    static constexpr int kPaperWidth = 512;
     static constexpr int kPaperHeight = 212;
     static constexpr int kBorderH = 16;
     static constexpr int kBorderV = 14;
@@ -55,6 +55,7 @@ private:
     void render_sprites_m2(int line, uint32_t* buf);
     uint8_t log_op(int op, uint8_t src, uint8_t dst) const;
     uint32_t bitmap_addr(int x, int y) const;
+    uint32_t cpu_phys(uint32_t addr) const;
     int display_y_offset() const;
     int pixels_per_byte() const;
     uint8_t get_pixel(int x, int y) const;

@@ -28,6 +28,13 @@ uint32_t g7_color(uint8_t c) {
     return 0xFF000000 | (r << 16) | (g << 8) | b;
 }
 
+void put256(uint32_t* buf, int x, uint32_t color) {
+    if (static_cast<unsigned>(x) < 256u) {
+        buf[x * 2] = color;
+        buf[x * 2 + 1] = color;
+    }
+}
+
 }  // namespace
 
 // =============================================================================
@@ -74,6 +81,13 @@ void V9938::vram_wr(uint32_t addr, uint8_t val) {
     vram_[addr & (kVramSize - 1)] = val;
 }
 
+uint32_t V9938::cpu_phys(uint32_t addr) const {
+    const int mode = screen_mode();
+    if (mode == 7 || mode == 8)
+        return ((addr & 1) << 16) | (addr >> 1);
+    return addr;
+}
+
 // =============================================================================
 // V9938 VDP - Scanline rendering
 // =============================================================================
@@ -89,14 +103,13 @@ void V9938::render_t1(int line, uint32_t* buf) {
     int row = line / 8;
     int ymod = line & 7;
     // 8-pixel left border, 240 pixels text (40 chars × 6), 8-pixel right border
-    for (int x = 0; x < kPaperWidth; x++) buf[x] = bg;
+    for (int x = 0; x < 256; x++) put256(buf, x, bg);
     for (int col = 0; col < 40; col++) {
         uint8_t ch = vram_rd(nt + row * 40 + col);
         uint8_t pat = vram_rd(pg + ch * 8 + ymod);
         int px = 8 + col * 6;
         for (int bit = 0; bit < 6; bit++) {
-            if (px + bit < kPaperWidth)
-                buf[px + bit] = (pat & (0x80 >> bit)) ? fg : bg;
+            put256(buf, px + bit, (pat & (0x80 >> bit)) ? fg : bg);
         }
     }
 }
@@ -118,7 +131,7 @@ void V9938::render_g1(int line, uint32_t* buf) {
         uint32_t bg = palette_[bg_i ? bg_i : 0];
         int px = col * 8;
         for (int bit = 0; bit < 8; bit++)
-            buf[px + bit] = (pat & (0x80 >> bit)) ? fg : bg;
+            put256(buf, px + bit, (pat & (0x80 >> bit)) ? fg : bg);
     }
 }
 
@@ -147,7 +160,7 @@ void V9938::render_g2(int line, uint32_t* buf) {
         uint32_t bg = palette_[bg_i ? bg_i : 0];
         int px = col * 8;
         for (int bit = 0; bit < 8; bit++)
-            buf[px + bit] = (pat & (0x80 >> bit)) ? fg : bg;
+            put256(buf, px + bit, (pat & (0x80 >> bit)) ? fg : bg);
     }
 }
 
@@ -168,8 +181,8 @@ void V9938::render_mc(int line, uint32_t* buf) {
         uint32_t c1 = palette_[hi ? hi : 0];
         uint32_t c2 = palette_[lo ? lo : 0];
         int px = col * 8;
-        for (int x = 0; x < 4; x++) buf[px + x] = c1;
-        for (int x = 4; x < 8; x++) buf[px + x] = c2;
+        for (int x = 0; x < 4; x++) put256(buf, px + x, c1);
+        for (int x = 4; x < 8; x++) put256(buf, px + x, c2);
     }
 }
 
@@ -178,34 +191,27 @@ void V9938::render_g4(int line, uint32_t* buf) {
     const int y = line + display_y_offset();
     for (int x = 0; x < 256; x += 2) {
         uint8_t byte = vram_rd(bitmap_addr(x, y));
-        buf[x]     = palette_[(byte >> 4) & 0x0F];
-        buf[x + 1] = palette_[byte & 0x0F];
+        put256(buf, x, palette_[(byte >> 4) & 0x0F]);
+        put256(buf, x + 1, palette_[byte & 0x0F]);
     }
 }
 
-// Render G5 (Screen 6, 512×212 bitmap, 2bpp → display as 256 wide)
 void V9938::render_g5(int line, uint32_t* buf) {
     const int y = line + display_y_offset();
-    for (int x = 0; x < 256; x++) {
-        uint8_t byte = vram_rd(bitmap_addr(x * 2, y));
-        buf[x] = palette_[(byte >> 6) & 3];
-    }
+    for (int x = 0; x < 512; x++)
+        buf[x] = palette_[get_pixel(x, y)];
 }
 
-// Render G6 (Screen 7, 512×212 planar 4bpp → 256 wide, matching SCREEN 5 aspect)
 void V9938::render_g6(int line, uint32_t* buf) {
     const int y = line + display_y_offset();
-    for (int x = 0; x < 256; x++) {
-        uint8_t byte = vram_rd(bitmap_addr(x * 2, y));
-        buf[x] = palette_[(byte >> 4) & 0x0F];
-    }
+    for (int x = 0; x < 512; x++)
+        buf[x] = palette_[get_pixel(x, y)];
 }
 
-// Render G7 (Screen 8, 256×212 planar 8bpp)
 void V9938::render_g7(int line, uint32_t* buf) {
     const int y = line + display_y_offset();
     for (int x = 0; x < 256; x++)
-        buf[x] = g7_color(vram_rd(bitmap_addr(x, y)));
+        put256(buf, x, g7_color(vram_rd(bitmap_addr(x, y))));
 }
 
 // Render sprites mode 1 (Screen 1-3: 8/16 px, 4 per line, 1 color)
@@ -243,7 +249,7 @@ void V9938::render_sprites_m1(int line, uint32_t* buf) {
             if (bits & (0x80 >> bx)) {
                 for (int m = 0; m < mag; m++) {
                     int px = x + sx * mag + m;
-                    if (px >= 0 && px < 256) buf[px] = color;
+                    if (px >= 0 && px < 256) put256(buf, px, color);
                 }
             }
         }
@@ -289,7 +295,7 @@ void V9938::render_sprites_m2(int line, uint32_t* buf) {
             if (bits & (0x80 >> bx)) {
                 for (int m = 0; m < mag; m++) {
                     int px = x + sx * mag + m;
-                    if (px >= 0 && px < 256) buf[px] = color;
+                    if (px >= 0 && px < 256) put256(buf, px, color);
                 }
             }
         }
@@ -706,7 +712,7 @@ uint8_t V9938::port_read(int port) {
     switch (port & 3) {
     case 0: { // Port 0x98: VRAM data read
         uint8_t val = read_buf_;
-        read_buf_ = vram_rd(vram_addr_);
+        read_buf_ = vram_rd(cpu_phys(vram_addr_));
         vram_addr_ = (vram_addr_ + 1) & (kVramSize - 1);
         latch_flag_ = false;
         return val;
@@ -742,7 +748,7 @@ void V9938::port_write(int port, uint8_t val) {
             command_write_byte(val);
         } else {
             read_buf_ = val;
-            vram_wr(vram_addr_, val);
+            vram_wr(cpu_phys(vram_addr_), val);
             vram_addr_ = (vram_addr_ + 1) & (kVramSize - 1);
         }
         latch_flag_ = false;
@@ -762,7 +768,7 @@ void V9938::port_write(int port, uint8_t val) {
                                ((uint32_t)(val & 0x3F) << 8) | latch_;
                 vram_write_ = (val & 0x40) != 0;
                 if (!vram_write_) {
-                    read_buf_ = vram_rd(vram_addr_);
+                    read_buf_ = vram_rd(cpu_phys(vram_addr_));
                     vram_addr_ = (vram_addr_ + 1) & (kVramSize - 1);
                 }
             }

@@ -2365,7 +2365,7 @@ void test_v9938_line_stays_axis_aligned() {
 
     auto pixel = [&](int x, int y) -> uint32_t {
         const uint32_t* fb = vdp.framebuffer();
-        return fb[(dsp::V9938::kBorderV + y) * dsp::V9938::kScreenWidth + dsp::V9938::kBorderH + x] &
+        return fb[(dsp::V9938::kBorderV + y) * dsp::V9938::kScreenWidth + dsp::V9938::kBorderH + x * 2] &
                0x00ffffffu;
     };
     auto render_rows = [&](int y0, int y1) {
@@ -2436,8 +2436,8 @@ void test_v9938_screen7_planar() {
         return fb[(dsp::V9938::kBorderV + 10) * dsp::V9938::kScreenWidth + dsp::V9938::kBorderH + x] &
                0x00ffffffu;
     };
-    check(pix(0) != pix(1), "SCREEN 7 even/odd bytes live in different 64K banks");
-    check(pix(0) == pix(2), "SCREEN 7 2:1 output keeps even pixels of the 512-dot line");
+    check(pix(0) != pix(2), "SCREEN 7 X=0 and X=2 use different 64K banks");
+    check(pix(0) == pix(4), "SCREEN 7 X=0 and X=4 share bank 0");
 }
 
 void test_msx2_bios_mapper_and_disk() {
@@ -2471,8 +2471,8 @@ void test_msx2_bios_mapper_and_disk() {
     auto machine = std::make_unique<dsp::Msx2>();
     check(machine->init(dir.string(), &error), "MSX2 boots from zxtiny-named BIOS files");
     check(std::strcmp(machine->title(), "MSX2") == 0, "MSX2 title");
-    check(machine->screen_width() == 288 && machine->screen_height() == 240,
-          "MSX2 screen is 288x240 including border");
+    check(machine->screen_width() == 544 && machine->screen_height() == 240,
+          "MSX2 screen is 544x240 including border");
     check(machine->debug_has_diskrom(), "optional DISK.ROM is detected");
     check(machine->debug_slot() == 0xf0, "boot slot select is BIOS+RAM");
     check(machine->debug_mapper(3) == 0, "mapper page 3 starts on RAM page 0");
