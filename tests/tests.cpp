@@ -31,12 +31,16 @@
 #include "drivers/nes.h"
 #include "drivers/scv.h"
 #include "drivers/spectrum.h"
+#include "drivers/zx_clone.h"
 #include "machine/bagman_pal.h"
+#include "machine/beta128.h"
 #include "machine/kabuki.h"
 #include "machine/lynx_suzy.h"
 #include "machine/mos6526.h"
 #include "machine/slapstic.h"
 #include "machine/spectrum_tape.h"
+#include "machine/trdos_disk.h"
+#include "machine/wd1793.h"
 #include "sound/ay8910.h"
 #include "sound/msm5205.h"
 #include "sound/nes_apu.h"
@@ -2154,6 +2158,118 @@ void test_atari_system1_missing_roms() {
     check(std::strcmp(road.title(), "Road Runner") == 0, "Road Runner title");
 }
 
+void test_trdos_scl_and_beta() {
+    std::vector<uint8_t> scl(9 + 14 + 256, 0);
+    std::memcpy(scl.data(), "SINCLAIR", 8);
+    scl[8] = 1;
+    std::memcpy(scl.data() + 9, "TEST    C", 9);
+    scl[9 + 9] = 0x00;
+    scl[9 + 10] = 0x80;
+    scl[9 + 11] = 0x00;
+    scl[9 + 12] = 0x01;
+    scl[9 + 13] = 1;
+    std::fill(scl.begin() + 9 + 14, scl.end(), uint8_t(0xa5));
+
+    dsp::TrdosDisk disk;
+    std::string error;
+    check(disk.load_bytes(scl.data(), scl.size(), &error), "SCL image expands to a TR-DOS volume");
+    check(disk.tracks() == 80 && disk.heads() == 2, "SCL becomes an 80-track DS disk");
+    const uint8_t* cat = disk.sector(0, 0, 1);
+    check(cat != nullptr && std::memcmp(cat, "TEST    C", 9) == 0, "SCL catalogue keeps the file name");
+    check(cat != nullptr && cat[14] == 0 && cat[15] == 1,
+          "first SCL file starts at logical track 1 sector 0");
+    const uint8_t* info = disk.sector(0, 0, 9);
+    check(info != nullptr && info[0xe3] == 0x16 && info[0xe7] == 0x10,
+          "disk-info sector is DS/80 with the TR-DOS ident");
+    const uint8_t* data = disk.sector(0, 1, 1);
+    check(data != nullptr && data[0] == 0xa5 && data[255] == 0xa5,
+          "file payload lands on cylinder 0 head 1");
+
+    dsp::Wd1793 fdc;
+    fdc.reset();
+    fdc.set_disk(&disk);
+    fdc.set_side(1);
+    fdc.track_w(0);
+    fdc.sector_w(1);
+    fdc.command_w(0x80);
+    check((fdc.status_r() & 0x02) != 0, "read sector raises DRQ");
+    check(fdc.data_r() == 0xa5, "WD1793 returns the SCL payload");
+    for (int i = 1; i < 256; i++) (void)fdc.data_r();
+    check(fdc.intrq(), "sector read completes with INTRQ");
+
+    dsp::Beta128 beta;
+    beta.reset();
+    check(!beta.active(), "Beta 128 starts paged out");
+    beta.enable();
+    check(beta.state_r() != 0xff, "port $FF is live while DOS is paged in");
+
+    dsp::Pentagon1024 pentagon;
+    dsp::Scorpion256 scorpion;
+    check(std::strcmp(pentagon.title(), "Pentagon 1024") == 0, "Pentagon title");
+    check(std::strcmp(scorpion.title(), "Scorpion ZS-256") == 0, "Scorpion title");
+    check(pentagon.debug_ram_pages() == 64, "Pentagon 1024 has 64 RAM pages");
+    check(scorpion.debug_ram_pages() == 16, "Scorpion 256 has 16 RAM pages");
+    check(pentagon.screen_width() == 352 && pentagon.screen_height() == 280,
+          "clone screen is 352x280");
+
+    error = "unset";
+    check(!pentagon.init("/no/such/pentagon", &error), "Pentagon init fails without ROMs");
+    check(error.find("not found") != std::string::npos, "Pentagon reports the missing 128K ROM");
+    error = "unset";
+    check(!scorpion.init("/no/such/scorpion", &error), "Scorpion init fails without ROMs");
+    check(error.find("not found") != std::string::npos, "Scorpion reports the missing ROM");
+
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "dsp-zx-clone-roms";
+    fs::create_directories(dir);
+    auto write_blob = [&](const char* name, size_t size) {
+        std::vector<uint8_t> blob(size, 0x00);
+        blob[0] = 0x18;
+        blob[1] = 0xfe;  // JR -2
+        std::ofstream out((dir / name).string(), std::ios::binary);
+        out.write(reinterpret_cast<const char*>(blob.data()), std::streamsize(blob.size()));
+    };
+    write_blob("128.rom", 0x8000);
+    write_blob("trdos.rom", 0x4000);
+    write_blob("scorpion.rom", 0x10000);
+
+    dsp::Pentagon1024 pent_ok;
+    check(pent_ok.init(dir.string(), &error), "Pentagon boots from dummy 128K+TR-DOS ROMs");
+    pent_ok.io_out(0x7ffd, 0x07);
+    check(pent_ok.debug_ram3() == 7, "Pentagon $7FFD bits 0-2 select RAM 0-7");
+    pent_ok.io_out(0x7ffd, 0x40);
+    check(pent_ok.debug_ram3() == 8, "Pentagon $7FFD bits 6-7 select RAM 8-31");
+    pent_ok.io_out(0xdffd, 0x01);
+    check(pent_ok.debug_ram3() == 40, "Pentagon $DFFD bit 0 selects RAM 32-63");
+    pent_ok.io_out(0x7ffd, 0x10);
+    pent_ok.debug_m1(0x3d00);
+    check(pent_ok.debug_beta() && pent_ok.debug_rom_page() == 3,
+          "M1 at $3D00 with the 48K ROM pages TR-DOS in");
+    pent_ok.debug_m1(0x4000);
+    check(!pent_ok.debug_beta(), "M1 at $4000 pages TR-DOS out");
+
+    const fs::path scl_path = dir / "test.scl";
+    {
+        std::ofstream out(scl_path.string(), std::ios::binary);
+        out.write(reinterpret_cast<const char*>(scl.data()), std::streamsize(scl.size()));
+    }
+    check(pent_ok.load_media(scl_path.string(), &error), "Pentagon loads an SCL disk");
+    check(pent_ok.debug_disk(), "Beta 128 has a disk after SCL load");
+
+    dsp::Scorpion256 scor_ok;
+    check(scor_ok.init(dir.string(), &error), "Scorpion boots from a 64 KB ROM");
+    scor_ok.io_out(0x7ffd, 0x05);
+    check(scor_ok.debug_ram3() == 5, "Scorpion $7FFD bits 0-2 select RAM 0-7");
+    scor_ok.io_out(0x1ffd, 0x10);
+    check(scor_ok.debug_ram3() == 13, "Scorpion $1FFD bit 4 selects RAM 8-15");
+    check(scor_ok.load_media(scl_path.string(), &error), "Scorpion loads an SCL disk");
+
+    pent_ok.run_frame();
+    scor_ok.run_frame();
+    check(pent_ok.framebuffer()[0] != 0, "Pentagon renders a border");
+    check(scor_ok.framebuffer()[0] != 0, "Scorpion renders a border");
+}
+
 }  // namespace
 
 int main() {
@@ -2229,6 +2345,7 @@ int main() {
     test_tms7000_lvdp_and_int1();
     test_tms3556_background();
     test_exelv_dummy_bios();
+    test_trdos_scl_and_beta();
     test_atari_system1_missing_roms();
     if (failures == 0) {
         std::printf("all tests passed\n");

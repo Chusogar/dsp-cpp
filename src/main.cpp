@@ -29,6 +29,8 @@
 #include "drivers/msx1.h"
 #include "drivers/c64.h"
 #include "drivers/exelv.h"
+#include "drivers/pentagon.h"
+#include "drivers/scorpion.h"
 
 // Consoles
 #include "drivers/sms.h"
@@ -66,7 +68,7 @@ void print_supported_emulators() {
         "    rtype, hharry, rtype2\n"
         "\n"
         "  Computers:\n"
-        "    spectrum48, spectrum128, plus3,\n"
+        "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
         "    cpc464, cpc664, cpc6128, msx, c64,\n"
         "    exl100, exeltel\n"
         "\n"
@@ -86,7 +88,7 @@ void print_usage(const char* program) {
         "  --game NAME        emulator / game to run (required; see list above)\n"
         "  --tape FILE        tape/cart: Spectrum/CPC/C64 (.tap/.tzx/.cdt/.prg/.t64),\n"
         "                     or EXL-100 / EXELTEL cartridge (.bin/.rom)\n"
-        "  --disk FILE        Amstrad CPC / Spectrum +3 .dsk/.edsk floppy image\n"
+        "  --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, Pentagon/Scorpion .trd/.scl\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
         "                     bank, mikie has three (0=A, 1=B, 2=C); cpc: 0=colour(1)/\n"
@@ -204,6 +206,12 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     }
 	if (game == "spectrum128") return std::make_unique<dsp::Spectrum128k>(dsp::Spectrum128k::Model::Spec128k);
 	if (game == "plus3") return std::make_unique<dsp::Spectrum3>();
+	if (game == "pentagon" || game == "pentagon1024" || game == "pent1024") {
+	    return std::make_unique<dsp::Pentagon1024>();
+	}
+	if (game == "scorpion" || game == "scorpion256" || game == "scorpio" || game == "zs256") {
+	    return std::make_unique<dsp::Scorpion256>();
+	}
 	if (game == "msx") return std::make_unique<dsp::Msx1>();
 	if (game == "c64" || game == "commodore64" || game == "commodore") {
         return std::make_unique<dsp::C64>();

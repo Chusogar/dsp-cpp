@@ -6,7 +6,7 @@ Arcade: **Bagman**, **Mikie**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
 (**Kung-Fu Master**, **Spelunker**, **Lode Runner**), SNK (**Ikari Warriors**,
 **Athena**, **TNK III**, **ASO**), Capcom **CPS1**, Irem **M72** (**R-Type**),
 and Midway **MCR** (**Tapper** and family).
-Computers: **ZX Spectrum 48K**, Amstrad CPC, **Commodore 64**, **EXL-100** /
+Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC, **Commodore 64**, **EXL-100** /
 **EXELTEL**. Consoles: NES, Game Boy / Game Boy Color, **Atari Lynx**,
 **Super Cassette Vision**.
 
@@ -68,6 +68,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | TMS7000 CPU | new (MAME `tms7000` behaviour) | TMS7020/7040/7041/7042, EXL LVDP opcode |
 | TMS3556 VDP | new (MAME `tms3556` behaviour) | Text 40×25, bitmap 320×250, mixed, 8 colours |
 | EXL-100 / EXELTEL | new (MAME `exelv.cpp`) | Dual TMS7000, mailbox, IR keyboard, TMS5220, cartridge |
+| WD1793 / Beta 128 | new (MAME `beta_m.cpp`, `wd_fdc`) | TR-DOS FDC, TRD and SCL images |
+| Pentagon 1024 | new (MAME `pentagon.cpp`) | 1024 KB, uncontended 320-line ULA, GLUK, Beta disk |
+| Scorpion ZS-256 | new (MAME `scorpion.cpp`) | 256 KB, port $1FFD, Magic NMI, Beta disk |
 
 ## Building
 
@@ -108,6 +111,8 @@ holding the individual files:
 ./build/dsp --game lynx /path/to/game.lnx
 ./build/dsp --game scv /path/to/scv.zip
 ./build/dsp --game exl100 /path/to/exl100.zip
+./build/dsp --game pentagon --disk game.trd /path/to/pentagon-roms/
+./build/dsp --game scorpion --disk game.scl /path/to/scorpion.rom
 ```
 
 `--game` is required (`dsp --help` lists every name). Gauntlet accepts both the
@@ -132,7 +137,7 @@ Options:
 --frames N         frames to run in headless mode (default 300)
 --tape FILE        tape/cart: Spectrum/CPC/C64 (.tap/.tzx/.cdt/.prg/.t64),
                    or EXL-100 / EXELTEL cartridge (.bin/.rom)
---disk FILE        Amstrad CPC / Spectrum +3 .dsk/.edsk floppy image
+--disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, Pentagon/Scorpion .trd/.scl
 ```
 
 ### Atari System 1 (Indiana Jones, Marble Madness, Peter Pack Rat, Road Runner)
@@ -328,6 +333,31 @@ need the loader to be running, and the CSW (`$18`) and generalized data (`$19`) 
 are skipped. A "stop the tape" block only pauses for two seconds, because the machine
 restarts the tape whenever the loader runs.
 
+### Pentagon 1024 and Scorpion 256
+
+Soviet Spectrum clones with a Beta 128 disk interface (WD1793 / KR1818VG93) and
+TR-DOS. Both run at 3.5 MHz with 224 T-states per line and 320 lines per frame
+(no ULA contention). Disks are `.trd` (raw geometry) or `.scl` (catalogue +
+files, expanded to a DS/80 TR-DOS volume).
+
+Pentagon 1024 wants a 32 KB 128K ROM (`128p-0.rom`+`128p-1.rom` or `pentagon.rom` /
+`128.rom`) plus `trdos.rom`. Optional `gluk63r.rom` is the 1024SL boot monitor.
+RAM at `$C000` is `(7FFD & 7) | ((7FFD & 0xC0) >> 3) | ((DFFD & 1) << 5)`.
+
+Scorpion ZS-256 wants a 64 KB ROM (`scorpion.rom` / `scorp294.rom`, or
+`scorp0.rom`…`scorp3.rom`): 128 editor, 48 BASIC, service, TR-DOS. Port `$1FFD`
+bit 0 maps RAM page 0 at `$0000`, bit 1 selects the service ROM, bit 4 is the
+256 KB RAM bit. F5 is the Magic button (NMI).
+
+```bash
+./build/dsp --game pentagon --disk elite.trd /usr/share/spectrum-roms/
+./build/dsp --game scorpion --disk game.scl /path/to/scorpion.rom
+```
+
+TR-DOS is paged in by executing at `$3D00` while the 48K ROM is selected
+(`RANDOMIZE USR 15616`). Kempston on port `$1F` is disabled while DOS is paged
+so it does not clash with the FDC.
+
 ### Nintendo Entertainment System
 
 NTSC NES, ported from `nes.pas`. Give it an iNES (`.nes`) ROM, plain or inside a zip:
@@ -488,7 +518,7 @@ cmake --build build --target dsp_zexdoc
 src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805, µPD7801, TMS7000, NEC V30
 src/sound/      AY-3-8910, SN76496, NES APU, SID, µPD1771C, QSound, TMS5220
 src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556
-src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, Lynx Suzy/Mikey
+src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, Lynx, WD1793/Beta
 src/drivers/    the machines themselves (memory map, video, inputs)
 src/frontend/   SDL2 front end, driven through the core/machine.h interface
 src/core/       ROM loader (directory or zip) and the Machine interface
