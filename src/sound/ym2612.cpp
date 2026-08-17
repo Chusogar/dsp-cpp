@@ -10,6 +10,8 @@ YM2612::YM2612(uint32_t clock, float amplitude)
 }
 
 void YM2612::reset() {
+    // OPN2 has a fixed /72 FM prescaler (same default as YM2203 after reset).
+    opn_.prescaler_w(0, 1);
     opn_.irq_mask_set(0x03);
     opn_.write_mode(0x27, 0x30);
     opn_.reset_eg_timer();

@@ -75,7 +75,8 @@ void print_supported_emulators() {
         "    exl100, exeltel\n"
         "\n"
         "  Consoles:\n"
-        "    sms, gamegear, genesis, megadrive, pv1000, coleco, sg1000, gb, nes, lynx, scv\n"
+        "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp,\n"
+        "    pv1000, coleco, sg1000, gb, nes, lynx, scv\n"
         "\n");
 }
 

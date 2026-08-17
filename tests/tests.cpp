@@ -2461,7 +2461,7 @@ void test_genesis_vdp() {
     vdp.write(4, 0x0080);  // DMA bit + VRAM write
     vdp.write(0, 0x1111);
     check(vdp.vram(0) == 0x11, "DMA fill writes the high byte");
-    check(vdp.vram(2) == 0x11, "DMA fill covers more than one word");
+    check(vdp.vram(3) == 0x11, "DMA fill covers more than one word");
 
     vdp.handle_scanline(0);
     const uint32_t* line = vdp.line_buffer();

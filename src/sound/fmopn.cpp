@@ -637,6 +637,7 @@ void OpnCore::advance_eg_channel(Channel& ch) {
 }
 
 void OpnCore::advance_envelopes() {
+    if (eg_timer_overflow_ <= 0.0) return;
     eg_timer_ += eg_timer_add_;
     while (eg_timer_ >= eg_timer_overflow_) {
         eg_timer_ -= eg_timer_overflow_;
