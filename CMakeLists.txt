@@ -63,6 +63,9 @@ add_executable(dsp
   src/machine/disk_image.cpp
   src/machine/lynx_suzy.cpp
   src/machine/lynx_mikey.cpp
+  src/machine/trdos_disk.cpp
+  src/machine/wd1793.cpp
+  src/machine/beta128.cpp
   src/machine/mos6532.cpp
   src/machine/starwars_math.cpp
   
@@ -83,6 +86,7 @@ add_executable(dsp
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
   src/drivers/spectrum_3.cpp
+  src/drivers/zx_clone.cpp
   src/drivers/amstrad_cpc.cpp
   src/drivers/msx1.cpp
   
@@ -162,6 +166,9 @@ add_executable(dsp_tests
   src/machine/gb_mapper.cpp
   src/machine/lynx_suzy.cpp
   src/machine/lynx_mikey.cpp
+  src/machine/trdos_disk.cpp
+  src/machine/wd1793.cpp
+  src/machine/beta128.cpp
   src/machine/mos6532.cpp
   src/machine/starwars_math.cpp
   src/drivers/spectrum.cpp
@@ -175,6 +182,7 @@ add_executable(dsp_tests
   src/drivers/exelv.cpp
   src/drivers/starwars.cpp
   src/drivers/atari_system1.cpp
+  src/drivers/zx_clone.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

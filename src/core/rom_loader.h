@@ -27,6 +27,10 @@ public:
 	
 	bool load_first_file(std::vector<uint8_t>& dest, std::string* error) const;
 
+    bool try_read(const std::string& name, std::vector<uint8_t>& out) const {
+        return read_file(name, out);
+    }
+
     const std::vector<std::string>& warnings() const { return warnings_; }
 
 private:
