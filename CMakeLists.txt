@@ -23,6 +23,7 @@ add_executable(dsp
   src/cpu/m6805.cpp
   src/cpu/lr35902.cpp
   src/cpu/upd7801.cpp
+  src/cpu/tms7000.cpp
   src/cpu/hu6280.cpp
   src/cpu/mcs51.cpp
   src/cpu/nec_v30.cpp
@@ -45,6 +46,7 @@ add_executable(dsp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/tms9918.cpp
+  src/video/tms3556.cpp
   src/video/deco_bac06.cpp
   src/video/nes_ppu.cpp
   
@@ -100,6 +102,7 @@ add_executable(dsp
   src/sound/sid.cpp
   src/drivers/c64.cpp
   src/drivers/atari_lynx.cpp
+  src/drivers/exelv.cpp
       
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
@@ -121,6 +124,7 @@ add_executable(dsp_tests
   src/cpu/lr35902.cpp
   src/cpu/z80ctc.cpp
   src/cpu/upd7801.cpp
+  src/cpu/tms7000.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
@@ -133,6 +137,10 @@ add_executable(dsp_tests
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/nes_ppu.cpp
+  src/sound/tms5220.cpp
+  src/video/gfx.cpp
+  src/video/atari_mo.cpp
+  src/video/tms3556.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/spectrum_tape.cpp
@@ -160,6 +168,7 @@ add_executable(dsp_tests
   src/drivers/amstrad_cpc.cpp
   src/drivers/atari_lynx.cpp
   src/drivers/scv.cpp
+  src/drivers/exelv.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

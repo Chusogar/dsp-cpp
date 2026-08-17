@@ -66,6 +66,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | µPD7801 CPU | `src/cpu/upd7810.pas` (`CPU_7801`) | Epoch Super Cassette Vision CPU, 4 MHz crystal /2 |
 | µPD1771C | `src/snd/upd1771.pas` | SCV tone / noise / ADPCM sound |
 | Super Cassette Vision | `src/consolas/super_cassette_vision.pas` | BIOS + cartridge map, 192×222 video, keyboard and two joysticks |
+| TMS7000 CPU | new (MAME `tms7000` behaviour) | TMS7020/7040/7041/7042, EXL LVDP opcode |
+| TMS3556 VDP | new (MAME `tms3556` behaviour) | Text 40×25, bitmap 320×250, mixed, 8 colours |
+| EXL-100 / EXELTEL | new (MAME `exelv.cpp`) | Dual TMS7000, mailbox, IR keyboard, TMS5220, cartridge |
 
 ## Building
 
@@ -113,6 +116,13 @@ The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
 
 The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
 `ddragon2`, `elevator`, `junglek`, `spectrum48` or `scv`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
+./build/dsp --game exl100 /path/to/exl100.zip
+./build/dsp --game exl100 --tape /path/to/exelbas.bin /path/to/exl100.zip
+./build/dsp --game exeltel /path/to/exeltel.zip
+```
+
+The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
+`ddragon2`, `elevator`, `junglek`, `spectrum48`, `exl100` or `exeltel`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 (SLAPSTIC 104) and the two player `136041-xxx` set (SLAPSTIC 107).
 
 Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
@@ -127,6 +137,7 @@ Options:
                    elevator, junglek, ikari, athena, tnk3, aso or spectrum48
                    elevator, junglek, rtype, hharry, rtype2 or spectrum48
                    elevator, junglek, spectrum48 or scv
+                   elevator, junglek, spectrum48, exl100 or exeltel
 --scale N          window scale factor (default 3)
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
                    mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
@@ -137,7 +148,52 @@ Options:
 --screenshot FILE  headless mode: render frames and write FILE (BMP)
 --frames N         frames to run in headless mode (default 300)
 --tape FILE        tape image to insert: .tap/.tzx (spectrum48), .prg/.t64/.tap/.d64 (c64)
+--tape FILE        tape image to insert, .tap or .tzx (spectrum48);
+                   EXL-100 / EXELTEL cartridge (.bin/.rom)
 ```
+
+### Exelvision EXL-100 and EXELTEL
+
+French home computers from 1984/1986. They are not in dsp-emulator; this port
+follows MAME `exelv.cpp`. Each machine has a custom TMS7020 (EXL-100) or TMS7040
+(EXELTEL) at 4.9152 MHz with the SWAP R opcode replaced by LVDP (VRAM peek), a
+TMS7041/7042 I/O CPU talking through a 74LS374 mailbox, a TMS3556 VDP
+(40×25 text / 320×250 bitmap, 8 colours, 32 KiB VRAM) and a TMS5220C speech
+synthesizer. The keyboard and joysticks are infrared.
+
+ROMs are **not** shipped. MAME split sets from [mdk.cab](https://mdk.cab/download/split/exeltel.zip):
+
+* EXL-100 (`exl100.zip`): `exl100in.bin` (TMS7020, CRC `049109a3`) and
+  `exl100_7041.bin` (TMS7041, CRC `38f6fc7a`).
+  https://mdk.cab/download/split/exl100.zip
+* EXELTEL (`exeltel.zip`): `exeltel_7040.bin` (TMS7040, CRC `2792f02f`),
+  `exeltel_7042.bin` (I/O CPU, **BAD_DUMP** in MAME, CRC `a0163507`),
+  `exeltel14.bin` (French v1.4, 64 KiB, CRC `52a80dd4`) or `amper.bin`
+  (Spanish, CRC `45af256c`), and optionally `cm62312.bin` (speech).
+  https://mdk.cab/download/split/exeltel.zip
+
+[RetroBIOS](https://github.com/Abdess/retrobios) does not currently publish an
+Exelvision pack. The mdk.cab files match the MAME hashes. The TMS7040 also
+matches DCExel’s `exeltel_rom.zip` (CRC `2792f02f`).
+
+The TMS7042 I/O ROM has never been redumped. Running MAME’s image posts mailbox
+`$04` and the TMS7040 hangs at `$FA29`, so this driver ignores that CRC and HLE’s
+mailbox `$08` plus the PA.0 handshake. EXL-100 BIOS-only boot shows the
+Exelvision butterfly logo. EXELTEL turns the TMS3556 on in bitmap mode (red
+active area, cyan border); a full menu still needs a real 7042 dump.
+
+Load a cartridge with `--tape` or by placing a `.bin`/`.rom` beside the BIOS.
+Exel Basic (`exelbas`) is the usual way to get a prompt on the EXL-100.
+
+```bash
+./build/dsp --game exl100 /path/to/exl100.zip
+./build/dsp --game exl100 --tape /path/to/exelbas.bin /path/to/exl100.zip
+./build/dsp --game exeltel /path/to/exeltel.zip
+```
+
+The host keyboard is the infrared keyboard (AZERTY layout as in MAME). Cursor
+keys and Left Ctrl (CTL) work; FCT is Right Ctrl. Cassette motor control is not
+emulated; port B bit 3 still feeds a 1-bit DAC into the speaker.
 
 ### Taito SJ (Elevator Action, Jungle King)
 

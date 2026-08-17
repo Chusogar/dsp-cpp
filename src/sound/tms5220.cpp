@@ -98,7 +98,8 @@ void Tms5220::reset() {
     out_sample_ = 0;
     cycle_acc_ = 0;
     data_latch_ = 0;
-    wsq_ = rsq_ = true;
+    wsq_ = rsq_ = rs_read_ = true;
+    ready_delay_ = 0;
     volume_ = 1.0f;
     raise_irq(false);
 }
@@ -157,8 +158,23 @@ void Tms5220::set_wsq(bool level) {
     if (wsq_ && !level) {
         // Falling edge: commit latched data
         write_data(data_latch_);
+        ready_delay_ = 80;
     }
     wsq_ = level;
+}
+
+void Tms5220::strobe_ws_rs(uint8_t ws_rs) {
+    const bool ws = (ws_rs & 0x01) != 0;
+    const bool rs = (ws_rs & 0x02) != 0;
+    if (wsq_ && !ws) {
+        write_data(data_latch_);
+        ready_delay_ = 80;
+    }
+    if (rs_read_ && !rs) {
+        ready_delay_ = 80;
+    }
+    wsq_ = ws;
+    rs_read_ = rs;
 }
 
 void Tms5220::set_rsq(bool level) {
@@ -175,6 +191,7 @@ bool Tms5220::readyq() const {
     // Active-low: assert (true return means pin low / not ready) when FIFO full or talking
     // MAME readyq_r() returns 1 when ready. We expose readyq() as "pin is low" = busy.
     if (!rsq_) return true;  // held in reset → treat as not ready
+    if (ready_delay_ > 0) return true;
     if (fifo_count_ >= 14) return true;
     return false;
 }
@@ -271,6 +288,10 @@ int16_t Tms5220::lattice(int16_t excitation) {
 
 void Tms5220::tick(int cycles) {
     if (cycles <= 0) return;
+    if (ready_delay_ > 0) {
+        ready_delay_ -= cycles;
+        if (ready_delay_ < 0) ready_delay_ = 0;
+    }
     // Generate internal 8 kHz samples based on clock ratio
     // TMS5220 ROMCLK ~ 640 kHz, sample period ~ 80 clocks → 8 kHz
     cycle_acc_ += cycles;

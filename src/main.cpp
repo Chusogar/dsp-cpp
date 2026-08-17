@@ -30,6 +30,7 @@
 #include "drivers/amstrad_cpc.h"
 #include "drivers/msx1.h"
 #include "drivers/c64.h"
+#include "drivers/exelv.h"
 
 // Consoles
 #include "drivers/sms.h"
@@ -70,6 +71,8 @@ void print_supported_emulators() {
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3,\n"
         "    cpc464, cpc664, cpc6128, msx, c64\n"
+        "    cpc464, cpc664, cpc6128, msx,\n"
+        "    exl100, exeltel\n"
         "\n"
         "  Consoles:\n"
         "    sms, gamegear, pv1000, coleco, sg1000, gb, nes\n"
@@ -88,6 +91,8 @@ void print_usage(const char* program) {
         "Options:\n"
         "  --game NAME        emulator / game to run (required; see list above)\n"
         "  --tape FILE        ZX Spectrum, Amstrad CPC or C64 tape/program (.tap/.tzx/.cdt/.prg/.t64)\n"
+        "  --tape FILE        ZX Spectrum or Amstrad CPC tape image (.tap/.tzx/.cdt),\n"
+        "                     or an EXL-100 / EXELTEL cartridge (.bin/.rom)\n"
         "  --disk FILE        Amstrad CPC / Spectrum +3 .dsk/.edsk floppy image\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
@@ -200,6 +205,12 @@ std::string guess_game(const std::string& rom_path) {
 	    lowered.find("kernal") != std::string::npos || lowered.find("901227") != std::string::npos) {
         return "c64";
     }
+	if (lowered.find("exeltel") != std::string::npos) return "exeltel";
+	if (lowered.find("exl100") != std::string::npos ||
+	    lowered.find("exl-100") != std::string::npos ||
+	    lowered.find("exelvision") != std::string::npos) {
+	    return "exl100";
+	}
 		
 	// console
 	if (lowered.find("sms") != std::string::npos) return "sms";
@@ -322,6 +333,12 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "c64" || game == "commodore64" || game == "commodore") {
         return std::make_unique<dsp::C64>();
     }
+	if (game == "exl100" || game == "exl-100" || game == "exelvision") {
+	    return std::make_unique<dsp::Exelv>(dsp::Exelv::Model::Exl100);
+	}
+	if (game == "exeltel") {
+	    return std::make_unique<dsp::Exelv>(dsp::Exelv::Model::Exeltel);
+	}
     	
 	// consoles
 	if (game == "sms") return std::make_unique<dsp::Sms>();
