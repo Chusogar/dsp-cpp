@@ -125,6 +125,15 @@ void test_gfx_decode() {
     gfx.decode(layout, rom);
     pixels = gfx.element(0);
     check(pixels[7] == 3, "rotation moves the top left pixel to the top right");
+
+    layout.rotate_cw = false;
+    layout.rotate_ccw = true;
+    gfx.decode(layout, rom);
+    pixels = gfx.element(0);
+    // Rotatel: dest[row][col] = src[width - 1 - row][col]. Top-left colour 3
+    // lands at the bottom left; the old top-right (colour 2) is the new top-left.
+    check(pixels[7 * 8] == 3, "ccw rotation moves the top left pixel to the bottom left");
+    check(pixels[0] == 2, "ccw rotation moves the old top right pixel to the top left");
 }
 
 void test_palette_weights() {
