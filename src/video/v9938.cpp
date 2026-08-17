@@ -1,31 +1,33 @@
 #include "video/v9938.h"
 
-#include <cstring>
+#include <cstddef>
 
 namespace dsp {
 namespace {
 
-const uint8_t v9938_default_pal[16][3] = { // R,G,B (3-bit each)
-    {0,0,0},{0,0,0},{1,6,1},{3,7,3},{1,1,7},{2,3,7},{5,1,1},{2,6,7},
-    {7,1,1},{7,3,3},{6,6,1},{6,7,4},{1,4,1},{6,2,5},{5,5,5},{7,7,7}
+const uint8_t kDefaultPal[16][3] = {  // R,G,B (3-bit each)
+    {0, 0, 0}, {0, 0, 0}, {1, 6, 1}, {3, 7, 3}, {1, 1, 7}, {2, 3, 7}, {5, 1, 1}, {2, 6, 7},
+    {7, 1, 1}, {7, 3, 3}, {6, 6, 1}, {6, 7, 4}, {1, 4, 1}, {6, 2, 5}, {5, 5, 5}, {7, 7, 7},
 };
 
 uint32_t rgb3_to_argb(uint8_t r3, uint8_t g3, uint8_t b3) {
-    uint8_t r = (r3 << 5) | (r3 << 2) | (r3 >> 1);
-    uint8_t g = (g3 << 5) | (g3 << 2) | (g3 >> 1);
-    uint8_t b = (b3 << 5) | (b3 << 2) | (b3 >> 1);
-    return 0xFF000000 | (r << 16) | (g << 8) | b;
+    const uint8_t r = uint8_t((r3 << 5) | (r3 << 2) | (r3 >> 1));
+    const uint8_t g = uint8_t((g3 << 5) | (g3 << 2) | (g3 >> 1));
+    const uint8_t b = uint8_t((b3 << 5) | (b3 << 2) | (b3 >> 1));
+    return 0xFF000000u | (uint32_t(r) << 16) | (uint32_t(g) << 8) | b;
 }
 
-// G7 (Screen 8) fixed 256-color palette: 3-3-2 bit RGB
+// G7 (Screen 8) 3-3-2 RGB. Blue uses 0/2/4/7, matching MSXEC.
 uint32_t g7_color(uint8_t c) {
-    uint8_t r = (c >> 5) & 7;
-    uint8_t g = (c >> 2) & 7;
-    uint8_t b = c & 3;
-    r = (r << 5) | (r << 2) | (r >> 1);
-    g = (g << 5) | (g << 2) | (g >> 1);
-    b = (b << 6) | (b << 4) | (b << 2) | b;
-    return 0xFF000000 | (r << 16) | (g << 8) | b;
+    const uint8_t r3 = (c >> 5) & 7;
+    const uint8_t g3 = (c >> 2) & 7;
+    const uint8_t b2 = c & 3;
+    const uint8_t kblu[4] = {0, 2, 4, 7};
+    const uint8_t r = uint8_t((r3 << 5) | (r3 << 2) | (r3 >> 1));
+    const uint8_t g = uint8_t((g3 << 5) | (g3 << 2) | (g3 >> 1));
+    const uint8_t b3 = kblu[b2];
+    const uint8_t b = uint8_t((b3 << 5) | (b3 << 2) | (b3 >> 1));
+    return 0xFF000000u | (uint32_t(r) << 16) | (uint32_t(g) << 8) | b;
 }
 
 void put256(uint32_t* buf, int x, uint32_t color) {
@@ -35,220 +37,278 @@ void put256(uint32_t* buf, int x, uint32_t color) {
     }
 }
 
+unsigned mgetii(const uint8_t* p) {
+    return unsigned(p[0]) | (unsigned(p[1]) << 8);
+}
+
 }  // namespace
 
-// =============================================================================
-// V9938 VDP - Modo de pantalla
-// =============================================================================
-
-// Screen mode from mode bits M1-M5
 int V9938::screen_mode() const {
-    int m1 = (regs_[1] >> 4) & 1;
-    int m2 = (regs_[1] >> 3) & 1;
-    int m3 = (regs_[0] >> 1) & 1;
-    int m4 = (regs_[0] >> 2) & 1;
-    int m5 = (regs_[0] >> 3) & 1;
-    int bits = (m5 << 4) | (m4 << 3) | (m3 << 2) | (m2 << 1) | m1;
+    const int m1 = (regs_[1] >> 4) & 1;
+    const int m2 = (regs_[1] >> 3) & 1;
+    const int m3 = (regs_[0] >> 1) & 1;
+    const int m4 = (regs_[0] >> 2) & 1;
+    const int m5 = (regs_[0] >> 3) & 1;
+    const int bits = (m5 << 4) | (m4 << 3) | (m3 << 2) | (m2 << 1) | m1;
     switch (bits) {
-    case 0x01: return 0;   // T1  (Screen 0, 40 col)
-    case 0x09: return 10;  // T2  (Screen 0, 80 col)
-    case 0x00: return 1;   // G1  (Screen 1)
-    case 0x04: return 2;   // G2  (Screen 2)
-    case 0x02: return 3;   // MC  (Screen 3)
-    case 0x06: return 4;   // G3  (Screen 4)
-    case 0x08: return 5;   // G4  (Screen 5)
-    case 0x0C: return 6;   // G5  (Screen 6)
-    case 0x10: return 7;   // G6  (Screen 7)
-    case 0x18: return 8;   // G7  (Screen 8)
+    case 0x01: return 0;   // T1
+    case 0x09: return 10;  // T2
+    case 0x00: return 1;   // G1
+    case 0x04: return 2;   // G2
+    case 0x02: return 3;   // MC
+    case 0x06: return 4;   // G3
+    case 0x08: return 5;   // G4
+    case 0x0C: return 6;   // G5
+    case 0x10: return 7;   // G6
+    case 0x18: return 8;   // G7
     default:   return 1;
     }
 }
 
-// Active lines: 192 or 212
 int V9938::active_lines() const {
     return (regs_[9] & 0x80) ? 212 : 192;
 }
 
-// =============================================================================
-// V9938 VDP - VRAM access helpers
-// =============================================================================
+// 0 = 16K linear (MSX1 modes), 1 = 128K linear, 2 = 128K planar (G6/G7).
+int V9938::memtype() const {
+    switch (screen_mode()) {
+    case 7:
+    case 8:
+        return 2;
+    case 4:
+    case 5:
+    case 6:
+        return 1;
+    default:
+        return 0;
+    }
+}
 
 uint8_t V9938::vram_rd(uint32_t addr) const {
     return vram_[addr & (kVramSize - 1)];
 }
 
-void V9938::vram_wr(uint32_t addr, uint8_t val) {
-    vram_[addr & (kVramSize - 1)] = val;
+void V9938::vram_wr(uint32_t addr, uint8_t value) {
+    vram_[addr & (kVramSize - 1)] = value;
 }
 
-uint32_t V9938::cpu_phys(uint32_t addr) const {
+uint32_t V9938::cpu_linear() const {
+    return (uint32_t(regs_[14] & 7) << 14) | uint32_t(vram_where_ & 0x3FFF);
+}
+
+uint32_t V9938::cpu_phys() const {
+    uint32_t i = cpu_linear();
+    if (memtype() > 1) i = ((i >> 1) + (i << 16)) & 0x1FFFF;
+    return i;
+}
+
+void V9938::next_where() {
+    vram_where_ = (vram_where_ + 1) & 0x3FFF;
+    if (vram_where_ == 0 && memtype() != 0) regs_[14] = uint8_t((regs_[14] + 1) & 7);
+}
+
+uint8_t V9938::ram_recv() {
+    const uint8_t value = vram_rd(cpu_phys());
+    next_where();
+    return value;
+}
+
+void V9938::ram_send(uint8_t value) {
+    vram_wr(cpu_phys(), value);
+    next_where();
+}
+
+int V9938::bit_bmp() const { return (regs_[2] & 31) * 8 + 7; }
+int V9938::map_bm4() const { return (regs_[2] & 96) << 10; }
+int V9938::map_bm8() const { return (regs_[2] & 32) << 10; }
+
+uint32_t V9938::ink(uint8_t index) const {
     const int mode = screen_mode();
-    if (mode == 7 || mode == 8)
-        return ((addr & 1) << 16) | (addr >> 1);
-    return addr;
+    if (mode == 6) index &= 3;
+    else index &= 0x0F;
+    if (index == 0 && !(regs_[8] & 0x20)) {
+        const uint8_t bd = uint8_t(regs_[7] & (mode == 6 ? 3 : 0x0F));
+        return palette_[bd];
+    }
+    return palette_[index];
 }
 
-// =============================================================================
-// V9938 VDP - Scanline rendering
-// =============================================================================
+uint32_t V9938::backdrop() const {
+    if (screen_mode() == 8) return g7_color(regs_[7]);
+    return ink(uint8_t(regs_[7] & 0x0F));
+}
 
-// Render T1 (Screen 0, 40-column text)
-void V9938::render_t1(int line, uint32_t* buf) {
-    uint32_t nt = (uint32_t)(regs_[2] & 0x7F) << 10; // name table
-    uint32_t pg = (uint32_t)(regs_[4] & 0x3F) << 11; // pattern gen
-    uint8_t  fg_idx = (regs_[7] >> 4) & 0x0F;
-    uint8_t  bg_idx = regs_[7] & 0x0F;
-    uint32_t fg = palette_[fg_idx ? fg_idx : 0];
-    uint32_t bg = palette_[bg_idx ? bg_idx : 0];
-    int row = line / 8;
-    int ymod = line & 7;
-    // 8-pixel left border, 240 pixels text (40 chars × 6), 8-pixel right border
+void V9938::render_t1(int y, uint32_t* buf) {
+    const uint32_t nt = uint32_t(regs_[2] & 0x7F) << 10;
+    const uint32_t pg = uint32_t(regs_[4] & 0x3F) << 11;
+    const uint32_t fg = ink(uint8_t((regs_[7] >> 4) & 0x0F));
+    const uint32_t bg = ink(uint8_t(regs_[7] & 0x0F));
+    const int row = (y >> 3) & 31;
+    const int ymod = y & 7;
     for (int x = 0; x < 256; x++) put256(buf, x, bg);
     for (int col = 0; col < 40; col++) {
-        uint8_t ch = vram_rd(nt + row * 40 + col);
-        uint8_t pat = vram_rd(pg + ch * 8 + ymod);
-        int px = 8 + col * 6;
-        for (int bit = 0; bit < 6; bit++) {
+        const uint8_t ch = vram_rd(nt + uint32_t(row * 40 + col));
+        const uint8_t pat = vram_rd(pg + uint32_t(ch) * 8 + uint32_t(ymod));
+        const int px = 8 + col * 6;
+        for (int bit = 0; bit < 6; bit++)
             put256(buf, px + bit, (pat & (0x80 >> bit)) ? fg : bg);
+    }
+}
+
+void V9938::render_t2(int y, uint32_t* buf) {
+    const uint32_t nt = uint32_t(regs_[2] & 0x7C) << 10;
+    const uint32_t pg = uint32_t(regs_[4] & 0x3F) << 11;
+    const uint32_t bg = ink(uint8_t(regs_[7] & 0x0F));
+    const uint32_t fg = ink(uint8_t((regs_[7] >> 4) & 0x0F));
+    const int row = (y >> 3) & 31;
+    const int ymod = y & 7;
+    for (int x = 0; x < kPaperWidth; x++) buf[x] = bg;
+    const int pad = (kPaperWidth - 480) / 2;
+    for (int col = 0; col < 80; col++) {
+        const uint8_t ch = vram_rd(nt + uint32_t(row * 80 + col));
+        const uint8_t pat = vram_rd(pg + uint32_t(ch) * 8 + uint32_t(ymod));
+        const int px = pad + col * 6;
+        for (int bit = 0; bit < 6; bit++) {
+            const int x = px + bit;
+            if (x >= 0 && x < kPaperWidth) buf[x] = (pat & (0x80 >> bit)) ? fg : bg;
         }
     }
 }
 
-// Render G1 (Screen 1, 32×24 tiles)
-void V9938::render_g1(int line, uint32_t* buf) {
-    uint32_t nt = (uint32_t)(regs_[2] & 0x7F) << 10;
-    uint32_t ct = (uint32_t)(regs_[3]) << 6;
-    uint32_t pg = (uint32_t)(regs_[4] & 0x3F) << 11;
-    int row = line / 8;
-    int ymod = line & 7;
+void V9938::render_g1(int y, uint32_t* buf) {
+    const uint32_t nt = uint32_t(regs_[2] & 0x7F) << 10;
+    const uint32_t ct = uint32_t(regs_[3]) << 6;
+    const uint32_t pg = uint32_t(regs_[4] & 0x3F) << 11;
+    const int row = (y >> 3) & 31;
+    const int ymod = y & 7;
     for (int col = 0; col < 32; col++) {
-        uint8_t ch = vram_rd(nt + row * 32 + col);
-        uint8_t pat = vram_rd(pg + ch * 8 + ymod);
-        uint8_t clr = vram_rd(ct + (ch >> 3));
-        uint8_t fg_i = (clr >> 4) & 0x0F;
-        uint8_t bg_i = clr & 0x0F;
-        uint32_t fg = palette_[fg_i ? fg_i : 0];
-        uint32_t bg = palette_[bg_i ? bg_i : 0];
-        int px = col * 8;
+        const uint8_t ch = vram_rd(nt + uint32_t(row * 32 + col));
+        const uint8_t pat = vram_rd(pg + uint32_t(ch) * 8 + uint32_t(ymod));
+        const uint8_t clr = vram_rd(ct + (ch >> 3));
+        const uint32_t fg = ink(uint8_t((clr >> 4) & 0x0F));
+        const uint32_t bg = ink(uint8_t(clr & 0x0F));
+        const int px = col * 8;
         for (int bit = 0; bit < 8; bit++)
             put256(buf, px + bit, (pat & (0x80 >> bit)) ? fg : bg);
     }
 }
 
-// Render G2/G3 (Screen 2/4, high-res tiles)
-void V9938::render_g2(int line, uint32_t* buf) {
-    uint32_t nt = (uint32_t)(regs_[2] & 0x7F) << 10;
-    uint32_t ct_base = (uint32_t)(regs_[3] & 0x80) << 6;
-    uint32_t pg_base = (uint32_t)(regs_[4] & 0x04) << 11;
-    uint16_t ct_mask = ((uint16_t)(regs_[3] & 0x7F) << 3) | 0x07;
-    uint16_t pg_mask = ((uint16_t)(regs_[4] & 0x03) << 8) | 0xFF;
-    // Never mask off bits in practice for most Spectrum-like games: both are 0x1FFF
-    int row = line / 8;
-    int ymod = line & 7;
-    int third = (line / 64) * 256; // 0, 256, or 512
+void V9938::render_g2(int y, uint32_t* buf) {
+    const uint32_t nt = uint32_t(regs_[2] & 0x7F) << 10;
+    const uint32_t ct_base = uint32_t(regs_[3] & 0x80) << 6;
+    const uint32_t pg_base = uint32_t(regs_[4] & 0x04) << 11;
+    const uint16_t ct_mask = uint16_t((uint16_t(regs_[3] & 0x7F) << 3) | 0x07);
+    const uint16_t pg_mask = uint16_t((uint16_t(regs_[4] & 0x03) << 8) | 0xFF);
+    const int row = (y >> 3) & 31;
+    const int ymod = y & 7;
+    const int third = (y & 0xC0) << 2;
     for (int col = 0; col < 32; col++) {
-        uint8_t ch = vram_rd(nt + row * 32 + col);
-        uint16_t idx = ((ch + third) * 8 + ymod);
-        uint8_t pat = vram_rd(pg_base + (idx & (pg_mask * 8 + 7)));
-        uint8_t clr = vram_rd(ct_base + (idx & (ct_mask * 8 + 7)));
-        // Correct masking for G2: pattern index & mask
-        pat = vram_rd(pg_base + (idx & ((pg_mask << 3) | 7)));
-        clr = vram_rd(ct_base + (idx & ((ct_mask << 3) | 7)));
-        uint8_t fg_i = (clr >> 4) & 0x0F;
-        uint8_t bg_i = clr & 0x0F;
-        uint32_t fg = palette_[fg_i ? fg_i : 0];
-        uint32_t bg = palette_[bg_i ? bg_i : 0];
-        int px = col * 8;
+        const uint8_t ch = vram_rd(nt + uint32_t(row * 32 + col));
+        const uint16_t idx = uint16_t((ch + third) * 8 + ymod);
+        const uint8_t pat = vram_rd(pg_base + (idx & ((pg_mask << 3) | 7)));
+        const uint8_t clr = vram_rd(ct_base + (idx & ((ct_mask << 3) | 7)));
+        const uint32_t fg = ink(uint8_t((clr >> 4) & 0x0F));
+        const uint32_t bg = ink(uint8_t(clr & 0x0F));
+        const int px = col * 8;
         for (int bit = 0; bit < 8; bit++)
             put256(buf, px + bit, (pat & (0x80 >> bit)) ? fg : bg);
     }
 }
 
-// Render MC (Screen 3, multicolor)
-void V9938::render_mc(int line, uint32_t* buf) {
-    uint32_t nt = (uint32_t)(regs_[2] & 0x7F) << 10;
-    uint32_t pg = (uint32_t)(regs_[4] & 0x3F) << 11;
-    int row = line / 8;
-    int sub = (line / 4) & 1;
+void V9938::render_mc(int y, uint32_t* buf) {
+    const uint32_t nt = uint32_t(regs_[2] & 0x7F) << 10;
+    const uint32_t pg = uint32_t(regs_[4] & 0x3F) << 11;
+    const int row = (y >> 3) & 31;
+    const int ymod = (y >> 2) & 7;
     for (int col = 0; col < 32; col++) {
-        uint8_t ch = vram_rd(nt + row * 32 + col);
-        uint8_t clr = vram_rd(pg + ch * 8 + sub * 2 + ((row & 3) >= 2 ? 1 : 0));
-        // Hmm, MC addressing: pattern data at pg + ch*8 + (line/4)%2 * ... 
-        // Actually: each char gives 2 colors per 4-pixel-high block
-        clr = vram_rd(pg + ch * 8 + ((line >> 2) & 7));
-        uint8_t hi = (clr >> 4) & 0x0F;
-        uint8_t lo = clr & 0x0F;
-        uint32_t c1 = palette_[hi ? hi : 0];
-        uint32_t c2 = palette_[lo ? lo : 0];
-        int px = col * 8;
+        const uint8_t ch = vram_rd(nt + uint32_t(row * 32 + col));
+        const uint8_t clr = vram_rd(pg + uint32_t(ch) * 8 + uint32_t(ymod));
+        const uint32_t c1 = ink(uint8_t((clr >> 4) & 0x0F));
+        const uint32_t c2 = ink(uint8_t(clr & 0x0F));
+        const int px = col * 8;
         for (int x = 0; x < 4; x++) put256(buf, px + x, c1);
         for (int x = 4; x < 8; x++) put256(buf, px + x, c2);
     }
 }
 
-// Render G4 (Screen 5, 256×212 bitmap, 4bpp)
-void V9938::render_g4(int line, uint32_t* buf) {
-    const int y = line + display_y_offset();
-    for (int x = 0; x < 256; x += 2) {
-        uint8_t byte = vram_rd(bitmap_addr(x, y));
-        put256(buf, x, palette_[(byte >> 4) & 0x0F]);
-        put256(buf, x + 1, palette_[byte & 0x0F]);
+void V9938::render_g4(int y, uint32_t* buf) {
+    const int i = (y & bit_bmp()) << 7;
+    const int j = map_bm4();
+    for (int x = 0; x < 128; x++) {
+        const uint8_t b = vram_rd(uint32_t(j + i + x));
+        put256(buf, x * 2, ink(uint8_t(b >> 4)));
+        put256(buf, x * 2 + 1, ink(uint8_t(b & 0x0F)));
     }
 }
 
-void V9938::render_g5(int line, uint32_t* buf) {
-    const int y = line + display_y_offset();
-    for (int x = 0; x < 512; x++)
-        buf[x] = palette_[get_pixel(x, y)];
+void V9938::render_g5(int y, uint32_t* buf) {
+    const int i = (y & bit_bmp()) << 7;
+    const int j = map_bm4();
+    for (int x = 0; x < 128; x++) {
+        const uint8_t b = vram_rd(uint32_t(j + i + x));
+        buf[x * 4] = ink(uint8_t(b >> 6));
+        buf[x * 4 + 1] = ink(uint8_t((b >> 4) & 3));
+        buf[x * 4 + 2] = ink(uint8_t((b >> 2) & 3));
+        buf[x * 4 + 3] = ink(uint8_t(b & 3));
+    }
 }
 
-void V9938::render_g6(int line, uint32_t* buf) {
-    const int y = line + display_y_offset();
-    for (int x = 0; x < 512; x++)
-        buf[x] = palette_[get_pixel(x, y)];
+void V9938::render_g6(int y, uint32_t* buf) {
+    const int i = (y & bit_bmp()) << 7;
+    const int j = map_bm8();
+    for (int x = 0; x < 256; x++) {
+        const uint8_t b = vram_rd(uint32_t(j + i + (x >> 1) + (x & 1) * 65536));
+        buf[x * 2] = ink(uint8_t(b >> 4));
+        buf[x * 2 + 1] = ink(uint8_t(b & 0x0F));
+    }
 }
 
-void V9938::render_g7(int line, uint32_t* buf) {
-    const int y = line + display_y_offset();
-    for (int x = 0; x < 256; x++)
-        put256(buf, x, g7_color(vram_rd(bitmap_addr(x, y))));
+void V9938::render_g7(int y, uint32_t* buf) {
+    const int i = (y & bit_bmp()) << 7;
+    const int j = map_bm8();
+    for (int x = 0; x < 256; x++) {
+        const uint8_t b = vram_rd(uint32_t(j + i + (x >> 1) + (x & 1) * 65536));
+        put256(buf, x, g7_color(b));
+    }
 }
 
-// Render sprites mode 1 (Screen 1-3: 8/16 px, 4 per line, 1 color)
-void V9938::render_sprites_m1(int line, uint32_t* buf) {
-    uint32_t sat = (uint32_t)(regs_[5] & 0x7F) << 7;
-    uint32_t spg = (uint32_t)(regs_[6] & 0x07) << 11;
-    int size = (regs_[1] & 0x02) ? 16 : 8;
-    int mag  = (regs_[1] & 0x01) ? 2 : 1;
+void V9938::render_sprites_m1(int y, uint32_t* buf) {
+    const uint32_t sat = uint32_t(regs_[5] & 0x7F) << 7;
+    const uint32_t spg = uint32_t(regs_[6] & 0x07) << 11;
+    const int size = (regs_[1] & 0x02) ? 16 : 8;
+    const int mag = (regs_[1] & 0x01) ? 2 : 1;
     int drawn = 0;
     for (int i = 0; i < 32 && drawn < 4; i++) {
-        int y = vram_rd(sat + i * 4);
-        if (y == 208) break;
-        y = (y + 1) & 0xFF;
-        if (line < y || line >= y + size * mag) continue;
-        int x    = vram_rd(sat + i * 4 + 1);
-        int pat  = vram_rd(sat + i * 4 + 2);
-        int attr = vram_rd(sat + i * 4 + 3);
+        int sy0 = vram_rd(sat + uint32_t(i * 4));
+        if (sy0 == 208) break;
+        sy0 = (sy0 + 1) & 0xFF;
+        if (y < sy0 || y >= sy0 + size * mag) continue;
+        int x = vram_rd(sat + uint32_t(i * 4 + 1));
+        int pat = vram_rd(sat + uint32_t(i * 4 + 2));
+        const int attr = vram_rd(sat + uint32_t(i * 4 + 3));
         if (attr & 0x80) x -= 32;
-        int clr = attr & 0x0F;
-        if (clr == 0) { drawn++; continue; }
-        uint32_t color = palette_[clr];
+        const int clr = attr & 0x0F;
+        if (clr == 0) {
+            drawn++;
+            continue;
+        }
+        const uint32_t color = ink(uint8_t(clr));
         if (size == 16) pat &= 0xFC;
-        int sy = (line - y) / mag;
+        const int sy = (y - sy0) / mag;
         for (int sx = 0; sx < size; sx++) {
             int bx = sx;
-            int by = sy;
+            const int by = sy;
             uint8_t bits;
             if (size == 16) {
-                int quad = (bx >= 8 ? 1 : 0) + (by >= 8 ? 2 : 0);
-                bits = vram_rd(spg + (pat + quad) * 8 + (by & 7));
+                const int quad = (bx >= 8 ? 1 : 0) + (by >= 8 ? 2 : 0);
+                bits = vram_rd(spg + uint32_t(pat + quad) * 8 + uint32_t(by & 7));
                 bx &= 7;
             } else {
-                bits = vram_rd(spg + pat * 8 + by);
+                bits = vram_rd(spg + uint32_t(pat) * 8 + uint32_t(by));
             }
             if (bits & (0x80 >> bx)) {
                 for (int m = 0; m < mag; m++) {
-                    int px = x + sx * mag + m;
+                    const int px = x + sx * mag + m;
                     if (px >= 0 && px < 256) put256(buf, px, color);
                 }
             }
@@ -257,44 +317,46 @@ void V9938::render_sprites_m1(int line, uint32_t* buf) {
     }
 }
 
-// Render sprites mode 2 (Screen 4+: 8/16 px, 8 per line, color per line)
-void V9938::render_sprites_m2(int line, uint32_t* buf) {
-    uint32_t sat_base = ((uint32_t)(regs_[11] & 0x03) << 15) |
-                        ((uint32_t)(regs_[5] & 0xFC) << 7);
-    uint32_t ct = sat_base - 0x200;  // color table is 512 bytes before SAT
-    uint32_t spg = (uint32_t)(regs_[6] & 0x3F) << 11;
-    int size = (regs_[1] & 0x02) ? 16 : 8;
-    int mag  = (regs_[1] & 0x01) ? 2 : 1;
+void V9938::render_sprites_m2(int y, uint32_t* buf) {
+    const uint32_t sat_base =
+        (uint32_t(regs_[11] & 0x03) << 15) | (uint32_t(regs_[5] & 0xFC) << 7);
+    const uint32_t ct = sat_base - 0x200;
+    const uint32_t spg = uint32_t(regs_[6] & 0x3F) << 11;
+    const int size = (regs_[1] & 0x02) ? 16 : 8;
+    const int mag = (regs_[1] & 0x01) ? 2 : 1;
+    const bool tp = (regs_[8] & 0x20) != 0;
     int drawn = 0;
     for (int i = 0; i < 32 && drawn < 8; i++) {
-        int y = vram_rd(sat_base + i * 4);
-        if (y == 216) break;
-        y = (y + 1) & 0xFF;
-        if (line < y || line >= y + size * mag) continue;
-        int x    = vram_rd(sat_base + i * 4 + 1);
-        int pat  = vram_rd(sat_base + i * 4 + 2);
-        int sy   = (line - y) / mag;
-        uint8_t cattr = vram_rd(ct + i * 16 + sy);
-        if (cattr & 0x40) x -= 32; // EC bit
-        int clr  = cattr & 0x0F;
-        bool cc  = (cattr & 0x20) != 0; // OR mode
-        (void)cc;
-        if (clr == 0 && !(cattr & 0x20)) { drawn++; continue; }
-        uint32_t color = palette_[clr];
+        int sy0 = vram_rd(sat_base + uint32_t(i * 4));
+        if (sy0 == 216) break;
+        sy0 = (sy0 + 1) & 0xFF;
+        if (y < sy0 || y >= sy0 + size * mag) continue;
+        int x = vram_rd(sat_base + uint32_t(i * 4 + 1));
+        int pat = vram_rd(sat_base + uint32_t(i * 4 + 2));
+        const int sy = (y - sy0) / mag;
+        const uint8_t cattr = vram_rd(ct + uint32_t(i * 16 + sy));
+        if (cattr & 0x40) x -= 32;
+        const int clr = cattr & 0x0F;
+        if (clr == 0 && !(cattr & 0x20) && !tp) {
+            drawn++;
+            continue;
+        }
+        const uint32_t color = palette_[std::size_t(clr)];
         if (size == 16) pat &= 0xFC;
         for (int sx = 0; sx < size; sx++) {
-            int bx = sx, by = sy;
+            int bx = sx;
+            const int by = sy;
             uint8_t bits;
             if (size == 16) {
-                int quad = (bx >= 8 ? 1 : 0) + (by >= 8 ? 2 : 0);
-                bits = vram_rd(spg + (pat + quad) * 8 + (by & 7));
+                const int quad = (bx >= 8 ? 1 : 0) + (by >= 8 ? 2 : 0);
+                bits = vram_rd(spg + uint32_t(pat + quad) * 8 + uint32_t(by & 7));
                 bx &= 7;
             } else {
-                bits = vram_rd(spg + pat * 8 + by);
+                bits = vram_rd(spg + uint32_t(pat) * 8 + uint32_t(by));
             }
             if (bits & (0x80 >> bx)) {
                 for (int m = 0; m < mag; m++) {
-                    int px = x + sx * mag + m;
+                    const int px = x + sx * mag + m;
                     if (px >= 0 && px < 256) put256(buf, px, color);
                 }
             }
@@ -303,165 +365,458 @@ void V9938::render_sprites_m2(int line, uint32_t* buf) {
     }
 }
 
-// Render one scanline
 void V9938::render_line(int line) {
-    int active = active_lines();
-    int vscroll = regs_[23];
-    int top_blank = (active == 212) ? 0 : 10; // adjust for 192/212 modes
-    int disp_line = line - (kBorderV + top_blank);
-
-    uint32_t border = palette_[regs_[7] & 0x0F];
+    const int active = active_lines();
+    const int top_blank = (active == 212) ? 0 : 10;
+    const int disp_line = line - (kBorderV + top_blank);
+    const uint32_t border = backdrop();
     uint32_t* row = framebuffer_.data() + (line * kScreenWidth);
 
-    // Border or blank line?
     if (disp_line < 0 || disp_line >= active || !(regs_[1] & 0x40)) {
         for (int x = 0; x < kScreenWidth; x++) row[x] = border;
         return;
     }
 
-    // Left border
     for (int x = 0; x < kBorderH; x++) row[x] = border;
-    // Right border
     for (int x = kBorderH + kPaperWidth; x < kScreenWidth; x++) row[x] = border;
 
     uint32_t* paper = row + kBorderH;
-    int render_line = (disp_line + vscroll) % active;
-    int mode = screen_mode();
+    // R#23 is an 8-bit wrap (256), not modulo the visible height.
+    const int vy = int(uint8_t(disp_line + regs_[23]));
+    const int mode = screen_mode();
 
     switch (mode) {
-    case 0:  render_t1(render_line, paper); break;
-    case 1:  render_g1(render_line, paper); break;
-    case 2:  // G2 (Screen 2)
-    case 4:  // G3 (Screen 4)
-        render_g2(render_line, paper); break;
-    case 3:  render_mc(render_line, paper); break;
-    case 5:  render_g4(render_line, paper); break;
-    case 6:  render_g5(render_line, paper); break;
-    case 7:  render_g6(render_line, paper); break;
-    case 8:  render_g7(render_line, paper); break;
-    case 10: // T2 (80 col) - render as T1 simplified
-        render_t1(render_line, paper); break;
+    case 0: render_t1(vy, paper); break;
+    case 1: render_g1(vy, paper); break;
+    case 2:
+    case 4: render_g2(vy, paper); break;
+    case 3: render_mc(vy, paper); break;
+    case 5: render_g4(vy, paper); break;
+    case 6: render_g5(vy, paper); break;
+    case 7: render_g6(vy, paper); break;
+    case 8: render_g7(vy, paper); break;
+    case 10: render_t2(vy, paper); break;
     default:
         for (int x = 0; x < kPaperWidth; x++) paper[x] = border;
         break;
     }
 
-    // Sprites
     if (mode >= 1 && mode <= 3)
-        render_sprites_m1(render_line, paper);
+        render_sprites_m1(vy, paper);
     else if (mode >= 4 && mode <= 8)
-        render_sprites_m2(render_line, paper);
+        render_sprites_m2(vy, paper);
 }
 
-// =============================================================================
-// V9938 VDP - Comandos
-// =============================================================================
-
-// Logical operation
-uint8_t V9938::log_op(int op, uint8_t src, uint8_t dst) const {
-    switch (op & 0x0F) {
-    case 0x0: return src;              // IMP
-    case 0x1: return src & dst;        // AND
-    case 0x2: return src | dst;        // OR
-    case 0x3: return src ^ dst;        // XOR
-    case 0x4: return ~src & dst;       // NOT
-    case 0x8: return src ? src : dst;  // TIMP
-    case 0x9: return src ? (src & dst) : dst;
-    case 0xA: return src ? (src | dst) : dst;
-    case 0xB: return src ? (src ^ dst) : dst;
-    case 0xC: return src ? (~src & dst) : dst;
-    default:  return src;
-    }
-}
-
-uint32_t V9938::bitmap_addr(int x, int y) const {
+int V9938::blit_update() {
+    blit_ay_ = (regs_[45] & 8) ? -1 : 1;
+    blit_ax_ = (regs_[45] & 4) ? -1 : 1;
     switch (screen_mode()) {
-    case 5:  // SCREEN 5 / G4: 256×, 4bpp, linear
-        return (uint32_t(y & 1023) << 7) + uint32_t((x & 255) >> 1);
-    case 6:  // SCREEN 6 / G5: 512×, 2bpp, linear
-        return (uint32_t(y & 1023) << 7) + uint32_t((x & 511) >> 2);
-    case 7:  // SCREEN 7 / G6: 512×, 4bpp, even/odd bytes in separate 64K banks
-        return (uint32_t(x & 2) << 15) | (uint32_t(y & 511) << 7) | uint32_t((x & 511) >> 2);
-    case 8:  // SCREEN 8 / G7: 256×, 8bpp, even/odd pixels in separate 64K banks
-        return (uint32_t(x & 1) << 16) | (uint32_t(y & 511) << 7) | uint32_t((x >> 1) & 127);
+    case 5:  // G4: 256×4-bit linear
+        blit_xl_ = 255;
+        blit_yl_ = 1023;
+        blit_mask_ = 15;
+        blit_step_ = 2;
+        blit_addx_ = int8_t(blit_ax_ * blit_step_);
+        blit_xh_ = ~blit_xl_;
+        blit_yh_ = ~blit_yl_;
+        return blit_case_ = 0;
+    case 6:  // G5: 512×2-bit linear
+        blit_xl_ = 511;
+        blit_yl_ = 1023;
+        blit_mask_ = 3;
+        blit_step_ = 4;
+        blit_addx_ = int8_t(blit_ax_ * blit_step_);
+        blit_xh_ = ~blit_xl_;
+        blit_yh_ = ~blit_yl_;
+        return blit_case_ = 1;
+    case 7:  // G6: 512×4-bit planar
+        blit_xl_ = 511;
+        blit_yl_ = 511;
+        blit_mask_ = 15;
+        blit_step_ = 2;
+        blit_addx_ = int8_t(blit_ax_ * blit_step_);
+        blit_xh_ = ~blit_xl_;
+        blit_yh_ = ~blit_yl_;
+        return blit_case_ = 2;
+    case 8:  // G7: 256×8-bit planar
+        blit_bits_ = 0;
+        blit_xl_ = 255;
+        blit_yl_ = 511;
+        blit_mask_ = 255;
+        blit_step_ = 1;
+        blit_addx_ = int8_t(blit_ax_ * blit_step_);
+        blit_xh_ = ~blit_xl_;
+        blit_yh_ = ~blit_yl_;
+        return blit_case_ = 3;
     default:
-        return 0;
+        blit_case_ = -1;
+        return -1;
     }
 }
 
-int V9938::display_y_offset() const {
-    switch (screen_mode()) {
-    case 5:
-    case 6:
-        return int((regs_[2] & 0x60) << 3);
-    case 7:
-    case 8:
-        return (regs_[2] & 0x20) ? 256 : 0;
-    default:
-        return 0;
-    }
-}
-
-int V9938::pixels_per_byte() const {
-    switch (screen_mode()) {
-    case 6: return 4;
-    case 8: return 1;
-    default: return 2;
-    }
-}
-
-uint8_t V9938::get_pixel(int x, int y) const {
-    const uint8_t byte = vram_rd(bitmap_addr(x, y));
-    switch (screen_mode()) {
-    case 6: {
-        const int shift = (3 - (x & 3)) * 2;
-        return uint8_t((byte >> shift) & 0x03);
-    }
-    case 8:
-        return byte;
-    default:
-        return (x & 1) ? uint8_t(byte & 0x0F) : uint8_t((byte >> 4) & 0x0F);
-    }
-}
-
-void V9938::set_pixel(int x, int y, uint8_t clr) {
-    const uint32_t addr = bitmap_addr(x, y);
-    uint8_t byte = vram_rd(addr);
-    switch (screen_mode()) {
-    case 6: {
-        const int shift = (3 - (x & 3)) * 2;
-        const uint8_t mask = uint8_t(0x03 << shift);
-        byte = uint8_t((byte & ~mask) | ((clr & 0x03) << shift));
+uint8_t* V9938::blit_offs(int x, int y) {
+    uint32_t addr = 0;
+    switch (blit_case_) {
+    case 0:
+        blit_bits_ = uint8_t((1 & ~x) << 2);
+        addr = uint32_t(y << 7) + uint32_t(x >> 1);
         break;
-    }
-    case 8:
-        byte = clr;
+    case 1:
+        blit_bits_ = uint8_t((3 & ~x) << 1);
+        addr = uint32_t(y << 7) + uint32_t(x >> 2);
+        break;
+    case 2:
+        blit_bits_ = uint8_t((1 & ~x) << 2);
+        addr = uint32_t(y << 7) + uint32_t(x >> 2) + uint32_t((x & 2) << 15);
         break;
     default:
-        if (x & 1) byte = uint8_t((byte & 0xF0) | (clr & 0x0F));
-        else       byte = uint8_t((byte & 0x0F) | ((clr & 0x0F) << 4));
+        blit_bits_ = 0;
+        addr = uint32_t(y << 7) + uint32_t(x >> 1) + uint32_t((x & 1) << 16);
         break;
     }
-    vram_wr(addr, byte);
+    return &vram_[addr & (kVramSize - 1)];
 }
 
-int V9938::line_x_mask() const {
-    const int mode = screen_mode();
-    return (mode == 6 || mode == 7) ? 512 : 256;
+uint8_t V9938::blit_test(int x, int y) {
+    return uint8_t(*blit_offs(x, y) >> blit_bits_);
 }
 
-void V9938::start_cpu_transfer(int cmd, int dx, int dy, int nx, int ny, int arg, uint8_t first) {
-    cmd_op_ = cmd;
-    cmd_dx_ = dx;
-    cmd_dy_ = dy;
-    cmd_nx_ = nx;
-    cmd_ny_ = ny;
-    cmd_px_ = 0;
-    cmd_py_ = 0;
-    cmd_arg_ = arg;
+void V9938::blit_logo(int x, int y, uint8_t color) {
+    color &= blit_mask_;
+    if (color == 0 && (regs_[46] & 8)) return;
+    uint8_t* o = blit_offs(x, y);
+    const uint8_t m = uint8_t(blit_mask_ << blit_bits_);
+    switch (regs_[46] & 7) {
+    case 1:
+        *o &= uint8_t((~m) + (color << blit_bits_));
+        break;
+    case 2:
+        *o |= uint8_t(color << blit_bits_);
+        break;
+    case 3:
+        *o ^= uint8_t(color << blit_bits_);
+        break;
+    case 4:
+        color = uint8_t(blit_mask_ & ~color);
+        *o = uint8_t((*o & ~m) + (color << blit_bits_));
+        break;
+    default:
+        *o = uint8_t((*o & ~m) + (color << blit_bits_));
+        break;
+    }
+}
+
+unsigned V9938::blit_get_sx() const {
+    return (unsigned(regs_[33]) << 8 | regs_[32]) & unsigned(blit_xl_);
+}
+unsigned V9938::blit_get_sy() const {
+    return (unsigned(regs_[35]) << 8 | regs_[34]) & unsigned(blit_yl_);
+}
+unsigned V9938::blit_get_dx() const {
+    return (unsigned(regs_[37]) << 8 | regs_[36]) & unsigned(blit_xl_);
+}
+unsigned V9938::blit_get_dy() const {
+    return (unsigned(regs_[39]) << 8 | regs_[38]) & unsigned(blit_yl_);
+}
+unsigned V9938::blit_get_nx() const {
+    return (unsigned(regs_[41]) << 8 | regs_[40]) & unsigned(blit_xl_);
+}
+unsigned V9938::blit_get_ny(int add) const {
+    return (mgetii(&regs_[42]) + unsigned(add)) & unsigned(blit_yl_);
+}
+void V9938::blit_set_sy(unsigned y) {
+    regs_[35] = uint8_t((y >> 8) & 3);
+    regs_[34] = uint8_t(y);
+}
+void V9938::blit_set_dy(unsigned y) {
+    regs_[39] = uint8_t((y >> 8) & 3);
+    regs_[38] = uint8_t(y);
+}
+void V9938::blit_set_ny(unsigned y) {
+    regs_[43] = uint8_t((y >> 8) & 3);
+    regs_[42] = uint8_t(y);
+}
+
+void V9938::blit_launch() {
+    cmd_op_ = regs_[46] >> 4;
+    if (cmd_op_ == 0) {
+        cmd_busy_ = false;
+        status_[2] &= ~0x81;
+        return;
+    }
+    if (blit_update() < 0) {
+        regs_[46] &= 15;
+        cmd_op_ = 0;
+        cmd_busy_ = false;
+        status_[2] &= ~0x81;
+        return;
+    }
+    status_[2] = uint8_t((status_[2] & 0x6E) | 0x0D);  // CE, drop TR/BD
     cmd_busy_ = true;
-    status_[2] |= 0x81;  // CE + TR
-    command_write_byte(first);
+    blit_sx_ = blit_get_sx();
+    blit_dx_ = blit_get_dx();
+    if (regs_[46] < 128) {
+        blit_nx_ = mgetii(&regs_[40]) & 1023;
+        blit_nz_ = int((blit_nx_ - 1) >> 1);
+    } else {
+        blit_nx_ = blit_get_nx();
+        blit_nz_ = 0;
+    }
+    blit_run();
+}
+
+void V9938::blit_run() {
+    int guard = 0;
+    while (cmd_busy_ && (status_[2] & 1) && guard++ < 1024 * 1024) {
+        const int cmd = regs_[46] >> 4;
+        unsigned s = 0, d = 0, n = 0;
+        switch (cmd) {
+        case 15: {  // HMMC
+            if (blit_nz_) return;
+            d = blit_get_dy();
+            *blit_offs(int(blit_dx_), int(d)) = regs_[44];
+            blit_dx_ += unsigned(blit_addx_);
+            if ((blit_nx_ -= blit_step_) < blit_step_ || (int(blit_dx_) & blit_xh_)) {
+                blit_dx_ = blit_get_dx();
+                blit_nx_ = blit_get_nx();
+                d += unsigned(blit_ay_);
+                blit_set_dy(d);
+                n = blit_get_ny(-1);
+                blit_set_ny(n);
+                if (!n || (int(d) & blit_yh_)) {
+                    status_[2] &= ~0x01;
+                    cmd_busy_ = false;
+                    break;
+                }
+            }
+            blit_nz_ = 1;
+            status_[2] |= 0x80;
+            return;
+        }
+        case 14: {  // YMMM
+            s = blit_get_sy();
+            d = blit_get_dy();
+            *blit_offs(int(blit_dx_), int(d)) = *blit_offs(int(blit_dx_), int(s));
+            blit_dx_ += unsigned(blit_addx_);
+            if (int(blit_dx_) & blit_xh_) {
+                blit_dx_ = blit_get_dx();
+                s += unsigned(blit_ay_);
+                blit_set_sy(s);
+                d += unsigned(blit_ay_);
+                blit_set_dy(d);
+                n = blit_get_ny(-1);
+                blit_set_ny(n);
+                if (!n || ((int(s) | int(d)) & blit_yh_)) {
+                    status_[2] &= ~0x01;
+                    cmd_busy_ = false;
+                }
+            }
+            break;
+        }
+        case 13: {  // HMMM
+            s = blit_get_sy();
+            d = blit_get_dy();
+            *blit_offs(int(blit_dx_), int(d)) = *blit_offs(int(blit_sx_), int(s));
+            blit_sx_ += unsigned(blit_addx_);
+            blit_dx_ += unsigned(blit_addx_);
+            if ((blit_nx_ -= blit_step_) < blit_step_ ||
+                ((int(blit_sx_) | int(blit_dx_)) & blit_xh_)) {
+                blit_sx_ = blit_get_sx();
+                blit_nx_ = blit_get_nx();
+                blit_dx_ = blit_get_dx();
+                s += unsigned(blit_ay_);
+                blit_set_sy(s);
+                d += unsigned(blit_ay_);
+                blit_set_dy(d);
+                n = blit_get_ny(-1);
+                blit_set_ny(n);
+                if (!n || ((int(s) | int(d)) & blit_yh_)) {
+                    status_[2] &= ~0x01;
+                    cmd_busy_ = false;
+                }
+            }
+            break;
+        }
+        case 12: {  // HMMV
+            d = blit_get_dy();
+            *blit_offs(int(blit_dx_), int(d)) = regs_[44];
+            blit_dx_ += unsigned(blit_addx_);
+            if ((blit_nx_ -= blit_step_) < blit_step_ || (int(blit_dx_) & blit_xh_)) {
+                blit_dx_ = blit_get_dx();
+                blit_nx_ = blit_get_nx();
+                d += unsigned(blit_ay_);
+                blit_set_dy(d);
+                n = blit_get_ny(-1);
+                blit_set_ny(n);
+                if (!n || (int(d) & blit_yh_)) {
+                    status_[2] &= ~0x01;
+                    cmd_busy_ = false;
+                }
+            }
+            break;
+        }
+        case 11: {  // LMMC
+            if (blit_nz_) return;
+            d = blit_get_dy();
+            blit_logo(int(blit_dx_), int(d), regs_[44]);
+            blit_dx_ += unsigned(blit_ax_);
+            if (!--blit_nx_ || (int(blit_dx_) & blit_xh_)) {
+                blit_dx_ = blit_get_dx();
+                blit_nx_ = blit_get_nx();
+                d += unsigned(blit_ay_);
+                blit_set_dy(d);
+                n = blit_get_ny(-1);
+                blit_set_ny(n);
+                if (!n || (int(d) & blit_yh_)) {
+                    status_[2] &= ~0x01;
+                    cmd_busy_ = false;
+                    break;
+                }
+            }
+            blit_nz_ = 1;
+            status_[2] |= 0x80;
+            return;
+        }
+        case 10:  // LMCM
+            status_[2] |= 0x80;
+            status_[7] = uint8_t(blit_test(int(blit_sx_), int(blit_get_sy())) & blit_mask_);
+            return;
+        case 9: {  // LMMM
+            s = blit_get_sy();
+            d = blit_get_dy();
+            blit_logo(int(blit_dx_), int(d), blit_test(int(blit_sx_), int(s)));
+            blit_sx_ += unsigned(blit_ax_);
+            blit_dx_ += unsigned(blit_ax_);
+            if (!--blit_nx_ || ((int(blit_sx_) | int(blit_dx_)) & blit_xh_)) {
+                blit_sx_ = blit_get_sx();
+                blit_nx_ = blit_get_nx();
+                blit_dx_ = blit_get_dx();
+                s += unsigned(blit_ay_);
+                blit_set_sy(s);
+                d += unsigned(blit_ay_);
+                blit_set_dy(d);
+                n = blit_get_ny(-1);
+                blit_set_ny(n);
+                if (!n || ((int(s) | int(d)) & blit_yh_)) {
+                    status_[2] &= ~0x01;
+                    cmd_busy_ = false;
+                }
+            }
+            break;
+        }
+        case 8: {  // LMMV
+            d = blit_get_dy();
+            blit_logo(int(blit_dx_), int(d), regs_[44]);
+            blit_dx_ += unsigned(blit_ax_);
+            if (!--blit_nx_ || (int(blit_dx_) & blit_xh_)) {
+                blit_dx_ = blit_get_dx();
+                blit_nx_ = blit_get_nx();
+                d += unsigned(blit_ay_);
+                blit_set_dy(d);
+                n = blit_get_ny(-1);
+                blit_set_ny(n);
+                if (!n || (int(d) & blit_yh_)) {
+                    status_[2] &= ~0x01;
+                    cmd_busy_ = false;
+                }
+            }
+            break;
+        }
+        case 7: {  // LINE — major length is NX+1; NY=0 stays axis-aligned
+            d = blit_get_dy();
+            blit_logo(int(blit_dx_), int(d), regs_[44]);
+            if (!blit_nx_) {
+                status_[2] &= ~0x01;
+                cmd_busy_ = false;
+                break;
+            }
+            if (regs_[45] & 1)
+                d += unsigned(blit_ay_);
+            else
+                blit_dx_ += unsigned(blit_ax_);
+            if ((blit_nz_ -= int(mgetii(&regs_[42]) & 511)) < 0) {
+                blit_nz_ += int(mgetii(&regs_[40]) & 1023);
+                if (regs_[45] & 1)
+                    blit_dx_ += unsigned(blit_ax_);
+                else
+                    d += unsigned(blit_ay_);
+            }
+            blit_set_dy(d);
+            if ((int(blit_dx_) & blit_xh_) || (int(d) & blit_yh_)) {
+                status_[2] &= ~0x01;
+                cmd_busy_ = false;
+            } else {
+                --blit_nx_;
+            }
+            break;
+        }
+        case 6: {  // SRCH
+            const uint8_t pix =
+                uint8_t((blit_test(int(blit_sx_), int(blit_get_sy())) ^ regs_[44]) & blit_mask_);
+            const bool match = (regs_[45] & 2) ? pix != 0 : pix == 0;
+            if (match) {
+                status_[8] = uint8_t(blit_sx_);
+                status_[9] = uint8_t((blit_sx_ >> 8) | 0xFE);
+                status_[2] = uint8_t((status_[2] & 0x6E) | 0x10);
+                cmd_busy_ = false;
+            } else {
+                blit_sx_ += unsigned(blit_ax_);
+                if (int(blit_sx_) & blit_xh_) {
+                    status_[8] = uint8_t(blit_sx_);
+                    status_[9] = uint8_t((blit_sx_ >> 8) | 0xFE);
+                    status_[2] &= 0x6E;
+                    cmd_busy_ = false;
+                }
+            }
+            break;
+        }
+        case 5:  // PSET
+            blit_logo(int(blit_dx_), int(blit_get_dy()), regs_[44]);
+            status_[2] &= ~0x01;
+            cmd_busy_ = false;
+            break;
+        case 4:  // POINT
+            status_[7] = uint8_t(blit_test(int(blit_sx_), int(blit_get_sy())) & blit_mask_);
+            status_[2] &= ~0x01;
+            cmd_busy_ = false;
+            break;
+        default:
+            status_[2] &= ~0x01;
+            cmd_busy_ = false;
+            break;
+        }
+    }
+    if (!cmd_busy_) status_[2] &= ~0x01;
+}
+
+void V9938::blit_lmcm() {
+    const unsigned s0 = blit_get_sy();
+    status_[2] &= ~0x80;
+    status_[7] = uint8_t(blit_test(int(blit_sx_), int(s0)) & blit_mask_);
+    blit_sx_ += unsigned(blit_ax_);
+    unsigned s = s0;
+    if (!--blit_nx_ || (int(blit_sx_) & blit_xh_)) {
+        blit_sx_ = blit_get_sx();
+        blit_nx_ = blit_get_nx();
+        s += unsigned(blit_ay_);
+        blit_set_sy(s);
+        const unsigned n = blit_get_ny(-1);
+        blit_set_ny(n);
+        if (!n || (int(s) & blit_yh_)) {
+            status_[2] &= ~0x01;
+            cmd_busy_ = false;
+        }
+    }
+}
+
+void V9938::command_write_byte(uint8_t data) {
+    regs_[44] = data;
+    if (!cmd_busy_) return;
+    const int cmd = regs_[46] >> 4;
+    if (cmd == 0x0B || cmd == 0x0F) {
+        blit_nz_ = 0;
+        blit_run();
+    }
 }
 
 void V9938::write_register(int index, uint8_t value) {
@@ -469,270 +824,37 @@ void V9938::write_register(int index, uint8_t value) {
         regs_[17] = value;
         return;
     }
-    if (cmd_busy_ && index == 44 && (cmd_op_ == 0x0B || cmd_op_ == 0x0F)) {
-        regs_[44] = value;
-        command_write_byte(value);
-        return;
-    }
     if (index < 0 || index >= kNumRegs) return;
     regs_[std::size_t(index)] = value;
-    if (index == 46 && value >= 0x40) exec_command();
+    if (index == 44 && cmd_busy_ && (status_[2] & 0x80)) command_write_byte(value);
+    if (index == 46) blit_launch();
 }
-
-// Execute VDP command instantly
-void V9938::exec_command() {
-    int cmd = regs_[46] >> 4;
-    int sx = regs_[32] | ((regs_[33] & 0x01) << 8);
-    int sy = regs_[34] | ((regs_[35] & 0x03) << 8);
-    int dx = regs_[36] | ((regs_[37] & 0x01) << 8);
-    int dy = regs_[38] | ((regs_[39] & 0x03) << 8);
-    int nx = regs_[40] | ((regs_[41] & 0x01) << 8);
-    int ny = regs_[42] | ((regs_[43] & 0x03) << 8);
-    int clr = regs_[44];
-    int arg = regs_[45];
-    int dix = (arg & 0x04) ? -1 : 1;
-    int diy = (arg & 0x08) ? -1 : 1;
-    int log = regs_[46] & 0x0F;
-
-    // Area-move commands treat NX/NY=0 as the maximum size. LINE uses the raw
-    // deltas: NY=0 is a straight horizontal/vertical stroke, which is how the
-    // MSX2 BIOS draws the boot logo.
-    if (cmd != 0x7) {
-        if (nx == 0) nx = 512;
-        if (ny == 0) ny = 1024;
-    } else {
-        nx &= 1023;
-        ny &= 1023;
-    }
-
-    cmd_busy_ = false;
-    status_[2] &= ~0x01; // clear TR
-    status_[2] &= ~0x80; // clear CE
-
-    switch (cmd) {
-    case 0x0: break; // STOP
-    case 0x5: // PSET
-        set_pixel(dx, dy, clr);
-        break;
-    case 0x4: // POINT
-        status_[7] = get_pixel(sx, sy);
-        break;
-    case 0x8: // LMMV (logical fill)
-        for (int y = 0; y < ny; y++)
-            for (int x = 0; x < nx; x++) {
-                int px = dx + x * dix, py = dy + y * diy;
-                uint8_t dst = get_pixel(px & 0x1FF, py & 0x3FF);
-                set_pixel(px & 0x1FF, py & 0x3FF, log_op(log, clr, dst));
-            }
-        break;
-    case 0x9: // LMMM (logical move)
-        for (int y = 0; y < ny; y++)
-            for (int x = 0; x < nx; x++) {
-                int spx = sx + x * dix, spy = sy + y * diy;
-                int dpx = dx + x * dix, dpy = dy + y * diy;
-                uint8_t src = get_pixel(spx & 0x1FF, spy & 0x3FF);
-                uint8_t dst = get_pixel(dpx & 0x1FF, dpy & 0x3FF);
-                set_pixel(dpx & 0x1FF, dpy & 0x3FF, log_op(log, src, dst));
-            }
-        break;
-    case 0xB: // LMMC (logical move CPU→VRAM); first pixel is already in R#44
-        start_cpu_transfer(cmd, dx, dy, nx, ny, arg, uint8_t(clr));
-        return;
-    case 0xC: // HMMV (high-speed fill, NX in dots → bytes)
-    {
-        const int ppb = pixels_per_byte();
-        int count = nx / ppb;
-        if (count <= 0) count = 1;
-        for (int y = 0; y < ny; y++) {
-            const int py = (dy + y * diy) & 0x3FF;
-            for (int x = 0; x < count; x++) {
-                const int px = (dx + x * dix * ppb) & 0x1FF;
-                vram_wr(bitmap_addr(px, py), uint8_t(clr));
-            }
-        }
-        break;
-    }
-    case 0xD: // HMMM (high-speed move)
-    {
-        const int ppb = pixels_per_byte();
-        int count = nx / ppb;
-        if (count <= 0) count = 1;
-        for (int y = 0; y < ny; y++) {
-            const int spy = (sy + y * diy) & 0x3FF;
-            const int dpy = (dy + y * diy) & 0x3FF;
-            for (int x = 0; x < count; x++) {
-                const int spx = (sx + x * dix * ppb) & 0x1FF;
-                const int dpx = (dx + x * dix * ppb) & 0x1FF;
-                vram_wr(bitmap_addr(dpx, dpy), vram_rd(bitmap_addr(spx, spy)));
-            }
-        }
-        break;
-    }
-    case 0xE: // YMMM (high-speed move Y-only)
-    {
-        const int ppb = pixels_per_byte();
-        const int xmax = line_x_mask();
-        for (int y = 0; y < ny; y++) {
-            const int spy = (sy + y * diy) & 0x3FF;
-            const int dpy = (dy + y * diy) & 0x3FF;
-            for (int x = 0; x < xmax; x += ppb)
-                vram_wr(bitmap_addr(x, dpy), vram_rd(bitmap_addr(x, spy)));
-        }
-        break;
-    }
-    case 0xF: // HMMC (high-speed move CPU→VRAM); first byte is already in R#44
-        nx /= pixels_per_byte();
-        if (nx <= 0) nx = 1;
-        start_cpu_transfer(cmd, dx, dy, nx, ny, arg, uint8_t(clr));
-        return;
-    case 0x7: // LINE — MAME/openMSX Bresenham (ASX starts at (NX-1)/2)
-    {
-        int asx = (nx - 1) >> 1;
-        int adx = 0;
-        int px = dx;
-        int py = dy;
-        const bool ymaj = (arg & 0x01) != 0;
-        const int xmask = line_x_mask();
-        for (;;) {
-            uint8_t dst = get_pixel(px & 0x1FF, py & 0x3FF);
-            set_pixel(px & 0x1FF, py & 0x3FF, log_op(log, uint8_t(clr), dst));
-            if (!ymaj) {
-                px += dix;
-                if ((asx -= ny) < 0) {
-                    asx += nx;
-                    py += diy;
-                }
-                asx &= 1023;
-                if (adx++ == nx || (px & xmask)) break;
-            } else {
-                py += diy;
-                if ((asx -= ny) < 0) {
-                    asx += nx;
-                    px += dix;
-                }
-                asx &= 1023;
-                if (adx++ == nx || (px & xmask)) break;
-            }
-        }
-        break;
-    }
-    case 0x6: // SRCH
-    {
-        int px = sx;
-        bool eq = (arg & 0x02) == 0;
-        for (int x = 0; x < 512; x++) {
-            uint8_t p = get_pixel(px & 0x1FF, sy & 0x3FF);
-            if ((eq && p == (clr & 0x0F)) || (!eq && p != (clr & 0x0F))) {
-                status_[2] |= 0x10; // BD
-                status_[8] = px & 0xFF;
-                status_[9] = (px >> 8) & 0x01;
-                break;
-            }
-            px += dix;
-        }
-        break;
-    }
-    case 0xA: // LMCM (logical move VRAM→CPU)
-        cmd_op_ = cmd;
-        cmd_sx_ = sx; cmd_sy_ = sy;
-        cmd_nx_ = nx; cmd_ny_ = ny;
-        cmd_px_ = 0;  cmd_py_ = 0;
-        cmd_arg_ = arg;
-        cmd_busy_ = true;
-        status_[2] |= 0x81;
-        // Pre-read first byte
-        status_[7] = get_pixel(sx, sy);
-        return;
-    default:
-        break;
-    }
-}
-
-// LMMC/HMMC byte transfer
-void V9938::command_write_byte(uint8_t data) {
-    if (!cmd_busy_) return;
-    int dix = (cmd_arg_ & 0x04) ? -1 : 1;
-    int diy = (cmd_arg_ & 0x08) ? -1 : 1;
-
-    if (cmd_op_ == 0x0B) { // LMMC
-        int px = (cmd_dx_ + cmd_px_ * dix) & 0x1FF;
-        int py = (cmd_dy_ + cmd_py_ * diy) & 0x3FF;
-        int log = regs_[46] & 0x0F;
-        uint8_t dst = get_pixel(px, py);
-        set_pixel(px, py, log_op(log, data, dst));
-    } else if (cmd_op_ == 0x0F) { // HMMC
-        const int ppb = pixels_per_byte();
-        int px = (cmd_dx_ + cmd_px_ * dix * ppb) & 0x1FF;
-        int py = (cmd_dy_ + cmd_py_ * diy) & 0x3FF;
-        vram_wr(bitmap_addr(px, py), data);
-    }
-
-    cmd_px_++;
-    if (cmd_px_ >= cmd_nx_) {
-        cmd_px_ = 0;
-        cmd_py_++;
-        if (cmd_py_ >= cmd_ny_) {
-            cmd_busy_ = false;
-            status_[2] &= ~0x81;
-        }
-    }
-}
-
-// LMCM byte read
-uint8_t V9938::command_read_byte() {
-    if (!cmd_busy_ || cmd_op_ != 0x0A) return 0xFF;
-    int dix = (cmd_arg_ & 0x04) ? -1 : 1;
-    int diy = (cmd_arg_ & 0x08) ? -1 : 1;
-    int px = (cmd_sx_ + cmd_px_ * dix) & 0x1FF;
-    int py = (cmd_sy_ + cmd_py_ * diy) & 0x3FF;
-    uint8_t val = get_pixel(px, py);
-    cmd_px_++;
-    if (cmd_px_ >= cmd_nx_) {
-        cmd_px_ = 0;
-        cmd_py_++;
-        if (cmd_py_ >= cmd_ny_) {
-            cmd_busy_ = false;
-            status_[2] &= ~0x81;
-        }
-    }
-    // Pre-read next byte
-    if (cmd_busy_) {
-        int npx = (cmd_sx_ + cmd_px_ * dix) & 0x1FF;
-        int npy = (cmd_sy_ + cmd_py_ * diy) & 0x3FF;
-        status_[7] = get_pixel(npx, npy);
-    }
-    return val;
-}
-
-// =============================================================================
-// V9938 VDP - Port I/O
-// =============================================================================
 
 uint8_t V9938::port_read(int port) {
     switch (port & 3) {
-    case 0: { // Port 0x98: VRAM data read
-        uint8_t val = read_buf_;
-        read_buf_ = vram_rd(cpu_phys(vram_addr_));
-        vram_addr_ = (vram_addr_ + 1) & (kVramSize - 1);
+    case 0: {
+        const uint8_t val = read_buf_;
+        read_buf_ = ram_recv();
         latch_flag_ = false;
         return val;
     }
-    case 1: { // Port 0x99: Status register read
+    case 1: {
         uint8_t sr = regs_[15] & 0x0F;
         if (sr >= kNumStatus) sr = 0;
         uint8_t val = status_[sr];
         if (sr == 0) {
-            status_[0] &= 0x1F; // clear VBLANK int, overflow, collision flags
+            status_[0] &= 0x1F;
             irq_vblank_ = false;
         }
         if (sr == 1) {
-            status_[1] &= ~0x01; // clear HBLANK flag
+            status_[1] &= ~0x01;
             irq_hblank_ = false;
         }
-        if (sr == 2 && cmd_busy_ && cmd_op_ == 0x0A) {
+        if (sr == 2) {
+            if (!(status_[2] & 1)) status_[2] &= ~0x80;
             val = status_[2];
-            status_[7] = command_read_byte();
         }
+        if (sr == 7 && cmd_busy_ && (regs_[46] >> 4) == 0x0A) blit_lmcm();
         latch_flag_ = false;
         return val;
     }
@@ -743,18 +865,17 @@ uint8_t V9938::port_read(int port) {
 
 void V9938::port_write(int port, uint8_t val) {
     switch (port & 3) {
-    case 0: // Port 0x98: VRAM data write (or HMMC/LMMC payload)
-        if (cmd_busy_ && (cmd_op_ == 0x0B || cmd_op_ == 0x0F)) {
+    case 0:
+        if (cmd_busy_ && ((regs_[46] >> 4) == 0x0B || (regs_[46] >> 4) == 0x0F)) {
             command_write_byte(val);
         } else {
             read_buf_ = val;
-            vram_wr(cpu_phys(vram_addr_), val);
-            vram_addr_ = (vram_addr_ + 1) & (kVramSize - 1);
+            ram_send(val);
         }
         latch_flag_ = false;
         break;
 
-    case 1: // Port 0x99: Register/address setup
+    case 1:
         if (!latch_flag_) {
             latch_ = val;
             latch_flag_ = true;
@@ -763,28 +884,22 @@ void V9938::port_write(int port, uint8_t val) {
             if (val & 0x80) {
                 write_register(val & 0x3F, latch_);
             } else {
-                // VRAM address set
-                vram_addr_ = ((uint32_t)(regs_[14] & 0x07) << 14) |
-                               ((uint32_t)(val & 0x3F) << 8) | latch_;
-                vram_write_ = (val & 0x40) != 0;
-                if (!vram_write_) {
-                    read_buf_ = vram_rd(cpu_phys(vram_addr_));
-                    vram_addr_ = (vram_addr_ + 1) & (kVramSize - 1);
-                }
+                vram_where_ = int(((uint32_t(val & 0x3F) << 8) | latch_) & 0x3FFF);
+                if (!(val & 0x40)) read_buf_ = ram_recv();
             }
         }
         break;
 
-    case 2: // Port 0x9A: Palette write
+    case 2:
         if (!pal_flag_) {
             pal_latch_ = val;
             pal_flag_ = true;
         } else {
             pal_flag_ = false;
-            uint8_t entry = regs_[16] & 0x0F;
-            uint8_t r = (pal_latch_ >> 4) & 0x07;
-            uint8_t b = pal_latch_ & 0x07;
-            uint8_t g = val & 0x07;
+            const uint8_t entry = regs_[16] & 0x0F;
+            const uint8_t r = (pal_latch_ >> 4) & 0x07;
+            const uint8_t b = pal_latch_ & 0x07;
+            const uint8_t g = val & 0x07;
             pal_rgb_[entry][0] = r;
             pal_rgb_[entry][1] = g;
             pal_rgb_[entry][2] = b;
@@ -793,9 +908,8 @@ void V9938::port_write(int port, uint8_t val) {
         }
         break;
 
-    case 3: // Port 0x9B: Indirect register access
-    {
-        uint8_t reg = regs_[17] & 0x3F;
+    case 3: {
+        const uint8_t reg = regs_[17] & 0x3F;
         if (reg != 17) write_register(reg, val);
         if (!(regs_[17] & 0x80))
             regs_[17] = uint8_t((regs_[17] & 0x80) | ((reg + 1) & 0x3F));
@@ -813,44 +927,45 @@ void V9938::reset() {
     palette_.fill(0);
     framebuffer_.fill(0);
     for (int i = 0; i < 16; i++) {
-        pal_rgb_[i][0] = v9938_default_pal[i][0];
-        pal_rgb_[i][1] = v9938_default_pal[i][1];
-        pal_rgb_[i][2] = v9938_default_pal[i][2];
-        palette_[i] = rgb3_to_argb(v9938_default_pal[i][0], v9938_default_pal[i][1],
-                                   v9938_default_pal[i][2]);
+        pal_rgb_[i][0] = kDefaultPal[i][0];
+        pal_rgb_[i][1] = kDefaultPal[i][1];
+        pal_rgb_[i][2] = kDefaultPal[i][2];
+        palette_[i] = rgb3_to_argb(kDefaultPal[i][0], kDefaultPal[i][1], kDefaultPal[i][2]);
     }
     latch_ = 0;
     latch_flag_ = false;
     read_buf_ = 0;
-    vram_addr_ = 0;
-    vram_write_ = false;
+    vram_where_ = 0;
     pal_latch_ = 0;
     pal_flag_ = false;
-    scanline_ = 0;
     frame_counter_ = 0;
     irq_vblank_ = false;
     irq_hblank_ = false;
-    cmd_sx_ = cmd_sy_ = cmd_dx_ = cmd_dy_ = 0;
-    cmd_nx_ = cmd_ny_ = cmd_clr_ = cmd_arg_ = cmd_op_ = 0;
-    cmd_px_ = cmd_py_ = 0;
+    cmd_op_ = 0;
     cmd_busy_ = false;
+    blit_nx_ = blit_sx_ = blit_dx_ = 0;
+    blit_nz_ = 0;
+    blit_case_ = -1;
+    status_[2] = 0x0C;
+    status_[4] = 0xFE;
+    status_[6] = 0xFC;
+    status_[9] = 0xFE;
     regs_[9] = 0x02;
 }
 
 void V9938::begin_frame() {
-    status_[0] |= 0x80;  // VBLANK flag is set every frame; IE0 only gates IRQ
-    status_[2] |= 0x40;  // VR
+    status_[0] |= 0x80;
+    status_[2] |= 0x40;
     if (regs_[1] & 0x20) irq_vblank_ = true;
     frame_counter_++;
 }
 
 void V9938::check_line_irq(int line) {
-    if (line == kBorderV) status_[2] &= ~0x40;  // end of vertical retrace
+    if (line == kBorderV) status_[2] &= ~0x40;
     if (line == (regs_[19] + kBorderV) && (regs_[0] & 0x10)) {
         status_[1] |= 0x01;
         irq_hblank_ = true;
     }
 }
-
 
 }  // namespace dsp

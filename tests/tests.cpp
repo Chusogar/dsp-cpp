@@ -2440,6 +2440,54 @@ void test_v9938_screen7_planar() {
     check(pix(0) == pix(4), "SCREEN 7 X=0 and X=4 share bank 0");
 }
 
+void test_v9938_r23_wraps_8bit() {
+    dsp::V9938 vdp;
+    auto wr = [&](int reg, uint8_t value) {
+        vdp.port_write(1, value);
+        vdp.port_write(1, uint8_t(0x80 | reg));
+    };
+    wr(0, 0x04);  // Graphic 4
+    wr(1, 0x40);
+    wr(2, 0x1f);
+    wr(7, 0x04);
+    wr(9, 0x00);  // 192 lines — R#23 must wrap at 256, not 192
+
+    auto pixel = [&](int x, int y) -> uint32_t {
+        const uint32_t* fb = vdp.framebuffer();
+        const int row = dsp::V9938::kBorderV + 10 + y;
+        return fb[row * dsp::V9938::kScreenWidth + dsp::V9938::kBorderH + x * 2] & 0x00ffffffu;
+    };
+    auto render_row = [&](int y) { vdp.render_line(dsp::V9938::kBorderV + 10 + y); };
+
+    wr(36, 10);
+    wr(37, 0);
+    wr(38, 5);
+    wr(39, 0);
+    wr(44, 15);
+    wr(45, 0);
+    wr(46, 0x50);  // PSET at (10,5)
+
+    wr(23, 0);
+    render_row(5);
+    const uint32_t ink = pixel(10, 5);
+    render_row(4);
+    check(ink != pixel(10, 4), "R#23=0 keeps VRAM Y aligned with the raster");
+
+    wr(23, 1);
+    render_row(4);
+    check(pixel(10, 4) == ink, "R#23=1 shows VRAM Y=raster+1");
+    render_row(5);
+    check(pixel(10, 5) != ink, "R#23=1 does not keep VRAM Y on the same raster");
+
+    wr(36, 20);
+    wr(38, 0);
+    wr(46, 0x50);  // PSET at (20,0)
+    wr(23, 1);
+    render_row(191);
+    render_row(0);
+    check(pixel(20, 191) != pixel(10, 4), "scanline 191 with R#23=1 reads Y=192, not Y=0");
+}
+
 void test_msx2_bios_mapper_and_disk() {
     dsp::V9938 vdp;
     vdp.reset();
@@ -2568,6 +2616,7 @@ int main() {
     test_trdos_scl_and_beta();
     test_v9938_line_stays_axis_aligned();
     test_v9938_screen7_planar();
+    test_v9938_r23_wraps_8bit();
     test_msx2_bios_mapper_and_disk();
     test_starwars_missing_roms();
     test_atari_system1_missing_roms();

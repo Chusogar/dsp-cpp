@@ -5,9 +5,9 @@
 
 namespace dsp {
 
-// Yamaha V9938, ported from zxtiny `zxm/msx2.c`. 128 KiB VRAM, MSX2 screen
-// modes 0–8, sprites, palette, and the command engine (instant, not
-// cycle-accurate). Framebuffer is 544×240 including the PAL border.
+// Yamaha V9938. Scanout, planar VRAM and the command engine follow CNGSOFT
+// MSXEC (cpcec) algorithms; commands run instantly rather than cycle-accurately.
+// Framebuffer is 544×240 including the PAL border.
 class V9938 {
 public:
     static constexpr int kPaperWidth = 512;
@@ -41,30 +41,50 @@ public:
 
 private:
     int active_lines() const;
+    int memtype() const;
     uint8_t vram_rd(uint32_t addr) const;
     void vram_wr(uint32_t addr, uint8_t value);
-    void render_t1(int line, uint32_t* buf);
-    void render_g1(int line, uint32_t* buf);
-    void render_g2(int line, uint32_t* buf);
-    void render_mc(int line, uint32_t* buf);
-    void render_g4(int line, uint32_t* buf);
-    void render_g5(int line, uint32_t* buf);
-    void render_g6(int line, uint32_t* buf);
-    void render_g7(int line, uint32_t* buf);
-    void render_sprites_m1(int line, uint32_t* buf);
-    void render_sprites_m2(int line, uint32_t* buf);
-    uint8_t log_op(int op, uint8_t src, uint8_t dst) const;
-    uint32_t bitmap_addr(int x, int y) const;
-    uint32_t cpu_phys(uint32_t addr) const;
-    int display_y_offset() const;
-    int pixels_per_byte() const;
-    uint8_t get_pixel(int x, int y) const;
-    void set_pixel(int x, int y, uint8_t clr);
-    void exec_command();
+    uint32_t cpu_linear() const;
+    uint32_t cpu_phys() const;
+    void next_where();
+    uint8_t ram_recv();
+    void ram_send(uint8_t value);
+
+    uint32_t ink(uint8_t index) const;
+    uint32_t backdrop() const;
+    int bit_bmp() const;
+    int map_bm4() const;
+    int map_bm8() const;
+
+    void render_t1(int y, uint32_t* buf);
+    void render_t2(int y, uint32_t* buf);
+    void render_g1(int y, uint32_t* buf);
+    void render_g2(int y, uint32_t* buf);
+    void render_mc(int y, uint32_t* buf);
+    void render_g4(int y, uint32_t* buf);
+    void render_g5(int y, uint32_t* buf);
+    void render_g6(int y, uint32_t* buf);
+    void render_g7(int y, uint32_t* buf);
+    void render_sprites_m1(int y, uint32_t* buf);
+    void render_sprites_m2(int y, uint32_t* buf);
+
+    int blit_update();
+    uint8_t* blit_offs(int x, int y);
+    uint8_t blit_test(int x, int y);
+    void blit_logo(int x, int y, uint8_t color);
+    unsigned blit_get_sx() const;
+    unsigned blit_get_sy() const;
+    unsigned blit_get_dx() const;
+    unsigned blit_get_dy() const;
+    unsigned blit_get_nx() const;
+    unsigned blit_get_ny(int add) const;
+    void blit_set_sy(unsigned y);
+    void blit_set_dy(unsigned y);
+    void blit_set_ny(unsigned y);
+    void blit_launch();
+    void blit_run();
+    void blit_lmcm();
     void write_register(int index, uint8_t value);
-    void start_cpu_transfer(int cmd, int dx, int dy, int nx, int ny, int arg, uint8_t first);
-    uint8_t command_read_byte();
-    int line_x_mask() const;
 
     std::array<uint8_t, kVramSize> vram_{};
     std::array<uint8_t, kNumRegs> regs_{};
@@ -76,18 +96,30 @@ private:
     uint8_t latch_ = 0;
     bool latch_flag_ = false;
     uint8_t read_buf_ = 0;
-    uint32_t vram_addr_ = 0;
-    bool vram_write_ = false;
+    int vram_where_ = 0;
     uint8_t pal_latch_ = 0;
     bool pal_flag_ = false;
-    int scanline_ = 0;
     int frame_counter_ = 0;
     bool irq_vblank_ = false;
     bool irq_hblank_ = false;
-    int cmd_sx_ = 0, cmd_sy_ = 0, cmd_dx_ = 0, cmd_dy_ = 0;
-    int cmd_nx_ = 0, cmd_ny_ = 0, cmd_clr_ = 0, cmd_arg_ = 0, cmd_op_ = 0;
-    int cmd_px_ = 0, cmd_py_ = 0;
+
+    int cmd_op_ = 0;
     bool cmd_busy_ = false;
+    unsigned blit_nx_ = 0;
+    unsigned blit_sx_ = 0;
+    unsigned blit_dx_ = 0;
+    int blit_nz_ = 0;
+    int8_t blit_ax_ = 1;
+    int8_t blit_ay_ = 1;
+    int8_t blit_case_ = -1;
+    int8_t blit_addx_ = 1;
+    uint8_t blit_step_ = 1;
+    uint8_t blit_bits_ = 0;
+    uint8_t blit_mask_ = 15;
+    int blit_xl_ = 255;
+    int blit_yl_ = 1023;
+    int blit_xh_ = ~255;
+    int blit_yh_ = ~1023;
 };
 
 }  // namespace dsp
