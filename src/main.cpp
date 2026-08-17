@@ -26,6 +26,7 @@
 #include "drivers/spectrum_3.h"
 #include "drivers/amstrad_cpc.h"
 #include "drivers/msx1.h"
+#include "drivers/c64.h"
 
 // Consoles
 #include "drivers/sms.h"
@@ -58,7 +59,7 @@ void print_supported_emulators() {
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3,\n"
-        "    cpc464, cpc664, cpc6128, msx\n"
+        "    cpc464, cpc664, cpc6128, msx, c64\n"
         "\n"
         "  Consoles:\n"
         "    sms, gamegear, pv1000, coleco, sg1000, gb, nes\n"
@@ -74,7 +75,7 @@ void print_usage(const char* program) {
     std::printf(
         "Options:\n"
         "  --game NAME        emulator / game to run (required; see list above)\n"
-        "  --tape FILE        ZX Spectrum or Amstrad CPC tape image (.tap/.tzx/.cdt)\n"
+        "  --tape FILE        ZX Spectrum, Amstrad CPC or C64 tape/program (.tap/.tzx/.cdt/.prg/.t64)\n"
         "  --disk FILE        Amstrad CPC / Spectrum +3 .dsk/.edsk floppy image\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
@@ -156,6 +157,10 @@ std::string guess_game(const std::string& rom_path) {
 	if (lowered.find("spectrum128") != std::string::npos) return "spectrum128";
 	if (lowered.find("plus3") != std::string::npos) return "plus3";
 	if (lowered.find("msx") != std::string::npos) return "msx";
+	if (lowered.find("c64") != std::string::npos || lowered.find("commodore") != std::string::npos ||
+	    lowered.find("kernal") != std::string::npos || lowered.find("901227") != std::string::npos) {
+        return "c64";
+    }
 		
 	// console
 	if (lowered.find("sms") != std::string::npos) return "sms";
@@ -240,6 +245,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "spectrum128") return std::make_unique<dsp::Spectrum128k>(dsp::Spectrum128k::Model::Spec128k);
 	if (game == "plus3") return std::make_unique<dsp::Spectrum3>();
 	if (game == "msx") return std::make_unique<dsp::Msx1>();
+	if (game == "c64" || game == "commodore64" || game == "commodore") {
+        return std::make_unique<dsp::C64>();
+    }
     	
 	// consoles
 	if (game == "sms") return std::make_unique<dsp::Sms>();

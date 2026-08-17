@@ -86,6 +86,10 @@ add_executable(dsp
   src/machine/nes_mapper.cpp
   src/drivers/nes.cpp
   src/drivers/scv.cpp
+  src/machine/mos6526.cpp
+  src/video/mos6566.cpp
+  src/sound/sid.cpp
+  src/drivers/c64.cpp
       
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
@@ -120,10 +124,14 @@ add_executable(dsp_tests
   src/machine/tape_tzx.cpp
   src/machine/i8255.cpp
   src/machine/nec765.cpp
+  src/machine/mos6526.cpp
+  src/video/mos6566.cpp
+  src/sound/sid.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
   src/machine/nes_mapper.cpp
   src/drivers/nes.cpp
+  src/drivers/c64.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

@@ -17,8 +17,8 @@ enum class Key {
     Enter, Space, LeftShift, RightShift, LeftCtrl, RightCtrl, Backspace,
     Up, Down, Left, Right, Comma, Period, Semicolon, Quote, Slash, Minus,
     Escape, Tab, CapsLock,
-    Count,
-	F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12
+    F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+    Count
 };
 
 // Controls of a single player.

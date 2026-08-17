@@ -44,6 +44,10 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | NES APU | `src/cpu/n2a03.pas` | 2A03 squares/triangle/noise/DPCM, resampled to 44100 Hz |
 | NES mappers | `src/consolas/nes_mappers.pas` | 0, 1 (MMC1), 2, 3, 4 (MMC3/MMC6), 7, 9–11, 13, 15, 34, 66, 68, 70, 71, 76, 79/146, 87, 88, 93–95, 113, 180, 184, 185, 206 |
 | NES driver | `src/consolas/nes.pas` | NTSC 256×240, iNES carts (plain or zipped), two controllers |
+| C64 driver | `ordenadores/commodore64.pas` | PLA, 6510 port, keyboard matrix, TAP/PRG/T64/D64 loaders |
+| VIC-II | `mos6566.pas` | PAL 6569, 384×270, sprites, bad lines |
+| MOS 6526 CIA | `mos6526_old.pas` | Two chips: CIA1 IRQ + keyboard, CIA2 NMI + VIC bank |
+| SID 6581 | `sid_sound.pas` | Three voices, 44100 Hz mono |
 | Front end | `src/misc/main_engine.pas` | SDL2 window, texture, audio queue, keyboard |
 
 ## Building
@@ -73,6 +77,7 @@ holding the individual files:
 ./build/dsp --game elevator /path/to/elevator.zip
 ./build/dsp --game junglek /path/to/junglek.zip
 ./build/dsp --game spectrum48 --tape /path/to/game.tzx /path/to/48.rom
+./build/dsp --game c64 --tape /path/to/game.prg /path/to/c64-roms/
 ```
 
 The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
@@ -98,7 +103,7 @@ Options:
 --fullscreen       start in full screen
 --screenshot FILE  headless mode: render frames and write FILE (BMP)
 --frames N         frames to run in headless mode (default 300)
---tape FILE        tape image to insert, .tap or .tzx (spectrum48)
+--tape FILE        tape image to insert: .tap/.tzx (spectrum48), .prg/.t64/.tap/.d64 (c64)
 ```
 
 ### Taito SJ (Elevator Action, Jungle King)
@@ -201,6 +206,25 @@ A/B, `1` for Start and `5` for Select (the arcade coin button). There is no BIOS
 the CPU starts at the cartridge reset vector. IRQ-heavy boards (VRC, FME-7, …)
 are still rejected at load time.
 
+### Commodore 64
+
+The machine needs the three copyrighted Commodore ROMs (KERNAL 901227-03, BASIC
+901226-01, character generator 901225-01). Point `--game c64` at a directory or
+zip that holds them; common aliases such as `kernal.bin` / `basic.bin` /
+`chargen.bin` are accepted.
+
+```bash
+./build/dsp --game c64 /path/to/c64-roms/
+./build/dsp --game c64 --tape game.prg /path/to/c64-roms/
+./build/dsp --game c64 --tape game.tap /path/to/c64-roms/
+```
+
+The host keyboard is mapped onto the C64 matrix (Left Shift is C64 left shift,
+Left Ctrl is CTRL, Tab is RUN/STOP). F1/F3/F5/F7 are the C64 function keys.
+F6 starts and stops a `.tap` cassette (the 6510 motor bit still has to enable
+the datasette). Arrows are also a joystick in Control Port 2. There is no 1541:
+a `.d64` image injects its first PRG into RAM.
+
 ### Controls
 
 | Key | Action |
@@ -255,9 +279,9 @@ cmake --build build --target dsp_zexdoc
 
 ```
 src/cpu/        Z80, M6809, M6502, M68000, HD63701 and M6805 cores
-src/sound/      AY-3-8910, SN76496, and the NES 2A03 APU
-src/video/      graphics decoding, resistor palettes, NES PPU
-src/machine/    Bagman PAL16R6, SLAPSTIC, Spectrum tape player, NES mappers
+src/sound/      AY-3-8910, SN76496, NES 2A03 APU, SID 6581
+src/video/      graphics decoding, resistor palettes, NES PPU, VIC-II
+src/machine/    Bagman PAL16R6, SLAPSTIC, Spectrum tape player, NES mappers, MOS 6526 CIA
 src/drivers/    the machines themselves (memory map, video, inputs)
 src/frontend/   SDL2 front end, driven through the core/machine.h interface
 src/core/       ROM loader (directory or zip) and the Machine interface
