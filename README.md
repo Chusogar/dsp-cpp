@@ -1,10 +1,14 @@
 # dsp-cpp
 
 C++17 + SDL2 port of [dsp-emulator](https://github.com/leniad/dsp-emulator) (Free Pascal).
-Supported games: **Bagman** (Valadon Automation, 1982), **Mikie** (Konami, 1984),
-**Gauntlet** (Atari, 1985), **Double Dragon** and **Double Dragon II** (Technos, 1987/1988),
-**Elevator Action** and **Jungle King** (Taito, 1983, Taito SJ hardware).
-It also emulates the **ZX Spectrum 48K** home computer (Sinclair, 1982).
+Arcade: **Bagman**, **Mikie**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
+**Double Dragon II**, Taito SJ (**Elevator Action**, **Jungle King**), Irem M62
+(**Kung-Fu Master**, **Spelunker**, **Lode Runner**), SNK (**Ikari Warriors**,
+**Athena**, **TNK III**, **ASO**), Capcom **CPS1**, Irem **M72** (**R-Type**),
+and Midway **MCR** (**Tapper** and family).
+Computers: **ZX Spectrum 48K**, Amstrad CPC, **Commodore 64**, **EXL-100** /
+**EXELTEL**. Consoles: NES, Game Boy / Game Boy Color, **Atari Lynx**,
+**Super Cassette Vision**.
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
 explains the port workflow and comes with a driver skeleton (`tools/new_driver.py`).
@@ -22,7 +26,12 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Bagman driver | `src/arcade/bagman_hw.pas` | Memory map, video, inputs, DIP switches |
 | Mikie driver | `src/arcade/mikie_hw.pas` | M6809 + sound Z80, PROM colour lookup tables, sprites |
 | M68000/68010 CPU | `src/cpu/m68000.pas` | Gauntlet main CPU |
-| M6502 CPU | `src/cpu/m6502.pas` | Gauntlet sound CPU |
+| M6502 CPU | `src/cpu/m6502.pas` | Gauntlet sound CPU, NES 2A03, optional 65C02 CMOS opcodes for the Lynx |
+| Mr. Do driver | `src/arcade/mrdo_hw.pas` | `rol90` tile/sprite decode |
+| MCR driver | `src/arcade/mcr_hw.pas` | Tapper / Tron family: dual Z80, CTC, SSIO |
+| Amstrad CPC | `src/computer/amstrad_cpc.pas` | Gate Array wait-states (opcodes on a 4 T-state grid) |
+| Lynx Suzy / Mikey | new | Sprite blitter, math coprocessor, timers, LCD DMA, 4-channel sound |
+| Atari Lynx driver | new | 64 KiB DRAM, MAPCTL, LNX/LYX carts, 160×102 LCD |
 | YM2151 FM, POKEY | `src/snd/fm_2151.pas`, `src/snd/pokey.pas` | Gauntlet sound board |
 | SLAPSTIC | `src/arcade/misc/slapstic.pas` | Types 101-107, bank switched protected ROM |
 | Atari motion objects | `src/arcade/misc/atari_mo.pas` | SLIP based sprite lists |
@@ -33,10 +42,31 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Double Dragon driver | `src/arcade/doubledragon_hw.pas` | Both variants: banked ROM, shared RAM, scroll, sprites, sound CPUs |
 | M6805/M68705 MCU | `src/cpu/m6805.pas` | MC68705P3 protection MCU of Elevator Action |
 | Taito SJ driver | `src/arcade/taitosj_hw.pas` | Main and sound Z80, four AY-3-8910, DAC, MCU handshake, three tile layers with per column scroll, sprites and PROM priorities |
+| M6803 MCU | `src/cpu/m680x.pas` (`TCPU_M6803`) | Irem M62 sound CPU: 128 bytes of internal RAM, ports 1-4, no internal ROM |
+| Irem M62 driver | `src/arcade/m62_hw.pas` | Kung-Fu Master, Spelunker, Spelunker II, Lode Runner and Lode Runner II: Z80, M6803, two AY-3-8910, two MSM5205, tiles and multi-height sprites |
+| SNK driver | `src/arcade/snk_hw.pas` | Three Z80s, YM3526, Ikari/Athena/TNK III/ASO video (chars, tiles, 16x16 and 32x32 sprites, hardflags) |
+| CPS1 driver | `src/arcade/cps1_hw.pas` | 68000 + Z80, CPS-A/B, three scroll layers, sprites, YM2151+OKI or QSound, Kabuki, 93C46 |
+| NEC V20/V30 CPU | `src/cpu/nec_v20_v30.pas` | R-Type main CPU, 20-bit segmented addressing |
+| M72 driver | `src/arcade/m72_hw.pas` | R-Type, Hammerin' Harry and R-Type II: V30 + Z80, YM2151, tiled FG/BG with priority, sprites |
 | Spectrum ULA | `src/computer/spectrum_hw.pas` | Keyboard matrix, border, one bit beeper, EAR input, contended timing |
 | Spectrum driver | `src/computer/spectrum_hw.pas`, `spectrum_misc.pas` | 48K memory map, display file with attributes and flash, Kempston joystick |
 | Tape player | `src/misc/tap_tzx.pas` | `.tap` blocks and `.tzx` images (turbo, pure tone/data, direct recording, pauses, loops), hooked to the ROM loader |
+| NES PPU | `src/consolas/nes_ppu.pas` | 2C02: nametables, sprites, loopy scroll, YUV palette |
+| NES APU | `src/cpu/n2a03.pas` | 2A03 squares/triangle/noise/DPCM, resampled to 44100 Hz |
+| NES mappers | `src/consolas/nes_mappers.pas` | 0, 1 (MMC1), 2, 3, 4 (MMC3/MMC6), 7, 9–11, 13, 15, 34, 66, 68, 70, 71, 76, 79/146, 87, 88, 93–95, 113, 180, 184, 185, 206 |
+| NES driver | `src/consolas/nes.pas` | NTSC 256×240, iNES carts (plain or zipped), two controllers |
+| C64 driver | `ordenadores/commodore64.pas` | PLA, 6510 port, keyboard matrix, TAP/PRG/T64/D64 loaders |
+| Game Boy driver | `src/consolas/gb.pas` | DMG / CGB from cart header `$0143`, optional boot ROMs |
+| VIC-II | `mos6566.pas` | PAL 6569, 384×270, sprites, bad lines |
+| MOS 6526 CIA | `mos6526_old.pas` | Two chips: CIA1 IRQ + keyboard, CIA2 NMI + VIC bank |
+| SID 6581 | `sid_sound.pas` | Three voices, 44100 Hz mono |
 | Front end | `src/misc/main_engine.pas` | SDL2 window, texture, audio queue, keyboard |
+| µPD7801 CPU | `src/cpu/upd7810.pas` (`CPU_7801`) | Epoch Super Cassette Vision CPU, 4 MHz crystal /2 |
+| µPD1771C | `src/snd/upd1771.pas` | SCV tone / noise / ADPCM sound |
+| Super Cassette Vision | `src/consolas/super_cassette_vision.pas` | BIOS + cartridge map, 192×222 video, keyboard and two joysticks |
+| TMS7000 CPU | new (MAME `tms7000` behaviour) | TMS7020/7040/7041/7042, EXL LVDP opcode |
+| TMS3556 VDP | new (MAME `tms3556` behaviour) | Text 40×25, bitmap 320×250, mixed, 8 colours |
+| EXL-100 / EXELTEL | new (MAME `exelv.cpp`) | Dual TMS7000, mailbox, IR keyboard, TMS5220, cartridge |
 
 ## Building
 
@@ -56,29 +86,38 @@ ROMs are **not** included. Point the emulator to a `bagman.zip` set or to a dire
 holding the individual files:
 
 ```bash
-./build/dsp /path/to/bagman.zip
+./build/dsp --game bagman /path/to/bagman.zip
 ./build/dsp --scale 3 --dip 0xfe /path/to/roms/bagman/
 ./build/dsp --game mikie /path/to/mikie.zip
 ./build/dsp --game gauntlet /path/to/gauntlet.zip
+./build/dsp --game mrdo /path/to/mrdo.zip
 ./build/dsp --game ddragon /path/to/ddragon.zip
-./build/dsp --game ddragon2 /path/to/ddragon2.zip
 ./build/dsp --game elevator /path/to/elevator.zip
-./build/dsp --game junglek /path/to/junglek.zip
+./build/dsp --game kungfum /path/to/kungfum.zip
+./build/dsp --game ikari /path/to/ikari.zip
+./build/dsp --game ffight /path/to/ffight.zip
+./build/dsp --game rtype /path/to/rtype.zip
+./build/dsp --game tapper /path/to/tapper.zip
 ./build/dsp --game spectrum48 --tape /path/to/game.tzx /path/to/48.rom
+./build/dsp --game c64 --tape /path/to/game.prg /path/to/c64-roms/
+./build/dsp --game gb /path/to/game.gbc
+./build/dsp --game nes /path/to/game.nes
+./build/dsp --game lynx /path/to/game.lnx
+./build/dsp --game scv /path/to/scv.zip
+./build/dsp --game exl100 /path/to/exl100.zip
 ```
 
-The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
-`ddragon2`, `elevator`, `junglek` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
-(SLAPSTIC 104) and the two player `136041-xxx` set (SLAPSTIC 107).
+`--game` is required (`dsp --help` lists every name). Gauntlet accepts both the
+four player parent set (SLAPSTIC 104) and the two player `136041-xxx` set
+(SLAPSTIC 107).
 
-Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
+Required Bagman files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
 `n9_b10.bin`, `c1_b01.bin`, `e1_b02.bin`, `f1_b03s.bin`, `j1_b04.bin`, `p3.bin`, `r3.bin`.
 
 Options:
 
 ```
---game NAME        machine to run: bagman, mikie, gauntlet, ddragon, ddragon2,
-                   elevator, junglek or spectrum48
+--game NAME        machine to run (see `dsp --help`)
 --scale N          window scale factor (default 3)
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
                    mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
@@ -88,8 +127,53 @@ Options:
 --fullscreen       start in full screen
 --screenshot FILE  headless mode: render frames and write FILE (BMP)
 --frames N         frames to run in headless mode (default 300)
---tape FILE        tape image to insert, .tap or .tzx (spectrum48)
+--tape FILE        tape/cart: Spectrum/CPC/C64 (.tap/.tzx/.cdt/.prg/.t64),
+                   or EXL-100 / EXELTEL cartridge (.bin/.rom)
+--disk FILE        Amstrad CPC / Spectrum +3 .dsk/.edsk floppy image
 ```
+
+### Exelvision EXL-100 and EXELTEL
+
+French home computers from 1984/1986. They are not in dsp-emulator; this port
+follows MAME `exelv.cpp`. Each machine has a custom TMS7020 (EXL-100) or TMS7040
+(EXELTEL) at 4.9152 MHz with the SWAP R opcode replaced by LVDP (VRAM peek), a
+TMS7041/7042 I/O CPU talking through a 74LS374 mailbox, a TMS3556 VDP
+(40×25 text / 320×250 bitmap, 8 colours, 32 KiB VRAM) and a TMS5220C speech
+synthesizer. The keyboard and joysticks are infrared.
+
+ROMs are **not** shipped. MAME split sets from [mdk.cab](https://mdk.cab/download/split/exeltel.zip):
+
+* EXL-100 (`exl100.zip`): `exl100in.bin` (TMS7020, CRC `049109a3`) and
+  `exl100_7041.bin` (TMS7041, CRC `38f6fc7a`).
+  https://mdk.cab/download/split/exl100.zip
+* EXELTEL (`exeltel.zip`): `exeltel_7040.bin` (TMS7040, CRC `2792f02f`),
+  `exeltel_7042.bin` (I/O CPU, **BAD_DUMP** in MAME, CRC `a0163507`),
+  `exeltel14.bin` (French v1.4, 64 KiB, CRC `52a80dd4`) or `amper.bin`
+  (Spanish, CRC `45af256c`), and optionally `cm62312.bin` (speech).
+  https://mdk.cab/download/split/exeltel.zip
+
+[RetroBIOS](https://github.com/Abdess/retrobios) does not currently publish an
+Exelvision pack. The mdk.cab files match the MAME hashes. The TMS7040 also
+matches DCExel’s `exeltel_rom.zip` (CRC `2792f02f`).
+
+The TMS7042 I/O ROM has never been redumped. Running MAME’s image posts mailbox
+`$04` and the TMS7040 hangs at `$FA29`, so this driver ignores that CRC and HLE’s
+mailbox `$08` plus the PA.0 handshake. EXL-100 BIOS-only boot shows the
+Exelvision butterfly logo. EXELTEL turns the TMS3556 on in bitmap mode (red
+active area, cyan border); a full menu still needs a real 7042 dump.
+
+Load a cartridge with `--tape` or by placing a `.bin`/`.rom` beside the BIOS.
+Exel Basic (`exelbas`) is the usual way to get a prompt on the EXL-100.
+
+```bash
+./build/dsp --game exl100 /path/to/exl100.zip
+./build/dsp --game exl100 --tape /path/to/exelbas.bin /path/to/exl100.zip
+./build/dsp --game exeltel /path/to/exeltel.zip
+```
+
+The host keyboard is the infrared keyboard (AZERTY layout as in MAME). Cursor
+keys and Left Ctrl (CTL) work; FCT is Right Ctrl. Cassette motor control is not
+emulated; port B bit 3 still feeds a 1-bit DAC into the speaker.
 
 ### Taito SJ (Elevator Action, Jungle King)
 
@@ -124,6 +208,76 @@ Jungle King ROM set: `kn21-1.bin`, `kn22-1.bin`, `kn43.bin`, `kn24.bin`, `kn25.b
 Neither set has been run here with real ROMs yet: the driver is only checked against a
 synthetic set, so this hardware is still unverified.
 
+### Irem M72 (R-Type, Hammerin' Harry, R-Type II)
+
+The board runs an 8 MHz NEC V30, a 3.579545 MHz Z80 with a YM2151, and (on Harry
+and R-Type II) a DAC sample ROM. Video is two 8x8 tilemaps with a per-tile
+priority bit plus 16x16 sprites.
+
+```bash
+./build/dsp --game rtype /path/to/rtype.zip
+./build/dsp --game hharry /path/to/hharry.zip
+./build/dsp --game rtype2 /path/to/rtype2.zip
+```
+
+R-Type has no dedicated sound ROM: the V30 copies the Z80 program into shared
+RAM at `$e0000`. DIP bank 0 is the low byte of the board ID / DSW word
+(`$fdfb` on R-Type).
+
+### CPS1 (Final Fight, Street Fighter II, …)
+
+Capcom Play System 1: a 10 or 12 MHz 68000, a sound Z80 (YM2151 + OKI6295, or
+Kabuki-encrypted QSound on Cadillacs and Dinosaurs / The Punisher), and the CPS-A/B
+pair that maps three tile layers plus sprites. The visible area is 384×224 (1941 is
+rotated 270°). `--game` names match the MAME set: `ghouls`, `ffight`, `kod`, `sf2`,
+`strider`, `3wonders`, `captcomm`, `knights`, `sf2ce`, `dino`, `punisher`, `willow`,
+`1941`, `nemo`.
+
+```bash
+./build/dsp --game ffight /path/to/ffight.zip
+```
+
+Final Fight DIP defaults are A=`0xff`, B=`0xf4`, C=`0x9f`.
+
+### Irem M62 (Kung-Fu Master, Spelunker, Lode Runner)
+
+Irem's M62 board runs a Z80 (3.072 MHz on Kung-Fu Master, 4 MHz on the others) and an
+M6803 sound CPU at 3.579545 MHz / 4 with two AY-3-8910 and two MSM5205 ADPCM chips.
+The sound CPU streams ADPCM nibbles; the first MSM5205 clocks the second in slave
+mode and pulses NMI so the 6803 can feed the next sample. Video is an 8x8 (or 12x8
+on Spelunker) tilemap plus 16x16 sprites that the height PROM can stack into 32 or
+64 pixel tall objects. Kung-Fu Master is 256x256 with a status bar that does not
+scroll; the other games are 384x256.
+
+```bash
+./build/dsp --game kungfum /path/to/kungfum.zip
+./build/dsp --game spelunkr /path/to/spelunkr.zip
+./build/dsp --game spelunk2 /path/to/spelunk2.zip
+./build/dsp --game ldrun /path/to/ldrun.zip
+./build/dsp --game ldrun2 /path/to/ldrun2.zip
+```
+
+DIP banks: 0 = A (gameplay / coinage), 1 = B (cabinet, flip screen, service). The
+Pascal driver finishes initialisation with `--dip 0:0xff --dip 1:0xfd`.
+
+Kung-Fu Master ROM set: `a-4e-c.bin`, `a-4d-c.bin`, `g-4c-a.bin`, `g-4d-a.bin`,
+`g-4e-a.bin`, `a-3e-.bin`, `a-3f-.bin`, `a-3h-.bin`, `b-4k-.bin` through
+`b-4a-.bin`, plus the colour and sprite-height PROMs `g-1j-.bin`, `g-1f-.bin`,
+`g-1h-.bin`, `b-1m-.bin`, `b-1n-.bin`, `b-1l-.bin`, `b-5f-.bin`.
+
+None of these sets has been run here with real ROMs yet.
+### SNK (Ikari Warriors, Athena, TNK III, ASO)
+
+Three Z80s (main and sub at 3.35 MHz, sound at 4 MHz) driving one or two YM3526 chips.
+Ikari Warriors is a portrait 216x288 game with 16x16 and 32x32 sprites and a hardflags
+collision port; Athena is 288x216; TNK III and ASO draw 288x216 and rotate the picture
+270 degrees. DIP banks are 0=A, 1=B and 2=C (bonus life). Ikari defaults are
+`--dip 0:0x3b --dip 1:0x4b --dip 2:0x34`. Button 2 / 3 step the rotary stick on Ikari
+and TNK III.
+
+The Ikari set accepts both the old `1.rom` / `7.rom` / `7122er.prm` names and the
+MAME 0.221 `1.4p` / `p7.3b` / `a6002-1.1k` names.
+
 ### ZX Spectrum 48K
 
 The machine needs the 16 KiB Sinclair ROM, given as a plain `48.rom` image, a zip or a
@@ -144,6 +298,110 @@ signal level changes, jumps and loops. Games that only play under a custom loade
 need the loader to be running, and the CSW (`$18`) and generalized data (`$19`) blocks
 are skipped. A "stop the tape" block only pauses for two seconds, because the machine
 restarts the tape whenever the loader runs.
+
+### Nintendo Entertainment System
+
+NTSC NES, ported from `nes.pas`. Give it an iNES (`.nes`) ROM, plain or inside a zip:
+
+```bash
+./build/dsp --game nes /path/to/game.nes
+./build/dsp /path/to/game.nes
+```
+
+The 2A03 CPU ignores decimal mode and implements the unofficial opcodes from
+`m6502.pas`. Mappers 0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM), 4 (MMC3, MMC6 as
+NES 2.0 submapper 1), 7 (AxROM), 9/10 (MMC2/4), 11, 13, 15, 34, 66, 68, 70, 71,
+76, 79/146, 87, 88, 93, 94, 95, 113, 180, 184, 185 and 206 are implemented.
+CHR-RAM carts (header CHR = 0) work. Player 1 uses the arrows plus Ctrl/Alt for
+A/B, `1` for Start and `5` for Select (the arcade coin button). There is no BIOS;
+the CPU starts at the cartridge reset vector. IRQ-heavy boards (VRC, FME-7, …)
+are still rejected at load time.
+
+### Commodore 64
+
+The machine needs the three copyrighted Commodore ROMs (KERNAL 901227-03, BASIC
+901226-01, character generator 901225-01). Point `--game c64` at a directory or
+zip that holds them; common aliases such as `kernal.bin` / `basic.bin` /
+`chargen.bin` are accepted.
+
+```bash
+./build/dsp --game c64 /path/to/c64-roms/
+./build/dsp --game c64 --tape game.prg /path/to/c64-roms/
+./build/dsp --game c64 --tape game.tap /path/to/c64-roms/
+```
+
+The host keyboard is mapped onto the C64 matrix (Left Shift is C64 left shift,
+Left Ctrl is CTRL, Tab is RUN/STOP). F1/F3/F5/F7 are the C64 function keys.
+F6 starts and stops a `.tap` cassette (the 6510 motor bit still has to enable
+the datasette). Arrows are also a joystick in Control Port 2. There is no 1541:
+a `.d64` image injects its first PRG into RAM.
+
+### Game Boy / Game Boy Color
+
+`--game gb` loads a `.gb` / `.gbc` cartridge (plain or zipped). The machine is
+chosen from header byte `$0143` the same way `gb.pas` does: bit 7 set (`$80`
+CGB-enhanced or `$C0` CGB-exclusive) runs as Game Boy Color; otherwise it is
+a DMG Game Boy. Optional boot ROMs (`dmg_boot.bin`, `cgb_boot.bin`) may sit
+next to the cartridge; without them the CPU is left in `reset_gb`'s post-boot
+state so games still start at `$0100`.
+
+```bash
+./build/dsp --game gb /path/to/game.gbc
+```
+### Midway MCR (Tapper, Tron, …)
+
+`--game tapper` (also `tron`, `shollow`, `domino`, `wacko`, `dotron`, `timber`) is the
+Midway MCR-II/III board from `mcr_hw.pas`: dual Z80, Z80 CTC daisy IRQs, SSIO sound
+(two AY-3-8910 plus the 14024 `/SINT` clock) and 16×16 tiles with 32×32 sprites.
+Point it at a MAME merged `tapper.zip`.
+
+```bash
+./build/dsp --game tapper /path/to/tapper.zip
+./build/dsp --game tapper --screenshot tapper.bmp --frames 180 /path/to/tapper.zip
+```
+
+Start is player 1 `1` / player 2 `2`, coin is `5`/`6`, Tapper pours with Ctrl/Space.
+### Atari Lynx
+
+The handheld is a 65C02 (G65SC02 inside **Mikey**) at 16 MHz with wait states, 64 KiB
+of shared DRAM, and **Suzy** for sprites, 16-bit math and the cartridge port. Mikey
+also owns the eight timers (HBL/VBL), 16-colour 12-bit palette, LCD DMA (160×102),
+four-channel polynomial sound and the cart address shifter.
+
+The 512-byte Mikey boot ROM is the same `lynxboot.img` dump Handy and Mednafen use
+(CRC `0d973c9d` or `e1ffecb6`). It is not shipped in this tree. Put it next to the
+cartridge, in the ROM directory, or pass it as the positional path:
+
+```bash
+# https://github.com/Abdess/retrobios/blob/main/bios/Atari/Lynx/lynxboot.img
+./build/dsp --game lynx /path/to/roms/          # directory with lynxboot.img + game.lnx
+./build/dsp --game lynx /path/to/game.lnx       # looks for lynxboot.img beside the cart
+```
+
+Without that file a tiny open bootstrap is mapped instead, which is enough for
+raw homebrew that expects the first 256 bytes at `$0200`. Commercial carts need
+the Atari ROM.
+
+Lynx controls: arrows, Left Ctrl/Space = A, Left Alt/Z = B, X = Option 1, 1 = Option 2,
+5 = Pause.
+### Super Cassette Vision
+
+Epoch's Super Cassette Vision (1984) needs the 4 KiB BIOS `upd7801g.s01`
+(CRC `7ac06182`) and the 1 KiB character ROM `epochtv.chr` (CRC `db521533`).
+Those two files are the MAME `scv.zip` set (for example
+[Abdess/retrobios](https://github.com/Abdess/retrobios) ships them under
+`bios/Epoch/Super Cassette Vision/`). Give a directory or zip that holds both,
+or put them next to the cartridge:
+
+```bash
+./build/dsp --game scv /path/to/scv.zip
+./build/dsp --game scv /path/to/AstroWars.bin
+```
+
+The cartridge is the positional ROM path (plain `.bin`, a zip, or a split
+`.0`/`.1` pair). Extra RAM and the Pole Position II mapper follow the same CRCs
+as `super_cassette_vision.pas`. The host keyboard supplies 0–9, Q, W and P
+(pause); the arrows and buttons are the two joysticks.
 
 ### Controls
 
@@ -198,10 +456,10 @@ cmake --build build --target dsp_zexdoc
 ## Layout
 
 ```
-src/cpu/        Z80, M6809, M6502, M68000, HD63701 and M6805 cores
-src/sound/      AY-3-8910 and SN76496
-src/video/      graphics decoding and resistor based palette helpers
-src/machine/    Bagman PAL16R6, SLAPSTIC, Spectrum tape player
+src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805, µPD7801, TMS7000, NEC V30
+src/sound/      AY-3-8910, SN76496, NES APU, SID, µPD1771C, QSound, TMS5220
+src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556
+src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, Lynx Suzy/Mikey
 src/drivers/    the machines themselves (memory map, video, inputs)
 src/frontend/   SDL2 front end, driven through the core/machine.h interface
 src/core/       ROM loader (directory or zip) and the Machine interface

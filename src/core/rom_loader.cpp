@@ -145,6 +145,19 @@ bool RomLoader::read_file(const std::string& name, std::vector<uint8_t>& out) co
     }
 
     auto it = zip_index_.find(to_lower(name));
+    if (it == zip_index_.end()) {
+        const std::string wanted = to_lower(name);
+        for (auto kv = zip_index_.begin(); kv != zip_index_.end(); ++kv) {
+            const std::string& entry_name = kv->first;
+            const size_t slash = entry_name.find_last_of("/\\");
+            const std::string base =
+                slash == std::string::npos ? entry_name : entry_name.substr(slash + 1);
+            if (base == wanted) {
+                it = kv;
+                break;
+            }
+        }
+    }
     if (it == zip_index_.end()) return false;
     const ZipEntry& entry = it->second;
     size_t local = entry.local_offset;

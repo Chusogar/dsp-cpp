@@ -57,6 +57,7 @@ private:
     int ack_timer_ = -1;  // cycles until ACK
 
     double sample_acc_ = 0;
+    double chip_phase_ = 0;
     std::vector<int16_t> samples_;
 
     static const int8_t kWaveforms[8][32];

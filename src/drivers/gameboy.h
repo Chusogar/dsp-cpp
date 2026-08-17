@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -17,13 +18,13 @@ namespace dsp {
 // gb_sound.pas, gb_mappers.pas, all folded into their own dsp-cpp-style chip
 // classes: LR35902, GbApu, GbMapper, and the new GbPpu video chip).
 //
-// CGB is auto-detected from the cartridge header's $0143 byte, same as
-// gb_change_model. Boot ROMs are optional (init() loads one if the given
-// directory has dmg_boot.bin/cgb_boot.bin, matching common naming); without
-// one the CPU/IO state is initialized directly to the documented post-boot
-// values instead (reset_gb's `if not(rom_exist)` branch), which is what
-// most users will actually hit since the boot ROM is copyrighted and not
-// freely distributable, unlike every other console/computer ported so far.
+// CGB is auto-detected from the cartridge header's $0143 byte the same way
+// gb_change_model / abrir_gb do: any cart with bit 7 set ($80 enhanced or
+// $C0 exclusive) runs as Game Boy Color. Boot ROMs are optional (init()
+// loads one if the given directory has dmg_boot.bin/cgb_boot.bin); without
+// one the CPU/IO state is initialized directly to reset_gb's
+// `if not(rom_exist)` branch. The boot ROM is copyrighted and not freely
+// distributable, unlike every other console/computer ported so far.
 class GameBoy : public Machine {
 public:
     static constexpr uint32_t kClock = 4194304;
@@ -65,6 +66,11 @@ public:
     void debug_set_fetch_hook(std::function<void(uint16_t)> hook) { cpu_.on_fetch = std::move(hook); }
     int debug_line() const { return line_; }
     int debug_speed() const { return cpu_.speed; }
+    bool debug_is_cgb() const { return is_cgb_; }
+    bool debug_boot_rom_enabled() const { return boot_rom_enabled_; }
+    uint8_t debug_hdma_size() const { return hdma_size_; }
+    void debug_set_cgb_boot_rom(std::vector<uint8_t> data) { cgb_boot_rom_ = std::move(data); }
+    void debug_set_dmg_boot_rom(std::vector<uint8_t> data) { dmg_boot_rom_ = std::move(data); }
     void debug_set_io_write_hook(std::function<void(uint8_t, uint8_t)> hook) { io_write_hook_ = std::move(hook); }
 
 private:
@@ -78,6 +84,8 @@ private:
     void step_timer(int cycles);
     void step_div(int cycles);
     void hdma_block();
+    uint8_t dma_read(uint16_t address) const;
+    uint8_t read_cgb_boot(uint16_t address) const;
     void apply_post_boot_state();
     void save_cart_ram();
     void load_cart_ram();
@@ -124,6 +132,9 @@ private:
     uint16_t dma_src_ = 0, dma_dst_ = 0;
     bool hdma_active_ = false;
     uint8_t hdma_size_ = 0xff;
+
+    // CGB unused OAM region $FEA0-$FECF (with $FED0-$FEFF echoing $FEC0+n).
+    std::array<uint8_t, 0x30> cgb_oam_unused_{};
 
     // Joypad.
     uint8_t joy_select_ = 0x30;

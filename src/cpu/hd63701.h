@@ -9,22 +9,26 @@
 
 namespace dsp {
 
-// Hitachi HD63701Y, the 6800 family micro controller used as sub CPU by the
-// Double Dragon board. Ported from m680x.pas (TCPU_HD63701Y): 256 bytes of
-// internal RAM, 16 KB of internal ROM at $c000, six I/O ports and the output
-// compare timer.
+// 6800-family MCU, ported from m680x.pas.
+//   HD63701Y: 256 bytes of internal RAM, 16 KB of internal ROM at $c000,
+//             six I/O ports and the output compare timer (Double Dragon).
+//   M6803:    128 bytes of internal RAM at $40, no internal ROM, ports 1-4
+//             only (Irem M62 sound CPU).
 class HD63701 {
 public:
     using ReadHandler = std::function<uint8_t(uint16_t)>;
     using WriteHandler = std::function<void(uint16_t, uint8_t)>;
     using PortReadHandler = std::function<uint8_t()>;
     using PortWriteHandler = std::function<void(uint8_t)>;
+    using CycleHandler = std::function<void(int)>;
+
+    enum class Type { HD63701Y, M6803 };
 
     struct Flags {
         bool h = false, i = true, n = false, z = false, v = false, c = false;
     };
 
-    explicit HD63701(uint32_t clock);
+    explicit HD63701(uint32_t clock, Type type = Type::HD63701Y);
 
     void set_memory_handlers(ReadHandler read, WriteHandler write);
     // Ports 1 to 4 (index 0 to 3).
@@ -33,8 +37,10 @@ public:
     // Ports 5 and 6 (index 0 and 1).
     void set_portx_read(int port, PortReadHandler handler);
     void set_portx_write(int port, PortWriteHandler handler);
+    void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
 
     std::array<uint8_t, 0x4000>& internal_rom() { return rom_; }
+    Type type() const { return type_; }
 
     void reset();
     // Runs until at least `cycles` cycles have elapsed, returns the amount executed.
@@ -142,6 +148,8 @@ private:
 
     ReadHandler read_;
     WriteHandler write_;
+    CycleHandler cycle_handler_;
+    Type type_ = Type::HD63701Y;
 };
 
 }  // namespace dsp

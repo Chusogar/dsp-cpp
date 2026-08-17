@@ -15,13 +15,32 @@ public:
     using InHandler = std::function<uint8_t(uint16_t)>;
     using OutHandler = std::function<void(uint16_t, uint8_t)>;
     using CycleHandler = std::function<void(int)>;
+    using InstructionHook = std::function<void(uint16_t pc)>;
+    using IrqAckHandler = std::function<void()>;
 
     explicit Z80(uint32_t clock);
 
     void set_memory_handlers(ReadHandler read, WriteHandler write);
     void set_io_handlers(InHandler in, OutHandler out);
+    // Optional opcode map (M1 fetches). Immediates and data still use `read`.
+    // Used by Kabuki-encrypted Z80s (CPS1 QSound). When empty, fetch uses `read`.
+    void set_opcode_read(ReadHandler handler) { opcode_read_ = std::move(handler); }
     // Called after every instruction with the number of elapsed T states.
     void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
+    // Called immediately before the next opcode fetch (PC still points at the opcode).
+    void set_instruction_hook(InstructionHook handler) { instruction_hook_ = std::move(handler); }
+
+    // Replace the built-in T-state tables. Null entries keep the current table.
+    // The Amstrad CPC Gate Array stretches almost every opcode to a multiple of
+    // 4 T-states; other machines leave the defaults (Spectrum, etc.).
+    void set_timing_tables(const uint8_t* main, const uint8_t* cb, const uint8_t* index,
+                           const uint8_t* index_cb, const uint8_t* ed, const uint8_t* extra);
+    // Called at the start of an accepted maskable interrupt (before IFF1 is
+    // cleared), matching nz80 `raised_z80`.
+    void set_irq_ack_callback(IrqAckHandler handler) { irq_ack_ = std::move(handler); }
+    // Round accepted-IRQ T-states up to a multiple of `align` (0 disables).
+    // The CPC Gate Array needs this so the CRTC stays on a 4 T-state grid.
+    void set_irq_cycle_align(int align) { irq_cycle_align_ = align; }
 
     void reset();
     // Runs until at least `cycles` T states have elapsed, returns the amount executed.
@@ -110,10 +129,22 @@ private:
 
     uint32_t clock_;
     ReadHandler read_;
+    ReadHandler opcode_read_;
     WriteHandler write_;
+    bool fetching_opcode_ = true;
     InHandler in_;
     OutHandler out_;
     CycleHandler cycle_handler_;
+    InstructionHook instruction_hook_;
+    IrqAckHandler irq_ack_;
+
+    const uint8_t* t_main_ = nullptr;
+    const uint8_t* t_cb_ = nullptr;
+    const uint8_t* t_index_ = nullptr;
+    const uint8_t* t_index_cb_ = nullptr;
+    const uint8_t* t_ed_ = nullptr;
+    const uint8_t* t_extra_ = nullptr;
+    int irq_cycle_align_ = 0;
 
     int cycles_ = 0;      // T states consumed by the instruction being executed
     int executed_ = 0;    // T states consumed in the current run() call

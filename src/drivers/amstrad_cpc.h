@@ -127,6 +127,7 @@ private:
     uint8_t read_port(uint16_t port);
     void write_port(uint16_t port, uint8_t value);
     void on_cycles(int cycles);
+    void on_irq_ack();
 
     // Gate array / CRTC / memory banker.
     void write_ga(uint8_t value);
@@ -173,7 +174,7 @@ private:
     Ppi ppi_state_;
     bool mod_address_ = false;
     bool irq_asserted_ = false;
-    bool iff1_before_ = false;
+    int video_acc_ = 0;
     int cpc_line_ = 0;
     bool color_monitor_ = true;
     uint8_t bright_ = 0;
