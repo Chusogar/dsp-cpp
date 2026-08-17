@@ -454,8 +454,14 @@ a `.d64` image injects its first PRG into RAM.
 chosen from header byte `$0143` the same way `gb.pas` does: bit 7 set (`$80`
 CGB-enhanced or `$C0` CGB-exclusive) runs as Game Boy Color; otherwise it is
 a DMG Game Boy. Optional boot ROMs (`dmg_boot.bin`, `cgb_boot.bin`) may sit
-next to the cartridge; without them the CPU is left in `reset_gb`'s post-boot
-state so games still start at `$0100`.
+next to the cartridge; without them the CPU is left in the documented post-boot
+state so games still start at `$0100` — including `A = $11` on Game Boy Color,
+which is how the cartridges detect the hardware and enable their colour mode.
+
+Colour hardware: banked VRAM and WRAM, the 8+8 CGB palettes, general-purpose
+and HBlank VRAM DMA, and the KEY1 double-speed switch (which does not speed up
+the sound, as on real hardware). All of those registers only answer on Game Boy
+Color; on DMG they read back as `$FF` and are inert.
 
 ```bash
 ./build/dsp --game gb /path/to/game.gbc
