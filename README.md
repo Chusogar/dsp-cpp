@@ -6,11 +6,7 @@ Arcade: **Bagman**, **Mikie**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
 (**Kung-Fu Master**, **Spelunker**, **Lode Runner**), SNK (**Ikari Warriors**,
 **Athena**, **TNK III**, **ASO**), Capcom **CPS1**, Irem **M72** (**R-Type**),
 and Midway **MCR** (**Tapper** and family).
-Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC, **Commodore 64**, **EXL-100** /
-Midway **MCR** (**Tapper** and family), and Atari **Star Wars**.
-Computers: **ZX Spectrum 48K**, Amstrad CPC, **Commodore 64**, **EXL-100** /
-**EXELTEL**. Consoles: NES, Game Boy / Game Boy Color, **Atari Lynx**,
-**Super Cassette Vision**.
+Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, **MSX1**, **MSX2**, Amstrad CPC, **Commodore 64**, **EXL-100** / **EXELTEL**. Arcade also includes Midway **MCR** (**Tapper** and family) and Atari **Star Wars**. Consoles: NES, Game Boy / Game Boy Color, **Atari Lynx**, **Super Cassette Vision**.
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
 explains the port workflow and comes with a driver skeleton (`tools/new_driver.py`).
@@ -73,6 +69,8 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | WD1793 / Beta 128 | new (MAME `beta_m.cpp`, `wd_fdc`) | TR-DOS FDC, TRD and SCL images |
 | Pentagon 1024 | new (MAME `pentagon.cpp`) | 1024 KB, uncontended 320-line ULA, GLUK, Beta disk |
 | Scorpion ZS-256 | new (MAME `scorpion.cpp`) | 256 KB, port $1FFD, Magic NMI, Beta disk |
+| V9938 VDP | zxtiny `msx2.c` | 128 KiB VRAM, MSX2 screens 0–8, sprites, commands |
+| MSX2 | zxtiny `msx2.c` | 256 KB mapper RAM, subslots, RTC, Disk-ROM traps, `.dsk` |
 | Atari AVG (Star Wars) | new (MAME `avgdvg.cpp`) | PROM state machine, colour vector list |
 | MOS 6532 RIOT | new (MAME `mos6532.cpp`) | 128-byte RAM, ports, timer IRQ |
 | Star Wars mathbox | new (MAME `starwars_m.cpp`) | PROM microcode, multiply-accumulate, restoring divider |
@@ -376,6 +374,26 @@ archive; pass the zip or the extracted files.
 TR-DOS is paged in by executing at `$3D00` while the 48K ROM is selected
 (`RANDOMIZE USR 15616`). Kempston on port `$1F` is disabled while DOS is paged
 so it does not clash with the FDC.
+
+### MSX2
+
+Yamaha V9938 MSX2 with 256 KB mapper RAM, expanded slots, RP-5C01 RTC and
+AY-3-8910. Disks are raw 512-byte-sector `.dsk` images (360K SS or 720K DS);
+MSX-DOS I/O is the Disk-ROM BIOS traps from zxtiny (`DSKIO` / `DSKCHG` /
+`GETDPB`). Cassette `.cas` uses the TAPION/TAPIN traps.
+
+BIOS files come from [zxtiny](https://github.com/Chusogar/zxtiny) `roms/`:
+`msx2_bios.rom` + `msx2_ext.rom`, and optionally `cbios_disk.rom` / `DISK.ROM`.
+`MSX2.ROM` / `MSX2EXT.ROM` names also work. Point `dsp` at the `roms` folder
+or at a parent of the zxtiny checkout.
+
+```bash
+git clone https://github.com/Chusogar/zxtiny
+./build/dsp --game msx2 zxtiny/roms/
+./build/dsp --game msx2 --disk game.dsk zxtiny/roms/
+./build/dsp --game msx2 --tape game.cas zxtiny/roms/
+./build/dsp --game msx2 zxtiny/roms/Nemesis.rom
+```
 
 ### Nintendo Entertainment System
 

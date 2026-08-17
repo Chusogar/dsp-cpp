@@ -28,6 +28,7 @@
 #include "drivers/exelv.h"
 #include "drivers/gameboy.h"
 #include "drivers/mcr.h"
+#include "drivers/msx2.h"
 #include "drivers/nes.h"
 #include "drivers/scv.h"
 #include "drivers/starwars.h"
@@ -2193,6 +2194,8 @@ void test_starwars_missing_roms() {
         }
         check(lit > 100, "Star Wars attract draws visible vectors");
     }
+}
+
 void test_atari_system1_missing_roms() {
     dsp::AtariSystem1 machine(dsp::AtariSystem1::Game::Indy);
     std::string error = "unset";
@@ -2347,6 +2350,56 @@ void test_trdos_scl_and_beta() {
     check(scor64->init(dir64.string(), &error), "64 KB scorpion.rom boots from the ZXMak layout");
 }
 
+void test_msx2_bios_mapper_and_disk() {
+    dsp::V9938 vdp;
+    vdp.reset();
+    check(vdp.screen_mode() == 1, "V9938 powers up in G1");
+    vdp.port_write(1, 0x07);
+    vdp.port_write(1, 0x87);  // R7 = backdrop colour 7
+    vdp.render_line(0);
+    check((vdp.framebuffer()[0] & 0x00ffffffu) != 0, "V9938 draws a non-black border");
+
+    std::string error = "unset";
+    dsp::Msx2 missing;
+    check(!missing.init("/no/such/msx2", &error), "MSX2 init fails without BIOS");
+    check(error.find("not found") != std::string::npos, "MSX2 reports the missing BIOS");
+
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "dsp-msx2-roms";
+    fs::create_directories(dir);
+    auto write_blob = [&](const char* name, size_t size) {
+        std::vector<uint8_t> blob(size, 0x00);
+        blob[0] = 0x18;
+        blob[1] = 0xfe;
+        std::ofstream out((dir / name).string(), std::ios::binary);
+        out.write(reinterpret_cast<const char*>(blob.data()), std::streamsize(blob.size()));
+    };
+    write_blob("msx2_bios.rom", 0x8000);
+    write_blob("msx2_ext.rom", 0x4000);
+    write_blob("DISK.ROM", 0x4000);
+
+    auto machine = std::make_unique<dsp::Msx2>();
+    check(machine->init(dir.string(), &error), "MSX2 boots from zxtiny-named BIOS files");
+    check(std::strcmp(machine->title(), "MSX2") == 0, "MSX2 title");
+    check(machine->screen_width() == 288 && machine->screen_height() == 240,
+          "MSX2 screen is 288x240 including border");
+    check(machine->debug_has_diskrom(), "optional DISK.ROM is detected");
+    check(machine->debug_slot() == 0xf0, "boot slot select is BIOS+RAM");
+    check(machine->debug_mapper(3) == 0, "mapper page 3 starts on RAM page 0");
+
+    const fs::path dsk = dir / "blank.dsk";
+    {
+        std::vector<uint8_t> image(360 * 1024, 0x00);
+        image[0] = 0xf9;
+        std::ofstream out(dsk.string(), std::ios::binary);
+        out.write(reinterpret_cast<const char*>(image.data()), std::streamsize(image.size()));
+    }
+    check(machine->load_media(dsk.string(), &error), "MSX2 loads a raw 360K .dsk");
+    check(machine->debug_disk_loaded(), "disk image is attached");
+    machine->run_frame();
+    check(machine->framebuffer()[0] != 0, "MSX2 renders a border");
+}
+
 }  // namespace
 
 int main() {
@@ -2423,6 +2476,7 @@ int main() {
     test_tms3556_background();
     test_exelv_dummy_bios();
     test_trdos_scl_and_beta();
+    test_msx2_bios_mapper_and_disk();
     test_starwars_missing_roms();
     test_atari_system1_missing_roms();
     if (failures == 0) {

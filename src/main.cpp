@@ -28,6 +28,7 @@
 #include "drivers/spectrum_3.h"
 #include "drivers/amstrad_cpc.h"
 #include "drivers/msx1.h"
+#include "drivers/msx2.h"
 #include "drivers/c64.h"
 #include "drivers/exelv.h"
 #include "drivers/pentagon.h"
@@ -59,8 +60,7 @@ void print_supported_emulators() {
         "\n"
         "  Arcade:\n"
         "    bagman, mikie, gauntlet, mrdo, ddragon, ddragon2,\n"
-        "    elevator, junglek, indydoom, peter, marble, starwars,\n"
-        "    elevator, junglek, indydoom, peter, marble, roadrunn,\n"
+        "    elevator, junglek, indydoom, peter, marble, starwars, roadrunn,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
 		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
         "    kungfum, spelunkr, spelunk2, ldrun, ldrun2,\n"
@@ -71,7 +71,7 @@ void print_supported_emulators() {
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
-        "    cpc464, cpc664, cpc6128, msx, c64,\n"
+        "    cpc464, cpc664, cpc6128, msx, msx2, c64,\n"
         "    exl100, exeltel\n"
         "\n"
         "  Consoles:\n"
@@ -90,7 +90,8 @@ void print_usage(const char* program) {
         "  --game NAME        emulator / game to run (required; see list above)\n"
         "  --tape FILE        tape/cart: Spectrum/CPC/C64 (.tap/.tzx/.cdt/.prg/.t64),\n"
         "                     or EXL-100 / EXELTEL cartridge (.bin/.rom)\n"
-        "  --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, Pentagon/Scorpion .trd/.scl\n"
+        "  --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, Pentagon/Scorpion .trd/.scl,\n"
+        "                     MSX2 .dsk\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
         "                     bank, mikie has three (0=A, 1=B, 2=C); cpc: 0=colour(1)/\n"
@@ -135,6 +136,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "marble") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Marble);
 	if (game == "starwars" || game == "star-wars") {
 		return std::make_unique<dsp::StarWars>();
+	}
 	if (game == "roadrunn" || game == "roadrunner") {
 		return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::RoadRunner);
 	}
@@ -217,6 +219,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	    return std::make_unique<dsp::Scorpion256>();
 	}
 	if (game == "msx") return std::make_unique<dsp::Msx1>();
+	if (game == "msx2") return std::make_unique<dsp::Msx2>();
 	if (game == "c64" || game == "commodore64" || game == "commodore") {
         return std::make_unique<dsp::C64>();
     }
