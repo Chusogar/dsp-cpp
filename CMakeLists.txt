@@ -46,6 +46,7 @@ add_executable(dsp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/tms9918.cpp
+  src/video/v9938.cpp
   src/video/tms3556.cpp
   src/video/deco_bac06.cpp
   src/video/nes_ppu.cpp
@@ -89,6 +90,7 @@ add_executable(dsp
   src/drivers/zx_clone.cpp
   src/drivers/amstrad_cpc.cpp
   src/drivers/msx1.cpp
+  src/drivers/msx2.cpp
   
   src/drivers/sms.cpp
   src/machine/sega_vdp.cpp
@@ -149,6 +151,7 @@ add_executable(dsp_tests
   src/video/atari_mo.cpp
   src/video/nes_ppu.cpp
   src/video/tms3556.cpp
+  src/video/v9938.cpp
   src/video/mos6566.cpp
   src/video/gb_ppu.cpp
   src/video/avg_starwars.cpp
@@ -183,6 +186,7 @@ add_executable(dsp_tests
   src/drivers/starwars.cpp
   src/drivers/atari_system1.cpp
   src/drivers/zx_clone.cpp
+  src/drivers/msx2.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

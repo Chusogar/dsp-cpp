@@ -28,6 +28,7 @@
 #include "drivers/exelv.h"
 #include "drivers/gameboy.h"
 #include "drivers/mcr.h"
+#include "drivers/msx2.h"
 #include "drivers/nes.h"
 #include "drivers/scv.h"
 #include "drivers/starwars.h"
@@ -59,6 +60,7 @@
 #include "video/gfx.h"
 #include "video/mos6566.h"
 #include "video/tms3556.h"
+#include "video/v9938.h"
 
 namespace {
 
@@ -2349,6 +2351,193 @@ void test_trdos_scl_and_beta() {
     check(scor64->init(dir64.string(), &error), "64 KB scorpion.rom boots from the ZXMak layout");
 }
 
+void test_v9938_line_stays_axis_aligned() {
+    dsp::V9938 vdp;
+    auto wr = [&](int reg, uint8_t value) {
+        vdp.port_write(1, value);
+        vdp.port_write(1, uint8_t(0x80 | reg));
+    };
+    wr(0, 0x04);   // M4 → Graphic 4 (SCREEN 5)
+    wr(1, 0x40);   // display enable
+    wr(2, 0x1f);   // name table page 0
+    wr(7, 0x04);   // backdrop colour 4
+    wr(9, 0x80);   // 212 lines
+
+    auto pixel = [&](int x, int y) -> uint32_t {
+        const uint32_t* fb = vdp.framebuffer();
+        return fb[(dsp::V9938::kBorderV + y) * dsp::V9938::kScreenWidth + dsp::V9938::kBorderH + x * 2] &
+               0x00ffffffu;
+    };
+    auto render_rows = [&](int y0, int y1) {
+        for (int y = y0; y <= y1; y++) vdp.render_line(dsp::V9938::kBorderV + y);
+    };
+
+    // Horizontal LINE: NY=0 must not be expanded to 1024 (that shears the MSX2 logo).
+    wr(36, 20);
+    wr(37, 0);  // DX
+    wr(38, 40);
+    wr(39, 0);  // DY
+    wr(40, 40);
+    wr(41, 0);  // NX
+    wr(42, 0);
+    wr(43, 0);  // NY = 0
+    wr(44, 15); // white
+    wr(45, 0);  // ARG: right, down, X major
+    wr(46, 0x70);
+    render_rows(40, 41);
+    check(pixel(20, 40) != pixel(20, 41), "horizontal LINE with NY=0 does not step in Y");
+    check(pixel(60, 40) == pixel(20, 40), "horizontal LINE reaches DX+NX");
+    check(pixel(60, 41) == pixel(20, 41), "row below a horizontal LINE stays backdrop");
+
+    // Vertical LINE: MAJ=1, NY=0.
+    wr(36, 80);
+    wr(37, 0);
+    wr(38, 10);
+    wr(39, 0);
+    wr(40, 20);
+    wr(41, 0);
+    wr(42, 0);
+    wr(43, 0);
+    wr(44, 15);
+    wr(45, 0x01);  // Y major
+    wr(46, 0x70);
+    render_rows(10, 30);
+    check(pixel(80, 10) != pixel(81, 10), "vertical LINE with NY=0 does not step in X");
+    check(pixel(80, 30) == pixel(80, 10), "vertical LINE reaches DY+NX");
+    check(pixel(81, 30) == pixel(81, 10), "column beside a vertical LINE stays backdrop");
+}
+
+void test_v9938_screen7_planar() {
+    dsp::V9938 vdp;
+    auto wr = [&](int reg, uint8_t value) {
+        vdp.port_write(1, value);
+        vdp.port_write(1, uint8_t(0x80 | reg));
+    };
+    wr(0, 0x08);  // M5 → Graphic 6 (SCREEN 7)
+    wr(1, 0x40);
+    wr(2, 0x1f);
+    wr(9, 0x80);
+
+    auto pset = [&](int x, int y, uint8_t color) {
+        wr(36, uint8_t(x));
+        wr(37, uint8_t(x >> 8));
+        wr(38, uint8_t(y));
+        wr(39, 0);
+        wr(44, color);
+        wr(45, 0);
+        wr(46, 0x50);  // PSET IMP
+    };
+    pset(0, 10, 15);
+    pset(2, 10, 8);
+    pset(4, 10, 15);
+    vdp.render_line(dsp::V9938::kBorderV + 10);
+    const uint32_t* fb = vdp.framebuffer();
+    auto pix = [&](int x) {
+        return fb[(dsp::V9938::kBorderV + 10) * dsp::V9938::kScreenWidth + dsp::V9938::kBorderH + x] &
+               0x00ffffffu;
+    };
+    check(pix(0) != pix(2), "SCREEN 7 X=0 and X=2 use different 64K banks");
+    check(pix(0) == pix(4), "SCREEN 7 X=0 and X=4 share bank 0");
+}
+
+void test_v9938_r23_wraps_8bit() {
+    dsp::V9938 vdp;
+    auto wr = [&](int reg, uint8_t value) {
+        vdp.port_write(1, value);
+        vdp.port_write(1, uint8_t(0x80 | reg));
+    };
+    wr(0, 0x04);  // Graphic 4
+    wr(1, 0x40);
+    wr(2, 0x1f);
+    wr(7, 0x04);
+    wr(9, 0x00);  // 192 lines — R#23 must wrap at 256, not 192
+
+    auto pixel = [&](int x, int y) -> uint32_t {
+        const uint32_t* fb = vdp.framebuffer();
+        const int row = dsp::V9938::kBorderV + 10 + y;
+        return fb[row * dsp::V9938::kScreenWidth + dsp::V9938::kBorderH + x * 2] & 0x00ffffffu;
+    };
+    auto render_row = [&](int y) { vdp.render_line(dsp::V9938::kBorderV + 10 + y); };
+
+    wr(36, 10);
+    wr(37, 0);
+    wr(38, 5);
+    wr(39, 0);
+    wr(44, 15);
+    wr(45, 0);
+    wr(46, 0x50);  // PSET at (10,5)
+
+    wr(23, 0);
+    render_row(5);
+    const uint32_t ink = pixel(10, 5);
+    render_row(4);
+    check(ink != pixel(10, 4), "R#23=0 keeps VRAM Y aligned with the raster");
+
+    wr(23, 1);
+    render_row(4);
+    check(pixel(10, 4) == ink, "R#23=1 shows VRAM Y=raster+1");
+    render_row(5);
+    check(pixel(10, 5) != ink, "R#23=1 does not keep VRAM Y on the same raster");
+
+    wr(36, 20);
+    wr(38, 0);
+    wr(46, 0x50);  // PSET at (20,0)
+    wr(23, 1);
+    render_row(191);
+    render_row(0);
+    check(pixel(20, 191) != pixel(10, 4), "scanline 191 with R#23=1 reads Y=192, not Y=0");
+}
+
+void test_msx2_bios_mapper_and_disk() {
+    dsp::V9938 vdp;
+    vdp.reset();
+    check(vdp.screen_mode() == 1, "V9938 powers up in G1");
+    vdp.port_write(1, 0x07);
+    vdp.port_write(1, 0x87);  // R7 = backdrop colour 7
+    vdp.render_line(0);
+    check((vdp.framebuffer()[0] & 0x00ffffffu) != 0, "V9938 draws a non-black border");
+
+    std::string error = "unset";
+    dsp::Msx2 missing;
+    check(!missing.init("/no/such/msx2", &error), "MSX2 init fails without BIOS");
+    check(error.find("not found") != std::string::npos, "MSX2 reports the missing BIOS");
+
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "dsp-msx2-roms";
+    fs::create_directories(dir);
+    auto write_blob = [&](const char* name, size_t size) {
+        std::vector<uint8_t> blob(size, 0x00);
+        blob[0] = 0x18;
+        blob[1] = 0xfe;
+        std::ofstream out((dir / name).string(), std::ios::binary);
+        out.write(reinterpret_cast<const char*>(blob.data()), std::streamsize(blob.size()));
+    };
+    write_blob("msx2_bios.rom", 0x8000);
+    write_blob("msx2_ext.rom", 0x4000);
+    write_blob("DISK.ROM", 0x4000);
+
+    auto machine = std::make_unique<dsp::Msx2>();
+    check(machine->init(dir.string(), &error), "MSX2 boots from zxtiny-named BIOS files");
+    check(std::strcmp(machine->title(), "MSX2") == 0, "MSX2 title");
+    check(machine->screen_width() == 544 && machine->screen_height() == 240,
+          "MSX2 screen is 544x240 including border");
+    check(machine->debug_has_diskrom(), "optional DISK.ROM is detected");
+    check(machine->debug_slot() == 0, "PPI port A resets to 0 like MSXEC");
+    check(machine->debug_mapper(3) == 0, "mapper page 3 starts on RAM page 0");
+
+    const fs::path dsk = dir / "blank.dsk";
+    {
+        std::vector<uint8_t> image(360 * 1024, 0x00);
+        image[0] = 0xf9;
+        std::ofstream out(dsk.string(), std::ios::binary);
+        out.write(reinterpret_cast<const char*>(image.data()), std::streamsize(image.size()));
+    }
+    check(machine->load_media(dsk.string(), &error), "MSX2 loads a raw 360K .dsk");
+    check(machine->debug_disk_loaded(), "disk image is attached");
+    machine->run_frame();
+    check(machine->framebuffer()[0] != 0, "MSX2 renders a border");
+}
+
 }  // namespace
 
 int main() {
@@ -2425,6 +2614,10 @@ int main() {
     test_tms3556_background();
     test_exelv_dummy_bios();
     test_trdos_scl_and_beta();
+    test_v9938_line_stays_axis_aligned();
+    test_v9938_screen7_planar();
+    test_v9938_r23_wraps_8bit();
+    test_msx2_bios_mapper_and_disk();
     test_starwars_missing_roms();
     test_atari_system1_missing_roms();
     if (failures == 0) {
