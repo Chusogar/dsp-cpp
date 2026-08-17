@@ -2193,6 +2193,8 @@ void test_starwars_missing_roms() {
         }
         check(lit > 100, "Star Wars attract draws visible vectors");
     }
+}
+
 void test_atari_system1_missing_roms() {
     dsp::AtariSystem1 machine(dsp::AtariSystem1::Game::Indy);
     std::string error = "unset";
