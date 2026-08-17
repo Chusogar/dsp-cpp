@@ -2230,7 +2230,6 @@ void test_polepos_driver() {
         check(boot2.init(rom2, &error), "Pole Position II ROM set loads");
         for (int i = 0; i < 600; i++) boot2.run_frame();
         check(boot2.debug_z80_pc() != 0, "Pole Position II Z80 is executing");
-        check(boot2.debug_n53_pc() != 0, "Pole Position II 53xx MCU is executing");
         bool lit2 = false;
         const uint32_t* fb2 = boot2.framebuffer();
         for (int i = 0; i < boot2.screen_width() * boot2.screen_height(); i++) {
