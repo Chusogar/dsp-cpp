@@ -546,8 +546,13 @@ committed. The MAME parent set `starwars` is enough:
 Z80 + two Z8002s at 3.072 MHz, 256×224, ~60.6 Hz. The Namco 06xx talks to a
 real MB8843 51xx (coins, DIPs, start) plus a high-level 53xx (steering). Audio
 is the Pole Position WSG, engine sample player, and MB88 52xx/54xx DACs. Use
-the MAME 0.221 merged parent sets `polepos` and `polepos2`, with `namco51.zip`,
-`namco52.zip`, and `namco54.zip` next to them.
+the MAME 0.221 merged parent sets `polepos` and `polepos2`. The 51xx/52xx/54xx
+MCU dumps come from the same archive and are fetched automatically if they are
+not already next to the game zip:
+
+- https://archive.org/download/mame-0.221-roms-merged/namco51.zip
+- https://archive.org/download/mame-0.221-roms-merged/namco52.zip
+- https://archive.org/download/mame-0.221-roms-merged/namco54.zip
 
 ```bash
 ./build/dsp --game polepos /path/to/polepos.zip

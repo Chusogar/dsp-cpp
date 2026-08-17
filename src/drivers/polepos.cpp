@@ -1,6 +1,7 @@
 #include "drivers/polepos.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 
@@ -91,15 +92,67 @@ const std::vector<RomEntry> kNamco51Rom = {{"51xx.bin", 0x0400, 0, 0xc2f57ef8}};
 const std::vector<RomEntry> kNamco52Rom = {{"52xx.bin", 0x0400, 0, 0x3257d11e}};
 const std::vector<RomEntry> kNamco54Rom = {{"54xx.bin", 0x0400, 0, 0xee7357e0}};
 
+constexpr const char* kMameMergedBase = "https://archive.org/download/mame-0.221-roms-merged/";
+
+std::string shell_quote(const std::string& value) {
+    std::string out = "'";
+    for (char c : value) {
+        if (c == '\'')
+            out += "'\\''";
+        else
+            out += c;
+    }
+    out += "'";
+    return out;
+}
+
+bool try_load_zip(const std::string& path, const std::vector<RomEntry>& entries, std::vector<uint8_t>& dest,
+                  std::string* attempt) {
+    RomLoader loader;
+    return loader.open(path, attempt) && loader.load(entries, dest, attempt);
+}
+
+bool download_mame_zip(const char* zip_name, const std::filesystem::path& dest, std::string* error) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!dest.parent_path().empty()) fs::create_directories(dest.parent_path(), ec);
+    const fs::path part = dest.string() + ".part";
+    const std::string url = std::string(kMameMergedBase) + zip_name;
+    const std::string cmd = "curl -fsSL --retry 4 --retry-delay 2 -o " + shell_quote(part.string()) + " " +
+                            shell_quote(url);
+    if (std::system(cmd.c_str()) != 0) {
+        fs::remove(part, ec);
+        if (error) *error = std::string("cannot download ") + url;
+        return false;
+    }
+    fs::rename(part, dest, ec);
+    if (ec) {
+        if (error) *error = "cannot save " + dest.string();
+        return false;
+    }
+    return true;
+}
+
 bool load_mcu_rom(const std::string& game_path, const char* zip_name, const std::vector<RomEntry>& entries,
                   std::vector<uint8_t>& dest, std::string* error) {
     namespace fs = std::filesystem;
     const fs::path given(game_path);
     const fs::path sibling = given.has_parent_path() ? given.parent_path() / zip_name : fs::path(zip_name);
-    RomLoader loader;
+    const fs::path cached = fs::path("/tmp/roms") / zip_name;
     std::string attempt;
-    if (loader.open(sibling.string(), &attempt) && loader.load(entries, dest, &attempt)) return true;
-    if (loader.open(game_path, &attempt) && loader.load(entries, dest, &attempt)) return true;
+    if (try_load_zip(sibling.string(), entries, dest, &attempt)) return true;
+    if (try_load_zip(game_path, entries, dest, &attempt)) return true;
+    if (try_load_zip(cached.string(), entries, dest, &attempt)) return true;
+
+    const fs::path download_to = sibling.has_parent_path() ? sibling : cached;
+    if (download_mame_zip(zip_name, download_to, &attempt) &&
+        try_load_zip(download_to.string(), entries, dest, &attempt)) {
+        return true;
+    }
+    if (download_to != cached && download_mame_zip(zip_name, cached, &attempt) &&
+        try_load_zip(cached.string(), entries, dest, &attempt)) {
+        return true;
+    }
     if (error) *error = attempt.empty() ? (std::string("missing ") + zip_name) : attempt;
     return false;
 }
