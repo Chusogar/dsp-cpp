@@ -136,11 +136,27 @@ inline uint8_t sz53p(uint8_t value) { return uint8_t(sz53(value) | kParity[value
 }  // namespace
 
 Z80::Z80(uint32_t clock) : clock_(clock) {
+    t_main_ = kMain;
+    t_cb_ = kCb;
+    t_index_ = kIndex;
+    t_index_cb_ = kIndexCb;
+    t_ed_ = kEd;
+    t_extra_ = kExtra;
     read_ = [](uint16_t) { return uint8_t(0xff); };
     write_ = [](uint16_t, uint8_t) {};
     in_ = [](uint16_t) { return uint8_t(0xff); };
     out_ = [](uint16_t, uint8_t) {};
     reset();
+}
+
+void Z80::set_timing_tables(const uint8_t* main, const uint8_t* cb, const uint8_t* index,
+                            const uint8_t* index_cb, const uint8_t* ed, const uint8_t* extra) {
+    if (main) t_main_ = main;
+    if (cb) t_cb_ = cb;
+    if (index) t_index_ = index;
+    if (index_cb) t_index_cb_ = index_cb;
+    if (ed) t_ed_ = ed;
+    if (extra) t_extra_ = extra;
 }
 
 void Z80::set_memory_handlers(ReadHandler read, WriteHandler write) {
@@ -410,7 +426,7 @@ void Z80::block_ld(int delta, bool repeat) {
     if (repeat && bc() != 0) {
         pc_ = uint16_t(pc_ - 2);
         wz = uint16_t(pc_ + 1);
-        cycles_ += 5;
+        cycles_ += t_extra_[delta > 0 ? 0xb0 : 0xb8];
     }
 }
 
@@ -427,7 +443,7 @@ void Z80::block_cp(int delta, bool repeat) {
     if (repeat && bc() != 0 && result != 0) {
         pc_ = uint16_t(pc_ - 2);
         wz = uint16_t(pc_ + 1);
-        cycles_ += 5;
+        cycles_ += t_extra_[delta > 0 ? 0xb1 : 0xb9];
     }
 }
 
@@ -442,7 +458,7 @@ void Z80::block_in(int delta, bool repeat) {
                 kParity[(sum & 7) ^ b]);
     if (repeat && b != 0) {
         pc_ = uint16_t(pc_ - 2);
-        cycles_ += 5;
+        cycles_ += t_extra_[delta > 0 ? 0xb2 : 0xba];
     }
 }
 
@@ -457,7 +473,7 @@ void Z80::block_out(int delta, bool repeat) {
                 kParity[(sum & 7) ^ b]);
     if (repeat && b != 0) {
         pc_ = uint16_t(pc_ - 2);
-        cycles_ += 5;
+        cycles_ += t_extra_[delta > 0 ? 0xb3 : 0xbb];
     }
 }
 
@@ -477,31 +493,41 @@ int Z80::take_nmi() {
 
 int Z80::take_irq() {
     if (!iff1) return 0;
+    if (irq_ack_) irq_ack_();
     halted = false;
     iff1 = iff2 = false;
     if (irq_state_ == IrqLine::Hold || irq_state_ == IrqLine::Pulse) irq_state_ = IrqLine::Clear;
     r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
+    int tstates = 13;
     switch (im) {
         case 0: {
             // Only the RST n form used by the supported drivers is decoded here.
             push(pc_);
             pc_ = uint16_t(irq_vector_ & 0x38);
             wz = pc_;
-            return 13;
+            tstates = 13;
+            break;
         }
         case 1:
             push(pc_);
             pc_ = 0x0038;
             wz = pc_;
-            return 13;
+            tstates = 13;
+            break;
         default: {
             uint16_t addr = uint16_t((i << 8) | irq_vector_);
             push(pc_);
             pc_ = uint16_t(rd(addr) | (rd(uint16_t(addr + 1)) << 8));
             wz = pc_;
-            return 19;
+            tstates = 19;
+            break;
         }
     }
+    if (irq_cycle_align_ > 1) {
+        const int rem = tstates % irq_cycle_align_;
+        if (rem != 0) tstates += irq_cycle_align_ - rem;
+    }
+    return tstates;
 }
 
 int Z80::run(int cycles) {
@@ -528,7 +554,7 @@ int Z80::run(int cycles) {
         if (instruction_hook_) instruction_hook_(pc_);
         uint8_t opcode = fetch();
         r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
-        cycles_ += kMain[opcode];
+        cycles_ += t_main_[opcode];
 
         switch (opcode) {
             case 0x00: break;  // nop
@@ -564,7 +590,7 @@ int Z80::run(int cycles) {
                 if (b != 0) {
                     pc_ = uint16_t(pc_ + offset);
                     wz = pc_;
-                    cycles_ += kExtra[opcode];
+                    cycles_ += t_extra_[opcode];
                 }
                 break;
             }
@@ -613,7 +639,7 @@ int Z80::run(int cycles) {
                 if (taken) {
                     pc_ = uint16_t(pc_ + offset);
                     wz = pc_;
-                    cycles_ += kExtra[opcode];
+                    cycles_ += t_extra_[opcode];
                 }
                 break;
             }
@@ -726,7 +752,7 @@ int Z80::run(int cycles) {
                             if (taken) {
                                 pc_ = pop();
                                 wz = pc_;
-                                cycles_ += kExtra[opcode];
+                                cycles_ += t_extra_[opcode];
                             }
                             break;
                         }
@@ -787,7 +813,7 @@ int Z80::run(int cycles) {
                             if (taken) {
                                 push(pc_);
                                 pc_ = addr;
-                                cycles_ += kExtra[opcode];
+                                cycles_ += t_extra_[opcode];
                             }
                             break;
                         }
@@ -878,7 +904,7 @@ int Z80::run(int cycles) {
 void Z80::exec_cb() {
     uint8_t opcode = fetch();
     r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
-    cycles_ += kCb[opcode];
+    cycles_ += t_cb_[opcode];
 
     static uint8_t Z80::*const regs[8] = {&Z80::b, &Z80::c, &Z80::d, &Z80::e,
                                           &Z80::h, &Z80::l, nullptr, &Z80::a};
@@ -920,7 +946,7 @@ void Z80::exec_cb() {
 void Z80::exec_ed() {
     uint8_t opcode = fetch();
     r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
-    cycles_ += kEd[opcode];
+    cycles_ += t_ed_[opcode];
 
     static uint8_t Z80::*const regs[8] = {&Z80::b, &Z80::c, &Z80::d, &Z80::e,
                                           &Z80::h, &Z80::l, nullptr, &Z80::a};
@@ -1043,7 +1069,7 @@ void Z80::exec_ed() {
 void Z80::exec_index(uint16_t* index_reg) {
     uint8_t opcode = fetch();
     r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
-    cycles_ += kIndex[opcode];
+    cycles_ += t_index_[opcode];
 
     uint8_t index_high = uint8_t(*index_reg >> 8);
     uint8_t index_low = uint8_t(*index_reg);
@@ -1168,7 +1194,7 @@ void Z80::exec_index(uint16_t* index_reg) {
 void Z80::exec_index_cb(uint16_t* index_reg) {
     int8_t offset = int8_t(fetch());
     uint8_t opcode = fetch();
-    cycles_ += kIndexCb[opcode];
+    cycles_ += t_index_cb_[opcode];
 
     uint16_t addr = uint16_t(*index_reg + offset);
     wz = addr;

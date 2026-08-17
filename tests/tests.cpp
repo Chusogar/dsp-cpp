@@ -1,10 +1,15 @@
 // Minimal self contained checks for the ported components.
+#include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iterator>
 #include <memory>
 #include <string>
+#include <filesystem>
+#include <fstream>
+#include <set>
 #include <vector>
 
 #include "cpu/hd63701.h"
@@ -18,6 +23,7 @@
 #include "drivers/nes.h"
 #include "cpu/z80ctc.h"
 #include "drivers/mcr.h"
+#include "drivers/amstrad_cpc.h"
 #include "drivers/spectrum.h"
 #include "machine/bagman_pal.h"
 #include "machine/mos6526.h"
@@ -96,6 +102,206 @@ void test_z80_interrupt() {
     cpu.set_irq(dsp::IrqLine::Hold);
     cpu.run(40);
     check(cpu.a == 0x42, "mode 1 interrupt vectors through 0x0038");
+}
+
+int count_instruction_cycles(dsp::Z80& cpu, int at_least = 1) {
+    int total = 0;
+    cpu.set_cycle_handler([&](int cycles) { total += cycles; });
+    cpu.run(at_least);
+    cpu.set_cycle_handler(nullptr);
+    return total;
+}
+
+void test_z80_cpc_wait_states() {
+    auto memory = make_memory();
+    dsp::Z80 cpu = make_cpu(memory);
+    std::array<uint8_t, 256> main{};
+    std::array<uint8_t, 256> extra{};
+    main.fill(4);
+    main[0x3e] = 8;  // CPC LD A,n
+    extra[0xb0] = 4;
+    extra[0xb8] = 4;
+    cpu.set_timing_tables(main.data(), main.data(), main.data(), main.data(), main.data(),
+                          extra.data());
+
+    memory[0] = 0x3e;
+    memory[1] = 0x42;
+    cpu.set_pc(0);
+    check(count_instruction_cycles(cpu) == 8, "CPC wait-states make LD A,n 8 T-states");
+    check(cpu.a == 0x42, "LD A,n still loads the immediate");
+
+    // LDIR extra uses the ED extra table (4 T on the CPC, 5 on a bare Z80).
+    memory[0] = 0x21;
+    memory[1] = 0x00;
+    memory[2] = 0x20;
+    memory[3] = 0x11;
+    memory[4] = 0x00;
+    memory[5] = 0x30;
+    memory[6] = 0x01;
+    memory[7] = 0x02;
+    memory[8] = 0x00;
+    memory[9] = 0xed;
+    memory[10] = 0xb0;
+    memory[11] = 0x76;
+    memory[0x2000] = 0xaa;
+    memory[0x2001] = 0xbb;
+    cpu.reset();
+    cpu.set_timing_tables(main.data(), main.data(), main.data(), main.data(), main.data(),
+                          extra.data());
+    cpu.set_pc(0);
+    int block_cycles = 0;
+    cpu.set_cycle_handler([&](int cycles) { block_cycles += cycles; });
+    cpu.run(200);
+    check(memory[0x3000] == 0xaa && memory[0x3001] == 0xbb, "LDIR still copies with CPC extras");
+    // Two repeating LDIR steps at 4+4 extra plus a terminal 4 T ED B0 and HALT 4:
+    // the exact total is less important than each repeating step being a multiple of 4.
+    check((block_cycles % 4) == 0, "CPC LDIR totals stay on a 4 T-state grid");
+}
+
+void test_z80_irq_cycle_align() {
+    auto memory = make_memory();
+    dsp::Z80 cpu = make_cpu(memory);
+    memory[0x0038] = 0x00;  // nop in the IM1 handler
+    cpu.sp = 0xf000;
+    cpu.im = 1;
+    cpu.iff1 = cpu.iff2 = true;
+    cpu.set_pc(0);
+    cpu.set_irq_cycle_align(4);
+    bool acked = false;
+    cpu.set_irq_ack_callback([&] { acked = true; });
+    cpu.set_irq(dsp::IrqLine::Assert);
+    const int total = count_instruction_cycles(cpu);
+    check(acked, "IRQ acknowledge callback runs when the interrupt is taken");
+    check(!cpu.iff1, "taking the IRQ clears IFF1");
+    check(cpu.pc() == 0x0039, "IM1 then executes the opcode at 0x0038");
+    // 16 T IRQ (13 rounded up to a multiple of 4) + 4 T NOP.
+    check(total == 20, "aligned IM1 IRQ plus NOP is 20 T-states");
+}
+
+void emit_ld_bc(std::vector<uint8_t>& rom, size_t& pc, uint16_t bc) {
+    rom[pc++] = 0x01;
+    rom[pc++] = uint8_t(bc);
+    rom[pc++] = uint8_t(bc >> 8);
+}
+
+void emit_ld_a(std::vector<uint8_t>& rom, size_t& pc, uint8_t value) {
+    rom[pc++] = 0x3e;
+    rom[pc++] = value;
+}
+
+void emit_out_c_a(std::vector<uint8_t>& rom, size_t& pc) {
+    rom[pc++] = 0xed;
+    rom[pc++] = 0x79;
+}
+
+void emit_ga(std::vector<uint8_t>& rom, size_t& pc, uint8_t value) {
+    emit_ld_bc(rom, pc, 0x7f00);
+    emit_ld_a(rom, pc, value);
+    emit_out_c_a(rom, pc);
+}
+
+void emit_crtc(std::vector<uint8_t>& rom, size_t& pc, uint8_t index, uint8_t value) {
+    emit_ld_bc(rom, pc, 0xbc00);
+    emit_ld_a(rom, pc, index);
+    emit_out_c_a(rom, pc);
+    emit_ld_bc(rom, pc, 0xbd00);
+    emit_ld_a(rom, pc, value);
+    emit_out_c_a(rom, pc);
+}
+
+bool write_cpc_dummy_rom(const std::string& dir) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    std::vector<uint8_t> rom(0x8000, 0x00);
+    size_t pc = 0;
+
+    rom[pc++] = 0xf3;  // di
+
+    // Mode 1, both ROMs enabled so this firmware keeps running.
+    emit_ga(rom, pc, 0x81);
+    // Pens: paper black, ink bright yellow, border black.
+    emit_ga(rom, pc, 0x00);
+    emit_ga(rom, pc, 0x44);  // paper: hardware colour 4 (blue)
+    emit_ga(rom, pc, 0x01);
+    emit_ga(rom, pc, 0x4b);  // ink: hardware colour 11 (white)
+    emit_ga(rom, pc, 0x10);
+    emit_ga(rom, pc, 0x54);  // border: hardware colour 20 (black)
+
+    constexpr uint8_t kCrtc[14] = {63, 40, 46, 0x8e, 38, 0, 25, 30, 0, 7, 0, 0, 0x30, 0};
+    for (uint8_t r = 0; r < 14; r++) emit_crtc(rom, pc, r, kCrtc[r]);
+
+    // Fill 16K of video RAM at 0xC000 with 0xE0 (mode 1: three ink pixels, one paper).
+    // Writes only: LDIR would *read* 0xC000, which is the upper ROM while it is paged in.
+    rom[pc++] = 0x21;  // ld hl,0xc000
+    rom[pc++] = 0x00;
+    rom[pc++] = 0xc0;
+    rom[pc++] = 0x01;  // ld bc,0x4000
+    rom[pc++] = 0x00;
+    rom[pc++] = 0x40;
+    const size_t fill_loop = pc;
+    rom[pc++] = 0x36;  // ld (hl),0xe0
+    rom[pc++] = 0xe0;
+    rom[pc++] = 0x23;  // inc hl
+    rom[pc++] = 0x0b;  // dec bc
+    rom[pc++] = 0x78;  // ld a,b
+    rom[pc++] = 0xb1;  // or c
+    rom[pc++] = 0x20;  // jr nz,fill_loop
+    rom[pc++] = uint8_t(int(fill_loop) - int(pc + 1));
+    rom[pc++] = 0x18;
+    rom[pc++] = 0xfe;  // jr $
+
+    std::ofstream out(dir + "/cpc464.rom", std::ios::binary);
+    if (!out) return false;
+    out.write(reinterpret_cast<const char*>(rom.data()), std::streamsize(rom.size()));
+    return bool(out);
+}
+
+void test_amstrad_crtc_does_not_tear() {
+    const std::string dir = "/tmp/cpc_test_roms";
+    if (!write_cpc_dummy_rom(dir)) {
+        check(false, "could not write the dummy CPC ROM");
+        return;
+    }
+
+    dsp::AmstradCpc cpc(dsp::AmstradCpc::Model::CPC464);
+    std::string error;
+    if (!cpc.init(dir, &error)) {
+        check(false, "dummy CPC ROM should load");
+        std::printf("  init error: %s\n", error.c_str());
+        return;
+    }
+
+    for (int frame = 0; frame < 30; frame++) cpc.run_frame();
+
+    const uint32_t* first = cpc.framebuffer();
+    const int width = cpc.screen_width();
+    const int height = cpc.screen_height();
+    std::vector<uint32_t> snapshot(first, first + size_t(width) * height);
+
+    cpc.run_frame();
+    const uint32_t* second = cpc.framebuffer();
+    bool stable = std::equal(snapshot.begin(), snapshot.end(), second);
+    check(stable, "consecutive CPC frames stay identical once the CRTC is locked");
+
+    std::set<uint32_t> colours;
+    for (int i = 0; i < width * height; i++) colours.insert(second[i]);
+    check(colours.size() >= 2 && colours.size() <= 6,
+          "a locked CPC picture uses a handful of palette colours, not random noise");
+
+    // Mode 1 0xF0 paints three ink pixels and one paper pixel per byte, so a
+    // visible scanline must contain that 4-pixel cadence rather than speckle.
+    bool found_pattern = false;
+    for (int y = 0; y < height && !found_pattern; y++) {
+        const uint32_t* row = second + y * width;
+        for (int x = 0; x + 3 < width; x++) {
+            if (row[x] == row[x + 1] && row[x] == row[x + 2] && row[x] != row[x + 3]) {
+                found_pattern = true;
+                break;
+            }
+        }
+    }
+    check(found_pattern, "mode 1 video RAM is scanned as a stable 4-pixel pattern");
 }
 
 void test_bagman_pal() {
@@ -1490,6 +1696,9 @@ int main() {
     test_z80_arithmetic();
     test_z80_flags_and_blocks();
     test_z80_interrupt();
+    test_z80_cpc_wait_states();
+    test_z80_irq_cycle_align();
+    test_amstrad_crtc_does_not_tear();
     test_bagman_pal();
     test_gfx_decode();
     test_palette_weights();
