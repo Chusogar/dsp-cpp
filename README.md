@@ -36,6 +36,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | SLAPSTIC | `src/arcade/misc/slapstic.pas` | Types 101-107, bank switched protected ROM |
 | Atari motion objects | `src/arcade/misc/atari_mo.pas` | SLIP based sprite lists |
 | Gauntlet driver | `src/arcade/gauntlet_hw.pas` | Memory map, playfield/char/sprite video, EEPROM, sound communication |
+| Atari System 1 | `src/arcade/atari_system1.pas` | Marble Madness, Peter Pack Rat, Indiana Jones: 68000+SLAPSTIC, M6502, YM2151, POKEY, PROM gfx banks |
 | HD63701Y MCU | `src/cpu/m680x.pas` | Double Dragon sub CPU: internal RAM/ROM, I/O ports, output compare timer |
 | MSM5205 ADPCM | `src/snd/msm5205.pas` | Two chips in Double Dragon |
 | OKI MSM6295 | `src/snd/oki6295.pas` | Double Dragon II sample player |
@@ -90,6 +91,7 @@ holding the individual files:
 ./build/dsp --scale 3 --dip 0xfe /path/to/roms/bagman/
 ./build/dsp --game mikie /path/to/mikie.zip
 ./build/dsp --game gauntlet /path/to/gauntlet.zip
+./build/dsp --game indydoom /path/to/indytemp.zip
 ./build/dsp --game mrdo /path/to/mrdo.zip
 ./build/dsp --game ddragon /path/to/ddragon.zip
 ./build/dsp --game elevator /path/to/elevator.zip
@@ -131,6 +133,26 @@ Options:
                    or EXL-100 / EXELTEL cartridge (.bin/.rom)
 --disk FILE        Amstrad CPC / Spectrum +3 .dsk/.edsk floppy image
 ```
+
+### Atari System 1 (Indiana Jones, Marble Madness, Peter Pack Rat)
+
+Atari System 1 is a 7.16 MHz 68000 behind a SLAPSTIC (105 on Indiana Jones, 103
+on Marble Madness, 107 on Peter Pack Rat), a 1.79 MHz M6502 with a YM2151 and a
+POKEY, and playfield/motion-object banks decoded from a pair of colour PROMs
+(`convert_back` in `atari_system1.pas`). The visible area is 336×240.
+
+Indiana Jones needs the game zip **and** the Atari System 1 BIOS (`atarisy1.zip`
+with `136032.205.l13` / `136032.206.l12` / `136032.104.f5`). Put `atarisy1.zip`
+next to `indytemp.zip`; the driver opens it automatically.
+
+```bash
+./build/dsp --game indydoom /path/to/indytemp.zip
+./build/dsp --game marble /path/to/marble.zip
+./build/dsp --game peter /path/to/peterpak.zip
+```
+
+Whip / button 1 is Left Ctrl or Space. Coins are 5/6. The trackball is not
+emulated yet (reads as `$FF`, matching the Pascal stub).
 
 ### Exelvision EXL-100 and EXELTEL
 

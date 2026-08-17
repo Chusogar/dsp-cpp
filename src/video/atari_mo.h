@@ -46,7 +46,9 @@ public:
     };
 
     // Called once per 8x8 (or tile sized) piece of a motion object.
-    using DrawTile = std::function<void(int code, int color, bool hflip, bool vflip, int x, int y)>;
+    // `gfx` is the Atari System 1 graphics bank (0 when the driver has one tileset).
+    using DrawTile =
+        std::function<void(int code, int color, bool hflip, bool vflip, int x, int y, int gfx)>;
 
     AtariMotionObjects(const Config& config, const uint16_t* slip_ram, const uint16_t* sprite_ram,
                        int xmax, int ymax);
@@ -58,6 +60,7 @@ public:
     // Lookup tables, exposed so drivers can apply their own code/colour mangling.
     std::vector<uint16_t>& code_lookup() { return code_lookup_; }
     std::vector<uint16_t>& color_lookup() { return color_lookup_; }
+    std::vector<uint8_t>& gfx_lookup() { return gfx_lookup_; }
 
 private:
     class SpriteParameter {
@@ -112,6 +115,7 @@ private:
     int sliprammask_ = 0;
 
     std::vector<uint16_t> code_lookup_, color_lookup_;
+    std::vector<uint8_t> gfx_lookup_;
     std::vector<uint16_t> active_list_;
     size_t active_last_ = 0;
 

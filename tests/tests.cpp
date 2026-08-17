@@ -23,6 +23,7 @@
 #include "cpu/z80ctc.h"
 #include "drivers/amstrad_cpc.h"
 #include "drivers/atari_lynx.h"
+#include "drivers/atari_system1.h"
 #include "drivers/c64.h"
 #include "drivers/exelv.h"
 #include "drivers/gameboy.h"
@@ -929,7 +930,7 @@ void test_atari_motion_objects() {
     dsp::AtariMotionObjects objects(config, slip_ram.data(), sprite_ram.data(), 512, 256);
     int drawn = 0;
     int last_code = -1, last_color = -1, last_x = -1, last_y = -1;
-    objects.draw(0, 0, 0, [&](int code, int color, bool, bool, int x, int y) {
+    objects.draw(0, 0, 0, [&](int code, int color, bool, bool, int x, int y, int) {
         drawn++;
         last_code = code;
         last_color = color;
@@ -2125,6 +2126,20 @@ void test_exelv_dummy_bios() {
     check(tel.debug_pc() >= 0xf000, "dummy EXELTEL BIOS idles in TMS7040 ROM");
 }
 
+void test_atari_system1_missing_roms() {
+    dsp::AtariSystem1 machine(dsp::AtariSystem1::Game::Indy);
+    std::string error = "unset";
+    check(!machine.init("/no/such/indytemp.zip", &error),
+          "Indiana Jones init fails without the ROM set");
+    check(error.find("not found") != std::string::npos || error.find("missing") != std::string::npos ||
+              error.find("cannot") != std::string::npos,
+          "init reports why the Atari System 1 set is missing");
+    check(std::strcmp(machine.title(), "Indiana Jones and the Temple of Doom") == 0,
+          "Indiana Jones title");
+    check(machine.screen_width() == 336 && machine.screen_height() == 240,
+          "Atari System 1 screen is 336x240");
+}
+
 }  // namespace
 
 int main() {
@@ -2200,6 +2215,7 @@ int main() {
     test_tms7000_lvdp_and_int1();
     test_tms3556_background();
     test_exelv_dummy_bios();
+    test_atari_system1_missing_roms();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

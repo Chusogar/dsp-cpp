@@ -543,7 +543,7 @@ void Gauntlet::update_video() {
     }
 
     motion_objects_->draw(scroll_x_, uint16_t(scroll_y), -1,
-                          [this](int code, int color, bool hflip, bool vflip, int x, int y) {
+                          [this](int code, int color, bool hflip, bool vflip, int x, int y, int) {
                               const uint8_t* pixels = tiles_.element(code);
                               for (int row = 0; row < 8; row++) {
                                   int target_y = y + row;

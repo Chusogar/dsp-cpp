@@ -165,6 +165,7 @@ add_executable(dsp_tests
   src/drivers/atari_lynx.cpp
   src/drivers/scv.cpp
   src/drivers/exelv.cpp
+  src/drivers/atari_system1.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)
