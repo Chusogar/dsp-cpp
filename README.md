@@ -5,7 +5,7 @@ Arcade: **Bagman**, **Mikie**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
 **Double Dragon II**, Taito SJ (**Elevator Action**, **Jungle King**), Irem M62
 (**Kung-Fu Master**, **Spelunker**, **Lode Runner**), SNK (**Ikari Warriors**,
 **Athena**, **TNK III**, **ASO**), Capcom **CPS1**, Irem **M72** (**R-Type**),
-and Midway **MCR** (**Tapper** and family).
+Midway **MCR** (**Tapper** and family), and Atari **Star Wars**.
 Computers: **ZX Spectrum 48K**, Amstrad CPC, **Commodore 64**, **EXL-100** /
 **EXELTEL**. Consoles: NES, Game Boy / Game Boy Color, **Atari Lynx**,
 **Super Cassette Vision**.
@@ -67,6 +67,10 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | TMS7000 CPU | new (MAME `tms7000` behaviour) | TMS7020/7040/7041/7042, EXL LVDP opcode |
 | TMS3556 VDP | new (MAME `tms3556` behaviour) | Text 40×25, bitmap 320×250, mixed, 8 colours |
 | EXL-100 / EXELTEL | new (MAME `exelv.cpp`) | Dual TMS7000, mailbox, IR keyboard, TMS5220, cartridge |
+| Atari AVG (Star Wars) | new (MAME `avgdvg.cpp`) | PROM state machine, colour vector list |
+| MOS 6532 RIOT | new (MAME `mos6532.cpp`) | 128-byte RAM, ports, timer IRQ |
+| Star Wars mathbox | new (MAME `starwars_m.cpp`) | PROM microcode, multiply-accumulate, restoring divider |
+| Star Wars driver | new (MAME `starwars.cpp`) | Dual 6809, AVG, 4×POKEY, TMS5220, analog stick |
 
 ## Building
 
@@ -105,6 +109,7 @@ holding the individual files:
 ./build/dsp --game lynx /path/to/game.lnx
 ./build/dsp --game scv /path/to/scv.zip
 ./build/dsp --game exl100 /path/to/exl100.zip
+./build/dsp --game starwars /path/to/starwars.zip
 ```
 
 `--game` is required (`dsp --help` lists every name). Gauntlet accepts both the
@@ -439,6 +444,24 @@ and bank C holds flip screen (bit 0) and upright controls (bit 1).
 Mikie ROM set: `n14.11c`, `o13.12a`, `o17.12d`, `n10.6e`, `o11.8i`, `001.f1`, `003.f3`,
 `005.h1`, `007.h3`, `d19.1i`, `d21.3i`, `d20.2i`, `d22.12h`, `d18.f9`.
 
+### Atari Star Wars
+
+Vector arcade from 1983. Two 1.5 MHz 6809s (main + sound), the Atari AVG, a PROM
+mathbox, four POKEYs and a TMS5220. The visible vector area is 250×280 inside a
+400×300 window at ~41 Hz.
+
+```bash
+./build/dsp --game starwars /path/to/starwars.zip
+```
+
+Fire is Left Ctrl / Space, the yoke is the arrow keys, coin is 5. ROMs are not
+committed. The MAME parent set `starwars` is enough:
+
+`136021.214.1f`, `136021.102.1hj`, `136021.203.1jk`, `136021.104.1kl`,
+`136021.206.1m`, vector `136021-105.1l`, sound `136021-107.1jk` +
+`136021-208.1h`, AVG PROM `136021-109.4b`, mathbox `136021-110.7h` …
+`136021-113.7l`.
+
 ## Tests
 
 ```bash
@@ -458,8 +481,8 @@ cmake --build build --target dsp_zexdoc
 ```
 src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805, µPD7801, TMS7000, NEC V30
 src/sound/      AY-3-8910, SN76496, NES APU, SID, µPD1771C, QSound, TMS5220
-src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556
-src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, Lynx Suzy/Mikey
+src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556, AVG
+src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, 6532, Lynx, mathbox
 src/drivers/    the machines themselves (memory map, video, inputs)
 src/frontend/   SDL2 front end, driven through the core/machine.h interface
 src/core/       ROM loader (directory or zip) and the Machine interface

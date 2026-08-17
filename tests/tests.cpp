@@ -29,13 +29,16 @@
 #include "drivers/mcr.h"
 #include "drivers/nes.h"
 #include "drivers/scv.h"
+#include "drivers/starwars.h"
 #include "drivers/spectrum.h"
 #include "machine/bagman_pal.h"
 #include "machine/kabuki.h"
 #include "machine/lynx_suzy.h"
 #include "machine/mos6526.h"
+#include "machine/mos6532.h"
 #include "machine/slapstic.h"
 #include "machine/spectrum_tape.h"
+#include "machine/starwars_math.h"
 #include "sound/ay8910.h"
 #include "sound/msm5205.h"
 #include "sound/nes_apu.h"
@@ -2125,6 +2128,38 @@ void test_exelv_dummy_bios() {
     check(tel.debug_pc() >= 0xf000, "dummy EXELTEL BIOS idles in TMS7040 ROM");
 }
 
+void test_starwars_missing_roms() {
+    dsp::StarWars machine;
+    check(std::strcmp(machine.title(), "Star Wars") == 0, "Star Wars title");
+    check(machine.screen_width() == 400 && machine.screen_height() == 300,
+          "Star Wars reports the 400x300 vector window");
+    std::string error = "unset";
+    check(!machine.init("/no/such/starwars.zip", &error), "missing Star Wars ROMs fail init");
+    check(error.find("not found") != std::string::npos || error.find("cannot") != std::string::npos ||
+              error.size() > 3,
+          "init reports why the Star Wars ROM set is missing");
+
+    dsp::StarwarsMath math;
+    std::array<uint8_t, 0x1000> prom{};
+    math.init(prom.data());
+    math.write(6, 0x10);
+    math.write(7, 0x00);
+    math.write(4, 0x00);
+    math.write(5, 0x20);
+    const uint16_t quotient = uint16_t((uint16_t(math.div_reh()) << 8) | math.div_rel());
+    check(quotient != 0, "mathbox restoring divider produces a quotient");
+
+    dsp::Mos6532 riot;
+    int irqs = 0;
+    riot.set_irq_callback([&irqs](dsp::IrqLine line) {
+        if (line != dsp::IrqLine::Clear) irqs++;
+    });
+    riot.reset();
+    riot.io_write(0x1c, 0x01);  // timer, /1 prescale, IRQ enabled
+    riot.tick(4);
+    check(irqs > 0, "MOS 6532 timer raises IRQ after countdown");
+}
+
 }  // namespace
 
 int main() {
@@ -2200,6 +2235,7 @@ int main() {
     test_tms7000_lvdp_and_int1();
     test_tms3556_background();
     test_exelv_dummy_bios();
+    test_starwars_missing_roms();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
