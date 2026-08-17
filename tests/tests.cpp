@@ -31,6 +31,8 @@
 #include "drivers/nes.h"
 #include "drivers/scv.h"
 #include "drivers/starwars.h"
+#include "drivers/polepos.h"
+#include "cpu/z8002.h"
 #include "drivers/spectrum.h"
 #include "drivers/zx_clone.h"
 #include "machine/bagman_pal.h"
@@ -2144,6 +2146,70 @@ void test_exelv_dummy_bios() {
     check(tel.debug_pc() >= 0xf000, "dummy EXELTEL BIOS idles in TMS7040 ROM");
 }
 
+void test_polepos_driver() {
+    dsp::PolePos missing(dsp::PolePos::Game::PolePosition);
+    check(std::strcmp(missing.title(), "Pole Position") == 0, "Pole Position title");
+    check(missing.screen_width() == 256 && missing.screen_height() == 224,
+          "Pole Position reports 256x224");
+    std::string error = "unset";
+    check(!missing.init("/no/such/polepos.zip", &error), "missing Pole Position ROMs fail init");
+    check(error.find("not found") != std::string::npos || error.find("cannot") != std::string::npos ||
+              error.size() > 3,
+          "init reports why the Pole Position ROM set is missing");
+
+    dsp::PolePos missing2(dsp::PolePos::Game::PolePosition2);
+    check(std::strcmp(missing2.title(), "Pole Position II") == 0, "Pole Position II title");
+
+    // Z8002: LD R9,#0x0002 then HALT-ish (keep running a handful of insns).
+    std::array<uint8_t, 0x100> mem{};
+    mem[2] = 0x40;
+    mem[3] = 0x00;  // FCW
+    mem[4] = 0x00;
+    mem[5] = 0x10;  // PC = 0x0010
+    mem[0x10] = 0x21;
+    mem[0x11] = 0x09;
+    mem[0x12] = 0x00;
+    mem[0x13] = 0x02;  // LD R9, #0002
+    dsp::Z8002 cpu(3072000);
+    cpu.set_memory_handlers([&](uint16_t a) { return mem[a & 0xff]; },
+                            [&](uint16_t a, uint8_t v) { mem[a & 0xff] = v; });
+    cpu.reset();
+    cpu.run(50);
+    check(cpu.pc() == 0x0014, "Z8002 LD R9,#imm advances PC");
+    check(cpu.rw(9) == 0x0002, "Z8002 LD R9,#0002 writes R9");
+
+    const char* rom = "/tmp/roms/polepos.zip";
+    std::FILE* f = std::fopen(rom, "rb");
+    if (f) {
+        std::fclose(f);
+        dsp::PolePos boot(dsp::PolePos::Game::PolePosition);
+        error.clear();
+        check(boot.init(rom, &error), "Pole Position ROM set loads");
+        for (int i = 0; i < 180; i++) boot.run_frame();
+        check(boot.debug_z80_pc() != 0, "Pole Position Z80 is executing");
+        bool lit = false;
+        const uint32_t* fb = boot.framebuffer();
+        for (int i = 0; i < boot.screen_width() * boot.screen_height(); i++) {
+            if ((fb[i] & 0x00ffffffu) != 0) {
+                lit = true;
+                break;
+            }
+        }
+        check(lit, "Pole Position attract produces non-black pixels");
+    }
+
+    const char* rom2 = "/tmp/roms/polepos2.zip";
+    f = std::fopen(rom2, "rb");
+    if (f) {
+        std::fclose(f);
+        dsp::PolePos boot2(dsp::PolePos::Game::PolePosition2);
+        error.clear();
+        check(boot2.init(rom2, &error), "Pole Position II ROM set loads");
+        for (int i = 0; i < 60; i++) boot2.run_frame();
+        check(boot2.debug_z80_pc() != 0, "Pole Position II Z80 is executing");
+    }
+}
+
 void test_starwars_missing_roms() {
     dsp::StarWars machine;
     check(std::strcmp(machine.title(), "Star Wars") == 0, "Star Wars title");
@@ -2426,6 +2492,7 @@ int main() {
     test_exelv_dummy_bios();
     test_trdos_scl_and_beta();
     test_starwars_missing_roms();
+    test_polepos_driver();
     test_atari_system1_missing_roms();
     if (failures == 0) {
         std::printf("all tests passed\n");

@@ -27,6 +27,7 @@ add_executable(dsp
   src/cpu/hu6280.cpp
   src/cpu/mcs51.cpp
   src/cpu/nec_v30.cpp
+  src/cpu/z8002.cpp
  
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
@@ -111,6 +112,7 @@ add_executable(dsp
   src/drivers/atari_lynx.cpp
   src/drivers/exelv.cpp
   src/drivers/starwars.cpp
+  src/drivers/polepos.cpp
       
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
@@ -133,6 +135,7 @@ add_executable(dsp_tests
   src/cpu/lr35902.cpp
   src/cpu/upd7801.cpp
   src/cpu/tms7000.cpp
+  src/cpu/z8002.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
@@ -181,6 +184,7 @@ add_executable(dsp_tests
   src/drivers/scv.cpp
   src/drivers/exelv.cpp
   src/drivers/starwars.cpp
+  src/drivers/polepos.cpp
   src/drivers/atari_system1.cpp
   src/drivers/zx_clone.cpp
   src/core/rom_loader.cpp

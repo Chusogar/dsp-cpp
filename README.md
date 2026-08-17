@@ -5,7 +5,8 @@ Arcade: **Bagman**, **Mikie**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
 **Double Dragon II**, Taito SJ (**Elevator Action**, **Jungle King**), Irem M62
 (**Kung-Fu Master**, **Spelunker**, **Lode Runner**), SNK (**Ikari Warriors**,
 **Athena**, **TNK III**, **ASO**), Capcom **CPS1**, Irem **M72** (**R-Type**),
-and Midway **MCR** (**Tapper** and family).
+Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Namco
+**Pole Position** / **Pole Position II**.
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC, **Commodore 64**, **EXL-100** /
 Midway **MCR** (**Tapper** and family), and Atari **Star Wars**.
 Computers: **ZX Spectrum 48K**, Amstrad CPC, **Commodore 64**, **EXL-100** /
@@ -77,6 +78,8 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | MOS 6532 RIOT | new (MAME `mos6532.cpp`) | 128-byte RAM, ports, timer IRQ |
 | Star Wars mathbox | new (MAME `starwars_m.cpp`) | PROM microcode, multiply-accumulate, restoring divider |
 | Star Wars driver | new (MAME `starwars.cpp`) | Dual 6809, AVG, 4×POKEY, TMS5220, analog stick |
+| Z8002 CPU | new (MAME `z8000`) | Unsegmented 16-bit Z8002 used by Pole Position |
+| Pole Position driver | new (MAME `namco/polepos.cpp`) | Z80 + dual Z8002, road, sprites, 51xx/53xx I/O |
 
 ## Building
 
@@ -120,6 +123,8 @@ holding the individual files:
 ./build/dsp --game pentagon --disk game.trd /path/to/pentagon-roms/
 ./build/dsp --game scorpion --disk game.scl /path/to/scorpion.rom
 ./build/dsp --game starwars /path/to/starwars.zip
+./build/dsp --game polepos /path/to/polepos.zip
+./build/dsp --game polepos2 /path/to/polepos2.zip
 ```
 
 `--game` is required (`dsp --help` lists every name). Gauntlet accepts both the
@@ -534,6 +539,20 @@ committed. The MAME parent set `starwars` is enough:
 `136021.206.1m`, vector `136021-105.1l`, sound `136021-107.1jk` +
 `136021-208.1h`, AVG PROM `136021-109.4b`, mathbox `136021-110.7h` …
 `136021-113.7l`.
+
+### Namco Pole Position / Pole Position II
+
+Z80 + two Z8002s at 3.072 MHz, 256×224, ~60.6 Hz. The Namco 06xx talks to a
+high-level 51xx/53xx (coins, DIPs, steering); WSG/engine samples are not
+emulated yet. Use the MAME 0.221 merged parent sets `polepos` and `polepos2`.
+
+```bash
+./build/dsp --game polepos /path/to/polepos.zip
+./build/dsp --game polepos2 /path/to/polepos2.zip
+```
+
+Steer with the arrows, accelerate with Left Ctrl / Space, brake with Z / Down,
+toggle gear with X, coin with 5. DIP bank 0 is DSWA, bank 1 is DSWB.
 
 ## Tests
 
