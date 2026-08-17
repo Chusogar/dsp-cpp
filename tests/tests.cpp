@@ -2197,6 +2197,14 @@ void test_trdos_scl_and_beta() {
     for (int i = 1; i < 256; i++) (void)fdc.data_r();
     check(fdc.intrq(), "sector read completes with INTRQ");
 
+    dsp::TrdosDisk trd_disk;
+    std::vector<uint8_t> trd(40 * 16 * 256, 0);
+    trd[0] = 'A';
+    check(trd_disk.load_bytes(trd.data(), trd.size(), &error), "a 40-track SS TRD image loads");
+    check(trd_disk.tracks() == 40 && trd_disk.heads() == 1, "TRD size selects 40-track single sided");
+    check(trd_disk.sector(0, 0, 1) != nullptr && trd_disk.sector(0, 0, 1)[0] == 'A',
+          "TRD bytes map onto track 0 sector 1");
+
     dsp::Beta128 beta;
     beta.reset();
     check(!beta.active(), "Beta 128 starts paged out");
