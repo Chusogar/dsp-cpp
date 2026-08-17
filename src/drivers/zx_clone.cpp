@@ -5,6 +5,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include "core/rom_loader.h"
 
@@ -47,11 +50,61 @@ bool try_rom(const std::string& dir, const char* name, std::vector<uint8_t>& out
     return load_file((fs::path(dir) / upper).string(), out);
 }
 
+std::string ascii_lower(std::string value) {
+    for (char& c : value) c = char(std::tolower(static_cast<unsigned char>(c)));
+    return value;
+}
+
 bool ends_ci(const std::string& path, const char* ext) {
-    std::string lower = path;
-    for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
+    const std::string lower = ascii_lower(path);
     const size_t n = std::strlen(ext);
     return lower.size() >= n && lower.compare(lower.size() - n, n, ext) == 0;
+}
+
+bool skip_rom_dir(const std::string& name) {
+    const std::string n = ascii_lower(name);
+    return n == ".git" || n == "build" || n == "cmakefiles" || n == "node_modules" || n == ".svn" ||
+           n == "target" || n == "__pycache__" || n == ".idea" || n == "out";
+}
+
+bool is_zx_companion_dir(const std::string& name) {
+    const std::string n = ascii_lower(name);
+    return n == "zxtiny" || n == "zxtiny-main" || n == "zxm" || n == "jmesys" || n == "jmesys-main";
+}
+
+bool is_clone_zip_name(const std::string& name) {
+    const std::string lower = ascii_lower(name);
+    return lower.find("pentagon") != std::string::npos || lower.find("pent1024") != std::string::npos ||
+           lower.find("scorpio") != std::string::npos || lower.find("scorpion") != std::string::npos ||
+           lower.find("spec128") != std::string::npos || lower.find("beta128") != std::string::npos ||
+           lower.find("trdos") != std::string::npos || lower.find("zxmak") != std::string::npos;
+}
+
+bool keep_rom_subdir(const std::string& name, int depth) {
+    const std::string n = ascii_lower(name);
+    if (is_zx_companion_dir(n)) return true;
+    if (n == "roms" || n == "rom" || n == "bios" || n == "sinclair" || n == "spectrum" ||
+        n == "pentagon" || n == "scorpion" || n == "scorpio" || n == "trdos" || n == "beta" ||
+        n == "soft" || n == "files" || n == "128") {
+        return true;
+    }
+    if (n == "src" && depth <= 1) return true;
+    return depth < 1;
+}
+
+int rom_file_score(const std::string& lower_name, const std::string& path_lower) {
+    const bool jmesys = path_lower.find("jmesys") != std::string::npos;
+    const bool zxtiny = path_lower.find("zxtiny") != std::string::npos ||
+                        path_lower.find("/zxm/") != std::string::npos;
+    if (lower_name.rfind("scorp", 0) == 0 || lower_name == "trdos.rom" ||
+        lower_name.rfind("trd50", 0) == 0) {
+        if (zxtiny) return 3;
+    }
+    if (lower_name.rfind("penta", 0) == 0) {
+        if (jmesys) return 3;
+    }
+    if (jmesys || zxtiny) return 2;
+    return 1;
 }
 
 uint32_t to_argb(uint32_t bgr) {
@@ -83,34 +136,90 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
     }
 
     std::vector<RomLoader> sources;
+    std::unordered_set<std::string> opened;
     auto add_source = [&](const std::string& p) {
+        if (p.empty() || !opened.insert(p).second) return;
         RomLoader loader;
         std::string ignored;
         if (loader.open(p, &ignored)) sources.push_back(std::move(loader));
     };
     add_source(dir);
-    std::error_code ec;
-    if (fs::is_directory(dir, ec)) {
-        // MAME rompath: only open the Spectrum-clone zips, not the whole set.
-        for (const auto& item : fs::directory_iterator(dir, ec)) {
-            if (!item.is_regular_file(ec)) continue;
-            const std::string name = item.path().filename().string();
-            if (!ends_ci(name, ".zip")) continue;
-            std::string lower = name;
-            for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
-            const bool clone_zip =
-                lower.find("pentagon") != std::string::npos ||
-                lower.find("pent1024") != std::string::npos || lower.find("scorpio") != std::string::npos ||
-                lower.find("scorpion") != std::string::npos || lower.find("spec128") != std::string::npos ||
-                lower.find("beta128") != std::string::npos || lower.find("trdos") != std::string::npos ||
-                lower.find("zxmak") != std::string::npos;
-            if (clone_zip) add_source(item.path().string());
+
+    std::unordered_map<std::string, fs::path> nested_roms;
+    std::unordered_map<std::string, int> nested_score;
+    auto remember_rom = [&](const fs::path& file) {
+        const std::string name = ascii_lower(file.filename().string());
+        const std::string path_l = ascii_lower(file.generic_string());
+        const int score = rom_file_score(name, path_l);
+        const auto it = nested_score.find(name);
+        if (it != nested_score.end() && score <= it->second) return;
+        nested_roms[name] = file;
+        nested_score[name] = score;
+    };
+
+    auto index_tree = [&](const fs::path& root) {
+        std::error_code iec;
+        if (fs::is_regular_file(root, iec)) {
+            const std::string name = root.filename().string();
+            if (ends_ci(name, ".zip") && is_clone_zip_name(name)) add_source(root.string());
+            else if (ends_ci(name, ".rom") || ends_ci(name, ".bin")) remember_rom(root);
+            return;
         }
+        if (!fs::is_directory(root, iec)) return;
+        fs::recursive_directory_iterator it(
+            root, fs::directory_options::skip_permission_denied, iec);
+        const fs::recursive_directory_iterator end;
+        int visited = 0;
+        for (; it != end; it.increment(iec)) {
+            if (iec) {
+                iec.clear();
+                continue;
+            }
+            if (++visited > 20000) break;
+            const fs::path p = it->path();
+            if (it->is_directory(iec)) {
+                if (skip_rom_dir(p.filename().string()) || it.depth() >= 8 ||
+                    !keep_rom_subdir(p.filename().string(), it.depth())) {
+                    it.disable_recursion_pending();
+                }
+                continue;
+            }
+            if (!it->is_regular_file(iec)) continue;
+            const std::string name = p.filename().string();
+            if (ends_ci(name, ".zip") && is_clone_zip_name(name)) add_source(p.string());
+            else if (ends_ci(name, ".rom") || ends_ci(name, ".bin")) remember_rom(p);
+        }
+    };
+
+    std::error_code ec;
+    std::vector<fs::path> extra_roots;
+    auto consider_root = [&](const fs::path& p) {
+        std::error_code dec;
+        if (!fs::is_directory(p, dec)) return;
+        extra_roots.push_back(p);
+    };
+    fs::path walk = fs::absolute(dir, ec);
+    for (int i = 0; i < 8 && !walk.empty(); i++) {
+        std::error_code dec;
+        for (const auto& item : fs::directory_iterator(walk, dec)) {
+            if (!item.is_directory(dec)) continue;
+            if (is_zx_companion_dir(item.path().filename().string())) consider_root(item.path());
+        }
+        if (is_zx_companion_dir(walk.filename().string())) consider_root(walk);
+        const fs::path parent = walk.parent_path();
+        if (parent == walk) break;
+        walk = parent;
     }
+    index_tree(dir);
+    for (const fs::path& extra : extra_roots) index_tree(extra);
 
     auto try_named = [&](const char* name, std::vector<uint8_t>& out) -> bool {
         for (const RomLoader& loader : sources) {
             if (loader.try_read(name, out) && !out.empty()) return true;
+        }
+        const auto it = nested_roms.find(ascii_lower(name));
+        if (it != nested_roms.end() && load_file(it->second.string(), out) && !out.empty()) {
+            return true;
         }
         return try_rom(dir, name, out);
     };
@@ -151,7 +260,8 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
 
     const char* joined64_scorp[] = {"scorpion.rom", "scorp294.rom", "scorpion.rom.bin", "scorpio.rom"};
     const char* joined64_pent[] = {"pentagon.rom", "pentagon.rom.bin"};
-    const char* joined32[] = {"pentagon.rom", "128.rom", "zx128.rom", "spectrum128.rom", "128p.rom"};
+    const char* joined32[] = {"pentagon.rom", "penta_sp.rom", "128.rom", "zx128.rom",
+                              "spectrum128.rom", "128p.rom"};
     if (model_ == ZxCloneModel::Scorpion256) {
         load_joined64(joined64_scorp, sizeof(joined64_scorp) / sizeof(joined64_scorp[0]));
         if (!have128) {
@@ -183,7 +293,7 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
     }
     if (!have128) {
         std::vector<uint8_t> r0, r1;
-        const char* n0[] = {"128p-0.rom", "zx128_0.rom", "128-0.rom", "plus2-0.rom"};
+        const char* n0[] = {"128p-0.rom", "zx128_0.rom", "128-0.rom", "plus2-0.rom", "128tr.rom"};
         const char* n1[] = {"128p-1.rom", "zx128_1.rom", "128-1.rom", "plus2-1.rom"};
         for (const char* a : n0) {
             if (try_named(a, r0) && r0.size() >= 0x4000) break;
@@ -230,8 +340,8 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
         return false;
     }
 
-    const char* gluk_names[] = {"gluk63r.rom", "gluk.rom", "gluk54r.rom", "gluk60r.rom",
-                                "scorp2.rom", "service.rom"};
+    // Do not treat zxtiny's scorp2.rom / a Scorpion service dump as Pentagon GLUK.
+    const char* gluk_names[] = {"gluk63r.rom", "gluk.rom", "gluk54r.rom", "gluk60r.rom"};
     std::vector<uint8_t> gluk;
     if (model_ == ZxCloneModel::Pentagon1024) {
         for (const char* n : gluk_names) {
