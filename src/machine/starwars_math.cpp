@@ -1,5 +1,7 @@
 #include "machine/starwars_math.h"
 
+#include <cstddef>
+
 namespace dsp {
 
 void StarwarsMath::init(const uint8_t* prom) {
