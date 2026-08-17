@@ -41,9 +41,12 @@ public:
 
 private:
     int active_lines() const;
+    int display_top() const;
+    int raster_mode() const;
     int memtype() const;
     uint8_t vram_rd(uint32_t addr) const;
     void vram_wr(uint32_t addr, uint8_t value);
+    uint8_t map_rd(uint32_t addr) const;
     uint32_t cpu_linear() const;
     uint32_t cpu_phys() const;
     void next_where();

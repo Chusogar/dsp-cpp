@@ -57,7 +57,7 @@ Msx2::Msx2() : z80_(kMainClock), ay8910_(kMainClock / 2, 0.8f) {
                          [this](uint16_t p, uint8_t v) { write_port(p, v); });
     z80_.set_cycle_handler([this](int cycles) { on_main_cycles(cycles); });
     z80_.set_instruction_hook([this](uint16_t pc) { on_instruction(pc); });
-    ay8910_.set_port_handlers([this] { return joy1_; }, nullptr, nullptr, nullptr);
+    ay8910_.set_port_handlers([this] { return psg_port_a(); }, nullptr, nullptr, nullptr);
 }
 
 bool Msx2::init(const std::string& rom_path, std::string* error) {
@@ -71,7 +71,7 @@ void Msx2::reset() {
     keyboard_.fill(0xff);
     joy1_ = 0x3f;
     ppi_c_ = 0;
-    primary_sel_ = 0xf0;
+    primary_sel_ = 0;
     secondary_sel_.fill(0);
     expanded_ = {true, false, false, true};
     mapper_reg_ = {3, 2, 1, 0};
@@ -212,12 +212,15 @@ void Msx2::write_byte(uint16_t address, uint8_t value) {
 }
 
 uint8_t Msx2::read_port(uint16_t port) {
-    switch (port & 0xff) {
+    uint8_t p = uint8_t(port);
+    if (p >= 0x9c && p <= 0x9f) p = uint8_t(p - 4);  // MSX-SYSTEM VDP mirrors
+    if (p >= 0xac && p <= 0xaf) p = uint8_t(p - 4);  // MSX-SYSTEM PPI mirrors
+    switch (p) {
         case 0x98:
         case 0x99:
         case 0x9a:
         case 0x9b:
-            return vdp_.port_read((port & 0xff) - 0x98);
+            return vdp_.port_read(p - 0x98);
         case 0xa2:
             return ay8910_.read();
         case 0xa8:
@@ -234,14 +237,18 @@ uint8_t Msx2::read_port(uint16_t port) {
         case 0xfd:
         case 0xfe:
         case 0xff:
-            return mapper_reg_[(port & 0xff) - 0xfc];
+            // Unused mapper bits read as 1, same as MSXEC (`ram_cfg|~ram_bit`).
+            return uint8_t(mapper_reg_[p - 0xfc] | uint8_t(~(kRamPages - 1)));
         default:
             return 0xff;
     }
 }
 
 void Msx2::write_port(uint16_t port, uint8_t value) {
-    switch (port & 0xff) {
+    uint8_t p = uint8_t(port);
+    if (p >= 0x9c && p <= 0x9f) p = uint8_t(p - 4);
+    if (p >= 0xac && p <= 0xaf) p = uint8_t(p - 4);
+    switch (p) {
         case 0x98:
             if (vdp_.command_busy() && (vdp_.command_op() == 0x0b || vdp_.command_op() == 0x0f)) {
                 vdp_.command_write_byte(value);
@@ -252,7 +259,7 @@ void Msx2::write_port(uint16_t port, uint8_t value) {
         case 0x99:
         case 0x9a:
         case 0x9b:
-            vdp_.port_write((port & 0xff) - 0x98, value);
+            vdp_.port_write(p - 0x98, value);
             break;
         case 0xa0:
             ay8910_.control(value);
@@ -288,12 +295,19 @@ void Msx2::write_port(uint16_t port, uint8_t value) {
         case 0xfd:
         case 0xfe:
         case 0xff:
-            mapper_reg_[(port & 0xff) - 0xfc] = value;
+            mapper_reg_[p - 0xfc] = value;
             update_pages();
             break;
         default:
             break;
     }
+}
+
+uint8_t Msx2::psg_port_a() const {
+    // MSXEC: joystick in bits 0–5, BIOS $002B bit 5 as the keyboard-layout bit.
+    uint8_t value = joy1_;
+    if (bios_[0x2b] & 0x20) value |= 0x40;
+    return value;
 }
 
 uint8_t Msx2::rtc_read() const {

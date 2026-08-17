@@ -68,6 +68,7 @@ private:
     void update_pages();
     uint8_t megarom_read(uint16_t address) const;
     void megarom_write(uint16_t address, uint8_t value);
+    uint8_t psg_port_a() const;
     uint8_t rtc_read() const;
     void bios_ret();
     bool trap_bios(uint16_t pc);
@@ -93,7 +94,7 @@ private:
     Mapper cart_mapper_ = Mapper::None;
     std::array<uint8_t, 4> cart_bank_{};
 
-    uint8_t primary_sel_ = 0xf0;
+    uint8_t primary_sel_ = 0;
     std::array<uint8_t, 4> secondary_sel_{};
     std::array<bool, 4> expanded_{};
     std::array<uint8_t, 4> mapper_reg_{3, 2, 1, 0};

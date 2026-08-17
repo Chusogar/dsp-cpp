@@ -69,19 +69,22 @@ int V9938::active_lines() const {
     return (regs_[9] & 0x80) ? 212 : 192;
 }
 
+int V9938::display_top() const {
+    return kBorderV + (active_lines() == 212 ? 0 : 10);
+}
+
+// MSXEC packs the mode as ((R#0>>1)&7)+(R#1&24): 0..5 G1..G6, 7 G7, 8 MC, 16 T1, 18 T2.
+int V9938::raster_mode() const {
+    return ((regs_[0] >> 1) & 7) + (regs_[1] & 24);
+}
+
 // 0 = 16K linear (MSX1 modes), 1 = 128K linear, 2 = 128K planar (G6/G7).
 int V9938::memtype() const {
-    switch (screen_mode()) {
-    case 7:
-    case 8:
-        return 2;
-    case 4:
-    case 5:
-    case 6:
-        return 1;
-    default:
-        return 0;
-    }
+    // MSXEC: planar when (R#1&24)==0 && (R#0&10)==10, i.e. G6/G7. M5 alone (R#0=0x08)
+    // is standard Graphic 6, so treat any M5 bitmap as planar.
+    if ((regs_[1] & 24) == 0 && (regs_[0] & 8) != 0) return 2;
+    if ((regs_[0] & 12) && !(regs_[1] & 24)) return 1;
+    return 0;
 }
 
 uint8_t V9938::vram_rd(uint32_t addr) const {
@@ -90,6 +93,11 @@ uint8_t V9938::vram_rd(uint32_t addr) const {
 
 void V9938::vram_wr(uint32_t addr, uint8_t value) {
     vram_[addr & (kVramSize - 1)] = value;
+}
+
+uint8_t V9938::map_rd(uint32_t addr) const {
+    if (memtype() > 1) addr = ((addr >> 1) + (addr << 16)) & 0x1FFFF;
+    return vram_rd(addr);
 }
 
 uint32_t V9938::cpu_linear() const {
@@ -327,14 +335,14 @@ void V9938::render_sprites_m2(int y, uint32_t* buf) {
     const bool tp = (regs_[8] & 0x20) != 0;
     int drawn = 0;
     for (int i = 0; i < 32 && drawn < 8; i++) {
-        int sy0 = vram_rd(sat_base + uint32_t(i * 4));
+        int sy0 = map_rd(sat_base + uint32_t(i * 4));
         if (sy0 == 216) break;
         sy0 = (sy0 + 1) & 0xFF;
         if (y < sy0 || y >= sy0 + size * mag) continue;
-        int x = vram_rd(sat_base + uint32_t(i * 4 + 1));
-        int pat = vram_rd(sat_base + uint32_t(i * 4 + 2));
+        int x = map_rd(sat_base + uint32_t(i * 4 + 1));
+        int pat = map_rd(sat_base + uint32_t(i * 4 + 2));
         const int sy = (y - sy0) / mag;
-        const uint8_t cattr = vram_rd(ct + uint32_t(i * 16 + sy));
+        const uint8_t cattr = map_rd(ct + uint32_t(i * 16 + sy));
         if (cattr & 0x40) x -= 32;
         const int clr = cattr & 0x0F;
         if (clr == 0 && !(cattr & 0x20) && !tp) {
@@ -349,10 +357,10 @@ void V9938::render_sprites_m2(int y, uint32_t* buf) {
             uint8_t bits;
             if (size == 16) {
                 const int quad = (bx >= 8 ? 1 : 0) + (by >= 8 ? 2 : 0);
-                bits = vram_rd(spg + uint32_t(pat + quad) * 8 + uint32_t(by & 7));
+                bits = map_rd(spg + uint32_t(pat + quad) * 8 + uint32_t(by & 7));
                 bx &= 7;
             } else {
-                bits = vram_rd(spg + uint32_t(pat) * 8 + uint32_t(by));
+                bits = map_rd(spg + uint32_t(pat) * 8 + uint32_t(by));
             }
             if (bits & (0x80 >> bx)) {
                 for (int m = 0; m < mag; m++) {
@@ -367,8 +375,7 @@ void V9938::render_sprites_m2(int y, uint32_t* buf) {
 
 void V9938::render_line(int line) {
     const int active = active_lines();
-    const int top_blank = (active == 212) ? 0 : 10;
-    const int disp_line = line - (kBorderV + top_blank);
+    const int disp_line = line - display_top();
     const uint32_t border = backdrop();
     uint32_t* row = framebuffer_.data() + (line * kScreenWidth);
 
@@ -410,8 +417,9 @@ void V9938::render_line(int line) {
 int V9938::blit_update() {
     blit_ay_ = (regs_[45] & 8) ? -1 : 1;
     blit_ax_ = (regs_[45] & 4) ? -1 : 1;
-    switch (screen_mode()) {
-    case 5:  // G4: 256×4-bit linear
+    // Hardware G4..G7 are packed modes 2,3,4,6; MSXEC also labels 3..5,7 as G4..G7.
+    switch (raster_mode() & 31) {
+    case 2:  // G4 (M4)
         blit_xl_ = 255;
         blit_yl_ = 1023;
         blit_mask_ = 15;
@@ -420,7 +428,7 @@ int V9938::blit_update() {
         blit_xh_ = ~blit_xl_;
         blit_yh_ = ~blit_yl_;
         return blit_case_ = 0;
-    case 6:  // G5: 512×2-bit linear
+    case 3:  // G5 (M4+M3)
         blit_xl_ = 511;
         blit_yl_ = 1023;
         blit_mask_ = 3;
@@ -429,7 +437,8 @@ int V9938::blit_update() {
         blit_xh_ = ~blit_xl_;
         blit_yh_ = ~blit_yl_;
         return blit_case_ = 1;
-    case 7:  // G6: 512×4-bit planar
+    case 4:  // G6 (M5)
+    case 5:  // G6 with M3, as in MSXEC's (mode&29)==5
         blit_xl_ = 511;
         blit_yl_ = 511;
         blit_mask_ = 15;
@@ -438,7 +447,8 @@ int V9938::blit_update() {
         blit_xh_ = ~blit_xl_;
         blit_yh_ = ~blit_yl_;
         return blit_case_ = 2;
-    case 8:  // G7: 256×8-bit planar
+    case 6:  // G7 (M5+M4)
+    case 7:  // G7 with M3
         blit_bits_ = 0;
         blit_xl_ = 255;
         blit_yl_ = 511;
@@ -954,15 +964,20 @@ void V9938::reset() {
 }
 
 void V9938::begin_frame() {
-    status_[0] |= 0x80;
-    status_[2] |= 0x40;
-    if (regs_[1] & 0x20) irq_vblank_ = true;
     frame_counter_++;
 }
 
 void V9938::check_line_irq(int line) {
-    if (line == kBorderV) status_[2] &= ~0x40;
-    if (line == (regs_[19] + kBorderV) && (regs_[0] & 0x10)) {
+    const int active = active_lines();
+    const int disp = line - display_top();
+    if (disp == 0) status_[2] &= ~0x40;  // start of bitmap: VR off
+    if (disp == active) {
+        status_[2] |= 0x40;  // end of bitmap: VR + IE0
+        status_[0] |= 0x80;
+        if (regs_[1] & 0x20) irq_vblank_ = true;
+    }
+    // IE1 compares DL (R#19) with (raster + R#23) as an 8-bit wrap, like MSXEC.
+    if (disp >= 0 && uint8_t(disp + regs_[23]) == regs_[19] && (regs_[0] & 0x10)) {
         status_[1] |= 0x01;
         irq_hblank_ = true;
     }

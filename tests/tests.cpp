@@ -2522,7 +2522,7 @@ void test_msx2_bios_mapper_and_disk() {
     check(machine->screen_width() == 544 && machine->screen_height() == 240,
           "MSX2 screen is 544x240 including border");
     check(machine->debug_has_diskrom(), "optional DISK.ROM is detected");
-    check(machine->debug_slot() == 0xf0, "boot slot select is BIOS+RAM");
+    check(machine->debug_slot() == 0, "PPI port A resets to 0 like MSXEC");
     check(machine->debug_mapper(3) == 0, "mapper page 3 starts on RAM page 0");
 
     const fs::path dsk = dir / "blank.dsk";
