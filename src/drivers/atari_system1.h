@@ -61,6 +61,11 @@ public:
     const char* title() const override;
 
     uint32_t debug_pc() const { return main_cpu_.pc(); }
+    uint16_t debug_sound_pc() const { return sound_cpu_.pc(); }
+    bool debug_sound_halted() const { return sound_cpu_halted_; }
+    uint16_t debug_bankselect() const { return bankselect_; }
+    uint8_t debug_in2() const { return in2_; }
+    uint8_t debug_sound_ram(uint16_t address) const { return sound_memory_[address]; }
 
 private:
     uint16_t main_read(uint32_t address);
@@ -152,7 +157,7 @@ private:
     bool main_pending_ = false;
     uint8_t sound_latch_ = 0;
     uint8_t main_latch_ = 0;
-    bool sound_cpu_halted_ = true;
+    bool sound_cpu_halted_ = false;
     int line_ = 0;
 
     int64_t audio_accumulator_ = 0;

@@ -264,7 +264,7 @@ bool try_open_loader(RomLoader& loader, const std::string& path) {
 
 AtariSystem1::AtariSystem1(Game game)
     : game_(game),
-      main_cpu_(kMainClock),
+      main_cpu_(kMainClock, M68000::Type::M68010),
       sound_cpu_(kSoundClock),
       ym_(kYmClock),
       pokey_(kSoundClock),
@@ -284,6 +284,8 @@ AtariSystem1::AtariSystem1(Game game)
         [this](uint16_t address) { return sound_read(address); },
         [this](uint16_t address, uint8_t value) { sound_write(address, value); });
     sound_cpu_.set_cycle_handler([this](int cycles) { on_sound_cycles(cycles); });
+    // Hold: the 6502 consumes the line after one IRQ. YM2151 then deasserts on
+    // the Timer A ack ($14 bit 4) and re-asserts on the next wrap.
     ym_.set_irq_handler([this](bool on) { sound_cpu_.set_irq(on ? IrqLine::Hold : IrqLine::Clear); });
 
     via_.set_port_a([this]() { return tms_.status(); },
@@ -589,7 +591,10 @@ void AtariSystem1::reset() {
     main_pending_ = false;
     main_latch_ = 0;
     sound_latch_ = 0;
-    sound_cpu_halted_ = true;
+    // Keep the 6502 running from power-on, matching dsp-emulator. Starting it
+    // halted deadlocks Indiana Jones: the 68K BIOS waits for a 6502 reply
+    // before it writes bankselect bit 7, so $1820 coin switches are never read.
+    sound_cpu_halted_ = false;
     line_ = 0;
     audio_accumulator_ = 0;
     audio_.clear();
@@ -605,9 +610,19 @@ void AtariSystem1::set_sound_reset(bool running) {
     if (running == !sound_cpu_halted_) return;
     if (running) {
         sound_cpu_halted_ = false;
-        sound_cpu_.reset();
+        ym_.clear_external_irq();
+        sound_cpu_.set_irq(IrqLine::Clear);
+        sound_cpu_.set_nmi(IrqLine::Clear);
+        // Continue from the halted PC. A forced 6502 reset runs the sound ROM
+        // zero-page clear and wipes the $FE38 coin debounce / credit counters.
     } else {
+        // MAME bankselect_w: holding the 6502 in reset also resets the VIA
+        // and acknowledges the main latch.
         sound_cpu_halted_ = true;
+        via_.reset();
+        tms_.reset();
+        main_pending_ = false;
+        main_cpu_.set_irq(6, IrqLine::Clear);
     }
 }
 
@@ -761,45 +776,60 @@ void AtariSystem1::set_palette(int index, uint16_t value) {
 }
 
 uint8_t AtariSystem1::sound_read(uint16_t address) {
-    if (address <= 0x0fff || address >= 0x4000) return sound_memory_[address];
+    // MAME: RAM $0000-$0FFF mirrored at $2000; I/O at $1800-$187F with
+    // mirrors 0x278e / 0x278f / 0x2780.
+    if ((address & ~0x2000) <= 0x0fff) return sound_memory_[address & 0x0fff];
+    if (address >= 0x4000) return sound_memory_[address];
     if (has_speech() && via_selected(address)) return via_.read(uint8_t(address & 0x0f));
-    if (address == 0x1801) return ym_.status();
-    if (address == 0x1810) {
+    if ((address & ~0x278e) == 0x1800 || (address & ~0x278e) == 0x1801) return ym_.status();
+    if ((address & ~0x278f) == 0x1810) {
         sound_pending_ = false;
         sound_cpu_.set_nmi(IrqLine::Clear);
         return sound_latch_;
     }
-    if (address == 0x1820) {
-        return uint8_t(in2_ | (sound_pending_ ? 0x08 : 0) | (main_pending_ ? 0x10 : 0));
+    if ((address & ~0x278f) == 0x1820) {
+        uint8_t value = uint8_t(in2_ | (sound_pending_ ? 0x08 : 0) | (main_pending_ ? 0x10 : 0));
+        // MAME switch_6502_r: service (F60000 bit 6) inverts the self-test bit.
+        if ((in0_ & 0x0040) == 0) value ^= 0x80;
+        return value;
     }
-    if (address >= 0x1870 && address <= 0x187f) return pokey_.read(address & 0x0f);
+    if ((address & ~0x2780) >= 0x1870 && (address & ~0x2780) <= 0x187f) {
+        return pokey_.read(address & 0x0f);
+    }
     return 0xff;
 }
 
 void AtariSystem1::sound_write(uint16_t address, uint8_t value) {
-    if (address <= 0x0fff) {
-        sound_memory_[address] = value;
+    if ((address & ~0x2000) <= 0x0fff) {
+        sound_memory_[address & 0x0fff] = value;
         return;
     }
     if (has_speech() && via_selected(address)) {
         via_.write(uint8_t(address & 0x0f), value);
         return;
     }
-    if (address == 0x1800) {
+    if ((address & ~0x278e) == 0x1800) {
         ym_.select_register(value);
         return;
     }
-    if (address == 0x1801) {
+    if ((address & ~0x278e) == 0x1801) {
         ym_.write(value);
         return;
     }
-    if (address == 0x1810) {
+    if ((address & ~0x278f) == 0x1810) {
         main_latch_ = value;
         main_pending_ = true;
         main_cpu_.set_irq(6, IrqLine::Assert);
         return;
     }
-    if (address >= 0x1870 && address <= 0x187f) pokey_.write(address & 0x0f, value);
+    // MAME: $1820-$1827 LS259. Q0 is YM2151 reset (active low). Absorb the
+    // writes so they are not treated as open bus; do not pulse ym_.reset()
+    // here — that would stop Timer A, which is what drives the $FE38 coin scan.
+    const uint16_t outlatch = uint16_t(address & ~0x2788);
+    if (outlatch >= 0x1820 && outlatch <= 0x1827) return;
+    if ((address & ~0x2780) >= 0x1870 && (address & ~0x2780) <= 0x187f) {
+        pokey_.write(address & 0x0f, value);
+    }
 }
 
 void AtariSystem1::on_sound_cycles(int cycles) {
