@@ -2407,6 +2407,39 @@ void test_v9938_line_stays_axis_aligned() {
     check(pixel(81, 30) == pixel(81, 10), "column beside a vertical LINE stays backdrop");
 }
 
+void test_v9938_screen7_planar() {
+    dsp::V9938 vdp;
+    auto wr = [&](int reg, uint8_t value) {
+        vdp.port_write(1, value);
+        vdp.port_write(1, uint8_t(0x80 | reg));
+    };
+    wr(0, 0x08);  // M5 → Graphic 6 (SCREEN 7)
+    wr(1, 0x40);
+    wr(2, 0x1f);
+    wr(9, 0x80);
+
+    auto pset = [&](int x, int y, uint8_t color) {
+        wr(36, uint8_t(x));
+        wr(37, uint8_t(x >> 8));
+        wr(38, uint8_t(y));
+        wr(39, 0);
+        wr(44, color);
+        wr(45, 0);
+        wr(46, 0x50);  // PSET IMP
+    };
+    pset(0, 10, 15);
+    pset(2, 10, 8);
+    pset(4, 10, 15);
+    vdp.render_line(dsp::V9938::kBorderV + 10);
+    const uint32_t* fb = vdp.framebuffer();
+    auto pix = [&](int x) {
+        return fb[(dsp::V9938::kBorderV + 10) * dsp::V9938::kScreenWidth + dsp::V9938::kBorderH + x] &
+               0x00ffffffu;
+    };
+    check(pix(0) != pix(1), "SCREEN 7 even/odd bytes live in different 64K banks");
+    check(pix(0) == pix(2), "SCREEN 7 2:1 output keeps even pixels of the 512-dot line");
+}
+
 void test_msx2_bios_mapper_and_disk() {
     dsp::V9938 vdp;
     vdp.reset();
@@ -2534,6 +2567,7 @@ int main() {
     test_exelv_dummy_bios();
     test_trdos_scl_and_beta();
     test_v9938_line_stays_axis_aligned();
+    test_v9938_screen7_planar();
     test_msx2_bios_mapper_and_disk();
     test_starwars_missing_roms();
     test_atari_system1_missing_roms();

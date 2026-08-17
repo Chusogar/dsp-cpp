@@ -54,6 +54,9 @@ private:
     void render_sprites_m1(int line, uint32_t* buf);
     void render_sprites_m2(int line, uint32_t* buf);
     uint8_t log_op(int op, uint8_t src, uint8_t dst) const;
+    uint32_t bitmap_addr(int x, int y) const;
+    int display_y_offset() const;
+    int pixels_per_byte() const;
     uint8_t get_pixel(int x, int y) const;
     void set_pixel(int x, int y, uint8_t clr);
     void exec_command();

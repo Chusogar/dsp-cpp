@@ -175,10 +175,9 @@ void V9938::render_mc(int line, uint32_t* buf) {
 
 // Render G4 (Screen 5, 256×212 bitmap, 4bpp)
 void V9938::render_g4(int line, uint32_t* buf) {
-    uint32_t base = (uint32_t)(regs_[2] & 0x60) << 10;
-    uint32_t addr = base + (uint32_t)line * 128;
+    const int y = line + display_y_offset();
     for (int x = 0; x < 256; x += 2) {
-        uint8_t byte = vram_rd(addr++);
+        uint8_t byte = vram_rd(bitmap_addr(x, y));
         buf[x]     = palette_[(byte >> 4) & 0x0F];
         buf[x + 1] = palette_[byte & 0x0F];
     }
@@ -186,34 +185,27 @@ void V9938::render_g4(int line, uint32_t* buf) {
 
 // Render G5 (Screen 6, 512×212 bitmap, 2bpp → display as 256 wide)
 void V9938::render_g5(int line, uint32_t* buf) {
-    uint32_t base = (uint32_t)(regs_[2] & 0x60) << 10;
-    uint32_t addr = base + (uint32_t)line * 128;
-    for (int x = 0; x < 256; x += 2) {
-        uint8_t byte = vram_rd(addr++);
-        // 4 pixels per byte, 2 bits each; take pixels 0 and 2 for 2:1 downscale
-        buf[x]     = palette_[(byte >> 6) & 3];
-        buf[x + 1] = palette_[(byte >> 2) & 3];
-    }
-}
-
-// Render G6 (Screen 7, 512×212 bitmap, 4bpp → display as 256 wide)
-void V9938::render_g6(int line, uint32_t* buf) {
-    uint32_t base = (uint32_t)(regs_[2] & 0x20) << 11;
-    uint32_t addr = base + (uint32_t)line * 256;
+    const int y = line + display_y_offset();
     for (int x = 0; x < 256; x++) {
-        uint8_t byte = vram_rd(addr);
-        // Two 4bpp pixels at 512 width → we take the left one
-        buf[x] = palette_[(byte >> 4) & 0x0F];
-        addr++;
+        uint8_t byte = vram_rd(bitmap_addr(x * 2, y));
+        buf[x] = palette_[(byte >> 6) & 3];
     }
 }
 
-// Render G7 (Screen 8, 256×212 bitmap, 8bpp, fixed 3-3-2 palette)
+// Render G6 (Screen 7, 512×212 planar 4bpp → 256 wide, matching SCREEN 5 aspect)
+void V9938::render_g6(int line, uint32_t* buf) {
+    const int y = line + display_y_offset();
+    for (int x = 0; x < 256; x++) {
+        uint8_t byte = vram_rd(bitmap_addr(x * 2, y));
+        buf[x] = palette_[(byte >> 4) & 0x0F];
+    }
+}
+
+// Render G7 (Screen 8, 256×212 planar 8bpp)
 void V9938::render_g7(int line, uint32_t* buf) {
-    uint32_t base = (uint32_t)(regs_[2] & 0x60) << 10;
-    uint32_t addr = base + (uint32_t)line * 256;
+    const int y = line + display_y_offset();
     for (int x = 0; x < 256; x++)
-        buf[x] = g7_color(vram_rd(addr++));
+        buf[x] = g7_color(vram_rd(bitmap_addr(x, y)));
 }
 
 // Render sprites mode 1 (Screen 1-3: 8/16 px, 4 per line, 1 color)
@@ -376,74 +368,75 @@ uint8_t V9938::log_op(int op, uint8_t src, uint8_t dst) const {
     }
 }
 
-// Get pixel from VRAM (bitmap modes)
-uint8_t V9938::get_pixel(int x, int y) const {
-    int mode = screen_mode();
-    uint32_t base = (uint32_t)(regs_[2] & 0x60) << 10;
-    switch (mode) {
-    case 5: { // G4: 4bpp, 256 wide
-        uint32_t addr = base + (uint32_t)y * 128 + x / 2;
-        uint8_t byte = vram_rd(addr);
-        return (x & 1) ? (byte & 0x0F) : ((byte >> 4) & 0x0F);
-    }
-    case 6: { // G5: 2bpp, 512 wide
-        uint32_t addr = base + (uint32_t)y * 128 + x / 4;
-        uint8_t byte = vram_rd(addr);
-        int shift = (3 - (x & 3)) * 2;
-        return (byte >> shift) & 0x03;
-    }
-    case 7: { // G6: 4bpp, 512 wide
-        base = (uint32_t)(regs_[2] & 0x20) << 11;
-        uint32_t addr = base + (uint32_t)y * 256 + x / 2;
-        uint8_t byte = vram_rd(addr);
-        return (x & 1) ? (byte & 0x0F) : ((byte >> 4) & 0x0F);
-    }
-    case 8: { // G7: 8bpp, 256 wide
-        uint32_t addr = base + (uint32_t)y * 256 + x;
-        return vram_rd(addr);
-    }
-    default: return 0;
+uint32_t V9938::bitmap_addr(int x, int y) const {
+    switch (screen_mode()) {
+    case 5:  // SCREEN 5 / G4: 256×, 4bpp, linear
+        return (uint32_t(y & 1023) << 7) + uint32_t((x & 255) >> 1);
+    case 6:  // SCREEN 6 / G5: 512×, 2bpp, linear
+        return (uint32_t(y & 1023) << 7) + uint32_t((x & 511) >> 2);
+    case 7:  // SCREEN 7 / G6: 512×, 4bpp, even/odd bytes in separate 64K banks
+        return (uint32_t(x & 2) << 15) | (uint32_t(y & 511) << 7) | uint32_t((x & 511) >> 2);
+    case 8:  // SCREEN 8 / G7: 256×, 8bpp, even/odd pixels in separate 64K banks
+        return (uint32_t(x & 1) << 16) | (uint32_t(y & 511) << 7) | uint32_t((x >> 1) & 127);
+    default:
+        return 0;
     }
 }
 
-// Set pixel in VRAM (bitmap modes)
+int V9938::display_y_offset() const {
+    switch (screen_mode()) {
+    case 5:
+    case 6:
+        return int((regs_[2] & 0x60) << 3);
+    case 7:
+    case 8:
+        return (regs_[2] & 0x20) ? 256 : 0;
+    default:
+        return 0;
+    }
+}
+
+int V9938::pixels_per_byte() const {
+    switch (screen_mode()) {
+    case 6: return 4;
+    case 8: return 1;
+    default: return 2;
+    }
+}
+
+uint8_t V9938::get_pixel(int x, int y) const {
+    const uint8_t byte = vram_rd(bitmap_addr(x, y));
+    switch (screen_mode()) {
+    case 6: {
+        const int shift = (3 - (x & 3)) * 2;
+        return uint8_t((byte >> shift) & 0x03);
+    }
+    case 8:
+        return byte;
+    default:
+        return (x & 1) ? uint8_t(byte & 0x0F) : uint8_t((byte >> 4) & 0x0F);
+    }
+}
+
 void V9938::set_pixel(int x, int y, uint8_t clr) {
-    int mode = screen_mode();
-    uint32_t base = (uint32_t)(regs_[2] & 0x60) << 10;
-    switch (mode) {
-    case 5: { // G4
-        uint32_t addr = base + (uint32_t)y * 128 + x / 2;
-        uint8_t byte = vram_rd(addr);
-        if (x & 1) byte = (byte & 0xF0) | (clr & 0x0F);
-        else       byte = (byte & 0x0F) | ((clr & 0x0F) << 4);
-        vram_wr(addr, byte);
+    const uint32_t addr = bitmap_addr(x, y);
+    uint8_t byte = vram_rd(addr);
+    switch (screen_mode()) {
+    case 6: {
+        const int shift = (3 - (x & 3)) * 2;
+        const uint8_t mask = uint8_t(0x03 << shift);
+        byte = uint8_t((byte & ~mask) | ((clr & 0x03) << shift));
         break;
     }
-    case 6: { // G5
-        uint32_t addr = base + (uint32_t)y * 128 + x / 4;
-        uint8_t byte = vram_rd(addr);
-        int shift = (3 - (x & 3)) * 2;
-        uint8_t mask = 0x03 << shift;
-        byte = (byte & ~mask) | ((clr & 0x03) << shift);
-        vram_wr(addr, byte);
+    case 8:
+        byte = clr;
+        break;
+    default:
+        if (x & 1) byte = uint8_t((byte & 0xF0) | (clr & 0x0F));
+        else       byte = uint8_t((byte & 0x0F) | ((clr & 0x0F) << 4));
         break;
     }
-    case 7: { // G6
-        base = (uint32_t)(regs_[2] & 0x20) << 11;
-        uint32_t addr = base + (uint32_t)y * 256 + x / 2;
-        uint8_t byte = vram_rd(addr);
-        if (x & 1) byte = (byte & 0xF0) | (clr & 0x0F);
-        else       byte = (byte & 0x0F) | ((clr & 0x0F) << 4);
-        vram_wr(addr, byte);
-        break;
-    }
-    case 8: { // G7
-        uint32_t addr = base + (uint32_t)y * 256 + x;
-        vram_wr(addr, clr);
-        break;
-    }
-    default: break;
-    }
+    vram_wr(addr, byte);
 }
 
 int V9938::line_x_mask() const {
@@ -539,46 +532,51 @@ void V9938::exec_command() {
     case 0xB: // LMMC (logical move CPU→VRAM); first pixel is already in R#44
         start_cpu_transfer(cmd, dx, dy, nx, ny, arg, uint8_t(clr));
         return;
-    case 0xC: // HMMV (high-speed fill)
+    case 0xC: // HMMV (high-speed fill, NX in dots → bytes)
+    {
+        const int ppb = pixels_per_byte();
+        int count = nx / ppb;
+        if (count <= 0) count = 1;
         for (int y = 0; y < ny; y++) {
-            uint32_t base = (uint32_t)(regs_[2] & 0x60) << 10;
-            int py = (dy + y * diy) & 0x3FF;
-            for (int x = 0; x < nx; x++) {
-                int px = (dx + x * dix) & 0x1FF;
-                uint32_t addr = base + (uint32_t)py * 128 + px / 2;
-                if (screen_mode() == 8) // G7: byte per pixel
-                    addr = base + (uint32_t)py * 256 + px;
-                vram_wr(addr, clr);
+            const int py = (dy + y * diy) & 0x3FF;
+            for (int x = 0; x < count; x++) {
+                const int px = (dx + x * dix * ppb) & 0x1FF;
+                vram_wr(bitmap_addr(px, py), uint8_t(clr));
             }
         }
         break;
+    }
     case 0xD: // HMMM (high-speed move)
+    {
+        const int ppb = pixels_per_byte();
+        int count = nx / ppb;
+        if (count <= 0) count = 1;
         for (int y = 0; y < ny; y++) {
-            uint32_t base = (uint32_t)(regs_[2] & 0x60) << 10;
-            int spy = (sy + y * diy) & 0x3FF;
-            int dpy = (dy + y * diy) & 0x3FF;
-            int bpl = (screen_mode() == 8) ? 256 : 128;
-            for (int x = 0; x < nx; x++) {
-                int spx = (sx + x * dix) & 0x1FF;
-                int dpx = (dx + x * dix) & 0x1FF;
-                uint32_t sa, da;
-                if (bpl == 256) { sa = base + spy*256 + spx; da = base + dpy*256 + dpx; }
-                else { sa = base + spy*128 + spx/2; da = base + dpy*128 + dpx/2; }
-                vram_wr(da, vram_rd(sa));
+            const int spy = (sy + y * diy) & 0x3FF;
+            const int dpy = (dy + y * diy) & 0x3FF;
+            for (int x = 0; x < count; x++) {
+                const int spx = (sx + x * dix * ppb) & 0x1FF;
+                const int dpx = (dx + x * dix * ppb) & 0x1FF;
+                vram_wr(bitmap_addr(dpx, dpy), vram_rd(bitmap_addr(spx, spy)));
             }
         }
         break;
+    }
     case 0xE: // YMMM (high-speed move Y-only)
+    {
+        const int ppb = pixels_per_byte();
+        const int xmax = line_x_mask();
         for (int y = 0; y < ny; y++) {
-            int spy = (sy + y * diy) & 0x3FF;
-            int dpy = (dy + y * diy) & 0x3FF;
-            int bpl = (screen_mode() == 8) ? 256 : 128;
-            uint32_t base = (uint32_t)(regs_[2] & 0x60) << 10;
-            for (int x = 0; x < bpl; x++)
-                vram_wr(base + dpy * bpl + x, vram_rd(base + spy * bpl + x));
+            const int spy = (sy + y * diy) & 0x3FF;
+            const int dpy = (dy + y * diy) & 0x3FF;
+            for (int x = 0; x < xmax; x += ppb)
+                vram_wr(bitmap_addr(x, dpy), vram_rd(bitmap_addr(x, spy)));
         }
         break;
+    }
     case 0xF: // HMMC (high-speed move CPU→VRAM); first byte is already in R#44
+        nx /= pixels_per_byte();
+        if (nx <= 0) nx = 1;
         start_cpu_transfer(cmd, dx, dy, nx, ny, arg, uint8_t(clr));
         return;
     case 0x7: // LINE — MAME/openMSX Bresenham (ASX starts at (NX-1)/2)
@@ -657,11 +655,10 @@ void V9938::command_write_byte(uint8_t data) {
         uint8_t dst = get_pixel(px, py);
         set_pixel(px, py, log_op(log, data, dst));
     } else if (cmd_op_ == 0x0F) { // HMMC
-        int px = (cmd_dx_ + cmd_px_ * dix) & 0x1FF;
+        const int ppb = pixels_per_byte();
+        int px = (cmd_dx_ + cmd_px_ * dix * ppb) & 0x1FF;
         int py = (cmd_dy_ + cmd_py_ * diy) & 0x3FF;
-        uint32_t base = (uint32_t)(regs_[2] & 0x60) << 10;
-        int bpl = (screen_mode() == 8) ? 256 : 128;
-        vram_wr(base + py * bpl + (bpl == 256 ? px : px / 2), data);
+        vram_wr(bitmap_addr(px, py), data);
     }
 
     cmd_px_++;
