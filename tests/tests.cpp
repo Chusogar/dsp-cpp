@@ -2211,20 +2211,20 @@ void test_trdos_scl_and_beta() {
     beta.enable();
     check(beta.state_r() != 0xff, "port $FF is live while DOS is paged in");
 
-    dsp::Pentagon1024 pentagon;
-    dsp::Scorpion256 scorpion;
-    check(std::strcmp(pentagon.title(), "Pentagon 1024") == 0, "Pentagon title");
-    check(std::strcmp(scorpion.title(), "Scorpion ZS-256") == 0, "Scorpion title");
-    check(pentagon.debug_ram_pages() == 64, "Pentagon 1024 has 64 RAM pages");
-    check(scorpion.debug_ram_pages() == 16, "Scorpion 256 has 16 RAM pages");
-    check(pentagon.screen_width() == 352 && pentagon.screen_height() == 280,
+    auto pentagon = std::make_unique<dsp::Pentagon1024>();
+    auto scorpion = std::make_unique<dsp::Scorpion256>();
+    check(std::strcmp(pentagon->title(), "Pentagon 1024") == 0, "Pentagon title");
+    check(std::strcmp(scorpion->title(), "Scorpion ZS-256") == 0, "Scorpion title");
+    check(pentagon->debug_ram_pages() == 64, "Pentagon 1024 has 64 RAM pages");
+    check(scorpion->debug_ram_pages() == 16, "Scorpion 256 has 16 RAM pages");
+    check(pentagon->screen_width() == 352 && pentagon->screen_height() == 280,
           "clone screen is 352x280");
 
     error = "unset";
-    check(!pentagon.init("/no/such/pentagon", &error), "Pentagon init fails without ROMs");
+    check(!pentagon->init("/no/such/pentagon", &error), "Pentagon init fails without ROMs");
     check(error.find("not found") != std::string::npos, "Pentagon reports the missing 128K ROM");
     error = "unset";
-    check(!scorpion.init("/no/such/scorpion", &error), "Scorpion init fails without ROMs");
+    check(!scorpion->init("/no/such/scorpion", &error), "Scorpion init fails without ROMs");
     check(error.find("not found") != std::string::npos, "Scorpion reports the missing ROM");
 
     namespace fs = std::filesystem;
@@ -2241,41 +2241,58 @@ void test_trdos_scl_and_beta() {
     write_blob("trdos.rom", 0x4000);
     write_blob("scorpion.rom", 0x10000);
 
-    dsp::Pentagon1024 pent_ok;
-    check(pent_ok.init(dir.string(), &error), "Pentagon boots from dummy 128K+TR-DOS ROMs");
-    pent_ok.io_out(0x7ffd, 0x07);
-    check(pent_ok.debug_ram3() == 7, "Pentagon $7FFD bits 0-2 select RAM 0-7");
-    pent_ok.io_out(0x7ffd, 0x40);
-    check(pent_ok.debug_ram3() == 8, "Pentagon $7FFD bits 6-7 select RAM 8-31");
-    pent_ok.io_out(0xdffd, 0x01);
-    check(pent_ok.debug_ram3() == 40, "Pentagon $DFFD bit 0 selects RAM 32-63");
-    pent_ok.io_out(0x7ffd, 0x10);
-    pent_ok.debug_m1(0x3d00);
-    check(pent_ok.debug_beta() && pent_ok.debug_rom_page() == 3,
+    auto pent_ok = std::make_unique<dsp::Pentagon1024>();
+    check(pent_ok->init(dir.string(), &error), "Pentagon boots from dummy 128K+TR-DOS ROMs");
+    pent_ok->io_out(0x7ffd, 0x07);
+    check(pent_ok->debug_ram3() == 7, "Pentagon $7FFD bits 0-2 select RAM 0-7");
+    pent_ok->io_out(0x7ffd, 0x40);
+    check(pent_ok->debug_ram3() == 8, "Pentagon $7FFD bits 6-7 select RAM 8-31");
+    pent_ok->io_out(0xdffd, 0x01);
+    check(pent_ok->debug_ram3() == 40, "Pentagon $DFFD bit 0 selects RAM 32-63");
+    pent_ok->io_out(0x7ffd, 0x10);
+    pent_ok->debug_m1(0x3d00);
+    check(pent_ok->debug_beta() && pent_ok->debug_rom_page() == 3,
           "M1 at $3D00 with the 48K ROM pages TR-DOS in");
-    pent_ok.debug_m1(0x4000);
-    check(!pent_ok.debug_beta(), "M1 at $4000 pages TR-DOS out");
+    pent_ok->debug_m1(0x4000);
+    check(!pent_ok->debug_beta(), "M1 at $4000 pages TR-DOS out");
 
     const fs::path scl_path = dir / "test.scl";
     {
         std::ofstream out(scl_path.string(), std::ios::binary);
         out.write(reinterpret_cast<const char*>(scl.data()), std::streamsize(scl.size()));
     }
-    check(pent_ok.load_media(scl_path.string(), &error), "Pentagon loads an SCL disk");
-    check(pent_ok.debug_disk(), "Beta 128 has a disk after SCL load");
+    check(pent_ok->load_media(scl_path.string(), &error), "Pentagon loads an SCL disk");
+    check(pent_ok->debug_disk(), "Beta 128 has a disk after SCL load");
 
-    dsp::Scorpion256 scor_ok;
-    check(scor_ok.init(dir.string(), &error), "Scorpion boots from a 64 KB ROM");
-    scor_ok.io_out(0x7ffd, 0x05);
-    check(scor_ok.debug_ram3() == 5, "Scorpion $7FFD bits 0-2 select RAM 0-7");
-    scor_ok.io_out(0x1ffd, 0x10);
-    check(scor_ok.debug_ram3() == 13, "Scorpion $1FFD bit 4 selects RAM 8-15");
-    check(scor_ok.load_media(scl_path.string(), &error), "Scorpion loads an SCL disk");
+    auto scor_ok = std::make_unique<dsp::Scorpion256>();
+    check(scor_ok->init(dir.string(), &error), "Scorpion boots from a 64 KB ROM");
+    scor_ok->io_out(0x7ffd, 0x05);
+    check(scor_ok->debug_ram3() == 5, "Scorpion $7FFD bits 0-2 select RAM 0-7");
+    scor_ok->io_out(0x1ffd, 0x10);
+    check(scor_ok->debug_ram3() == 13, "Scorpion $1FFD bit 4 selects RAM 8-15");
+    check(scor_ok->load_media(scl_path.string(), &error), "Scorpion loads an SCL disk");
 
-    pent_ok.run_frame();
-    scor_ok.run_frame();
-    check(pent_ok.framebuffer()[0] != 0, "Pentagon renders a border");
-    check(scor_ok.framebuffer()[0] != 0, "Scorpion renders a border");
+    pent_ok->run_frame();
+    scor_ok->run_frame();
+    check(pent_ok->framebuffer()[0] != 0, "Pentagon renders a border");
+    check(scor_ok->framebuffer()[0] != 0, "Scorpion renders a border");
+
+    const fs::path dir64 = dir / "zxmak";
+    fs::create_directories(dir64);
+    {
+        std::vector<uint8_t> blob(0x10000, 0x00);
+        blob[0] = 0x18;
+        blob[1] = 0xfe;
+        std::memcpy(blob.data() + 0xc365, "TR-DOS", 6);
+        std::ofstream out((dir64 / "PENTAGON.ROM").string(), std::ios::binary);
+        out.write(reinterpret_cast<const char*>(blob.data()), std::streamsize(blob.size()));
+        std::ofstream out2((dir64 / "scorpion.rom").string(), std::ios::binary);
+        out2.write(reinterpret_cast<const char*>(blob.data()), std::streamsize(blob.size()));
+    }
+    auto pent64 = std::make_unique<dsp::Pentagon1024>();
+    check(pent64->init(dir64.string(), &error), "64 KB PENTAGON.ROM boots without a separate TR-DOS file");
+    auto scor64 = std::make_unique<dsp::Scorpion256>();
+    check(scor64->init(dir64.string(), &error), "64 KB scorpion.rom boots from the ZXMak layout");
 }
 
 }  // namespace

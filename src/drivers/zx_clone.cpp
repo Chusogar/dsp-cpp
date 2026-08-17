@@ -102,7 +102,8 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
                 lower.find("pentagon") != std::string::npos ||
                 lower.find("pent1024") != std::string::npos || lower.find("scorpio") != std::string::npos ||
                 lower.find("scorpion") != std::string::npos || lower.find("spec128") != std::string::npos ||
-                lower.find("beta128") != std::string::npos || lower.find("trdos") != std::string::npos;
+                lower.find("beta128") != std::string::npos || lower.find("trdos") != std::string::npos ||
+                lower.find("zxmak") != std::string::npos;
             if (clone_zip) add_source(item.path().string());
         }
     }
@@ -123,18 +124,36 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
     std::vector<uint8_t> blob;
     bool have128 = false;
     bool have_dos = false;
+    bool joined64 = false;
     gluk_present_ = false;
 
-    const char* joined64[] = {"scorpion.rom", "scorp294.rom", "scorpion.rom.bin", "scorpio.rom"};
+    auto contains = [](const std::vector<uint8_t>& data, size_t off, size_t n, const char* text) {
+        const size_t m = std::strlen(text);
+        if (off + n > data.size() || m == 0 || n < m) return false;
+        for (size_t i = 0; i + m <= n; i++) {
+            if (std::memcmp(data.data() + off + i, text, m) == 0) return true;
+        }
+        return false;
+    };
+
+    auto load_joined64 = [&](const char* const* names, size_t count) {
+        for (size_t i = 0; i < count; i++) {
+            if (!try_named(names[i], blob) || blob.size() < 0x10000) continue;
+            for (int p = 0; p < 4; p++) copy_page(p, blob, size_t(p) * 0x4000);
+            have128 = have_dos = joined64 = true;
+            if (model_ == ZxCloneModel::Pentagon1024 &&
+                (contains(blob, 0x8000, 0x4000, "GLUK") || contains(blob, 0x8000, 0x4000, "RESET SERVICE"))) {
+                gluk_present_ = true;
+            }
+            return;
+        }
+    };
+
+    const char* joined64_scorp[] = {"scorpion.rom", "scorp294.rom", "scorpion.rom.bin", "scorpio.rom"};
+    const char* joined64_pent[] = {"pentagon.rom", "pentagon.rom.bin"};
     const char* joined32[] = {"pentagon.rom", "128.rom", "zx128.rom", "spectrum128.rom", "128p.rom"};
     if (model_ == ZxCloneModel::Scorpion256) {
-        for (const char* n : joined64) {
-            if (try_named(n, blob) && blob.size() >= 0x10000) {
-                for (int p = 0; p < 4; p++) copy_page(p, blob, size_t(p) * 0x4000);
-                have128 = have_dos = true;
-                break;
-            }
-        }
+        load_joined64(joined64_scorp, sizeof(joined64_scorp) / sizeof(joined64_scorp[0]));
         if (!have128) {
             std::vector<uint8_t> p0, p1, p2, p3;
             if (try_named("scorp0.rom", p0) && try_named("scorp1.rom", p1) &&
@@ -148,6 +167,8 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
                 have128 = have_dos = true;
             }
         }
+    } else {
+        load_joined64(joined64_pent, sizeof(joined64_pent) / sizeof(joined64_pent[0]));
     }
 
     if (!have128) {
@@ -220,7 +241,9 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
                 break;
             }
         }
-        if (!gluk_present_) copy_page(2, std::vector<uint8_t>(rom_[3].begin(), rom_[3].end()), 0);
+        if (!gluk_present_ && !joined64) {
+            copy_page(2, std::vector<uint8_t>(rom_[3].begin(), rom_[3].end()), 0);
+        }
     } else if (rom_[2][0] == 0 && rom_[2][1] == 0) {
         const char* svc[] = {"scorp2.rom", "service.rom"};
         for (const char* n : svc) {

@@ -355,7 +355,13 @@ MAME 0.221 names (merged parent is `spec128.zip`; clones live in subfolders
 A directory of split zips also works: `pentagon.zip` + `spectrum_beta128.zip`,
 `pent1024.zip` for GLUK, `scorpio.zip` for the Scorpion 64 KB ROM.
 
+ZXMak 0.28.2 ([zxmak0282.zip](https://zxmak.narod.ru/Soft/zxmak0282.zip)) ships
+64 KB `PENTAGON.ROM` (128+48+boot+TR-DOS 5.04F) and `scorpion.rom` in one
+archive; pass the zip or the extracted files.
+
 ```bash
+./build/dsp --game pentagon --disk elite.trd /path/to/zxmak0282.zip
+./build/dsp --game scorpion --disk game.scl /path/to/zxmak0282.zip
 ./build/dsp --game pentagon --disk elite.trd /path/to/mame-roms/
 ./build/dsp --game scorpion --disk game.scl /path/to/scorpio.zip
 ```
