@@ -32,6 +32,7 @@
 #include "drivers/scv.h"
 #include "drivers/starwars.h"
 #include "drivers/polepos.h"
+#include "cpu/mb88xx.h"
 #include "cpu/z8002.h"
 #include "drivers/spectrum.h"
 #include "drivers/zx_clone.h"
@@ -2160,6 +2161,13 @@ void test_polepos_driver() {
     dsp::PolePos missing2(dsp::PolePos::Game::PolePosition2);
     check(std::strcmp(missing2.title(), "Pole Position II") == 0, "Pole Position II title");
 
+    std::vector<uint8_t> mb_rom(0x400, 0x00);
+    dsp::Mb88 mcu(dsp::Mb88::Type::Mb8843, 1536000);
+    mcu.set_program_rom(mb_rom.data(), mb_rom.size());
+    mcu.reset();
+    mcu.run(10);
+    check(mcu.pc() == 10, "MB8843 NOP advances PC one byte per cycle");
+
     // Z8002: LD R9,#0x0002 then HALT-ish (keep running a handful of insns).
     std::array<uint8_t, 0x100> mem{};
     mem[2] = 0x40;
@@ -2189,6 +2197,21 @@ void test_polepos_driver() {
         check(boot.init(rom, &error), "Pole Position ROM set loads");
         for (int i = 0; i < 180; i++) boot.run_frame();
         check(boot.debug_z80_pc() != 0, "Pole Position Z80 is executing");
+        check(boot.debug_n51_pc() != 0 || (boot.debug_ls259() & 0x02) == 0,
+              "Pole Position 51xx MCU is clocked or still held in reset");
+        std::vector<int16_t> audio;
+        boot.drain_audio(audio);
+        bool heard = false;
+        for (int16_t s : audio) {
+            if (s != 0) {
+                heard = true;
+                break;
+            }
+        }
+        check(!audio.empty(), "Pole Position drain_audio yields samples");
+        if (boot.debug_ls259() & 0x04) {
+            check(heard, "Pole Position WSG/engine produce non-silent samples when enabled");
+        }
         bool lit = false;
         const uint32_t* fb = boot.framebuffer();
         for (int i = 0; i < boot.screen_width() * boot.screen_height(); i++) {

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 
 #include "core/rom_loader.h"
 
@@ -67,6 +68,41 @@ const std::vector<RomEntry> kPpProms = {
     {"pp3-6.6m", 0x0400, 0x0c00, 0x63fb6057},
 };
 const std::vector<RomEntry> kPpNamco = {{"pp1-5.3b", 0x0100, 0, 0x8568decc}};
+const std::vector<RomEntry> kPpEngine = {
+    {"pp1_15.6a", 0x2000, 0x0000, 0xb5ad4d5f},
+    {"pp1_16.5a", 0x2000, 0x2000, 0x8fdd2f6f},
+};
+const std::vector<RomEntry> kPpVoice = {
+    {"pp2_11.2e", 0x2000, 0x0000, 0x5b4cf05e},
+    {"pp2_12.2f", 0x2000, 0x2000, 0x32b694c2},
+    {"pp2_13.1e", 0x2000, 0x4000, 0x8842138a},
+};
+const std::vector<RomEntry> kPp2Engine = {
+    {"pp4_15.6a", 0x2000, 0x0000, 0x7d93bc1c},
+    {"pp4_16.5a", 0x2000, 0x2000, 0x7d93bc1c},
+};
+const std::vector<RomEntry> kPp2Voice = {
+    {"pp1_11.2e", 0x2000, 0x0000, 0x45b9bfeb},
+    {"pp1_13.1e", 0x2000, 0x2000, 0xa4237466},
+    {"pp1_12.2f", 0x2000, 0x4000, 0xa31b4be5},
+    {"pp1_14.1f", 0x2000, 0x6000, 0x944580f9},
+};
+const std::vector<RomEntry> kNamco51Rom = {{"51xx.bin", 0x0400, 0, 0xc2f57ef8}};
+const std::vector<RomEntry> kNamco52Rom = {{"52xx.bin", 0x0400, 0, 0x3257d11e}};
+const std::vector<RomEntry> kNamco54Rom = {{"54xx.bin", 0x0400, 0, 0xee7357e0}};
+
+bool load_mcu_rom(const std::string& game_path, const char* zip_name, const std::vector<RomEntry>& entries,
+                  std::vector<uint8_t>& dest, std::string* error) {
+    namespace fs = std::filesystem;
+    const fs::path given(game_path);
+    const fs::path sibling = given.has_parent_path() ? given.parent_path() / zip_name : fs::path(zip_name);
+    RomLoader loader;
+    std::string attempt;
+    if (loader.open(sibling.string(), &attempt) && loader.load(entries, dest, &attempt)) return true;
+    if (loader.open(game_path, &attempt) && loader.load(entries, dest, &attempt)) return true;
+    if (error) *error = attempt.empty() ? (std::string("missing ") + zip_name) : attempt;
+    return false;
+}
 
 const std::vector<RomEntry> kPp2Z80 = {
     {"pp4_9.6h", 0x2000, 0x0000, 0xbcf87004},
@@ -157,7 +193,15 @@ GfxLayout big_sprite_layout(int region_bytes) {
 }  // namespace
 
 PolePos::PolePos(Game game)
-    : game_(game), z80_(kCpuClock), sub1_(kCpuClock), sub2_(kCpuClock) {
+    : game_(game),
+      z80_(kCpuClock),
+      sub1_(kCpuClock),
+      sub2_(kCpuClock),
+      n51_(kMcuClock),
+      n52_(kMcuClock),
+      n54_(kMcuClock),
+      wsg_(kMasterClock / 512),
+      engine_(kCpuClock) {
     framebuffer_.assign(size_t(kScreenWidth) * kScreenHeight, 0xff000000u);
     z80_.set_memory_handlers([this](uint16_t a) { return z80_read(a); },
                              [this](uint16_t a, uint8_t v) { z80_write(a, v); });
@@ -168,6 +212,12 @@ PolePos::PolePos(Game game)
                               [this](uint16_t a, uint8_t v) { z8002_write(0, a, v); });
     sub2_.set_memory_handlers([this](uint16_t a) { return z8002_read(1, a); },
                               [this](uint16_t a, uint8_t v) { z8002_write(1, a, v); });
+    n51_.set_input(0, [this] { return uint8_t(dswb_ & 0x0f); });
+    n51_.set_input(1, [this] { return uint8_t(dswb_ >> 4); });
+    n51_.set_input(2, [this] { return uint8_t(in0() & 0x0f); });
+    n51_.set_input(3, [this] { return uint8_t(in0() >> 4); });
+    n52_.set_rom_read([this](uint16_t offset) { return namco52_rom_r(offset); });
+    n52_.set_si_read([] { return 1; });
 }
 
 bool PolePos::init(const std::string& rom_path, std::string* error) {
@@ -195,6 +245,19 @@ bool PolePos::init(const std::string& rom_path, std::string* error) {
     if (!loader.load(kPpScale, scalelut_, error)) return false;
     if (!loader.load(pp2 ? kPp2Proms : kPpProms, proms_, error)) return false;
     if (!loader.load(kPpNamco, namco_wavetable_, error)) return false;
+    if (!loader.load(pp2 ? kPp2Engine : kPpEngine, engine_rom_, error)) return false;
+    if (!loader.load(pp2 ? kPp2Voice : kPpVoice, voice_rom_, error)) return false;
+
+    std::vector<uint8_t> n51_rom, n52_rom, n54_rom;
+    if (!load_mcu_rom(rom_path, "namco51.zip", kNamco51Rom, n51_rom, error)) return false;
+    if (!load_mcu_rom(rom_path, "namco52.zip", kNamco52Rom, n52_rom, error)) return false;
+    if (!load_mcu_rom(rom_path, "namco54.zip", kNamco54Rom, n54_rom, error)) return false;
+    if (!n51_.load_rom(n51_rom, error)) return false;
+    if (!n52_.load_rom(n52_rom, error)) return false;
+    if (!n54_.load_rom(n54_rom, error)) return false;
+
+    wsg_.set_wavetable(namco_wavetable_.data(), namco_wavetable_.size());
+    engine_.set_samples(engine_rom_.data(), engine_rom_.size());
 
     warnings_ = loader.warnings();
     decode_graphics();
@@ -274,17 +337,15 @@ void PolePos::reset() {
     n06_read_stretch_ = false;
     n06_cycle_acc_ = 0;
     n06_period_cycles_ = 0;
-    n51_mode_ = 1;
-    n51_out_index_ = 0;
-    n51_coinage_left_ = 0;
-    n51_out_.fill(0x0f);
-    n51_coinage_ = {1, 1, 1, 1};
-    n51_cred_lo_ = 0;
-    n51_cred_hi_ = 0;
-    n51_coin1_partial_ = 0;
-    n51_coin2_partial_ = 0;
-    n51_in0_prev_ = 0xff;
-    namco51_vblank();
+    mcu_cycle_acc_ = 0;
+    n51_.reset();
+    n52_.reset();
+    n54_.reset();
+    n51_.set_reset(false);
+    n52_.set_reset(false);
+    n54_.set_reset(false);
+    wsg_.reset();
+    engine_.reset();
     steer_last_ = steer_;
     steer_delta_ = 0;
     steer_accum_ = 0;
@@ -327,6 +388,15 @@ void PolePos::ls259_w(int bit, bool value) {
             irq_enable_ = value;
             if (value) z80_.set_irq(IrqLine::Clear);
             break;
+        case 1:
+            n51_.set_reset(value);
+            n52_.set_reset(value);
+            n54_.set_reset(value);
+            break;
+        case 2:
+            wsg_.sound_enable(value);
+            engine_.clson(value);
+            break;
         case 3:
             adc_channel_ = value;
             break;
@@ -366,6 +436,9 @@ void PolePos::namco06_ctrl_w(uint8_t data) {
         n06_period_cycles_ = 0;
         n06_timer_state_ = false;
         z80_.set_nmi(IrqLine::Clear);
+        n51_.set_chip_select(false);
+        n52_.set_chip_select(false);
+        n54_.set_chip_select(false);
     } else {
         const int divisor = 1 << ((n06_control_ >> 5) & 7);
         // One NMI per divided 06xx clock (64 Z80 cycles * divisor).
@@ -374,7 +447,6 @@ void PolePos::namco06_ctrl_w(uint8_t data) {
         if (n06_control_ & 0x10) {
             z80_.set_nmi(IrqLine::Clear);
             n06_read_stretch_ = true;
-            n51_out_index_ = 0;
         } else {
             n06_read_stretch_ = false;
         }
@@ -383,99 +455,16 @@ void PolePos::namco06_ctrl_w(uint8_t data) {
 
 void PolePos::namco06_tick() {
     n06_timer_state_ = !n06_timer_state_;
+    if (n06_timer_state_) n51_.set_rw((n06_control_ & 0x10) != 0);
     if (n06_timer_state_ && !n06_read_stretch_) {
         z80_.set_nmi(IrqLine::Pulse);
     } else {
         z80_.set_nmi(IrqLine::Clear);
     }
     n06_read_stretch_ = false;
-}
-
-uint8_t PolePos::namco51_read() {
-    const uint8_t lo = n51_out_[size_t(n51_out_index_ & 7)];
-    const uint8_t hi = n51_out_[size_t((n51_out_index_ + 1) & 7)];
-    n51_out_index_ = (n51_out_index_ + 2) & 7;
-    return uint8_t((hi << 4) | (lo & 0x0f));
-}
-
-void PolePos::namco51_write(uint8_t data) {
-    data &= 0x0f;
-    if (n51_coinage_left_ > 0) {
-        n51_coinage_[size_t(n51_coinage_left_ - 1)] = data == 0 ? uint8_t(1) : data;
-        n51_coinage_left_--;
-        return;
-    }
-    switch (data) {
-        case 1:
-            n51_coinage_left_ = 4;
-            break;
-        case 2:
-            n51_mode_ = 0;
-            n51_out_index_ = 0;
-            break;
-        case 5:
-            n51_mode_ = 1;
-            n51_out_index_ = 0;
-            break;
-        default:
-            break;
-    }
-}
-
-void PolePos::namco51_vblank() {
-    const uint8_t in = in0();
-    n51_out_.fill(0x0f);
-    if (n51_mode_ == 1) {
-        n51_out_[0] = uint8_t(in & 0x0f);
-        n51_out_[1] = uint8_t(in >> 4);
-        n51_out_[2] = uint8_t(dswb_ & 0x0f);
-        n51_out_[3] = uint8_t(dswb_ >> 4);
-    } else {
-        const uint8_t coins = uint8_t((~in) & (~n51_in0_prev_) & 0x30);
-        if (coins & 0x10) {
-            n51_coin1_partial_++;
-            if (n51_coin1_partial_ >= n51_coinage_[3]) {
-                n51_coin1_partial_ = 0;
-                n51_cred_lo_ = uint8_t(n51_cred_lo_ + n51_coinage_[2]);
-                while (n51_cred_lo_ > 9) {
-                    n51_cred_lo_ = uint8_t(n51_cred_lo_ - 10);
-                    if (n51_cred_hi_ < 9) n51_cred_hi_++;
-                }
-            }
-        }
-        if (coins & 0x20) {
-            n51_coin2_partial_++;
-            if (n51_coin2_partial_ >= n51_coinage_[1]) {
-                n51_coin2_partial_ = 0;
-                n51_cred_lo_ = uint8_t(n51_cred_lo_ + n51_coinage_[0]);
-                while (n51_cred_lo_ > 9) {
-                    n51_cred_lo_ = uint8_t(n51_cred_lo_ - 10);
-                    if (n51_cred_hi_ < 9) n51_cred_hi_++;
-                }
-            }
-        }
-        n51_out_[0] = n51_cred_lo_;
-        n51_out_[1] = n51_cred_hi_;
-        if (n51_mode_ == 2) {
-            n51_out_[2] = uint8_t(in & 0x0f);
-            n51_out_[3] = 0;
-            n51_out_[4] = uint8_t(in >> 4);
-            n51_out_[5] = gear_hi_ ? 1 : 0;
-        }
-        const bool start = ((~in) & n51_in0_prev_ & 0x04) != 0;
-        if (n51_mode_ == 0 && start && (n51_cred_lo_ || n51_cred_hi_)) {
-            if (n51_cred_lo_ == 0) {
-                n51_cred_hi_--;
-                n51_cred_lo_ = 9;
-            } else {
-                n51_cred_lo_--;
-            }
-            n51_mode_ = 2;
-            n51_out_[0] = n51_cred_lo_;
-            n51_out_[1] = n51_cred_hi_;
-        }
-    }
-    n51_in0_prev_ = in;
+    n51_.set_chip_select((n06_control_ & 0x01) && n06_timer_state_);
+    n52_.set_chip_select((n06_control_ & 0x04) && n06_timer_state_);
+    n54_.set_chip_select((n06_control_ & 0x08) && n06_timer_state_);
 }
 
 uint8_t PolePos::namco53_read() {
@@ -495,14 +484,21 @@ uint8_t PolePos::namco53_read() {
 uint8_t PolePos::namco06_data_r() {
     if (!(n06_control_ & 0x10)) return 0;
     uint8_t result = 0xff;
-    if (n06_control_ & 0x01) result &= namco51_read();
+    if (n06_control_ & 0x01) result &= n51_.read();
     if (n06_control_ & 0x02) result &= namco53_read();
     return result;
 }
 
 void PolePos::namco06_data_w(uint8_t data) {
     if (n06_control_ & 0x10) return;
-    if (n06_control_ & 0x01) namco51_write(data);
+    if (n06_control_ & 0x01) n51_.write(data);
+    if (n06_control_ & 0x04) n52_.write(data);
+    if (n06_control_ & 0x08) n54_.write(data);
+}
+
+uint8_t PolePos::namco52_rom_r(uint16_t offset) const {
+    if (offset < voice_rom_.size()) return voice_rom_[offset];
+    return 0xff;
 }
 
 void PolePos::on_z80_cycles(int cycles) {
@@ -513,10 +509,22 @@ void PolePos::on_z80_cycles(int cycles) {
             namco06_tick();
         }
     }
+    // MB88 parent clock is half the Z80 clock, then /6 internally → 1 MCU cycle / 12 Z80 cycles.
+    mcu_cycle_acc_ += cycles;
+    while (mcu_cycle_acc_ >= 12) {
+        mcu_cycle_acc_ -= 12;
+        n51_.run(1);
+        n52_.run(1);
+        n54_.run(1);
+    }
     audio_accumulator_ += int64_t(cycles) * kSampleRate;
     while (audio_accumulator_ >= int64_t(kCpuClock)) {
         audio_accumulator_ -= int64_t(kCpuClock);
-        audio_.push_back(0);
+        int32_t sample = wsg_.update(n54_.chanl1(), n54_.chanl2(), n54_.chanl3(), n52_.dac()) * 40;
+        sample += engine_.update();
+        if (sample > 32767) sample = 32767;
+        if (sample < -32768) sample = -32768;
+        audio_.push_back(int16_t(sample));
     }
 }
 
@@ -530,7 +538,11 @@ uint8_t PolePos::z80_read(uint16_t address) {
     if (address < 0x4c00) return road_ram_[(address - 0x4800) * 2 + 1];
     if (address < 0x5000) return alpha_ram_[(address - 0x4c00) * 2 + 1];
     if (address < 0x5800) return view_ram_[(address - 0x5000) * 2 + 1];
-    if (address >= 0x8000 && address < 0x9000) return sound_ram_[address & 0x3ff];
+    if (address >= 0x8000 && address < 0x9000) {
+        const uint16_t off = uint16_t(address & 0x3ff);
+        if (off >= 0x3c0) return wsg_.read(uint8_t(off & 0x3f));
+        return sound_ram_[off];
+    }
     if ((address & 0xf000) == 0x9000) {
         return (address & 0x0100) ? namco06_ctrl_r() : namco06_data_r();
     }
@@ -566,7 +578,11 @@ void PolePos::z80_write(uint16_t address, uint8_t value) {
         return;
     }
     if (address >= 0x8000 && address < 0x9000) {
-        sound_ram_[address & 0x3ff] = value;
+        const uint16_t off = uint16_t(address & 0x3ff);
+        if (off >= 0x3c0)
+            wsg_.write(uint8_t(off & 0x3f), value);
+        else
+            sound_ram_[off] = value;
         return;
     }
     if ((address & 0xf000) == 0x9000) {
@@ -579,6 +595,8 @@ void PolePos::z80_write(uint16_t address, uint8_t value) {
     if ((address & 0xf000) == 0xa000) {
         const int sel = address & 7;
         if ((address & 0x0300) == 0x0000) ls259_w(sel, (value & 1) != 0);
+        if ((address & 0x0300) == 0x0200) engine_.lsb_w(value);
+        if ((address & 0x0300) == 0x0300) engine_.msb_w(value);
         return;
     }
 }
@@ -837,11 +855,13 @@ void PolePos::run_frame() {
             z80_.set_irq(IrqLine::Assert);
         }
         if (line == 240) {
-            namco51_vblank();
+            n51_.vblank(true);
             if (sub_irq_mask_) {
                 if (!sub1_reset_) sub1_.set_nvi(IrqLine::Assert);
                 if (!sub2_reset_) sub2_.set_nvi(IrqLine::Assert);
             }
+        } else if (line == 0) {
+            n51_.vblank(false);
         }
         int left = kCyclesPerLine;
         while (left > 0) {

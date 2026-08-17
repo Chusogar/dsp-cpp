@@ -8,6 +8,11 @@
 #include "core/machine.h"
 #include "cpu/z80.h"
 #include "cpu/z8002.h"
+#include "machine/namco51.h"
+#include "machine/namco52.h"
+#include "machine/namco54.h"
+#include "sound/polepos_engine.h"
+#include "sound/polepos_wsg.h"
 #include "video/gfx.h"
 
 namespace dsp {
@@ -24,6 +29,7 @@ public:
     static constexpr int kScanlines = 264;
     static constexpr uint32_t kMasterClock = 24576000;
     static constexpr uint32_t kCpuClock = kMasterClock / 8;  // 3.072 MHz
+    static constexpr uint32_t kMcuClock = kCpuClock / 2;     // 1.536 MHz, MB88 /6 inside
     static constexpr double kFramesPerSecond = double(kMasterClock / 4) / (384.0 * 264.0);
     static constexpr int kSampleRate = 44100;
     static constexpr int kCyclesPerLine = 192;
@@ -57,6 +63,7 @@ public:
     uint8_t debug_sub_irq_mask() const { return sub_irq_mask_; }
     bool debug_sub1_reset() const { return sub1_reset_; }
     bool debug_sub2_reset() const { return sub2_reset_; }
+    uint16_t debug_n51_pc() const { return n51_.debug_pc(); }
     uint16_t debug_view_hscroll() const { return view_hscroll_; }
     uint16_t debug_road_vscroll() const { return road_vscroll_; }
     uint16_t debug_alpha_word(int index) const {
@@ -90,10 +97,8 @@ private:
     void namco06_ctrl_w(uint8_t data);
     void namco06_tick();
 
-    uint8_t namco51_read();
-    void namco51_write(uint8_t data);
-    void namco51_vblank();
     uint8_t namco53_read();
+    uint8_t namco52_rom_r(uint16_t offset) const;
 
     uint8_t in0() const;
 
@@ -113,6 +118,11 @@ private:
     Z80 z80_;
     Z8002 sub1_;
     Z8002 sub2_;
+    Namco51xx n51_;
+    Namco52xx n52_;
+    Namco54xx n54_;
+    PolePosWsg wsg_;
+    PolePosEngine engine_;
 
     std::vector<uint8_t> z80_rom_;
     std::vector<uint8_t> sub1_rom_;
@@ -131,6 +141,8 @@ private:
     std::vector<uint8_t> scalelut_;
     std::vector<uint8_t> proms_;
     std::vector<uint8_t> namco_wavetable_;
+    std::vector<uint8_t> engine_rom_;
+    std::vector<uint8_t> voice_rom_;
 
     GfxSet chars_;
     GfxSet tiles_;
@@ -171,18 +183,7 @@ private:
     bool n06_read_stretch_ = false;
     int n06_cycle_acc_ = 0;
     int n06_period_cycles_ = 0;
-
-    // Namco 51xx (high-level I/O, Pole Position nibble buffer)
-    int n51_mode_ = 1;  // 0 idle/credit, 1 init/switch, 2 active
-    int n51_out_index_ = 0;
-    int n51_coinage_left_ = 0;
-    std::array<uint8_t, 8> n51_out_{};
-    std::array<uint8_t, 4> n51_coinage_{1, 1, 1, 1};
-    uint8_t n51_cred_lo_ = 0;
-    uint8_t n51_cred_hi_ = 0;
-    uint8_t n51_coin1_partial_ = 0;
-    uint8_t n51_coin2_partial_ = 0;
-    uint8_t n51_in0_prev_ = 0xff;
+    int mcu_cycle_acc_ = 0;
 
     // Namco 53xx (high-level I/O)
     uint8_t steer_last_ = 0x80;

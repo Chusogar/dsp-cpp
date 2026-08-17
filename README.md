@@ -79,7 +79,8 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Star Wars mathbox | new (MAME `starwars_m.cpp`) | PROM microcode, multiply-accumulate, restoring divider |
 | Star Wars driver | new (MAME `starwars.cpp`) | Dual 6809, AVG, 4×POKEY, TMS5220, analog stick |
 | Z8002 CPU | new (MAME `z8000`) | Unsegmented 16-bit Z8002 used by Pole Position |
-| Pole Position driver | new (MAME `namco/polepos.cpp`) | Z80 + dual Z8002, road, sprites, 51xx/53xx I/O |
+| MB88xx MCU | new (MAME `mb88xx`) | Fujitsu 4-bit MCU used by Namco 51/52/54xx |
+| Pole Position driver | new (MAME `namco/polepos.cpp`) | Z80 + dual Z8002, road, sprites, real 51xx, WSG/engine |
 
 ## Building
 
@@ -543,8 +544,10 @@ committed. The MAME parent set `starwars` is enough:
 ### Namco Pole Position / Pole Position II
 
 Z80 + two Z8002s at 3.072 MHz, 256×224, ~60.6 Hz. The Namco 06xx talks to a
-high-level 51xx/53xx (coins, DIPs, steering); WSG/engine samples are not
-emulated yet. Use the MAME 0.221 merged parent sets `polepos` and `polepos2`.
+real MB8843 51xx (coins, DIPs, start) plus a high-level 53xx (steering). Audio
+is the Pole Position WSG, engine sample player, and MB88 52xx/54xx DACs. Use
+the MAME 0.221 merged parent sets `polepos` and `polepos2`, with `namco51.zip`,
+`namco52.zip`, and `namco54.zip` next to them.
 
 ```bash
 ./build/dsp --game polepos /path/to/polepos.zip
@@ -571,8 +574,8 @@ cmake --build build --target dsp_zexdoc
 ## Layout
 
 ```
-src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805, µPD7801, TMS7000, NEC V30
-src/sound/      AY-3-8910, SN76496, NES APU, SID, µPD1771C, QSound, TMS5220
+src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805, µPD7801, TMS7000, NEC V30, MB88xx
+src/sound/      AY-3-8910, SN76496, NES APU, SID, µPD1771C, QSound, TMS5220, Pole Position WSG/engine
 src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556
 src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, Lynx, WD1793/Beta
 src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556, AVG

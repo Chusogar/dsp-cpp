@@ -28,6 +28,7 @@ add_executable(dsp
   src/cpu/mcs51.cpp
   src/cpu/nec_v30.cpp
   src/cpu/z8002.cpp
+  src/cpu/mb88xx.cpp
  
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
@@ -43,6 +44,8 @@ add_executable(dsp
   src/sound/ym2203.cpp
   src/sound/ym3812.cpp
   src/sound/nes_apu.cpp
+  src/sound/polepos_wsg.cpp
+  src/sound/polepos_engine.cpp
     
   src/video/gfx.cpp
   src/video/atari_mo.cpp
@@ -69,6 +72,9 @@ add_executable(dsp
   src/machine/beta128.cpp
   src/machine/mos6532.cpp
   src/machine/starwars_math.cpp
+  src/machine/namco51.cpp
+  src/machine/namco52.cpp
+  src/machine/namco54.cpp
   
   src/drivers/bagman.cpp
   src/drivers/mikie.cpp
@@ -136,6 +142,7 @@ add_executable(dsp_tests
   src/cpu/upd7801.cpp
   src/cpu/tms7000.cpp
   src/cpu/z8002.cpp
+  src/cpu/mb88xx.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
@@ -148,6 +155,8 @@ add_executable(dsp_tests
   src/sound/tms5220.cpp
   src/sound/sid.cpp
   src/sound/gb_apu.cpp
+  src/sound/polepos_wsg.cpp
+  src/sound/polepos_engine.cpp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/nes_ppu.cpp
@@ -174,6 +183,9 @@ add_executable(dsp_tests
   src/machine/beta128.cpp
   src/machine/mos6532.cpp
   src/machine/starwars_math.cpp
+  src/machine/namco51.cpp
+  src/machine/namco52.cpp
+  src/machine/namco54.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
   src/drivers/nes.cpp
