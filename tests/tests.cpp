@@ -2212,6 +2212,43 @@ void test_atari_system1_missing_roms() {
     check(std::strcmp(road.title(), "Road Runner") == 0, "Road Runner title");
 }
 
+void test_indy_coin_if_present() {
+    const char* rom = "/tmp/roms/indytemp.zip";
+    std::ifstream probe(rom);
+    if (!probe) return;
+    probe.close();
+
+    dsp::AtariSystem1 machine(dsp::AtariSystem1::Game::Indy);
+    std::string error;
+    check(machine.init(rom, &error), "Indiana Jones ROM set loads for the coin test");
+    bool armed = false;
+    for (int i = 0; i < 600; i++) {
+        machine.run_frame();
+        if ((machine.debug_bankselect() & 0x80) != 0 &&
+            (machine.debug_sound_ram(0x30) & 0x1f) == 0x1f) {
+            armed = true;
+            break;
+        }
+    }
+    check(armed, "YM Timer A has armed the coin-1 debounce at $30");
+    check(!machine.debug_sound_halted(), "6502 sound CPU is running so it can see coins on $1820");
+    check(machine.debug_sound_pc() >= 0x4000, "6502 is executing sound ROM");
+
+    const uint8_t credits_before = machine.debug_sound_ram(0x2c);
+    dsp::MachineInputs coin;
+    for (int pulse = 0; pulse < 4; pulse++) {
+        coin.coin1 = true;
+        machine.set_inputs(coin);
+        check((machine.debug_in2() & 0x01) == 0, "coin 1 clears $1820 bit 0");
+        for (int i = 0; i < 3; i++) machine.run_frame();
+        coin.coin1 = false;
+        machine.set_inputs(coin);
+        for (int i = 0; i < 20; i++) machine.run_frame();
+    }
+    check(machine.debug_sound_ram(0x2c) > credits_before,
+          "inserting a coin is counted by the 6502 coin scan at $FE38");
+}
+
 void test_trdos_scl_and_beta() {
     std::vector<uint8_t> scl(9 + 14 + 256, 0);
     std::memcpy(scl.data(), "SINCLAIR", 8);
@@ -2427,6 +2464,7 @@ int main() {
     test_trdos_scl_and_beta();
     test_starwars_missing_roms();
     test_atari_system1_missing_roms();
+    test_indy_coin_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

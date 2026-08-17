@@ -27,6 +27,11 @@ public:
     void write(uint8_t data) { write_reg(last_register_, data); }
     void write_reg(uint8_t reg, uint8_t data);
     uint8_t status() const { return uint8_t(status_); }
+    void clear_external_irq() {
+        status_ &= ~3u;
+        irq_line_state_ = 0;
+        if (irq_handler_) irq_handler_(false);
+    }
 
     // Advances the two internal timers by `cycles` of the chip clock.
     void run_timers(int cycles);
