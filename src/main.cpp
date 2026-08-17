@@ -20,6 +20,7 @@
 #include "drivers/snk.h"
 #include "drivers/cps1.h"
 #include "drivers/m72.h"
+#include "drivers/starwars.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -56,6 +57,7 @@ void print_supported_emulators() {
         "\n"
         "  Arcade:\n"
         "    bagman, mikie, gauntlet, mrdo, ddragon, ddragon2,\n"
+        "    elevator, junglek, indydoom, peter, marble, starwars,\n"
         "    elevator, junglek, indydoom, peter, marble, roadrunn,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
 		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
@@ -129,6 +131,8 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "indydoom") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Indy);
 	if (game == "peter") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::PeterPak);	
 	if (game == "marble") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Marble);
+	if (game == "starwars" || game == "star-wars") {
+		return std::make_unique<dsp::StarWars>();
 	if (game == "roadrunn" || game == "roadrunner") {
 		return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::RoadRunner);
 	}

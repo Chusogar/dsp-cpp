@@ -49,6 +49,7 @@ add_executable(dsp
   src/video/tms3556.cpp
   src/video/deco_bac06.cpp
   src/video/nes_ppu.cpp
+  src/video/avg_starwars.cpp
   
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
@@ -62,6 +63,8 @@ add_executable(dsp
   src/machine/disk_image.cpp
   src/machine/lynx_suzy.cpp
   src/machine/lynx_mikey.cpp
+  src/machine/mos6532.cpp
+  src/machine/starwars_math.cpp
   
   src/drivers/bagman.cpp
   src/drivers/mikie.cpp
@@ -103,6 +106,7 @@ add_executable(dsp
   src/drivers/c64.cpp
   src/drivers/atari_lynx.cpp
   src/drivers/exelv.cpp
+  src/drivers/starwars.cpp
       
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
@@ -143,6 +147,7 @@ add_executable(dsp_tests
   src/video/tms3556.cpp
   src/video/mos6566.cpp
   src/video/gb_ppu.cpp
+  src/video/avg_starwars.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/via6522.cpp
@@ -157,6 +162,8 @@ add_executable(dsp_tests
   src/machine/gb_mapper.cpp
   src/machine/lynx_suzy.cpp
   src/machine/lynx_mikey.cpp
+  src/machine/mos6532.cpp
+  src/machine/starwars_math.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
   src/drivers/nes.cpp
@@ -166,6 +173,7 @@ add_executable(dsp_tests
   src/drivers/atari_lynx.cpp
   src/drivers/scv.cpp
   src/drivers/exelv.cpp
+  src/drivers/starwars.cpp
   src/drivers/atari_system1.cpp
   src/core/rom_loader.cpp
 )
