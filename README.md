@@ -7,6 +7,9 @@ Supported games: **Bagman** (Valadon Automation, 1982), **Mikie** (Konami, 1984)
 **Kung-Fu Master**, **Spelunker**, **Spelunker II**, **Lode Runner** and **Lode Runner II**
 (Irem M62 hardware).
 **Ikari Warriors**, **Athena**, **TNK III** and **ASO** (SNK, 1985–1986).
+and Capcom **CPS1** (Ghouls'n Ghosts, Final Fight, Street Fighter II, Strider,
+Cadillacs and Dinosaurs, The Punisher, and the rest of the Pascal `cps1_hw`
+set).
 It also emulates the **ZX Spectrum 48K** home computer (Sinclair, 1982).
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
@@ -39,6 +42,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | M6803 MCU | `src/cpu/m680x.pas` (`TCPU_M6803`) | Irem M62 sound CPU: 128 bytes of internal RAM, ports 1-4, no internal ROM |
 | Irem M62 driver | `src/arcade/m62_hw.pas` | Kung-Fu Master, Spelunker, Spelunker II, Lode Runner and Lode Runner II: Z80, M6803, two AY-3-8910, two MSM5205, tiles and multi-height sprites |
 | SNK driver | `src/arcade/snk_hw.pas` | Three Z80s, YM3526, Ikari/Athena/TNK III/ASO video (chars, tiles, 16x16 and 32x32 sprites, hardflags) |
+| CPS1 driver | `src/arcade/cps1_hw.pas` | 68000 + Z80, CPS-A/B, three scroll layers, sprites, YM2151+OKI or QSound, Kabuki, 93C46 |
 | Spectrum ULA | `src/computer/spectrum_hw.pas` | Keyboard matrix, border, one bit beeper, EAR input, contended timing |
 | Spectrum driver | `src/computer/spectrum_hw.pas`, `spectrum_misc.pas` | 48K memory map, display file with attributes and flash, Kempston joystick |
 | Tape player | `src/misc/tap_tzx.pas` | `.tap` blocks and `.tzx` images (turbo, pure tone/data, direct recording, pauses, loops), hooked to the ROM loader |
@@ -130,6 +134,21 @@ bits 0-1, year and coinage displays, hit detection or infinite lives, coin slots
 The defaults are `--dip 0:0x7f --dip 1:0x00 --dip 2:0xff` for Elevator Action and
 `--dip 0:0x3f` for Jungle King. Jungle King runs on a monitor rotated 180 degrees, and
 the port rotates its picture back.
+
+### CPS1 (Final Fight, Street Fighter II, …)
+
+Capcom Play System 1: a 10 or 12 MHz 68000, a sound Z80 (YM2151 + OKI6295, or
+Kabuki-encrypted QSound on Cadillacs and Dinosaurs / The Punisher), and the CPS-A/B
+pair that maps three tile layers plus sprites. The visible area is 384×224 (1941 is
+rotated 270°). `--game` names match the MAME set: `ghouls`, `ffight`, `kod`, `sf2`,
+`strider`, `3wonders`, `captcomm`, `knights`, `sf2ce`, `dino`, `punisher`, `willow`,
+`1941`, `nemo`.
+
+```bash
+./build/dsp --game ffight /path/to/ffight.zip
+```
+
+Final Fight DIP defaults are A=`0xff`, B=`0xf4`, C=`0x9f`.
 
 Elevator Action ROM set: `ba3__01.2764.ic1`, `ba3__02.2764.ic2`, `ba3__03-1.2764.ic3`,
 `ba3__04-1.2764.ic6`, `ba3__05.2764.ic4`, `ba3__06.2764.ic5`, `ba3__07.2764.ic9`,

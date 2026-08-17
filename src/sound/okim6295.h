@@ -15,6 +15,8 @@ public:
     OKIM6295(uint32_t clock, bool pin7_high);
 
     void set_rom(std::vector<uint8_t> rom) { rom_ = std::move(rom); }
+    // CPS1 sound maps $F006 to pin 7 (divisor 132 when high, 165 when low).
+    void set_pin7(bool high) { divisor_ = high ? 132 : 165; }
 
     void reset();
 

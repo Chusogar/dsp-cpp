@@ -35,8 +35,10 @@
 #include "sound/nes_apu.h"
 #include "sound/pokey.h"
 #include "sound/sid.h"
+#include "sound/qsound.h"
 #include "sound/sn76496.h"
 #include "sound/ym2151.h"
+#include "machine/kabuki.h"
 #include "video/atari_mo.h"
 #include "video/gb_ppu.h"
 #include "video/gfx.h"
@@ -1020,6 +1022,32 @@ void test_okim6295() {
     check(sample != 0, "the OKI6295 decodes the selected sample");
     chip.write(0x08);  // silence voice 1
     check((chip.read() & 0x01) == 0, "the silence command stops the voice");
+    chip.set_pin7(false);
+    check(chip.sample_frequency() == 1056000 / 165, "pin 7 low selects the /165 divider");
+}
+
+void test_kabuki() {
+    std::vector<uint8_t> src(0x8000, 0);
+    src[0] = 0x00;
+    src[1] = 0xff;
+    src[2] = 0xa5;
+    std::vector<uint8_t> opcode, data;
+    dsp::kabuki_cps1_decode(src, opcode, data, 0x76543210, 0x24601357, 0x4343, 0x43);
+    check(opcode.size() == 0x8000 && data.size() == 0x8000, "kabuki emits 32K opcode and data maps");
+    check(opcode[2] != src[2] || data[2] != src[2], "non-trivial bytes are encrypted");
+    check(opcode[2] != data[2], "opcode and data maps differ for Cadillacs keys");
+}
+
+void test_qsound() {
+    dsp::QSound chip(0x1000);
+    chip.reset();
+    check(chip.read() == 0x80, "qsound reports ready");
+    check(chip.mixed() == 0, "qsound is silent after reset");
+    chip.write(0, 0x00);
+    chip.write(1, 0x10);
+    chip.write(2, 0x80);  // pan of channel 0
+    chip.clock();
+    check(chip.left() == 0 && chip.right() == 0, "a pan write without a key-on stays silent");
 }
 
 // A .tap image with a single block, the format the ROM loader expects.
@@ -1729,6 +1757,8 @@ int main() {
     test_msm5205();
     test_msm5205_streaming();
     test_okim6295();
+    test_kabuki();
+    test_qsound();
     test_spectrum_tape();
     test_spectrum_tzx();
     test_spectrum_ula();

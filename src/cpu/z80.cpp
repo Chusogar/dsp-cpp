@@ -195,7 +195,12 @@ void Z80::set_nmi(IrqLine state) {
     if (state == IrqLine::Clear) nmi_latched_ = false;
 }
 
-uint8_t Z80::fetch() { return rd(pc_++); }
+uint8_t Z80::fetch() {
+    uint8_t value = (fetching_opcode_ && opcode_read_) ? opcode_read_(pc_) : read_(pc_);
+    fetching_opcode_ = false;
+    pc_ = uint16_t(pc_ + 1);
+    return value;
+}
 
 uint16_t Z80::fetch16() {
     uint16_t value = rd(pc_);
@@ -552,6 +557,7 @@ int Z80::run(int cycles) {
         }
 
         if (instruction_hook_) instruction_hook_(pc_);
+        fetching_opcode_ = true;
         uint8_t opcode = fetch();
         r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
         cycles_ += t_main_[opcode];
@@ -902,6 +908,7 @@ int Z80::run(int cycles) {
 }
 
 void Z80::exec_cb() {
+    fetching_opcode_ = true;
     uint8_t opcode = fetch();
     r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
     cycles_ += t_cb_[opcode];
@@ -944,6 +951,7 @@ void Z80::exec_cb() {
 }
 
 void Z80::exec_ed() {
+    fetching_opcode_ = true;
     uint8_t opcode = fetch();
     r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
     cycles_ += t_ed_[opcode];
@@ -1067,6 +1075,7 @@ void Z80::exec_ed() {
 }
 
 void Z80::exec_index(uint16_t* index_reg) {
+    fetching_opcode_ = true;
     uint8_t opcode = fetch();
     r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
     cycles_ += t_index_[opcode];

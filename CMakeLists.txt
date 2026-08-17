@@ -32,6 +32,7 @@ add_executable(dsp
   src/sound/pokey.cpp
   src/sound/msm5205.cpp
   src/sound/okim6295.cpp
+  src/sound/qsound.cpp
   src/sound/ym2413.cpp
   src/sound/tms5220.cpp
   src/sound/upd1771.cpp
@@ -49,6 +50,8 @@ add_executable(dsp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/via6522.cpp
+  src/machine/kabuki.cpp
+  src/machine/eeprom93c46.cpp
   src/machine/spectrum_tape.cpp
   src/machine/tape_tzx.cpp
   src/machine/i8255.cpp
@@ -66,6 +69,7 @@ add_executable(dsp
   src/drivers/dec0.cpp
   src/drivers/m62.cpp
   src/drivers/snk.cpp
+  src/drivers/cps1.cpp
       
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
@@ -118,6 +122,7 @@ add_executable(dsp_tests
   src/sound/msm5205.cpp
   src/sound/okim6295.cpp
   src/sound/nes_apu.cpp
+  src/sound/qsound.cpp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/nes_ppu.cpp
@@ -126,6 +131,8 @@ add_executable(dsp_tests
   src/machine/spectrum_tape.cpp
   src/machine/tape_tzx.cpp
   src/machine/i8255.cpp
+  src/machine/kabuki.cpp
+  src/machine/eeprom93c46.cpp
   src/machine/nec765.cpp
   src/machine/mos6526.cpp
   src/video/mos6566.cpp
