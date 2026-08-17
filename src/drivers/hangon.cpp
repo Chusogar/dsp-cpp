@@ -173,7 +173,10 @@ void HangOn::drain_audio(std::vector<int16_t>& out) {
 
 uint16_t HangOn::main_read(uint32_t address) {
     address &= 0xffffff;
-    if (address <= 0x3ffff) return rom_[address >> 1];
+    if (address <= 0x3ffff) {
+        if (rom_.empty()) return 0xffff;
+        return rom_[(address >> 1) % rom_.size()];
+    }
     if (address >= 0x20c000 && address <= 0x20ffff) return ram_[(address & 0x3fff) >> 1];
     if (address >= 0x400000 && address <= 0x403fff) return video_.tile_ram[(address & 0x3fff) >> 1];
     if (address >= 0x410000 && address <= 0x410fff) return video_.char_ram[(address & 0xfff) >> 1];

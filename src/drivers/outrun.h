@@ -46,6 +46,9 @@ public:
 
     const char* title() const override { return "OutRun"; }
 
+    uint32_t debug_pc() const { return main_cpu_.pc(); }
+    uint32_t debug_sub_pc() const { return sub_cpu_.pc(); }
+
 private:
     uint16_t main_read(uint32_t address);
     void main_write(uint32_t address, uint16_t value);
@@ -75,8 +78,8 @@ private:
 
     std::vector<uint16_t> rom_;
     std::vector<uint16_t> rom2_;
+    // Shared 68k work RAM at $60000-$67fff (main + sub, MAME share("share1")).
     std::array<uint16_t, 0x4000> ram_{};
-    std::array<uint16_t, 0x4000> ram2_{};
     std::array<uint16_t, 0x800> road_ram_{};
     std::array<uint16_t, 0x800> road_buffer_{};
     std::vector<uint32_t> sprite_rom_;

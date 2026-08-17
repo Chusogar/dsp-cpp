@@ -53,8 +53,9 @@ const std::vector<RomEntry> kShinobiSprites = {
 };
 
 const std::vector<RomEntry> kTetrisMain = {
-    {"xepr12201.rom", 0x8000, 1, 0x343c0670},
-    {"xepr12200.rom", 0x8000, 0, 0x0b694740},
+    // dsp-emulator decrypted names, plus MAME 0.221 tetrisd bootleg files (same CRCs).
+    {"xepr12201.rom|bootleg_epr-12200.rom", 0x8000, 1, 0x343c0670},
+    {"xepr12200.rom|bootleg_epr-12201.rom", 0x8000, 0, 0x0b694740},
 };
 const std::vector<RomEntry> kTetrisSound = {{"epr-12205.rom", 0x8000, 0, 0x6695dc99}};
 const std::vector<RomEntry> kTetrisTiles = {
@@ -109,7 +110,7 @@ void scramble_s16a_sprites(std::vector<uint16_t>& dest, const std::vector<uint8_
     copy64k(0x70000, 0x70000);
     dest.resize(out.size() / 2);
     for (size_t i = 0; i < dest.size(); i++) {
-        dest[i] = uint16_t((out[i * 2] << 8) | out[i * 2 + 1]);
+        dest[i] = uint16_t(out[i * 2] | (uint16_t(out[i * 2 + 1]) << 8));
     }
 }
 
@@ -538,7 +539,7 @@ uint16_t System16::read_16b(uint32_t address) {
         result = io_16b(uint16_t((address >> 1) & 0x1fff));
         mapped = true;
     }
-    if (!mapped) result = uint16_t(0xff00 | mapper_.read_reg(uint8_t((address >> 1) & 0x1f)));
+    if (!mapped) result = mapper_.read_reg(uint8_t((address >> 1) & 0x1f));
     return result;
 }
 

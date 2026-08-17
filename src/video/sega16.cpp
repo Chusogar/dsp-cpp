@@ -116,8 +116,10 @@ bool load_roms16b(RomLoader& loader, const std::vector<RomEntry>& entries,
         }
     }
     dest.resize(raw.size() / 2);
+    // roms_load16b writes interleaved bytes into a word array. On little-endian
+    // that is even|odd<<8, which System 16 sprite drawing expects.
     for (size_t i = 0; i < dest.size(); i++) {
-        dest[i] = uint16_t((raw[i * 2] << 8) | raw[i * 2 + 1]);
+        dest[i] = uint16_t(raw[i * 2] | (uint16_t(raw[i * 2 + 1]) << 8));
     }
     return true;
 }

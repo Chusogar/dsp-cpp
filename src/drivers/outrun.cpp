@@ -137,7 +137,6 @@ void Outrun::reset() {
     video_.reset();
     video_.screen_enabled = false;
     ram_.fill(0);
-    ram2_.fill(0);
     road_ram_.fill(0);
     road_buffer_.fill(0);
     in0_ = 0x00ef;
@@ -257,7 +256,8 @@ uint16_t Outrun::main_read(uint32_t address) {
                 result = rom2_[(address & 0x3ffff) >> 1];
                 break;
             case 0x60000 ... 0x7ffff:
-                result = ram2_[(address & 0x7fff) >> 1];
+                // Main CPU window onto the shared 68k work RAM (MAME share("share1")).
+                result = ram_[(address & 0x7fff) >> 1];
                 break;
             case 0x80000 ... 0x8ffff:
                 result = road_ram_[(address & 0xfff) >> 1];
@@ -268,7 +268,7 @@ uint16_t Outrun::main_read(uint32_t address) {
         }
         mapped = true;
     }
-    if (!mapped) result = uint16_t(0xff00 | mapper_.read_reg(uint8_t((address >> 1) & 0x1f)));
+    if (!mapped) result = mapper_.read_reg(uint8_t((address >> 1) & 0x1f));
     return result;
 }
 
@@ -317,7 +317,7 @@ void Outrun::main_write(uint32_t address, uint16_t value) {
     if (mapper_.contains(5, address)) {
         switch (address & 0xfffff) {
             case 0x60000 ... 0x7ffff:
-                ram2_[(address & 0x7fff) >> 1] = value;
+                ram_[(address & 0x7fff) >> 1] = value;
                 break;
             case 0x80000 ... 0x8ffff:
                 road_ram_[(address & 0xfff) >> 1] = value;
@@ -342,14 +342,15 @@ void Outrun::main_write(uint32_t address, uint16_t value) {
 uint16_t Outrun::sub_read(uint32_t address) {
     address &= 0xfffff;
     if (address <= 0x5ffff) return rom2_[(address & 0x3ffff) >> 1];
-    if (address >= 0x60000 && address <= 0x7ffff) return ram2_[(address & 0x7fff) >> 1];
+    // Same 32KiB work RAM the main CPU maps at $60000.
+    if (address >= 0x60000 && address <= 0x7ffff) return ram_[(address & 0x7fff) >> 1];
     if (address >= 0x80000 && address <= 0x8ffff) return road_ram_[(address & 0xfff) >> 1];
     return 0xffff;
 }
 
 void Outrun::sub_write(uint32_t address, uint16_t value) {
     address &= 0xfffff;
-    if (address >= 0x60000 && address <= 0x67fff) ram2_[(address & 0x7fff) >> 1] = value;
+    if (address >= 0x60000 && address <= 0x67fff) ram_[(address & 0x7fff) >> 1] = value;
     else if (address >= 0x80000 && address <= 0x8ffff) road_ram_[(address & 0xfff) >> 1] = value;
     else if (address >= 0x90000 && address <= 0x9ffff) road_control_ = uint8_t(value & 3);
 }
@@ -452,16 +453,11 @@ void Outrun::run_frame() {
     const int sound_cycles =
         int(double(kSoundClock) / kFramesPerSecond / (kScanlines * kCpuSync) + 0.5);
     for (int line = 0; line < kScanlines; line++) {
-        if (line == 65 || line == 129 || line == 193) main_cpu_.set_irq(2, IrqLine::Assert);
-        if (line == 66 || line == 130 || line == 194) main_cpu_.set_irq(2, IrqLine::Clear);
+        if (line == 65 || line == 129 || line == 193) main_cpu_.set_irq(2, IrqLine::Hold);
         if (line == 223) {
-            main_cpu_.set_irq(4, IrqLine::Assert);
-            sub_cpu_.set_irq(4, IrqLine::Assert);
+            main_cpu_.set_irq(4, IrqLine::Hold);
+            sub_cpu_.set_irq(4, IrqLine::Hold);
             update_video();
-        }
-        if (line == 224) {
-            main_cpu_.set_irq(4, IrqLine::Clear);
-            sub_cpu_.set_irq(4, IrqLine::Clear);
         }
         for (int slice = 0; slice < kCpuSync; slice++) {
             main_cpu_.run(main_cycles);

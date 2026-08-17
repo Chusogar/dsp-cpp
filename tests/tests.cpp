@@ -2280,6 +2280,71 @@ void test_sega_system16_missing_roms() {
     check(std::strcmp(tetris.title(), "Tetris") == 0, "Tetris title");
 }
 
+int unique_pixels(const dsp::Machine& machine) {
+    const uint32_t* fb = machine.framebuffer();
+    const int n = machine.screen_width() * machine.screen_height();
+    std::set<uint32_t> colors(fb, fb + n);
+    return int(colors.size());
+}
+
+void test_sega_roms_if_present() {
+    auto exists = [](const char* path) {
+        std::ifstream probe(path);
+        return bool(probe);
+    };
+
+    if (exists("/tmp/roms/outrun.zip")) {
+        dsp::Outrun machine;
+        std::string error;
+        check(machine.init("/tmp/roms/outrun.zip", &error), "OutRun MAME set loads");
+        check(machine.debug_pc() == 0x7b1e, "OutRun reset vector is the 315-5195 boot stub");
+        for (int frame = 0; frame < 240; frame++) machine.run_frame();
+        check(machine.debug_pc() != 0x7b1e, "OutRun leaves the mapper boot stub");
+        check(machine.debug_sub_pc() != 0x103a, "OutRun sub CPU leaves the shared-RAM handshake");
+        check(unique_pixels(machine) > 8, "OutRun attract mode draws a colour picture");
+    }
+
+    if (exists("/tmp/roms/fantzone.zip")) {
+        dsp::System16 machine(dsp::System16::Game::Fantzone);
+        std::string error;
+        check(machine.init("/tmp/roms/fantzone.zip", &error), "Fantasy Zone MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 8, "Fantasy Zone attract mode draws a colour picture");
+    }
+
+    if (exists("/tmp/roms/shinobi.zip")) {
+        dsp::System16 machine(dsp::System16::Game::Shinobi);
+        std::string error;
+        check(machine.init("/tmp/roms/shinobi.zip", &error), "Shinobi MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 8, "Shinobi attract mode draws a colour picture");
+    }
+
+    if (exists("/tmp/roms/tetris.zip")) {
+        dsp::System16 machine(dsp::System16::Game::Tetris);
+        std::string error;
+        check(machine.init("/tmp/roms/tetris.zip", &error), "Tetris MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 4, "Tetris attract mode draws the warning screen");
+    }
+
+    if (exists("/tmp/roms/altbeast.zip")) {
+        dsp::System16 machine(dsp::System16::Game::Altbeast);
+        std::string error;
+        check(machine.init("/tmp/roms/altbeast.zip", &error), "Altered Beast MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 4, "Altered Beast attract mode draws a colour picture");
+    }
+
+    if (exists("/tmp/roms/hangon.zip")) {
+        dsp::HangOn machine;
+        std::string error;
+        check(machine.init("/tmp/roms/hangon.zip", &error), "Hang-On MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 4, "Hang-On attract mode draws more than the text layer");
+    }
+}
+
 void test_indy_coin_if_present() {
     const char* rom = "/tmp/roms/indytemp.zip";
     std::ifstream probe(rom);
@@ -2719,6 +2784,7 @@ int main() {
     test_atari_system1_missing_roms();
     test_sega_pcm_and_mapper();
     test_sega_system16_missing_roms();
+    test_sega_roms_if_present();
     test_indy_coin_if_present();
     test_ym2612();
     test_genesis_vdp();
