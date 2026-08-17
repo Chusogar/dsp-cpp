@@ -173,7 +173,9 @@ void GameBoy::apply_post_boot_state() {
     cpu_.sp = 0xfffe;
     cpu_.fz = true;
     cpu_.fn = false;
-    if (!is_cgb_) {
+    if (is_cgb_) {
+        // A = $11 is how every CGB-aware cartridge detects Game Boy Color
+        // hardware, so it must be the CGB value, not the DMG one.
         cpu_.a = 0x11;
         cpu_.fh = false;
         cpu_.fc = false;
@@ -187,38 +189,40 @@ void GameBoy::apply_post_boot_state() {
         cpu_.b = 0x00; cpu_.c = 0x13;
         cpu_.d = 0x00; cpu_.e = 0xd8;
         cpu_.h = 0x01; cpu_.l = 0x4d;
-        write_io(0x05, 0x00);
-        write_io(0x06, 0x00);
-        write_io(0x07, 0x00);
-        write_io(0x10, 0x80);
-        write_io(0x11, 0xbf);
-        write_io(0x12, 0xf3);
-        write_io(0x14, 0xbf);
-        write_io(0x16, 0x3f);
-        write_io(0x17, 0x00);
-        write_io(0x19, 0xbf);
-        write_io(0x1a, 0x7f);
-        write_io(0x1b, 0x0f);
-        write_io(0x1c, 0x9f);
-        write_io(0x1e, 0xbf);
-        write_io(0x20, 0xff);
-        write_io(0x21, 0x00);
-        write_io(0x22, 0x00);
-        write_io(0x23, 0xbf);
-        write_io(0x24, 0x77);
-        write_io(0x25, 0xf3);
-        write_io(0x26, 0xf1);
-        write_io(0x40, 0x91);
-        write_io(0x42, 0x00);
-        write_io(0x43, 0x00);
-        write_io(0x45, 0x00);
-        write_io(0x47, 0xfc);
-        write_io(0x48, 0xff);
-        write_io(0x49, 0xff);
-        write_io(0x4a, 0x00);
-        write_io(0x4b, 0x00);
-        write_io(0x00, 0x00);
     }
+
+    // The post-boot I/O state is the same on both models.
+    write_io(0x05, 0x00);
+    write_io(0x06, 0x00);
+    write_io(0x07, 0x00);
+    write_io(0x10, 0x80);
+    write_io(0x11, 0xbf);
+    write_io(0x12, 0xf3);
+    write_io(0x14, 0xbf);
+    write_io(0x16, 0x3f);
+    write_io(0x17, 0x00);
+    write_io(0x19, 0xbf);
+    write_io(0x1a, 0x7f);
+    write_io(0x1b, 0x0f);
+    write_io(0x1c, 0x9f);
+    write_io(0x1e, 0xbf);
+    write_io(0x20, 0xff);
+    write_io(0x21, 0x00);
+    write_io(0x22, 0x00);
+    write_io(0x23, 0xbf);
+    write_io(0x24, 0x77);
+    write_io(0x25, 0xf3);
+    write_io(0x26, 0xf1);
+    write_io(0x40, 0x91);
+    write_io(0x42, 0x00);
+    write_io(0x43, 0x00);
+    write_io(0x45, 0x00);
+    write_io(0x47, 0xfc);
+    write_io(0x48, 0xff);
+    write_io(0x49, 0xff);
+    write_io(0x4a, 0x00);
+    write_io(0x4b, 0x00);
+    write_io(0x00, 0x00);
     boot_rom_enabled_ = false;
 }
 
@@ -328,16 +332,18 @@ uint8_t GameBoy::read_io(uint8_t offset) {
         case 0x49: return io_ram_[0x49];
         case 0x4a: return io_ram_[0x4a];
         case 0x4b: return io_ram_[0x4b];
-        case 0x4d: return uint8_t((cpu_.speed << 7) | 0x7e | (cpu_.change_speed ? 1 : 0));
-        case 0x4f: return ppu_.vbk();
+        // The CGB-only registers do not exist on DMG and read back as $FF.
+        case 0x4d:
+            return is_cgb_ ? uint8_t((cpu_.speed << 7) | 0x7e | (cpu_.change_speed ? 1 : 0)) : 0xff;
+        case 0x4f: return is_cgb_ ? ppu_.vbk() : 0xff;
         case 0x51: case 0x52: case 0x53: case 0x54: return 0xff;
-        case 0x55: return hdma_size_;
-        case 0x56: return 1;
-        case 0x68: return ppu_.bg_pal_index();
-        case 0x69: return ppu_.read_bg_pal_data();
-        case 0x6a: return ppu_.obj_pal_index();
-        case 0x6b: return ppu_.read_obj_pal_data();
-        case 0x70: return uint8_t(0xf8 | wram_bank_);
+        case 0x55: return is_cgb_ ? hdma_size_ : 0xff;
+        case 0x56: return is_cgb_ ? 1 : 0xff;
+        case 0x68: return is_cgb_ ? ppu_.bg_pal_index() : 0xff;
+        case 0x69: return is_cgb_ ? ppu_.read_bg_pal_data() : 0xff;
+        case 0x6a: return is_cgb_ ? ppu_.obj_pal_index() : 0xff;
+        case 0x6b: return is_cgb_ ? ppu_.read_obj_pal_data() : 0xff;
+        case 0x70: return is_cgb_ ? uint8_t(0xf8 | wram_bank_) : 0xff;
         case 0xff: return io_ram_[0xff];
         default:
             if (offset >= 0x10 && offset <= 0x26) return apu_.read(uint8_t(offset - 0x10));
@@ -389,20 +395,23 @@ void GameBoy::write_io(uint8_t offset, uint8_t value) {
         case 0x49: ppu_.set_obp1(value); break;
         case 0x4a: ppu_.set_wy(value); break;
         case 0x4b: ppu_.set_wx(value); break;
-        case 0x4d: cpu_.change_speed = (value & 1) != 0; break;
-        case 0x4f: ppu_.set_vbk(value); break;
+        case 0x4d: if (is_cgb_) cpu_.change_speed = (value & 1) != 0; break;
+        case 0x4f: if (is_cgb_) ppu_.set_vbk(value); break;
         case 0x50: boot_rom_enabled_ = false; break;
         case 0x51: dma_src_ = uint16_t((dma_src_ & 0xff) | (value << 8)); break;
         case 0x52: dma_src_ = uint16_t((dma_src_ & 0xff00) | (value & 0xf0)); break;
         case 0x53: dma_dst_ = uint16_t((dma_dst_ & 0xff) | ((value & 0x1f) << 8)); break;
         case 0x54: dma_dst_ = uint16_t((dma_dst_ & 0xff00) | (value & 0xf0)); break;
         case 0x55:
-            if (hdma_active_ && (value & 0x80) != 0) {
-                hdma_active_ = false;
-                hdma_size_ = uint8_t(hdma_size_ | 0x80);
-            } else if ((value & 0x80) != 0) {
+            if (!is_cgb_) break;
+            if ((value & 0x80) != 0) {
                 hdma_size_ = value & 0x7f;
                 hdma_active_ = true;
+            } else if (hdma_active_) {
+                // Clearing bit 7 while an HBlank transfer runs aborts it, and
+                // the remaining length stays readable with bit 7 set.
+                hdma_active_ = false;
+                hdma_size_ = uint8_t(hdma_size_ | 0x80);
             } else {
                 int blocks = value + 1;
                 int len = blocks * 0x10;
@@ -411,15 +420,20 @@ void GameBoy::write_io(uint8_t offset, uint8_t value) {
                     dma_dst_++;
                     dma_src_++;
                 }
+                hdma_size_ = 0xff;
                 // lr35902.pas estados_demas: (220 shr speed) + 8*(valor+1)
                 cpu_.add_stall_cycles((220 >> cpu_.speed) + 8 * blocks);
             }
             break;
-        case 0x68: ppu_.set_bg_pal_index(value); break;
-        case 0x69: ppu_.write_bg_pal_data(value, (stat_ & 3) == 3); break;
-        case 0x6a: ppu_.set_obj_pal_index(value); break;
-        case 0x6b: ppu_.write_obj_pal_data(value, (stat_ & 3) == 3); break;
-        case 0x70: wram_bank_ = value & 7; if (wram_bank_ == 0) wram_bank_ = 1; break;
+        case 0x68: if (is_cgb_) ppu_.set_bg_pal_index(value); break;
+        case 0x69: if (is_cgb_) ppu_.write_bg_pal_data(value, (stat_ & 3) == 3); break;
+        case 0x6a: if (is_cgb_) ppu_.set_obj_pal_index(value); break;
+        case 0x6b: if (is_cgb_) ppu_.write_obj_pal_data(value, (stat_ & 3) == 3); break;
+        case 0x70:
+            if (!is_cgb_) break;
+            wram_bank_ = value & 7;
+            if (wram_bank_ == 0) wram_bank_ = 1;
+            break;
         case 0xff:
             cpu_.vblank_ena = (value & 0x01) != 0;
             cpu_.lcdstat_ena = (value & 0x02) != 0;
@@ -486,13 +500,20 @@ void GameBoy::on_cpu_cycles(int cycles) {
     if (is_cgb_ && wram_[0][0x1a4] == wram_[1][0x1a4]) wram_[0][0x1a4] = 0xed;
     if (cpu_.changed_speed) cpu_.changed_speed = false;
 
-    audio_accumulator_ += uint64_t(cycles) * uint64_t(GbApu::kSampleRate);
+    // The APU keeps running in real time while the CGB doubles the CPU clock,
+    // so samples are produced per single-speed cycle.
+    audio_accumulator_ += uint64_t(cycles >> cpu_.speed) * uint64_t(GbApu::kSampleRate);
     while (audio_accumulator_ >= kClock) {
         audio_accumulator_ -= kClock;
         audio_.push_back(apu_.update());
     }
 
-    if ((ppu_.lcdc() & 0x80) == 0) return;
+    if ((ppu_.lcdc() & 0x80) == 0) {
+        // With the LCD off there is no HBlank to wait for, so an HBlank DMA
+        // keeps copying instead of stalling until the display comes back.
+        if (is_cgb_ && hdma_active_) hdma_block();
+        return;
+    }
 
     int prev = line_cycles_;
     int cur = prev + cycles;

@@ -1697,7 +1697,7 @@ void test_gbc_cart_detection() {
     check(load_gb_rom(*gb, make_gb_rom(0x80), "/tmp/dsp_cpp_gbc_80.gb"), "load $80 cart");
     check(gb->debug_is_cgb(), "$80 carts run as Game Boy Color without a boot ROM");
     check(std::strcmp(gb->title(), "Game Boy Color") == 0, "title is Game Boy Color for $80");
-    check(gb->debug_state().a == 0x01, "CGB post-boot A is $01 (gb.pas, not hardware)");
+    check(gb->debug_state().a == 0x11, "CGB post-boot A is $11, how carts detect Game Boy Color");
 
     check(load_gb_rom(*gb, make_gb_rom(0xc0), "/tmp/dsp_cpp_gbc_c0.gb"), "load $c0 cart");
     check(gb->debug_is_cgb(), "$c0 carts run as Game Boy Color");
@@ -1705,6 +1705,71 @@ void test_gbc_cart_detection() {
     check(load_gb_rom(*gb, make_gb_rom(0x00), "/tmp/dsp_cpp_gb_dmg.gb"), "load DMG cart");
     check(!gb->debug_is_cgb(), "$00 carts stay on DMG");
     check(std::strcmp(gb->title(), "Game Boy") == 0, "title is Game Boy for DMG");
+    check(gb->debug_state().a == 0x01, "DMG post-boot A is $01");
+    check(gb->debug_read(0xff40) == 0x91, "DMG post-boot LCDC is $91");
+    check(gb->debug_read(0xff47) == 0xfc, "DMG post-boot BGP is $FC");
+}
+
+void test_gb_cgb_registers_absent_on_dmg() {
+    auto gb = std::make_unique<dsp::GameBoy>();
+    check(load_gb_rom(*gb, make_gb_rom(0x00), "/tmp/dsp_cpp_gb_dmg_regs.gb"), "load DMG cart");
+
+    for (uint16_t reg : {0xff4dU, 0xff4fU, 0xff55U, 0xff56U, 0xff68U, 0xff69U, 0xff6aU, 0xff6bU,
+                         0xff70U}) {
+        gb->debug_write(reg, 0x01);
+        check(gb->debug_read(reg) == 0xff, "CGB-only register reads as $FF on DMG");
+    }
+
+    // VBK stays on bank 0 and SVBK does not move WRAM $D000-$DFFF.
+    gb->debug_write(0x8000, 0x11);
+    gb->debug_write(0xff4f, 0x01);
+    check(gb->debug_read(0x8000) == 0x11, "DMG ignores VBK: VRAM has no second bank");
+    gb->debug_write(0xd000, 0x22);
+    gb->debug_write(0xff70, 0x02);
+    check(gb->debug_read(0xd000) == 0x22, "DMG ignores SVBK: WRAM has no banks");
+
+    // KEY1 does not exist either, so STOP must not switch to double speed.
+    gb->debug_write(0xff4d, 0x01);
+    gb->run_frame();
+    check(gb->debug_speed() == 0, "DMG stays at single speed");
+}
+
+void test_gbc_hdma_control() {
+    auto gb = std::make_unique<dsp::GameBoy>();
+    check(load_gb_rom(*gb, make_gb_rom(0x80), "/tmp/dsp_cpp_gbc_hdma.gb"), "load cart for HDMA");
+
+    // A general-purpose transfer reports "finished" ($FF) when it is done.
+    gb->debug_write(0xff51, 0xc0);
+    gb->debug_write(0xff52, 0x00);
+    gb->debug_write(0xff53, 0x00);
+    gb->debug_write(0xff54, 0x00);
+    gb->debug_write(0xff55, 0x01);  // two blocks
+    check(gb->debug_read(0xff55) == 0xff, "GDMA leaves $FF55 at $FF once complete");
+
+    // Clearing bit 7 aborts a running HBlank transfer and keeps the remaining
+    // length readable with bit 7 set.
+    gb->debug_write(0xff54, 0x40);
+    gb->debug_write(0xff55, 0x83);  // four blocks, HBlank
+    check(gb->debug_read(0xff55) == 0x03, "an active HDMA reports its remaining length");
+    gb->debug_write(0xff55, 0x00);
+    check(gb->debug_read(0xff55) == 0x83, "clearing bit 7 aborts the HDMA");
+    uint8_t before = gb->debug_read(0x8040);
+    gb->run_frame();
+    check(gb->debug_read(0x8040) == before, "an aborted HDMA copies nothing");
+
+    // Restarting with bit 7 set reloads the length instead of aborting.
+    for (int i = 0; i < 32; i++) gb->debug_write(uint16_t(0xc000 + i), uint8_t(0xa0 + i));
+    gb->debug_write(0xff51, 0xc0);
+    gb->debug_write(0xff52, 0x00);
+    gb->debug_write(0xff54, 0x40);
+    gb->debug_write(0xff55, 0x81);
+    check(gb->debug_read(0xff55) == 0x01, "writing bit 7 again restarts the HDMA");
+
+    // With the LCD off there is no HBlank, but the transfer still progresses.
+    gb->debug_write(0xff40, 0x00);  // LCD off
+    gb->run_frame();
+    check(gb->debug_read(0x8040) == 0xa0, "HDMA keeps copying while the LCD is off");
+    check(gb->debug_hdma_size() == 0xff, "the LCD-off HDMA runs to completion");
 }
 
 void test_gbc_boot_rom_map() {
@@ -2446,6 +2511,8 @@ int main() {
     test_c64_pla_and_keyboard();
     test_c64_prg_media();
     test_gbc_cart_detection();
+    test_gb_cgb_registers_absent_on_dmg();
+    test_gbc_hdma_control();
     test_gbc_boot_rom_map();
     test_gbc_ppu_lcdc0_and_priority();
     test_gbc_io_hdma_and_unused_oam();
