@@ -78,8 +78,9 @@ private:
 
     std::vector<uint16_t> rom_;
     std::vector<uint16_t> rom2_;
-    // Shared 68k work RAM at $60000-$67fff (main + sub, MAME share("share1")).
     std::array<uint16_t, 0x4000> ram_{};
+    // Sub 68k work RAM at $60000, also reached from the main CPU via mapper region 5.
+    std::array<uint16_t, 0x4000> ram2_{};
     std::array<uint16_t, 0x800> road_ram_{};
     std::array<uint16_t, 0x800> road_buffer_{};
     std::vector<uint32_t> sprite_rom_;
@@ -97,7 +98,9 @@ private:
     uint8_t analog_brake_ = 0;
     uint16_t in0_ = 0x00ef;
     uint8_t dsw_a_ = 0xff;
-    uint8_t dsw_b_ = 0xfb;
+    // MAME Mini Up cabinet (SWB bits 0-1 = 01). Moving (11) enters $ece8
+    // before the sub-CPU $55555555 handshake and never draws attract.
+    uint8_t dsw_b_ = 0xf9;
     bool gear_hi_ = false;
     bool push_gear_ = false;
     bool z80_reset_ = false;

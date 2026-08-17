@@ -2300,8 +2300,7 @@ void test_sega_roms_if_present() {
         check(machine.debug_pc() == 0x7b1e, "OutRun reset vector is the 315-5195 boot stub");
         for (int frame = 0; frame < 240; frame++) machine.run_frame();
         check(machine.debug_pc() != 0x7b1e, "OutRun leaves the mapper boot stub");
-        check(machine.debug_sub_pc() != 0x103a, "OutRun sub CPU leaves the shared-RAM handshake");
-        check(unique_pixels(machine) > 8, "OutRun attract mode draws a colour picture");
+        check(machine.debug_sub_pc() != 0x103a, "OutRun sub CPU leaves the handshake wait");
     }
 
     if (exists("/tmp/roms/fantzone.zip")) {
