@@ -7,11 +7,11 @@
 #include <cstdio>
 #include <cstring>
 
-// Little-endian host overlay of the BE Z8000 register file.
-// Word pairs live in 32-bit units (R0/R1 in L[0], …), so 16-bit indices XOR 1.
-// Byte indices must XOR 3 so RH0/RL0 land in R0, not the swapped neighbour.
-#define BYTE8_XOR_BE(a) ((a) ^ 3)
-#define BYTE4_XOR_BE(a) ((a) ^ 1)
+// Little-endian host overlay of the big-endian Z8000 register file (MAME).
+// Quads occupy 64-bit units, so byte/word/long indices XOR 7/3/1. That puts
+// RH0/RL0 in R0, R0/R1 in RR0, and RR0/RR2 in RQ0 — required for MULT/DIV.
+#define BYTE8_XOR_BE(a) ((a) ^ 7)
+#define BYTE4_XOR_BE(a) ((a) ^ 3)
 #define BYTE_XOR_BE(a) ((a) ^ 1)
 
 #include "cpu/z8000/z8000cpu.h"
@@ -311,6 +311,7 @@ int z8002_device::run(int cycles) {
             m_icount = 0;
             break;
         }
+        if (exec_hook_) exec_hook_(m_pc);
         m_op[0] = RDOP();
         m_op_valid = 1;
         const Z8000_init& exec = table[z8000_exec[m_op[0]]];

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -59,6 +60,14 @@ public:
     uint16_t debug_z80_pc() const { return z80_.pc(); }
     uint32_t debug_sub1_pc() const { return sub1_.pc(); }
     uint32_t debug_sub2_pc() const { return sub2_.pc(); }
+    uint16_t debug_sub1_fcw() const { return sub1_.fcw(); }
+    uint16_t debug_sub1_r(int n) const { return sub1_.rw(n); }
+    uint8_t debug_sprite_low(uint16_t z80_offset) const {
+        return sprite_ram_[size_t((z80_offset * 2 + 1) & 0xfff)];
+    }
+    void debug_set_sub1_exec_hook(std::function<void(uint32_t pc)> hook) {
+        sub1_.set_exec_hook(std::move(hook));
+    }
     uint8_t debug_ls259() const { return ls259_; }
     uint8_t debug_chacl() const { return chacl_; }
     uint8_t debug_sub_irq_mask() const { return sub_irq_mask_; }

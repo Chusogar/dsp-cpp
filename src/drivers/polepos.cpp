@@ -162,16 +162,17 @@ const std::vector<RomEntry> kPp2Z80 = {
     {"pp4_9.6h", 0x2000, 0x0000, 0xbcf87004},
     {"pp4_10.5h", 0x1000, 0x2000, 0xa9d4c380},
 };
-const std::vector<RomEntry> kPp2Sub1Even = {
-    {"pp4_2.8l", 0x2000, 0x0000, 0x51b9a669},
+const std::vector<RomEntry> kPp2Sub1Even = {{"pp4_2.8l", 0x2000, 0x0000, 0x51b9a669}};
+const std::vector<RomEntry> kPp2Sub1Odd = {{"pp4_1.8m", 0x2000, 0x0000, 0x3f6ac294}};
+// MAME loads pp4_7/pp4_8 into sub2 at $4000; sub1 $4000-$5fff is IC25, not ROM.
+const std::vector<RomEntry> kPp2Sub2Even = {
+    {"pp4_6.4l", 0x2000, 0x0000, 0x38d04e0f},
     {"pp4_8.3l", 0x1000, 0x2000, 0xef25a2ee},
 };
-const std::vector<RomEntry> kPp2Sub1Odd = {
-    {"pp4_1.8m", 0x2000, 0x0000, 0x3f6ac294},
+const std::vector<RomEntry> kPp2Sub2Odd = {
+    {"pp4_5.4m", 0x2000, 0x0000, 0xc3053cae},
     {"pp4_7.3m", 0x1000, 0x2000, 0xad1c8994},
 };
-const std::vector<RomEntry> kPp2Sub2Even = {{"pp4_6.4l", 0x2000, 0, 0x38d04e0f}};
-const std::vector<RomEntry> kPp2Sub2Odd = {{"pp4_5.4m", 0x2000, 0, 0xc3053cae}};
 const std::vector<RomEntry> kPp2Chars = {{"pp4_28.1f", 0x2000, 0, 0x280dde7d}};
 const std::vector<RomEntry> kPp2Tiles = {{"pp4_29.1e", 0x2000, 0, 0xec3ec6e6}};
 const std::vector<RomEntry> kPp2Sprites = {
@@ -416,6 +417,7 @@ void PolePos::reset() {
     ic25_result_ = 0;
     ic25_signed_ = 0;
     ic25_unsigned_ = 0;
+    ic25_word_ = 0;
     audio_accumulator_ = 0;
     audio_.clear();
     sub1_.set_reset_line(IrqLine::Assert);

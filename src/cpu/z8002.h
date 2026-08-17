@@ -22,6 +22,7 @@ public:
 
     void set_memory_handlers(Read8Handler read, Write8Handler write);
     void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
+    void set_exec_hook(std::function<void(uint32_t pc)> hook) { exec_hook_ = std::move(hook); }
 
     void reset();
     int run(int cycles);
@@ -588,6 +589,7 @@ private:
     Read8Handler read_{};
     Write8Handler write_{};
     CycleHandler cycle_handler_{};
+    std::function<void(uint32_t)> exec_hook_{};
 
     uint32_t m_op[4]{};
     uint32_t m_ppc = 0;

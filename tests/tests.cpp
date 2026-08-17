@@ -2216,6 +2216,31 @@ void test_polepos_driver() {
     check(bcpu.rw(0) == 0xab34, "Z8002 LDB RH0 overlays R0 high");
     check(bcpu.rw(1) == 0x00ff, "Z8002 LDB RL1 overlays R1 low");
 
+    // MULT RR0,R3 must use the R0:R1 long, not the neighbouring pair.
+    std::array<uint8_t, 0x100> mmem{};
+    mmem[2] = 0x40;
+    mmem[3] = 0x00;
+    mmem[4] = 0x00;
+    mmem[5] = 0x10;
+    mmem[0x10] = 0x21;
+    mmem[0x11] = 0x01;
+    mmem[0x12] = 0x00;
+    mmem[0x13] = 0x02;  // LD R1,#0002
+    mmem[0x14] = 0x21;
+    mmem[0x15] = 0x03;
+    mmem[0x16] = 0x00;
+    mmem[0x17] = 0x03;  // LD R3,#0003
+    mmem[0x18] = 0x99;
+    mmem[0x19] = 0x30;  // MULT RR0,R3
+    mmem[0x1a] = 0x7a;
+    mmem[0x1b] = 0x00;  // HALT
+    dsp::Z8002 mcpu(3072000);
+    mcpu.set_memory_handlers([&](uint16_t a) { return mmem[a & 0xff]; },
+                            [&](uint16_t a, uint8_t v) { mmem[a & 0xff] = v; });
+    mcpu.reset();
+    mcpu.run(200);
+    check(mcpu.rw(0) == 0x0000 && mcpu.rw(1) == 0x0006, "Z8002 MULT RR0,R3 writes R0:R1");
+
     const char* rom = "/tmp/roms/polepos.zip";
     std::FILE* f = std::fopen(rom, "rb");
     if (f) {
@@ -2258,6 +2283,10 @@ void test_polepos_driver() {
         check(boot2.init(rom2, &error), "Pole Position II ROM set loads");
         for (int i = 0; i < 600; i++) boot2.run_frame();
         check(boot2.debug_z80_pc() != 0, "Pole Position II Z80 is executing");
+        check(boot2.debug_sub1_pc() != 0x34c8, "Pole Position II sub1 leaves the IC25 fail idle");
+        check(boot2.debug_sprite_low(0x48) == 0, "Pole Position II Z8002 handshake clears mailbox $4048");
+        check(!boot2.debug_sub2_reset(), "Pole Position II releases Z8002 #2 after handshake");
+        check(boot2.debug_n53_pc() != 0, "Pole Position II 53xx MCU is executing");
         bool lit2 = false;
         const uint32_t* fb2 = boot2.framebuffer();
         for (int i = 0; i < boot2.screen_width() * boot2.screen_height(); i++) {
