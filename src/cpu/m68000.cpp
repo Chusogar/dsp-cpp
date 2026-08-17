@@ -113,11 +113,16 @@ void M68000::reset() {
 }
 
 uint8_t M68000::getbyte(uint32_t address) {
+    if (read_byte_) return read_byte_(address);
     uint16_t value = getword(address);
     return (address & 1) ? uint8_t(value & 0xff) : uint8_t(value >> 8);
 }
 
 void M68000::putbyte(uint32_t address, uint8_t value) {
+    if (write_byte_) {
+        write_byte_(address, value);
+        return;
+    }
     uint16_t old = getword(address);
     if (address & 1) putword(address, uint16_t((old & 0xff00) | value));
     else putword(address, uint16_t((old & 0x00ff) | (uint16_t(value) << 8)));

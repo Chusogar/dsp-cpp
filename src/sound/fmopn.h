@@ -81,6 +81,8 @@ public:
         uint32_t fc = 0;
         uint8_t kcode = 0;
         uint32_t block_fnum = 0;
+        bool pan_left = true;
+        bool pan_right = true;
     };
 
     // Signal bus slots: modulation inputs, the one sample delay and the channel
@@ -99,7 +101,8 @@ public:
     void set_ssg_clock_handler(SsgClockHandler handler) { ssg_clock_handler_ = std::move(handler); }
 
     void write_mode(int reg, int value);
-    void write_reg(int reg, int value);
+    // `channel_base` is 0 for OPN / YM2612 part 0, 3 for YM2612 part 1.
+    void write_reg(int reg, int value, int channel_base = 0);
     void prescaler_w(int address, int pre_divider);
 
     void refresh_fc_eg_chan(Channel& ch);
