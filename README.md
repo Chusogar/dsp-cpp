@@ -237,6 +237,19 @@ state so games still start at `$0100`.
 ```bash
 ./build/dsp --game gb /path/to/game.gbc
 ```
+### Midway MCR (Tapper, Tron, …)
+
+`--game tapper` (also `tron`, `shollow`, `domino`, `wacko`, `dotron`, `timber`) is the
+Midway MCR-II/III board from `mcr_hw.pas`: dual Z80, Z80 CTC daisy IRQs, SSIO sound
+(two AY-3-8910 plus the 14024 `/SINT` clock) and 16×16 tiles with 32×32 sprites.
+Point it at a MAME merged `tapper.zip`.
+
+```bash
+./build/dsp --game tapper /path/to/tapper.zip
+./build/dsp --game tapper --screenshot tapper.bmp --frames 180 /path/to/tapper.zip
+```
+
+Start is player 1 `1` / player 2 `2`, coin is `5`/`6`, Tapper pours with Ctrl/Space.
 
 ### Controls
 

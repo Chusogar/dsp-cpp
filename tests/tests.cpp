@@ -16,6 +16,8 @@
 #include "drivers/c64.h"
 #include "drivers/gameboy.h"
 #include "drivers/nes.h"
+#include "cpu/z80ctc.h"
+#include "drivers/mcr.h"
 #include "drivers/spectrum.h"
 #include "machine/bagman_pal.h"
 #include "machine/mos6526.h"
@@ -1424,6 +1426,62 @@ void test_gbc_oam_dma_from_vram() {
     gb->debug_write(0x8000, 0x55);
     gb->debug_write(0xff46, 0x80);  // OAM DMA from VRAM
     check(gb->debug_read(0xfe00) == 0xff, "OAM DMA from VRAM yields $FF");
+void test_z80ctc_timer_and_vector() {
+    dsp::Z80Ctc ctc;
+    int irqs = 0;
+    uint8_t last_vec = 0;
+    ctc.set_irq_callback([&](dsp::IrqLine state, uint8_t vec) {
+        if (state != dsp::IrqLine::Clear) {
+            irqs++;
+            last_vec = vec;
+        }
+    });
+    ctc.reset();
+    ctc.write(0, 0x00);          // interrupt vector base $00
+    ctc.write(0, 0x85);          // control: IRQ + timer + load constant (CONTROL|CONSTANT|INTERRUPT)
+    ctc.write(0, 2);             // time constant 2, auto-trigger
+    ctc.tick(16 * 2);            // one full countdown at prescale 16
+    check(irqs >= 1, "CTC timer channel 0 raises IRQ");
+    check(last_vec == 0x00, "CTC channel 0 vector is base+0");
+
+    irqs = 0;
+    last_vec = 0xff;
+    ctc.write(1, 0xc5);  // IRQ + counter + load constant
+    ctc.write(1, 1);
+    ctc.pulse_trigger(1);
+    check(irqs >= 1, "CTC counter channel 1 fires on the trigger edge");
+    check(last_vec == 0x02, "CTC channel 1 vector is base+2");
+}
+
+void test_mcr_tapper_io_map() {
+    dsp::Mcr tapper(dsp::Mcr::Game::Tapper);
+    check(std::strcmp(tapper.title(), "Tapper") == 0, "Tapper title");
+    check(tapper.screen_width() == 512 && tapper.screen_height() == 480, "MCR screen is 512x480");
+    check(tapper.frames_per_second() == 30.0, "MCR runs at 30 fps");
+    tapper.reset();
+    check(tapper.debug_ix() == 0xffff, "MCR reset leaves IX at $FFFF so boot CALL $01AC is a no-op");
+    std::string error = "unset";
+    check(!tapper.init("/no/such/tapper.zip", &error), "missing Tapper ROMs fail init");
+    check(error.find("not found") != std::string::npos || error.find("cannot") != std::string::npos ||
+              error.size() > 3,
+          "init reports why the ROM set is missing");
+
+    const char* rom = "/tmp/roms/tapper.zip";
+    std::FILE* f = std::fopen(rom, "rb");
+    if (f) {
+        std::fclose(f);
+        dsp::Mcr boot(dsp::Mcr::Game::Tapper);
+        error.clear();
+        check(boot.init(rom, &error), "Tapper ROM set loads");
+        int frames = 0;
+        while (frames < 180 && boot.debug_im() != 2) {
+            boot.run_frame();
+            frames++;
+        }
+        check(!boot.debug_halted(), "Tapper is still running after the boot sequence");
+        check(boot.debug_im() == 2, "Tapper programs the CTC in IM 2");
+        check(boot.debug_ctc_irqs() > 0, "the CTC raises IRQs once the scanline clocks start");
+    }
 }
 
 }  // namespace
@@ -1480,6 +1538,8 @@ int main() {
     test_gbc_ppu_lcdc0_and_priority();
     test_gbc_io_hdma_and_unused_oam();
     test_gbc_oam_dma_from_vram();
+    test_z80ctc_timer_and_vector();
+    test_mcr_tapper_io_map();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

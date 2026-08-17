@@ -109,6 +109,7 @@ add_executable(dsp_tests
   src/cpu/hd63701.cpp
   src/cpu/m6805.cpp
   src/cpu/lr35902.cpp
+  src/cpu/z80ctc.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
@@ -137,12 +138,26 @@ add_executable(dsp_tests
   src/machine/gb_mapper.cpp
   src/sound/gb_apu.cpp
   src/video/gb_ppu.cpp
+  src/drivers/mcr.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)
 target_link_libraries(dsp_tests PRIVATE ZLIB::ZLIB)
 target_compile_options(dsp_tests PRIVATE -Wall -Wextra)
 add_test(NAME dsp_tests COMMAND dsp_tests)
+
+add_executable(tapper_capture
+  tools/tapper_capture.cpp
+  src/drivers/mcr.cpp
+  src/cpu/z80.cpp
+  src/cpu/z80ctc.cpp
+  src/sound/ay8910.cpp
+  src/video/gfx.cpp
+  src/core/rom_loader.cpp
+)
+target_include_directories(tapper_capture PRIVATE src)
+target_link_libraries(tapper_capture PRIVATE ZLIB::ZLIB)
+target_compile_options(tapper_capture PRIVATE -Wall -Wextra)
 
 # Optional harness for the Z80 instruction exerciser (binary not shipped here).
 add_executable(dsp_zexdoc EXCLUDE_FROM_ALL tools/zexdoc_runner.cpp src/cpu/z80.cpp)
