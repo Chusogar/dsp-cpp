@@ -225,6 +225,19 @@ F6 starts and stops a `.tap` cassette (the 6510 motor bit still has to enable
 the datasette). Arrows are also a joystick in Control Port 2. There is no 1541:
 a `.d64` image injects its first PRG into RAM.
 
+### Game Boy / Game Boy Color
+
+`--game gb` loads a `.gb` / `.gbc` cartridge (plain or zipped). The machine is
+chosen from header byte `$0143` the same way `gb.pas` does: bit 7 set (`$80`
+CGB-enhanced or `$C0` CGB-exclusive) runs as Game Boy Color; otherwise it is
+a DMG Game Boy. Optional boot ROMs (`dmg_boot.bin`, `cgb_boot.bin`) may sit
+next to the cartridge; without them the CPU is left in `reset_gb`'s post-boot
+state so games still start at `$0100`.
+
+```bash
+./build/dsp --game gb /path/to/game.gbc
+```
+
 ### Controls
 
 | Key | Action |

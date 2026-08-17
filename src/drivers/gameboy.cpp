@@ -94,16 +94,9 @@ bool GameBoy::load_media(const std::string& path, std::string* error) {
 
     unlicensed_ = !std::equal(kNintendoLogo.begin(), kNintendoLogo.end(), data.begin() + 0x104);
     uint8_t cgb_flag = data[0x143];
-    // $80 means "CGB enhanced but still DMG playable"; on real hardware the
-    // CGB boot ROM auto-generates a compatibility colour palette for these
-    // when it runs. Since that boot ROM is copyrighted and not bundled here
-    // (see init()), without it skip straight to CGB mode only for $c0
-    // ("CGB exclusive", which always programs its own palette immediately
-    // and would look identical either way) or when a real cgb_boot_rom_ was
-    // supplied to actually perform that compatibility step. Otherwise fall
-    // back to plain DMG mode so `$80` games still render with a sensible
-    // (grayscale) palette instead of the CGB path's un-initialized white.
-    is_cgb_ = (cgb_flag == 0xc0) || (((cgb_flag & 0x80) != 0) && !cgb_boot_rom_.empty());
+    // gb_change_model((gb_head.cgb_flag and $80)<>0, ...): any cart with
+    // bit 7 set is Game Boy Color, both $80 (enhanced) and $C0 (exclusive).
+    is_cgb_ = (cgb_flag & 0x80) != 0;
     uint8_t header_type = data[0x147];
     uint8_t ram_size_code = data[0x149];
 
@@ -156,6 +149,7 @@ void GameBoy::reset() {
     dma_src_ = dma_dst_ = 0;
     hdma_active_ = false;
     hdma_size_ = 0xff;
+    cgb_oam_unused_.fill(0);
     joy_select_ = 0x30;
     joy_val_ = 0xff;
     joystick_ = 0xff;
@@ -228,14 +222,41 @@ void GameBoy::apply_post_boot_state() {
     boot_rom_enabled_ = false;
 }
 
+uint8_t GameBoy::read_cgb_boot(uint16_t address) const {
+    // gb.pas maps BIOS at $0000-$00FF and $0200-$08FF; $0100-$01FF is always
+    // the cart. A 2304-byte (0x900) cgb_boot.bin already has that hole, so
+    // index it by CPU address. Packed 256+1792 dumps concatenate the two
+    // Pascal files (gbc_boot.1 @0, gbc_boot.2 @$200) and need remapping.
+    const std::vector<uint8_t>& boot = cgb_boot_rom_;
+    if (boot.empty()) return 0xff;
+    if (boot.size() >= 0x900) {
+        if (address < boot.size()) return boot[address];
+        return 0xff;
+    }
+    size_t off = address < 0x100 ? address : size_t(0x100 + (address - 0x200));
+    if (off < boot.size()) return boot[off];
+    return 0xff;
+}
+
+uint8_t GameBoy::dma_read(uint16_t address) const {
+    // dma_trans / OAM DMA source in gb.pas: VRAM reads as $FF, $E000-$FFFF
+    // goes to cart RAM rather than the WRAM echo.
+    if (address <= 0x7fff) return mapper_.read_rom(address);
+    if (address <= 0x9fff) return 0xff;
+    if (address <= 0xbfff) return mapper_.read_ram(uint16_t(address & 0x1fff));
+    if (address <= 0xcfff) return wram_[0][address & 0xfff];
+    if (address <= 0xdfff) return wram_[size_t(wram_bank_)][address & 0xfff];
+    return mapper_.read_ram(uint16_t(address & 0x1fff));
+}
+
 uint8_t GameBoy::read_byte(uint16_t address) {
     if (address <= 0x7fff) {
         if (boot_rom_enabled_) {
-            const std::vector<uint8_t>& boot = is_cgb_ ? cgb_boot_rom_ : dmg_boot_rom_;
-            if (!is_cgb_ && address < boot.size()) return boot[address];
-            if (is_cgb_ && (address < 0x100 || (address >= 0x200 && address < boot.size()))) {
-                size_t off = address < 0x100 ? address : (0x100 + (address - 0x200));
-                if (off < boot.size()) return boot[off];
+            if (!is_cgb_) {
+                const std::vector<uint8_t>& boot = dmg_boot_rom_;
+                if (address < boot.size()) return boot[address];
+            } else if (address < 0x100 || (address >= 0x200 && address < 0x900)) {
+                return read_cgb_boot(address);
             }
         }
         return mapper_.read_rom(address);
@@ -247,7 +268,12 @@ uint8_t GameBoy::read_byte(uint16_t address) {
     if (address <= 0xefff) return wram_[0][address & 0xfff];        // echo
     if (address <= 0xfdff) return wram_[size_t(wram_bank_)][address & 0xfff];  // echo
     if (address <= 0xfe9f) return ppu_.oam_read(uint8_t(address & 0xff));
-    if (address <= 0xfeff) return 0;  // unusable
+    if (address <= 0xfeff) {
+        if (!is_cgb_) return 0;
+        uint8_t lo = uint8_t(address & 0xff);
+        if (lo <= 0xcf) return cgb_oam_unused_[lo - 0xa0];
+        return cgb_oam_unused_[0x20 + (lo & 0x0f)];  // $FEC0 + (addr & $F)
+    }
     return read_io(uint8_t(address & 0xff));
 }
 
@@ -260,7 +286,13 @@ void GameBoy::write_byte(uint16_t address, uint8_t value) {
     if (address <= 0xefff) { wram_[0][address & 0xfff] = value; return; }
     if (address <= 0xfdff) { wram_[size_t(wram_bank_)][address & 0xfff] = value; return; }
     if (address <= 0xfe9f) { ppu_.oam_write(uint8_t(address & 0xff), value); return; }
-    if (address <= 0xfeff) return;  // unusable
+    if (address <= 0xfeff) {
+        if (!is_cgb_) return;
+        uint8_t lo = uint8_t(address & 0xff);
+        if (lo <= 0xcf) cgb_oam_unused_[lo - 0xa0] = value;
+        else cgb_oam_unused_[0x20 + (lo & 0x0f)] = value;
+        return;
+    }
     write_io(uint8_t(address & 0xff), value);
 }
 
@@ -339,12 +371,16 @@ void GameBoy::write_io(uint8_t offset, uint8_t value) {
             break;
         }
         case 0x41: stat_ = uint8_t((stat_ & 0x7) | (value & 0xf8)); break;
-        case 0x42: ppu_.set_scy(value); break;
+        case 0x42: {
+            int sample = (line_cycles_ >> cpu_.speed) / 4;
+            ppu_.write_scy_mid_line(value, sample);
+            break;
+        }
         case 0x43: ppu_.set_scx(value); break;
         case 0x45: ly_compare_ = value; break;
         case 0x46: {  // OAM DMA
             uint16_t src = uint16_t(value << 8);
-            for (int i = 0; i < 0xa0; i++) ppu_.oam_write(uint8_t(i), read_byte(uint16_t(src + i)));
+            for (int i = 0; i < 0xa0; i++) ppu_.oam_write(uint8_t(i), dma_read(uint16_t(src + i)));
             oam_dma_remaining_ = 160;
             break;
         }
@@ -368,19 +404,15 @@ void GameBoy::write_io(uint8_t offset, uint8_t value) {
                 hdma_size_ = value & 0x7f;
                 hdma_active_ = true;
             } else {
-                int len = (value + 1) * 0x10;
+                int blocks = value + 1;
+                int len = blocks * 0x10;
                 for (int i = 0; i < len; i++) {
-                    uint8_t b = (dma_src_ <= 0x7fff) ? mapper_.read_rom(dma_src_)
-                              : (dma_src_ >= 0xa000 && dma_src_ <= 0xbfff)
-                                    ? mapper_.read_ram(uint16_t(dma_src_ - 0xa000))
-                              : (dma_src_ >= 0xc000 && dma_src_ <= 0xcfff) ? wram_[0][dma_src_ & 0xfff]
-                              : (dma_src_ >= 0xd000 && dma_src_ <= 0xdfff)
-                                    ? wram_[size_t(wram_bank_)][dma_src_ & 0xfff]
-                                    : uint8_t(0xff);
-                    ppu_.vram_write(uint16_t(dma_dst_ & 0x1fff), b);
+                    ppu_.vram_write(uint16_t(dma_dst_ & 0x1fff), dma_read(dma_src_));
                     dma_dst_++;
                     dma_src_++;
                 }
+                // lr35902.pas estados_demas: (220 shr speed) + 8*(valor+1)
+                cpu_.add_stall_cycles((220 >> cpu_.speed) + 8 * blocks);
             }
             break;
         case 0x68: ppu_.set_bg_pal_index(value); break;
@@ -421,7 +453,8 @@ void GameBoy::step_timer(int cycles) {
 
 void GameBoy::step_oam_dma(int cycles) {
     if (oam_dma_remaining_ <= 0) return;
-    oam_dma_remaining_ -= cycles;
+    int step = is_cgb_ ? (cycles >> cpu_.speed) : cycles;
+    oam_dma_remaining_ -= step;
 }
 
 void GameBoy::run_line_checkpoint_zero() {
@@ -449,6 +482,10 @@ void GameBoy::on_cpu_cycles(int cycles) {
     step_timer(cycles);
     step_oam_dma(cycles);
 
+    // gbc_despues_instruccion runs this WRAM poke every instruction, LCD on or off.
+    if (is_cgb_ && wram_[0][0x1a4] == wram_[1][0x1a4]) wram_[0][0x1a4] = 0xed;
+    if (cpu_.changed_speed) cpu_.changed_speed = false;
+
     audio_accumulator_ += uint64_t(cycles) * uint64_t(GbApu::kSampleRate);
     while (audio_accumulator_ >= kClock) {
         audio_accumulator_ -= kClock;
@@ -475,6 +512,8 @@ void GameBoy::on_cpu_cycles(int cycles) {
         if (is_cgb_ && !hdma_done_this_line_ && cur_c >= 300 && hdma_active_) {
             hdma_done_this_line_ = true;
             hdma_block();
+            cur += 8;  // gb.pas adds 8 to contador after each HDMA block
+            cur_c = cur / div_speed;
         }
         int threshold = sprites_time_ + 248;
         if (prev_c < threshold && cur_c >= threshold && (stat_ & 3) != 0) {
@@ -488,14 +527,7 @@ void GameBoy::on_cpu_cycles(int cycles) {
 
 void GameBoy::hdma_block() {
     for (int i = 0; i < 0x10; i++) {
-        uint8_t b = (dma_src_ <= 0x7fff) ? mapper_.read_rom(dma_src_)
-                  : (dma_src_ >= 0xa000 && dma_src_ <= 0xbfff)
-                        ? mapper_.read_ram(uint16_t(dma_src_ - 0xa000))
-                  : (dma_src_ >= 0xc000 && dma_src_ <= 0xcfff) ? wram_[0][dma_src_ & 0xfff]
-                  : (dma_src_ >= 0xd000 && dma_src_ <= 0xdfff)
-                        ? wram_[size_t(wram_bank_)][dma_src_ & 0xfff]
-                        : uint8_t(0xff);
-        ppu_.vram_write(uint16_t(dma_dst_ & 0x1fff), b);
+        ppu_.vram_write(uint16_t(dma_dst_ & 0x1fff), dma_read(dma_src_));
         dma_dst_++;
         dma_src_++;
     }
@@ -509,8 +541,14 @@ void GameBoy::run_frame() {
         if ((ppu_.lcdc() & 0x80) != 0) run_line_checkpoint_zero();
         cpu_.run(kCyclesPerLine << cpu_.speed);
         if (line_ < 144) {
+            ppu_.set_oam_dma(oam_dma_remaining_ > 0);
             ppu_.render_scanline(line_, &framebuffer_[size_t(line_) * GbPpu::kScreenWidth]);
-            if (ppu_.window_visible_on(line_)) ppu_.advance_window_line();
+            if ((ppu_.lcdc() & 0x80) != 0) {
+                if ((ppu_.lcdc() & 2) != 0 && oam_dma_remaining_ <= 0) {
+                    sprites_time_ = ppu_.sprite_mode3_penalty(line_, cpu_.speed);
+                }
+                if (ppu_.window_visible_on(line_)) ppu_.advance_window_line();
+            }
         }
     }
     ppu_.reset_window_line();
