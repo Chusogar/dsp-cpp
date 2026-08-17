@@ -40,6 +40,10 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Spectrum ULA | `src/computer/spectrum_hw.pas` | Keyboard matrix, border, one bit beeper, EAR input, contended timing |
 | Spectrum driver | `src/computer/spectrum_hw.pas`, `spectrum_misc.pas` | 48K memory map, display file with attributes and flash, Kempston joystick |
 | Tape player | `src/misc/tap_tzx.pas` | `.tap` blocks and `.tzx` images (turbo, pure tone/data, direct recording, pauses, loops), hooked to the ROM loader |
+| NES PPU | `src/consolas/nes_ppu.pas` | 2C02: nametables, sprites, loopy scroll, YUV palette |
+| NES APU | `src/cpu/n2a03.pas` | 2A03 squares/triangle/noise/DPCM, resampled to 44100 Hz |
+| NES mappers | `src/consolas/nes_mappers.pas` | 0, 1 (MMC1), 2, 3, 4 (MMC3/MMC6), 7, 9–11, 13, 15, 34, 66, 68, 70, 71, 76, 79/146, 87, 88, 93–95, 113, 180, 184, 185, 206 |
+| NES driver | `src/consolas/nes.pas` | NTSC 256×240, iNES carts (plain or zipped), two controllers |
 | Front end | `src/misc/main_engine.pas` | SDL2 window, texture, audio queue, keyboard |
 
 ## Building
@@ -179,6 +183,24 @@ need the loader to be running, and the CSW (`$18`) and generalized data (`$19`) 
 are skipped. A "stop the tape" block only pauses for two seconds, because the machine
 restarts the tape whenever the loader runs.
 
+### Nintendo Entertainment System
+
+NTSC NES, ported from `nes.pas`. Give it an iNES (`.nes`) ROM, plain or inside a zip:
+
+```bash
+./build/dsp --game nes /path/to/game.nes
+./build/dsp /path/to/game.nes
+```
+
+The 2A03 CPU ignores decimal mode and implements the unofficial opcodes from
+`m6502.pas`. Mappers 0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM), 4 (MMC3, MMC6 as
+NES 2.0 submapper 1), 7 (AxROM), 9/10 (MMC2/4), 11, 13, 15, 34, 66, 68, 70, 71,
+76, 79/146, 87, 88, 93, 94, 95, 113, 180, 184, 185 and 206 are implemented.
+CHR-RAM carts (header CHR = 0) work. Player 1 uses the arrows plus Ctrl/Alt for
+A/B, `1` for Start and `5` for Select (the arcade coin button). There is no BIOS;
+the CPU starts at the cartridge reset vector. IRQ-heavy boards (VRC, FME-7, …)
+are still rejected at load time.
+
 ### Controls
 
 | Key | Action |
@@ -233,9 +255,9 @@ cmake --build build --target dsp_zexdoc
 
 ```
 src/cpu/        Z80, M6809, M6502, M68000, HD63701 and M6805 cores
-src/sound/      AY-3-8910 and SN76496
-src/video/      graphics decoding and resistor based palette helpers
-src/machine/    Bagman PAL16R6, SLAPSTIC, Spectrum tape player
+src/sound/      AY-3-8910, SN76496, and the NES 2A03 APU
+src/video/      graphics decoding, resistor palettes, NES PPU
+src/machine/    Bagman PAL16R6, SLAPSTIC, Spectrum tape player, NES mappers
 src/drivers/    the machines themselves (memory map, video, inputs)
 src/frontend/   SDL2 front end, driven through the core/machine.h interface
 src/core/       ROM loader (directory or zip) and the Machine interface

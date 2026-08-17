@@ -8,7 +8,8 @@
 
 namespace dsp {
 
-// MOS 6502, ported from m6502.pas (NMOS variant used by the Atari sound boards).
+// MOS 6502, ported from m6502.pas. Type::Nmos is the arcade variant (BCD on);
+// Type::Nes is the 2A03 (decimal mode ignored, same undocumented opcodes).
 class M6502 {
 public:
     using ReadHandler = std::function<uint8_t(uint16_t)>;
@@ -20,7 +21,9 @@ public:
         bool dec = false, irq_disable = false, z = false, c = false;
     };
 
-    explicit M6502(uint32_t clock);
+    enum class Type { Nmos, Nes };
+
+    explicit M6502(uint32_t clock, Type type = Type::Nmos);
 
     void set_memory_handlers(ReadHandler read, WriteHandler write);
     void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
@@ -31,9 +34,14 @@ public:
 
     void set_irq(IrqLine state) { irq_request_ = state; }
     void set_nmi(IrqLine state);
+    // NES PPU NMI: one-instruction delay, same as n2a03 `after_ei:=true`.
+    void delay_interrupts() { after_ei_ = true; }
+    // OAM DMA steals 513 (+1 if odd) cycles from the current timeslice.
+    void steal_cycles(int cycles);
 
     uint32_t clock() const { return clock_; }
     uint16_t pc() const { return pc_; }
+    void set_pc(uint16_t value) { pc_ = value; }
 
     uint8_t a = 0, x = 0, y = 0, sp = 0xfd;
     Flags p;
@@ -58,9 +66,11 @@ private:
     void branch(bool condition, uint8_t offset);
 
     uint32_t clock_;
+    Type type_ = Type::Nmos;
     uint16_t pc_ = 0;
     uint16_t address_ = 0;  // effective address of the current instruction
     int extra_cycles_ = 0;
+    int stolen_cycles_ = 0;
 
     IrqLine irq_request_ = IrqLine::Clear;
     IrqLine nmi_request_ = IrqLine::Clear;

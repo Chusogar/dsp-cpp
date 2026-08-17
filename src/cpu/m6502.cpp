@@ -56,7 +56,7 @@ bool no_page_penalty_iy(uint8_t opcode) {
 
 }  // namespace
 
-M6502::M6502(uint32_t clock) : clock_(clock) {}
+M6502::M6502(uint32_t clock, Type type) : clock_(clock), type_(type) {}
 
 void M6502::set_memory_handlers(ReadHandler read, WriteHandler write) {
     read_ = std::move(read);
@@ -80,6 +80,7 @@ void M6502::reset() {
     irq_request_ = IrqLine::Clear;
     nmi_request_ = IrqLine::Clear;
     nmi_state_ = IrqLine::Clear;
+    stolen_cycles_ = 0;
 }
 
 uint8_t M6502::get_flags() const {
@@ -145,7 +146,7 @@ void M6502::set_nz(uint8_t value) {
 }
 
 void M6502::adc(uint8_t value) {
-    if (p.dec) {
+    if (p.dec && type_ != Type::Nes) {
         const uint8_t carry = p.c ? 1 : 0;
         uint16_t low = uint16_t((a & 0x0f) + (value & 0x0f) + carry);
         if (low > 9) low += 6;
@@ -167,7 +168,7 @@ void M6502::adc(uint8_t value) {
 }
 
 void M6502::sbc(uint8_t value) {
-    if (p.dec) {
+    if (p.dec && type_ != Type::Nes) {
         const uint8_t carry = p.c ? 0 : 1;
         const uint16_t diff = uint16_t(a - value - carry);
         int8_t low = int8_t((a & 0x0f) - (value & 0x0f) - carry);
@@ -530,8 +531,8 @@ int M6502::run(int cycles) {
             case 0xe0: case 0xe4: case 0xec:  // cpx
                 compare(x, read(address_));
                 break;
-            case 0xe1: case 0xe5: case 0xe9: case 0xed:
-            case 0xf1: case 0xf5: case 0xf9: case 0xfd:  // sbc
+            case 0xe1: case 0xe5: case 0xe9: case 0xeb: case 0xed:
+            case 0xf1: case 0xf5: case 0xf9: case 0xfd:  // sbc (0xeb unofficial)
                 sbc(read(address_));
                 break;
             case 0xe6: case 0xee: case 0xf6: case 0xfe: {  // inc
@@ -550,15 +551,129 @@ int M6502::run(int cycles) {
             case 0xf8:  // sed
                 p.dec = true;
                 break;
-            default:  // nop and the undocumented opcodes the sound code never uses
+            case 0x02: case 0x42:  // kil / jam
+                pc_ -= 1;
                 break;
-        }
+            case 0x03: case 0x07: case 0x0f: case 0x13:
+            case 0x17: case 0x1b: case 0x1f: {  // slo
+                uint8_t value = read(address_);
+                write(address_, value);
+                p.c = (value & 0x80) != 0;
+                value = uint8_t(value << 1);
+                a |= value;
+                set_nz(a);
+                write(address_, value);
+                break;
+            }
+            case 0x0b: case 0x2b: {  // anc
+                a &= read(address_);
+                const uint8_t carry = p.c ? 1 : 0;
+                p.c = (a & 0x80) != 0;
+                a = uint8_t((a << 1) | carry);
+                set_nz(a);
+                break;
+            }
+            case 0x23: case 0x27: case 0x2f: case 0x33:
+            case 0x37: case 0x3b: case 0x3f: {  // rla
+                const uint8_t value = read(address_);
+                write(address_, value);
+                const uint16_t rotated = uint16_t((value << 1) | (p.c ? 1 : 0));
+                p.c = (rotated & 0x100) != 0;
+                a &= uint8_t(rotated);
+                set_nz(a);
+                write(address_, uint8_t(rotated));
+                break;
+            }
+            case 0x43: case 0x47: case 0x4f: case 0x53:
+            case 0x57: case 0x5b: case 0x5f: {  // sre
+                uint8_t value = read(address_);
+                write(address_, value);
+                p.c = (value & 1) != 0;
+                value = uint8_t(value >> 1);
+                a ^= value;
+                set_nz(a);
+                write(address_, value);
+                break;
+            }
+            case 0x4b: {  // alr
+                p.c = (a & 1) != 0;
+                a &= read(address_);
+                p.c = (a & 1) != 0;
+                a = uint8_t(a >> 1);
+                p.z = a == 0;
+                p.n = false;
+                break;
+            }
+            case 0x63: case 0x67: case 0x6f: case 0x73:
+            case 0x77: case 0x7b: case 0x7f: {  // rra
+                uint8_t value = read(address_);
+                write(address_, value);
+                const uint16_t rotated = uint16_t((p.c ? 0x100 : 0) | value);
+                p.c = (value & 1) != 0;
+                value = uint8_t(rotated >> 1);
+                adc(value);
+                write(address_, value);
+                break;
+            }
+            case 0x6b: {  // arr
+                a &= read(address_);
+                const uint8_t carry = p.c ? 0x80 : 0;
+                p.c = (a & 1) != 0;
+                a = uint8_t((a >> 1) | carry);
+                set_nz(a);
+                break;
+            }
+            case 0x83: case 0x87: case 0x8f: case 0x97:  // sax
+                write(address_, uint8_t(a & x));
+                break;
+            case 0x8b:  // xaa
+                a = uint8_t(x & read(address_));
+                set_nz(a);
+                break;
+            case 0xa3: case 0xaf: case 0xb3:
+            case 0xb7: case 0xbf:  // lax ($a7 is implicit in the Pascal table)
+                a = x = read(address_);
+                set_nz(a);
+                break;
+            case 0xc3: case 0xcf: case 0xd3:
+            case 0xd7: case 0xdb: case 0xdf: {  // dcp
+                uint8_t value = read(address_);
+                write(address_, value);
+                value = uint8_t(value - 1);
+                p.c = a >= value;
+                const uint8_t diff = uint8_t(a - value);
+                p.z = diff == 0;
+                p.n = (diff & 0x80) != 0;
+                write(address_, value);
+                break;
+            }
+            case 0xe3: case 0xef: case 0xf3:
+            case 0xf7: case 0xfb: case 0xff: {  // isb / isc
+                uint8_t value = read(address_);
+                write(address_, value);
+                value = uint8_t(value + 1);
+                sbc(value);
+                write(address_, value);
+                break;
+            }
+            default:  // documented and undocumented nops
+                break;
+            }
 
         const int elapsed = kCycles[instruction] + extra_cycles_;
         executed += elapsed;
         if (cycle_handler_) cycle_handler_(elapsed);
+        if (stolen_cycles_ != 0) {
+            executed += stolen_cycles_;
+            if (cycle_handler_) cycle_handler_(stolen_cycles_);
+            stolen_cycles_ = 0;
+        }
     }
     return executed;
+}
+
+void M6502::steal_cycles(int cycles) {
+    if (cycles > 0) stolen_cycles_ += cycles;
 }
 
 }  // namespace dsp
