@@ -6,6 +6,8 @@
 #include <filesystem>
 #include <fstream>
 
+#include "core/rom_loader.h"
+
 namespace dsp {
 namespace {
 
@@ -80,6 +82,38 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
         if (dir.empty()) dir = ".";
     }
 
+    std::vector<RomLoader> sources;
+    auto add_source = [&](const std::string& p) {
+        RomLoader loader;
+        std::string ignored;
+        if (loader.open(p, &ignored)) sources.push_back(std::move(loader));
+    };
+    add_source(dir);
+    std::error_code ec;
+    if (fs::is_directory(dir, ec)) {
+        // MAME rompath: only open the Spectrum-clone zips, not the whole set.
+        for (const auto& item : fs::directory_iterator(dir, ec)) {
+            if (!item.is_regular_file(ec)) continue;
+            const std::string name = item.path().filename().string();
+            if (!ends_ci(name, ".zip")) continue;
+            std::string lower = name;
+            for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
+            const bool clone_zip =
+                lower.find("pentagon") != std::string::npos ||
+                lower.find("pent1024") != std::string::npos || lower.find("scorpio") != std::string::npos ||
+                lower.find("scorpion") != std::string::npos || lower.find("spec128") != std::string::npos ||
+                lower.find("beta128") != std::string::npos || lower.find("trdos") != std::string::npos;
+            if (clone_zip) add_source(item.path().string());
+        }
+    }
+
+    auto try_named = [&](const char* name, std::vector<uint8_t>& out) -> bool {
+        for (const RomLoader& loader : sources) {
+            if (loader.try_read(name, out) && !out.empty()) return true;
+        }
+        return try_rom(dir, name, out);
+    };
+
     auto copy_page = [&](int page, const std::vector<uint8_t>& blob, size_t off) {
         if (page < 0 || page > 3) return;
         const size_t n = std::min(size_t(0x4000), blob.size() - std::min(off, blob.size()));
@@ -95,7 +129,7 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
     const char* joined32[] = {"pentagon.rom", "128.rom", "zx128.rom", "spectrum128.rom", "128p.rom"};
     if (model_ == ZxCloneModel::Scorpion256) {
         for (const char* n : joined64) {
-            if (try_rom(dir, n, blob) && blob.size() >= 0x10000) {
+            if (try_named(n, blob) && blob.size() >= 0x10000) {
                 for (int p = 0; p < 4; p++) copy_page(p, blob, size_t(p) * 0x4000);
                 have128 = have_dos = true;
                 break;
@@ -103,8 +137,8 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
         }
         if (!have128) {
             std::vector<uint8_t> p0, p1, p2, p3;
-            if (try_rom(dir, "scorp0.rom", p0) && try_rom(dir, "scorp1.rom", p1) &&
-                try_rom(dir, "scorp2.rom", p2) && try_rom(dir, "scorp3.rom", p3) &&
+            if (try_named("scorp0.rom", p0) && try_named("scorp1.rom", p1) &&
+                try_named("scorp2.rom", p2) && try_named("scorp3.rom", p3) &&
                 p0.size() >= 0x4000 && p1.size() >= 0x4000 && p2.size() >= 0x4000 &&
                 p3.size() >= 0x4000) {
                 copy_page(0, p0, 0);
@@ -118,7 +152,7 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
 
     if (!have128) {
         for (const char* n : joined32) {
-            if (try_rom(dir, n, blob) && blob.size() >= 0x8000) {
+            if (try_named(n, blob) && blob.size() >= 0x8000) {
                 copy_page(0, blob, 0);
                 copy_page(1, blob, 0x4000);
                 have128 = true;
@@ -128,13 +162,13 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
     }
     if (!have128) {
         std::vector<uint8_t> r0, r1;
-        const char* n0[] = {"128p-0.rom", "128-0.rom", "plus2-0.rom"};
-        const char* n1[] = {"128p-1.rom", "128-1.rom", "plus2-1.rom"};
+        const char* n0[] = {"128p-0.rom", "zx128_0.rom", "128-0.rom", "plus2-0.rom"};
+        const char* n1[] = {"128p-1.rom", "zx128_1.rom", "128-1.rom", "plus2-1.rom"};
         for (const char* a : n0) {
-            if (try_rom(dir, a, r0) && r0.size() >= 0x4000) break;
+            if (try_named(a, r0) && r0.size() >= 0x4000) break;
         }
         for (const char* a : n1) {
-            if (try_rom(dir, a, r1) && r1.size() >= 0x4000) break;
+            if (try_named(a, r1) && r1.size() >= 0x4000) break;
         }
         if (r0.size() >= 0x4000 && r1.size() >= 0x4000) {
             copy_page(0, r0, 0);
@@ -158,11 +192,12 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
     }
 
     if (!have_dos) {
-        const char* dos_names[] = {"trdos.rom", "trd503.rom", "trd504.rom", "trd505.rom",
-                                   "dos.rom",   "128-3.rom",  "scorp3.rom", "beta128.rom"};
+        const char* dos_names[] = {"trdos.rom", "trd503.rom", "trd504.rom", "trd504t.rom",
+                                   "trd505.rom", "dos.rom",   "128-3.rom",  "scorp3.rom",
+                                   "beta128.rom"};
         std::vector<uint8_t> dos;
         for (const char* n : dos_names) {
-            if (try_rom(dir, n, dos) && dos.size() >= 0x4000) {
+            if (try_named(n, dos) && dos.size() >= 0x4000) {
                 copy_page(3, dos, 0);
                 have_dos = true;
                 break;
@@ -179,7 +214,7 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
     std::vector<uint8_t> gluk;
     if (model_ == ZxCloneModel::Pentagon1024) {
         for (const char* n : gluk_names) {
-            if (try_rom(dir, n, gluk) && gluk.size() >= 0x4000) {
+            if (try_named(n, gluk) && gluk.size() >= 0x4000) {
                 copy_page(2, gluk, 0);
                 gluk_present_ = true;
                 break;
@@ -189,7 +224,7 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
     } else if (rom_[2][0] == 0 && rom_[2][1] == 0) {
         const char* svc[] = {"scorp2.rom", "service.rom"};
         for (const char* n : svc) {
-            if (try_rom(dir, n, gluk) && gluk.size() >= 0x4000) {
+            if (try_named(n, gluk) && gluk.size() >= 0x4000) {
                 copy_page(2, gluk, 0);
                 break;
             }
