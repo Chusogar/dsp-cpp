@@ -112,19 +112,27 @@ ROMs are **not** shipped. MAME set names:
 * EXL-100 (`exl100.zip`): `exl100in.bin` (TMS7020, CRC `049109a3`) and
   `exl100_7041.bin` (TMS7041, CRC `38f6fc7a`).
 * EXELTEL (`exeltel.zip`): `exeltel_7040.bin` (TMS7040, CRC `2792f02f`),
-  `exeltel_7042.bin` (I/O CPU, bad dump in MAME), `exeltel14.bin` (64 KiB
-  system ROM) and optionally `cm62312.bin` (speech).
+  `exeltel_7042.bin` (I/O CPU, **BAD_DUMP** in MAME, CRC `a0163507`),
+  `exeltel14.bin` (French v1.4, 64 KiB, CRC `52a80dd4`) or `amper.bin`
+  (Spanish, CRC `45af256c`), and optionally `cm62312.bin` (speech).
+  The same files also live in a nested `exeltel/` folder inside `exl100.zip`.
 
 [RetroBIOS](https://github.com/Abdess/retrobios) does not currently publish an
-Exelvision pack. The MAME 0.193 merged set on Archive.org includes `exl100.zip`
-(TMS7020 + TMS7041, with the EXELTEL files in a nested folder):
+Exelvision pack. Sources that match the MAME CRCs:
 
-https://archive.org/download/MAME_0.193_ROMs_merged/MAME_0.193_ROMs_merged.zip/MAME%200.193%20ROMs%20%28merged%29%2Fexl100.zip
+* MAME 0.193 merged `exl100.zip` on Archive.org (TMS7020 + TMS7041, EXELTEL files nested):
+  https://archive.org/download/MAME_0.193_ROMs_merged/MAME_0.193_ROMs_merged.zip/MAME%200.193%20ROMs%20%28merged%29%2Fexl100.zip
+* DCExel “mémoires mortes” dump of the TMS7040 (`exeltel_rom.zip`, CRC `2792f02f`):
+  http://dcexel.free.fr/telechargement/rom/exeltel_rom.zip
 
-Without the I/O CPU ROM the driver HLE's the "I/O initialized" mailbox byte so
-the main CPU can continue. Load a cartridge with `--tape` or by placing a
-`.bin`/`.rom` beside the BIOS. Exel Basic (`exelbas`) is the usual way to get a
-prompt. BIOS-only boot shows the Exelvision butterfly logo.
+The TMS7042 I/O ROM has never been redumped. Running MAME’s image posts mailbox
+`$04` and the TMS7040 hangs at `$FA29`, so this driver ignores that CRC and HLE’s
+mailbox `$08` plus the PA.0 handshake. EXL-100 BIOS-only boot shows the
+Exelvision butterfly logo. EXELTEL turns the TMS3556 on in bitmap mode (red
+active area, cyan border); a full menu still needs a real 7042 dump.
+
+Load a cartridge with `--tape` or by placing a `.bin`/`.rom` beside the BIOS.
+Exel Basic (`exelbas`) is the usual way to get a prompt on the EXL-100.
 
 ```bash
 ./build/dsp --game exl100 /path/to/exl100.zip

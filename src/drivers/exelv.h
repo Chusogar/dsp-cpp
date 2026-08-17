@@ -53,6 +53,7 @@ public:
     bool load_media(const std::string& path, std::string* error) override;
 
     bool bios_loaded() const { return bios_loaded_; }
+    bool sub_present() const { return sub_present_; }
     uint16_t debug_pc() const { return maincpu_.pc(); }
     uint8_t debug_a() const { return maincpu_.a(); }
     uint16_t debug_sub_pc() const { return subcpu_.pc(); }
@@ -108,6 +109,7 @@ private:
     bool sub_present_ = false;
     bool bios_loaded_ = false;
     bool hle_io_sent_ = false;
+    bool hle_io_lowered_ = false;
     int hle_io_delay_ = 0;
 
     MachineInputs inputs_{};

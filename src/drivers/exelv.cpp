@@ -121,11 +121,16 @@ void Exelv::install_dummy_bios() {
 bool Exelv::load_bios(const std::string& rom_path, std::string* error) {
     (void)error;
     auto load_entries = [&](const std::vector<RomEntry>& entries, std::vector<uint8_t>& dest) {
-        dest.assign(entries[0].length, 0);
+        dest.clear();
         RomLoader loader;
         std::string ignored;
         if (!loader.open(rom_path, &ignored)) return false;
-        return loader.load(entries, dest, &ignored);
+        dest.assign(entries[0].length, 0);
+        if (!loader.load(entries, dest, &ignored)) {
+            dest.clear();
+            return false;
+        }
+        return true;
     };
 
     std::vector<uint8_t> main_rom, sub_rom;
@@ -135,6 +140,15 @@ bool Exelv::load_bios(const std::string& rom_path, std::string* error) {
     } else {
         if (!load_entries(kExeltelMain, main_rom)) return false;
         load_entries(kExeltelSub, sub_rom);
+        // MAME still ships this 7042 image as BAD_DUMP (CRC a0163507). The first
+        // 1 KiB matches the EXL-100 7041, then the rest diverges; running it
+        // posts mailbox $04 and the TMS7040 hangs at $FA29. Skip it and HLE the
+        // mailbox $08 handshake instead.
+        if (sub_rom.size() >= 0x800 && crc32_of(sub_rom.data(), sub_rom.size()) == 0xa0163507) {
+            warnings_.push_back(
+                "exeltel_7042.bin is MAME's known BAD_DUMP; mailbox $08 is HLE'd");
+            sub_rom.clear();
+        }
         std::vector<uint8_t> sys(0x10000, 0);
         RomLoader loader;
         std::string ignored;
@@ -150,7 +164,12 @@ bool Exelv::load_bios(const std::string& rom_path, std::string* error) {
         sub_present_ = true;
     } else {
         sub_present_ = false;
-        warnings_.push_back("I/O CPU ROM missing; mailbox init is HLE'd");
+        if (model_ == Model::Exl100) {
+            warnings_.push_back("I/O CPU ROM missing; mailbox init is HLE'd");
+        } else if (warnings_.empty() ||
+                   warnings_.back().find("BAD_DUMP") == std::string::npos) {
+            warnings_.push_back("I/O CPU ROM missing; mailbox $08 is HLE'd");
+        }
     }
     bios_loaded_ = true;
     return true;
@@ -235,6 +254,7 @@ void Exelv::reset() {
     wx319_ = 0;
     speech_irq_ = false;
     hle_io_sent_ = false;
+    hle_io_lowered_ = false;
     hle_io_delay_ = int(maincpu_.cpu_clock() / 5);  // ~0.2 s
     k_channels_[0] = 0xff;
     k_channels_[1] = 0xff;
@@ -483,12 +503,26 @@ void Exelv::run_frame() {
             remain -= slice;
         }
         tick_keyboard(cycles_per_line);
-        if (!sub_present_ && !hle_io_sent_) {
-            hle_io_delay_ -= cycles_per_line;
-            if (hle_io_delay_ <= 0) {
-                wx319_ = 0x08;  // I/O CPU initialized
-                maincpu_.set_input_line(Tms7000::kInt1, IrqLine::Hold);
-                hle_io_sent_ = true;
+        // EXL-100 waits for mailbox $08. EXELTEL's 7040 also CMP #$08 on the
+        // first handshake; the bad 7042 posts $04 and that path hangs at $FA29,
+        // so only a missing/disabled I/O CPU uses this HLE.
+        if (!sub_present_) {
+            if (!hle_io_sent_) {
+                hle_io_delay_ -= cycles_per_line;
+                if (hle_io_delay_ <= 0) {
+                    wx319_ = 0x08;  // I/O CPU initialized
+                    tms7041_portb_ |= 0x80;  // main PA.0 handshake high
+                    maincpu_.set_input_line(Tms7000::kInt1, IrqLine::Hold);
+                    hle_io_sent_ = true;
+                    hle_io_delay_ = cycles_per_line * kScanlines * 5;  // hold PA.0 ~0.1 s
+                }
+            } else if (!hle_io_lowered_) {
+                hle_io_delay_ -= cycles_per_line;
+                if (hle_io_delay_ <= 0) {
+                    // TMS7040 INT1 handler then BTJO %$01,P4 waiting for PA.0 low.
+                    tms7041_portb_ &= uint8_t(~0x80);
+                    hle_io_lowered_ = true;
+                }
             }
         }
     }

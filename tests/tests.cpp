@@ -957,10 +957,18 @@ void test_exelv_dummy_bios() {
     machine.install_dummy_bios();
     machine.reset();
     check(machine.bios_loaded(), "dummy EXL BIOS installs");
+    check(machine.sub_present(), "dummy EXL BIOS installs the I/O CPU");
     check(machine.screen_width() == 336 && machine.screen_height() == 252,
           "EXL-100 reports the TMS3556 336x252 framebuffer");
     for (int i = 0; i < 2; i++) machine.run_frame();
     check(machine.debug_pc() >= 0xf800, "dummy BIOS idles in internal ROM");
+
+    dsp::Exelv tel(dsp::Exelv::Model::Exeltel);
+    tel.install_dummy_bios();
+    tel.reset();
+    check(tel.bios_loaded(), "dummy EXELTEL BIOS installs");
+    for (int i = 0; i < 2; i++) tel.run_frame();
+    check(tel.debug_pc() >= 0xf000, "dummy EXELTEL BIOS idles in TMS7040 ROM");
 }
 
 }  // namespace
