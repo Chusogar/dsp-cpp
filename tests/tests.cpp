@@ -3,18 +3,11 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <memory>
-#include <string>
-#include <filesystem>
-#include <fstream>
 #include <set>
-#include <filesystem>
-#include <fstream>
-#include <filesystem>
-#include <fstream>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -24,38 +17,35 @@
 #include "cpu/m6805.h"
 #include "cpu/m6809.h"
 #include "cpu/m68000.h"
+#include "cpu/tms7000.h"
 #include "cpu/upd7801.h"
 #include "cpu/z80.h"
-#include "drivers/c64.h"
-#include "drivers/gameboy.h"
-#include "drivers/nes.h"
 #include "cpu/z80ctc.h"
-#include "drivers/mcr.h"
 #include "drivers/amstrad_cpc.h"
-#include "drivers/scv.h"
-#include "sound/upd1771.h"
-#include "cpu/tms7000.h"
-#include "cpu/z80.h"
-#include "drivers/exelv.h"
-#include "drivers/spectrum.h"
-#include "machine/bagman_pal.h"
-#include "machine/mos6526.h"
 #include "drivers/atari_lynx.h"
+#include "drivers/c64.h"
+#include "drivers/exelv.h"
+#include "drivers/gameboy.h"
+#include "drivers/mcr.h"
+#include "drivers/nes.h"
+#include "drivers/scv.h"
 #include "drivers/spectrum.h"
 #include "machine/bagman_pal.h"
+#include "machine/kabuki.h"
 #include "machine/lynx_suzy.h"
+#include "machine/mos6526.h"
 #include "machine/slapstic.h"
 #include "machine/spectrum_tape.h"
 #include "sound/ay8910.h"
 #include "sound/msm5205.h"
-#include "sound/okim6295.h"
 #include "sound/nes_apu.h"
+#include "sound/okim6295.h"
 #include "sound/pokey.h"
-#include "sound/sid.h"
 #include "sound/qsound.h"
+#include "sound/sid.h"
 #include "sound/sn76496.h"
+#include "sound/upd1771.h"
 #include "sound/ym2151.h"
-#include "machine/kabuki.h"
 #include "video/atari_mo.h"
 #include "video/gb_ppu.h"
 #include "video/gfx.h"
@@ -701,6 +691,8 @@ void test_m6502_nes_decimal_and_unofficial() {
     check(m6502_memory[0x20] == 0x0f, "DCP decrements the memory byte");
     check(dcp.p.z, "DCP compares A with the decremented byte");
     check(dcp.p.c, "DCP sets carry when A >= memory");
+}
+
 void test_m65c02_opcodes() {
     dsp::M6502 cpu = make_m6502();
     cpu.set_cmos(true);
@@ -1817,6 +1809,8 @@ void test_gbc_oam_dma_from_vram() {
     gb->debug_write(0x8000, 0x55);
     gb->debug_write(0xff46, 0x80);  // OAM DMA from VRAM
     check(gb->debug_read(0xfe00) == 0xff, "OAM DMA from VRAM yields $FF");
+}
+
 void test_z80ctc_timer_and_vector() {
     dsp::Z80Ctc ctc;
     int irqs = 0;
@@ -2024,6 +2018,8 @@ void test_scv_cartridge_window() {
     check(scv->init(dir, &error), "SCV init loads a dummy 8 KiB cartridge beside the BIOS");
     for (int i = 0; i < 2; i++) scv->run_frame();
     check(scv->debug_a() == 0xA5, "SCV maps an 8 KiB cart at $8000");
+}
+
 void test_tms7000_mov_add_call() {
     dsp::Tms7000 cpu(4915200, dsp::Tms7000::Chip::Tms7020);
     std::vector<uint8_t> rom(0x800, 0x00);

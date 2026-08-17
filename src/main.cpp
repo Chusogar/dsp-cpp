@@ -1,7 +1,5 @@
-#include <cctype>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
@@ -42,7 +40,6 @@
 #include "drivers/nes.h"
 #include "drivers/atari_lynx.h"
 #include "drivers/scv.h"
-//#include "drivers/nes.h"
 
 #include "frontend/sdl_app.h"
 
@@ -62,22 +59,19 @@ void print_supported_emulators() {
         "    elevator, junglek, indydoom, peter, marble,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
 		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
-		"    kungfum, spelunkr, spelunk2, ldrun, ldrun2\n"
-        "    ikari, athena, tnk3, aso\n"
+        "    kungfum, spelunkr, spelunk2, ldrun, ldrun2,\n"
+        "    ikari, athena, tnk3, aso,\n"
         "    ghouls, ffight, kod, sf2, strider, 3wonders, captcomm,\n"
-        "    knights, sf2ce, dino, punisher, willow, 1941, nemo\n"
+        "    knights, sf2ce, dino, punisher, willow, 1941, nemo,\n"
         "    rtype, hharry, rtype2\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3,\n"
-        "    cpc464, cpc664, cpc6128, msx, c64\n"
-        "    cpc464, cpc664, cpc6128, msx,\n"
+        "    cpc464, cpc664, cpc6128, msx, c64,\n"
         "    exl100, exeltel\n"
         "\n"
         "  Consoles:\n"
-        "    sms, gamegear, pv1000, coleco, sg1000, gb, nes\n"
-        "    sms, gamegear, pv1000, coleco, sg1000, gb, lynx\n"
-        "    sms, gamegear, pv1000, coleco, sg1000, gb, scv\n"
+        "    sms, gamegear, pv1000, coleco, sg1000, gb, nes, lynx, scv\n"
         "\n");
 }
 
@@ -90,9 +84,8 @@ void print_usage(const char* program) {
     std::printf(
         "Options:\n"
         "  --game NAME        emulator / game to run (required; see list above)\n"
-        "  --tape FILE        ZX Spectrum, Amstrad CPC or C64 tape/program (.tap/.tzx/.cdt/.prg/.t64)\n"
-        "  --tape FILE        ZX Spectrum or Amstrad CPC tape image (.tap/.tzx/.cdt),\n"
-        "                     or an EXL-100 / EXELTEL cartridge (.bin/.rom)\n"
+        "  --tape FILE        tape/cart: Spectrum/CPC/C64 (.tap/.tzx/.cdt/.prg/.t64),\n"
+        "                     or EXL-100 / EXELTEL cartridge (.bin/.rom)\n"
         "  --disk FILE        Amstrad CPC / Spectrum +3 .dsk/.edsk floppy image\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
@@ -111,127 +104,6 @@ void print_usage(const char* program) {
         "On the Spectrum the host keyboard is the Spectrum keyboard (Left Shift is\n"
         "caps shift, Left Ctrl symbol shift, cursor keys the caps shift arrows) and\n"
         "pause moves to F2.\n");
-}
-
-// Guesses the game from the ROM set name when --game is not given.
-std::string guess_game(const std::string& rom_path) {
-    std::string lowered;
-    for (char character : rom_path) lowered += char(std::tolower(character));
-    
-	// Arcade
-	if (lowered.find("mikie") != std::string::npos) return "mikie";
-    if (lowered.find("gauntlet") != std::string::npos) return "gauntlet";
-    if (lowered.find("ddragon2") != std::string::npos) return "ddragon2";
-    if (lowered.find("ddragon") != std::string::npos) return "ddragon";
-    if (lowered.find("elevator") != std::string::npos) return "elevator";
-    if (lowered.find("junglek") != std::string::npos || lowered.find("jungleking") != std::string::npos) {
-        return "junglek";
-    }
-	if (lowered.find("indydoom") != std::string::npos) return "indydoom";
-	if (lowered.find("peter") != std::string::npos) return "peter";
-	if (lowered.find("marble") != std::string::npos) return "marble";
-
-	if (lowered.find("tapper") != std::string::npos) return "tapper";
-	if (lowered.find("tron") != std::string::npos) return "tron";
-	if (lowered.find("shollow") != std::string::npos) return "shollow";
-	if (lowered.find("domino") != std::string::npos) return "domino";
-	if (lowered.find("whacko") != std::string::npos) return "whacko";
-	if (lowered.find("dotron") != std::string::npos) return "dotron";
-	if (lowered.find("timber") != std::string::npos) return "timber";
-
-	if (lowered.find("mrdo") != std::string::npos) return "mrdo";
-
-	if (lowered.find("robocop") != std::string::npos) return "robocop";
-    if (lowered.find("baddudes") != std::string::npos || lowered.find("drgninja") != std::string::npos) {
-        return "baddudes";
-    }
-    if (lowered.find("hippodr") != std::string::npos || lowered.find("ffantasy") != std::string::npos) {
-        return "hippodrm";
-    }
-    if (lowered.find("slyspy") != std::string::npos || lowered.find("secretag") != std::string::npos) {
-        return "slyspy";
-    }
-    if (lowered.find("bouldash") != std::string::npos) return "bouldash";
-    if (lowered.find("kungfum") != std::string::npos || lowered.find("kungfu") != std::string::npos) {
-        return "kungfum";
-    }
-    if (lowered.find("spelunk2") != std::string::npos) return "spelunk2";
-    if (lowered.find("spelunk") != std::string::npos) return "spelunkr";
-    if (lowered.find("ldrun2") != std::string::npos) return "ldrun2";
-    if (lowered.find("ldrun") != std::string::npos || lowered.find("loderunner") != std::string::npos) {
-        return "ldrun";
-    }
-	if (lowered.find("bouldash") != std::string::npos) return "bouldash";
-    if (lowered.find("ikari") != std::string::npos) return "ikari";
-    if (lowered.find("athena") != std::string::npos) return "athena";
-    if (lowered.find("tnk3") != std::string::npos) return "tnk3";
-    if (lowered.find("aso") != std::string::npos) return "aso";
-	if (lowered.find("bouldash") != std::string::npos) return "bouldash";
-    if (lowered.find("ghouls") != std::string::npos) return "ghouls";
-    if (lowered.find("ffight") != std::string::npos || lowered.find("finalfight") != std::string::npos) {
-        return "ffight";
-    }
-    if (lowered.find("kod") != std::string::npos) return "kod";
-    if (lowered.find("sf2ce") != std::string::npos) return "sf2ce";
-    if (lowered.find("sf2") != std::string::npos) return "sf2";
-    if (lowered.find("strider") != std::string::npos) return "strider";
-    if (lowered.find("3wonders") != std::string::npos || lowered.find("wonder3") != std::string::npos) {
-        return "3wonders";
-    }
-    if (lowered.find("captcomm") != std::string::npos) return "captcomm";
-    if (lowered.find("knights") != std::string::npos) return "knights";
-    if (lowered.find("dino") != std::string::npos) return "dino";
-    if (lowered.find("punisher") != std::string::npos) return "punisher";
-    if (lowered.find("willow") != std::string::npos) return "willow";
-    if (lowered.find("1941") != std::string::npos) return "1941";
-    if (lowered.find("nemo") != std::string::npos) return "nemo";
-    if (lowered.find("rtype2") != std::string::npos) return "rtype2";
-    if (lowered.find("hharry") != std::string::npos) return "hharry";
-    if (lowered.find("rtype") != std::string::npos) return "rtype";
-    
-    
-    // Computers
-	if (lowered.find("spectrum") != std::string::npos || lowered.find("48.rom") != std::string::npos) {
-        return "spectrum48";
-    }
-    if (lowered.find("cpc6128") != std::string::npos) return "cpc6128";
-    if (lowered.find("cpc664") != std::string::npos) return "cpc664";
-    if (lowered.find("cpc464") != std::string::npos) return "cpc464";
-
-	if (lowered.find("spectrum128") != std::string::npos) return "spectrum128";
-	if (lowered.find("plus3") != std::string::npos) return "plus3";
-	if (lowered.find("msx") != std::string::npos) return "msx";
-	if (lowered.find("c64") != std::string::npos || lowered.find("commodore") != std::string::npos ||
-	    lowered.find("kernal") != std::string::npos || lowered.find("901227") != std::string::npos) {
-        return "c64";
-    }
-	if (lowered.find("exeltel") != std::string::npos) return "exeltel";
-	if (lowered.find("exl100") != std::string::npos ||
-	    lowered.find("exl-100") != std::string::npos ||
-	    lowered.find("exelvision") != std::string::npos) {
-	    return "exl100";
-	}
-		
-	// console
-	if (lowered.find("sms") != std::string::npos) return "sms";
-    if (lowered.find("gamegear") != std::string::npos) return "gamegear";
-    if (lowered.find("pv1000") != std::string::npos) return "pv1000";
-	if (lowered.find("coleco") != std::string::npos) return "coleco";
-	if (lowered.find("sg1000") != std::string::npos) return "sg1000";
-	if (lowered.find("gb") != std::string::npos) return "gb";
-	if (lowered.find(".nes") != std::string::npos) return "nes";
-	if (lowered.find("lynx") != std::string::npos || lowered.find(".lnx") != std::string::npos ||
-        lowered.find(".lyx") != std::string::npos) {
-        return "lynx";
-    }
-	if (lowered.find("scv") != std::string::npos ||
-	    lowered.find("cassette") != std::string::npos) {
-	    return "scv";
-	}
-	//if (lowered.find("nes") != std::string::npos) return "nes";
-    
-
-    return "bagman";
 }
 
 std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
@@ -350,8 +222,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "nes") return std::make_unique<dsp::Nes>();
 	if (game == "lynx") return std::make_unique<dsp::AtariLynx>();
 	if (game == "scv") return std::make_unique<dsp::Scv>();
-	//if (game == "nes") return std::make_unique<dsp::Nes>();
-	
+
 
     return nullptr;
 }

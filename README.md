@@ -1,20 +1,14 @@
 # dsp-cpp
 
 C++17 + SDL2 port of [dsp-emulator](https://github.com/leniad/dsp-emulator) (Free Pascal).
-Supported games: **Bagman** (Valadon Automation, 1982), **Mikie** (Konami, 1984),
-**Gauntlet** (Atari, 1985), **Double Dragon** and **Double Dragon II** (Technos, 1987/1988),
-**Elevator Action** and **Jungle King** (Taito, 1983, Taito SJ hardware),
-**Kung-Fu Master**, **Spelunker**, **Spelunker II**, **Lode Runner** and **Lode Runner II**
-(Irem M62 hardware).
-**Ikari Warriors**, **Athena**, **TNK III** and **ASO** (SNK, 1985–1986).
-and Capcom **CPS1** (Ghouls'n Ghosts, Final Fight, Street Fighter II, Strider,
-Cadillacs and Dinosaurs, The Punisher, and the rest of the Pascal `cps1_hw`
-set).
-and Irem **M72** (**R-Type**, **Hammerin' Harry**, **R-Type II**).
-It also emulates the **ZX Spectrum 48K** home computer (Sinclair, 1982).
-**Elevator Action** and **Jungle King** (Taito, 1983, Taito SJ hardware).
-It also emulates the **ZX Spectrum 48K** home computer (Sinclair, 1982) and consoles
-including the **Atari Lynx** (1989).
+Arcade: **Bagman**, **Mikie**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
+**Double Dragon II**, Taito SJ (**Elevator Action**, **Jungle King**), Irem M62
+(**Kung-Fu Master**, **Spelunker**, **Lode Runner**), SNK (**Ikari Warriors**,
+**Athena**, **TNK III**, **ASO**), Capcom **CPS1**, Irem **M72** (**R-Type**),
+and Midway **MCR** (**Tapper** and family).
+Computers: **ZX Spectrum 48K**, Amstrad CPC, **Commodore 64**, **EXL-100** /
+**EXELTEL**. Consoles: NES, Game Boy / Game Boy Color, **Atari Lynx**,
+**Super Cassette Vision**.
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
 explains the port workflow and comes with a driver skeleton (`tools/new_driver.py`).
@@ -32,7 +26,10 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Bagman driver | `src/arcade/bagman_hw.pas` | Memory map, video, inputs, DIP switches |
 | Mikie driver | `src/arcade/mikie_hw.pas` | M6809 + sound Z80, PROM colour lookup tables, sprites |
 | M68000/68010 CPU | `src/cpu/m68000.pas` | Gauntlet main CPU |
-| M6502 CPU | `src/cpu/m6502.pas` | Gauntlet sound CPU; optional 65C02 CMOS opcodes for the Lynx |
+| M6502 CPU | `src/cpu/m6502.pas` | Gauntlet sound CPU, NES 2A03, optional 65C02 CMOS opcodes for the Lynx |
+| Mr. Do driver | `src/arcade/mrdo_hw.pas` | `rol90` tile/sprite decode |
+| MCR driver | `src/arcade/mcr_hw.pas` | Tapper / Tron family: dual Z80, CTC, SSIO |
+| Amstrad CPC | `src/computer/amstrad_cpc.pas` | Gate Array wait-states (opcodes on a 4 T-state grid) |
 | Lynx Suzy / Mikey | new | Sprite blitter, math coprocessor, timers, LCD DMA, 4-channel sound |
 | Atari Lynx driver | new | 64 KiB DRAM, MAPCTL, LNX/LYX carts, 160×102 LCD |
 | YM2151 FM, POKEY | `src/snd/fm_2151.pas`, `src/snd/pokey.pas` | Gauntlet sound board |
@@ -59,6 +56,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | NES mappers | `src/consolas/nes_mappers.pas` | 0, 1 (MMC1), 2, 3, 4 (MMC3/MMC6), 7, 9–11, 13, 15, 34, 66, 68, 70, 71, 76, 79/146, 87, 88, 93–95, 113, 180, 184, 185, 206 |
 | NES driver | `src/consolas/nes.pas` | NTSC 256×240, iNES carts (plain or zipped), two controllers |
 | C64 driver | `ordenadores/commodore64.pas` | PLA, 6510 port, keyboard matrix, TAP/PRG/T64/D64 loaders |
+| Game Boy driver | `src/consolas/gb.pas` | DMG / CGB from cart header `$0143`, optional boot ROMs |
 | VIC-II | `mos6566.pas` | PAL 6569, 384×270, sprites, bad lines |
 | MOS 6526 CIA | `mos6526_old.pas` | Two chips: CIA1 IRQ + keyboard, CIA2 NMI + VIC bank |
 | SID 6581 | `sid_sound.pas` | Three voices, 44100 Hz mono |
@@ -88,56 +86,38 @@ ROMs are **not** included. Point the emulator to a `bagman.zip` set or to a dire
 holding the individual files:
 
 ```bash
-./build/dsp /path/to/bagman.zip
+./build/dsp --game bagman /path/to/bagman.zip
 ./build/dsp --scale 3 --dip 0xfe /path/to/roms/bagman/
 ./build/dsp --game mikie /path/to/mikie.zip
 ./build/dsp --game gauntlet /path/to/gauntlet.zip
+./build/dsp --game mrdo /path/to/mrdo.zip
 ./build/dsp --game ddragon /path/to/ddragon.zip
-./build/dsp --game ddragon2 /path/to/ddragon2.zip
 ./build/dsp --game elevator /path/to/elevator.zip
-./build/dsp --game junglek /path/to/junglek.zip
+./build/dsp --game kungfum /path/to/kungfum.zip
 ./build/dsp --game ikari /path/to/ikari.zip
+./build/dsp --game ffight /path/to/ffight.zip
+./build/dsp --game rtype /path/to/rtype.zip
+./build/dsp --game tapper /path/to/tapper.zip
 ./build/dsp --game spectrum48 --tape /path/to/game.tzx /path/to/48.rom
 ./build/dsp --game c64 --tape /path/to/game.prg /path/to/c64-roms/
-```
-
-The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
-`ddragon2`, `elevator`, `junglek`, `kungfum`, `spelunkr`, `spelunk2`, `ldrun`,
-`ldrun2` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
-`ddragon2`, `elevator`, `junglek`, `ikari`, `athena`, `tnk3`, `aso` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
-`ddragon2`, `elevator`, `junglek`, `rtype`, `hharry`, `rtype2` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
+./build/dsp --game gb /path/to/game.gbc
+./build/dsp --game nes /path/to/game.nes
 ./build/dsp --game lynx /path/to/game.lnx
-```
-
-The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
-`ddragon2`, `elevator`, `junglek`, `spectrum48` or `lynx`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 ./build/dsp --game scv /path/to/scv.zip
-```
-
-The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
-`ddragon2`, `elevator`, `junglek`, `spectrum48` or `scv`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 ./build/dsp --game exl100 /path/to/exl100.zip
-./build/dsp --game exl100 --tape /path/to/exelbas.bin /path/to/exl100.zip
-./build/dsp --game exeltel /path/to/exeltel.zip
 ```
 
-The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
-`ddragon2`, `elevator`, `junglek`, `spectrum48`, `exl100` or `exeltel`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
-(SLAPSTIC 104) and the two player `136041-xxx` set (SLAPSTIC 107).
+`--game` is required (`dsp --help` lists every name). Gauntlet accepts both the
+four player parent set (SLAPSTIC 104) and the two player `136041-xxx` set
+(SLAPSTIC 107).
 
-Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
+Required Bagman files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
 `n9_b10.bin`, `c1_b01.bin`, `e1_b02.bin`, `f1_b03s.bin`, `j1_b04.bin`, `p3.bin`, `r3.bin`.
 
 Options:
 
 ```
---game NAME        machine to run: bagman, mikie, gauntlet, ddragon, ddragon2,
-                   elevator, junglek, kungfum, spelunkr, spelunk2, ldrun,
-                   ldrun2 or spectrum48
-                   elevator, junglek, ikari, athena, tnk3, aso or spectrum48
-                   elevator, junglek, rtype, hharry, rtype2 or spectrum48
-                   elevator, junglek, spectrum48 or scv
-                   elevator, junglek, spectrum48, exl100 or exeltel
+--game NAME        machine to run (see `dsp --help`)
 --scale N          window scale factor (default 3)
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
                    mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
@@ -147,9 +127,9 @@ Options:
 --fullscreen       start in full screen
 --screenshot FILE  headless mode: render frames and write FILE (BMP)
 --frames N         frames to run in headless mode (default 300)
---tape FILE        tape image to insert: .tap/.tzx (spectrum48), .prg/.t64/.tap/.d64 (c64)
---tape FILE        tape image to insert, .tap or .tzx (spectrum48);
-                   EXL-100 / EXELTEL cartridge (.bin/.rom)
+--tape FILE        tape/cart: Spectrum/CPC/C64 (.tap/.tzx/.cdt/.prg/.t64),
+                   or EXL-100 / EXELTEL cartridge (.bin/.rom)
+--disk FILE        Amstrad CPC / Spectrum +3 .dsk/.edsk floppy image
 ```
 
 ### Exelvision EXL-100 and EXELTEL
@@ -208,6 +188,26 @@ order of the four layers for every priority code.
 ./build/dsp --game junglek /path/to/junglek.zip
 ```
 
+DIP banks: 0 = A (bonus/finish bonus on bits 0-1, lives on bits 3-4, flip screen on
+bit 6, cabinet on bit 7), 1 = B (coin A and coin B), 2 = C (difficulty or bonus life on
+bits 0-1, year and coinage displays, hit detection or infinite lives, coin slots).
+The defaults are `--dip 0:0x7f --dip 1:0x00 --dip 2:0xff` for Elevator Action and
+`--dip 0:0x3f` for Jungle King. Jungle King runs on a monitor rotated 180 degrees, and
+the port rotates its picture back.
+
+Elevator Action ROM set: `ba3__01.2764.ic1`, `ba3__02.2764.ic2`, `ba3__03-1.2764.ic3`,
+`ba3__04-1.2764.ic6`, `ba3__05.2764.ic4`, `ba3__06.2764.ic5`, `ba3__07.2764.ic9`,
+`ba3__08.2764.ic10`, `ba3__09.2732.ic70`, `ba3__10.2732.ic71`,
+`ba3__11.mc68705p3.ic24`, `eb16.22`.
+
+Jungle King ROM set: `kn21-1.bin`, `kn22-1.bin`, `kn43.bin`, `kn24.bin`, `kn25.bin`,
+`kn46.bin`, `kn47.bin`, `kn28.bin`, `kn60.bin`, `kn29.bin`, `kn30.bin`, `kn51.bin`,
+`kn52.bin`, `kn53.bin`, `kn34.bin`, `kn55.bin`, `kn56.bin`, `kn37.bin`, `kn38.bin`,
+`kn59-1.bin`, `eb16.22`.
+
+Neither set has been run here with real ROMs yet: the driver is only checked against a
+synthetic set, so this hardware is still unverified.
+
 ### Irem M72 (R-Type, Hammerin' Harry, R-Type II)
 
 The board runs an 8 MHz NEC V30, a 3.579545 MHz Z80 with a YM2151, and (on Harry
@@ -224,13 +224,6 @@ R-Type has no dedicated sound ROM: the V30 copies the Z80 program into shared
 RAM at `$e0000`. DIP bank 0 is the low byte of the board ID / DSW word
 (`$fdfb` on R-Type).
 
-DIP banks: 0 = A (bonus/finish bonus on bits 0-1, lives on bits 3-4, flip screen on
-bit 6, cabinet on bit 7), 1 = B (coin A and coin B), 2 = C (difficulty or bonus life on
-bits 0-1, year and coinage displays, hit detection or infinite lives, coin slots).
-The defaults are `--dip 0:0x7f --dip 1:0x00 --dip 2:0xff` for Elevator Action and
-`--dip 0:0x3f` for Jungle King. Jungle King runs on a monitor rotated 180 degrees, and
-the port rotates its picture back.
-
 ### CPS1 (Final Fight, Street Fighter II, …)
 
 Capcom Play System 1: a 10 or 12 MHz 68000, a sound Z80 (YM2151 + OKI6295, or
@@ -245,19 +238,6 @@ rotated 270°). `--game` names match the MAME set: `ghouls`, `ffight`, `kod`, `s
 ```
 
 Final Fight DIP defaults are A=`0xff`, B=`0xf4`, C=`0x9f`.
-
-Elevator Action ROM set: `ba3__01.2764.ic1`, `ba3__02.2764.ic2`, `ba3__03-1.2764.ic3`,
-`ba3__04-1.2764.ic6`, `ba3__05.2764.ic4`, `ba3__06.2764.ic5`, `ba3__07.2764.ic9`,
-`ba3__08.2764.ic10`, `ba3__09.2732.ic70`, `ba3__10.2732.ic71`,
-`ba3__11.mc68705p3.ic24`, `eb16.22`.
-
-Jungle King ROM set: `kn21-1.bin`, `kn22-1.bin`, `kn43.bin`, `kn24.bin`, `kn25.bin`,
-`kn46.bin`, `kn47.bin`, `kn28.bin`, `kn60.bin`, `kn29.bin`, `kn30.bin`, `kn51.bin`,
-`kn52.bin`, `kn53.bin`, `kn34.bin`, `kn55.bin`, `kn56.bin`, `kn37.bin`, `kn38.bin`,
-`kn59-1.bin`, `eb16.22`.
-
-Neither set has been run here with real ROMs yet: the driver is only checked against a
-synthetic set, so this hardware is still unverified.
 
 ### Irem M62 (Kung-Fu Master, Spelunker, Lode Runner)
 
@@ -476,14 +456,10 @@ cmake --build build --target dsp_zexdoc
 ## Layout
 
 ```
-src/cpu/        Z80, M6809, M6502, M68000, HD63701 and M6805 cores
-src/sound/      AY-3-8910, SN76496, NES 2A03 APU, SID 6581
-src/video/      graphics decoding, resistor palettes, NES PPU, VIC-II
-src/machine/    Bagman PAL16R6, SLAPSTIC, Spectrum tape player, NES mappers, MOS 6526 CIA
-src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805 and µPD7801 cores
-src/sound/      AY-3-8910, SN76496, µPD1771C and the other arcade chips
-src/video/      graphics decoding and resistor based palette helpers
-src/machine/    Bagman PAL16R6, SLAPSTIC, Spectrum tape player
+src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805, µPD7801, TMS7000, NEC V30
+src/sound/      AY-3-8910, SN76496, NES APU, SID, µPD1771C, QSound, TMS5220
+src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556
+src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, Lynx Suzy/Mikey
 src/drivers/    the machines themselves (memory map, video, inputs)
 src/frontend/   SDL2 front end, driven through the core/machine.h interface
 src/core/       ROM loader (directory or zip) and the Machine interface

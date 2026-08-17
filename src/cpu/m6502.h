@@ -10,7 +10,6 @@ namespace dsp {
 
 // MOS 6502, ported from m6502.pas. Type::Nmos is the arcade variant (BCD on);
 // Type::Nes is the 2A03 (decimal mode ignored, same undocumented opcodes).
-// MOS 6502, ported from m6502.pas (NMOS variant used by the Atari sound boards).
 // Optional G65SC02/65C02 mode covers the extra Lynx opcodes (BRA, STZ, PHX/PHY,
 // TRB/TSB, BIT imm, INC/DEC A, JMP (abs,X), (zp)).
 class M6502 {

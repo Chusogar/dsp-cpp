@@ -714,8 +714,6 @@ int M6502::run(int cycles) {
                 x = pop();
                 set_nz(x);
                 break;
-            default:  // nop and the undocumented opcodes the sound code never uses
-                break;
             case 0x03: case 0x07: case 0x0f: case 0x13:
             case 0x17: case 0x1b: case 0x1f: {  // slo
                 uint8_t value = read(address_);

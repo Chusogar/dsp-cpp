@@ -116,13 +116,13 @@ enable_testing()
 add_executable(dsp_tests
   tests/tests.cpp
   src/cpu/z80.cpp
+  src/cpu/z80ctc.cpp
   src/cpu/m6809.cpp
   src/cpu/m6502.cpp
   src/cpu/m68000.cpp
   src/cpu/hd63701.cpp
   src/cpu/m6805.cpp
   src/cpu/lr35902.cpp
-  src/cpu/z80ctc.cpp
   src/cpu/upd7801.cpp
   src/cpu/tms7000.cpp
   src/sound/ay8910.cpp
@@ -134,13 +134,15 @@ add_executable(dsp_tests
   src/sound/nes_apu.cpp
   src/sound/qsound.cpp
   src/sound/upd1771.cpp
+  src/sound/tms5220.cpp
+  src/sound/sid.cpp
+  src/sound/gb_apu.cpp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/nes_ppu.cpp
-  src/sound/tms5220.cpp
-  src/video/gfx.cpp
-  src/video/atari_mo.cpp
   src/video/tms3556.cpp
+  src/video/mos6566.cpp
+  src/video/gb_ppu.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/spectrum_tape.cpp
@@ -150,22 +152,16 @@ add_executable(dsp_tests
   src/machine/eeprom93c46.cpp
   src/machine/nec765.cpp
   src/machine/mos6526.cpp
-  src/video/mos6566.cpp
-  src/sound/sid.cpp
-  src/drivers/spectrum.cpp
-  src/drivers/amstrad_cpc.cpp
   src/machine/nes_mapper.cpp
-  src/drivers/nes.cpp
-  src/drivers/c64.cpp
-  src/drivers/gameboy.cpp
   src/machine/gb_mapper.cpp
-  src/sound/gb_apu.cpp
-  src/video/gb_ppu.cpp
-  src/drivers/mcr.cpp
   src/machine/lynx_suzy.cpp
   src/machine/lynx_mikey.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
+  src/drivers/nes.cpp
+  src/drivers/c64.cpp
+  src/drivers/gameboy.cpp
+  src/drivers/mcr.cpp
   src/drivers/atari_lynx.cpp
   src/drivers/scv.cpp
   src/drivers/exelv.cpp
