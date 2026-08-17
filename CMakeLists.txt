@@ -154,6 +154,7 @@ add_executable(dsp_tests
   src/video/atari_mo.cpp
   src/video/nes_ppu.cpp
   src/video/tms3556.cpp
+  src/video/tms9918.cpp
   src/video/mos6566.cpp
   src/video/gb_ppu.cpp
   src/video/avg_starwars.cpp

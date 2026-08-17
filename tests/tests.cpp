@@ -61,6 +61,7 @@
 #include "video/gfx.h"
 #include "video/mos6566.h"
 #include "video/tms3556.h"
+#include "video/tms9918.h"
 #include "video/sega_315_5313.h"
 
 namespace {
@@ -2112,6 +2113,61 @@ void test_tms7000_lvdp_and_int1() {
     check(irq_cpu.a() == 0xaa, "tms7000 INT1 vectors through $FFFC");
 }
 
+void tms_write_reg(dsp::TMS9918& vdp, int reg, uint8_t value) {
+    vdp.register_write(value);
+    vdp.register_write(uint8_t(0x80 | reg));
+}
+
+void tms_write_vram(dsp::TMS9918& vdp, uint16_t address, const uint8_t* data, size_t size) {
+    vdp.register_write(uint8_t(address & 0xff));
+    vdp.register_write(uint8_t(0x40 | ((address >> 8) & 0x3f)));
+    for (size_t i = 0; i < size; i++) vdp.vram_write(data[i]);
+}
+
+void tms_setup_sprite_screen(dsp::TMS9918& vdp, uint8_t y, uint8_t x) {
+    vdp.reset();
+    tms_write_reg(vdp, 1, 0x40);  // display on, 8x8 sprites
+    tms_write_reg(vdp, 2, 0x05);  // nametable $1400 (empty → backdrop)
+    tms_write_reg(vdp, 5, 0x36);  // sprite attribute table $1B00
+    tms_write_reg(vdp, 6, 0x07);  // sprite patterns $3800
+    tms_write_reg(vdp, 7, 0x01);  // backdrop black
+    const uint8_t solid[8] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+    tms_write_vram(vdp, 0x3800, solid, sizeof(solid));
+    const uint8_t sat[] = {y, x, 0, 0x0f, 0xd0};
+    tms_write_vram(vdp, 0x1b00, sat, sizeof(sat));
+    for (int line = 0; line < dsp::TMS9918::kScreenHeight; line++) vdp.refresh_ntsc(line);
+}
+
+void test_tms9918_sprites() {
+    constexpr uint32_t kWhite = 0xffffffffu;
+    constexpr uint32_t kBlack = 0xff000000u;
+    auto pixel = [](const dsp::TMS9918& vdp, int x, int y) {
+        return vdp.framebuffer()[size_t(y) * dsp::TMS9918::kScreenWidth + size_t(x)];
+    };
+
+    dsp::TMS9918 vdp(0, nullptr);
+
+    // Y is stored minus one: Y=176 appears on scanlines 177-184, the bottom
+    // third of the screen. Signed int8 Y made this sprite vanish.
+    tms_setup_sprite_screen(vdp, 176, 40);
+    check(pixel(vdp, 40, 177) == kWhite, "TMS9918 draws an 8x8 sprite on the bottom third of the screen");
+    check(pixel(vdp, 47, 184) == kWhite, "TMS9918 sprite at Y=176 covers the last of its 8 scanlines");
+    check(pixel(vdp, 40, 176) == kBlack, "TMS9918 sprite Y is offset by one scanline");
+    check(pixel(vdp, 40, 185) == kBlack, "TMS9918 8x8 sprite does not extend past its height");
+    check(pixel(vdp, 39, 177) == kBlack, "TMS9918 sprite left edge is the stored X");
+
+    tms_setup_sprite_screen(vdp, 0xff, 16);
+    check(pixel(vdp, 16, 0) == kWhite, "TMS9918 Y=$FF places the sprite on scanline 0");
+    check(pixel(vdp, 16, 7) == kWhite, "TMS9918 Y=$FF sprite is fully visible at the top");
+
+    tms_setup_sprite_screen(vdp, 190, 80);
+    check(pixel(vdp, 80, 191) == kWhite, "TMS9918 sprite at Y=190 still shows on the last scanline");
+    check(pixel(vdp, 80, 190) == kBlack, "TMS9918 sprite at Y=190 does not start one line early");
+
+    tms_setup_sprite_screen(vdp, 191, 80);
+    check(pixel(vdp, 80, 191) == kBlack, "TMS9918 sprite at Y=191 is fully off the bottom");
+}
+
 void test_tms3556_background() {
     dsp::Tms3556 vdp;
     vdp.reset();
@@ -2647,6 +2703,7 @@ int main() {
     test_scv_cartridge_window();
     test_tms7000_mov_add_call();
     test_tms7000_lvdp_and_int1();
+    test_tms9918_sprites();
     test_tms3556_background();
     test_exelv_dummy_bios();
     test_trdos_scl_and_beta();
