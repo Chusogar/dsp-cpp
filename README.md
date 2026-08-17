@@ -12,6 +12,9 @@ Cadillacs and Dinosaurs, The Punisher, and the rest of the Pascal `cps1_hw`
 set).
 and Irem **M72** (**R-Type**, **Hammerin' Harry**, **R-Type II**).
 It also emulates the **ZX Spectrum 48K** home computer (Sinclair, 1982).
+**Elevator Action** and **Jungle King** (Taito, 1983, Taito SJ hardware).
+It also emulates the **ZX Spectrum 48K** home computer (Sinclair, 1982) and consoles
+including the **Atari Lynx** (1989).
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
 explains the port workflow and comes with a driver skeleton (`tools/new_driver.py`).
@@ -29,7 +32,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Bagman driver | `src/arcade/bagman_hw.pas` | Memory map, video, inputs, DIP switches |
 | Mikie driver | `src/arcade/mikie_hw.pas` | M6809 + sound Z80, PROM colour lookup tables, sprites |
 | M68000/68010 CPU | `src/cpu/m68000.pas` | Gauntlet main CPU |
-| M6502 CPU | `src/cpu/m6502.pas` | Gauntlet sound CPU |
+| M6502 CPU | `src/cpu/m6502.pas` | Gauntlet sound CPU; optional 65C02 CMOS opcodes for the Lynx |
+| Lynx Suzy / Mikey | new | Sprite blitter, math coprocessor, timers, LCD DMA, 4-channel sound |
+| Atari Lynx driver | new | 64 KiB DRAM, MAPCTL, LNX/LYX carts, 160×102 LCD |
 | YM2151 FM, POKEY | `src/snd/fm_2151.pas`, `src/snd/pokey.pas` | Gauntlet sound board |
 | SLAPSTIC | `src/arcade/misc/slapstic.pas` | Types 101-107, bank switched protected ROM |
 | Atari motion objects | `src/arcade/misc/atari_mo.pas` | SLIP based sprite lists |
@@ -95,6 +100,11 @@ The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
 `ldrun2` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 `ddragon2`, `elevator`, `junglek`, `ikari`, `athena`, `tnk3`, `aso` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 `ddragon2`, `elevator`, `junglek`, `rtype`, `hharry`, `rtype2` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
+./build/dsp --game lynx /path/to/game.lnx
+```
+
+The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
+`ddragon2`, `elevator`, `junglek`, `spectrum48` or `lynx`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 (SLAPSTIC 104) and the two player `136041-xxx` set (SLAPSTIC 107).
 
 Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
@@ -306,6 +316,29 @@ Point it at a MAME merged `tapper.zip`.
 ```
 
 Start is player 1 `1` / player 2 `2`, coin is `5`/`6`, Tapper pours with Ctrl/Space.
+### Atari Lynx
+
+The handheld is a 65C02 (G65SC02 inside **Mikey**) at 16 MHz with wait states, 64 KiB
+of shared DRAM, and **Suzy** for sprites, 16-bit math and the cartridge port. Mikey
+also owns the eight timers (HBL/VBL), 16-colour 12-bit palette, LCD DMA (160×102),
+four-channel polynomial sound and the cart address shifter.
+
+The 512-byte Mikey boot ROM is the same `lynxboot.img` dump Handy and Mednafen use
+(CRC `0d973c9d` or `e1ffecb6`). It is not shipped in this tree. Put it next to the
+cartridge, in the ROM directory, or pass it as the positional path:
+
+```bash
+# https://github.com/Abdess/retrobios/blob/main/bios/Atari/Lynx/lynxboot.img
+./build/dsp --game lynx /path/to/roms/          # directory with lynxboot.img + game.lnx
+./build/dsp --game lynx /path/to/game.lnx       # looks for lynxboot.img beside the cart
+```
+
+Without that file a tiny open bootstrap is mapped instead, which is enough for
+raw homebrew that expects the first 256 bytes at `$0200`. Commercial carts need
+the Atari ROM.
+
+Lynx controls: arrows, Left Ctrl/Space = A, Left Alt/Z = B, X = Option 1, 1 = Option 2,
+5 = Pause.
 
 ### Controls
 

@@ -58,6 +58,8 @@ add_executable(dsp
   src/machine/i8255.cpp
   src/machine/nec765.cpp
   src/machine/disk_image.cpp
+  src/machine/lynx_suzy.cpp
+  src/machine/lynx_mikey.cpp
   
   src/drivers/bagman.cpp
   src/drivers/mikie.cpp
@@ -97,6 +99,7 @@ add_executable(dsp
   src/video/mos6566.cpp
   src/sound/sid.cpp
   src/drivers/c64.cpp
+  src/drivers/atari_lynx.cpp
       
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
@@ -149,6 +152,11 @@ add_executable(dsp_tests
   src/sound/gb_apu.cpp
   src/video/gb_ppu.cpp
   src/drivers/mcr.cpp
+  src/machine/lynx_suzy.cpp
+  src/machine/lynx_mikey.cpp
+  src/drivers/spectrum.cpp
+  src/drivers/amstrad_cpc.cpp
+  src/drivers/atari_lynx.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)
