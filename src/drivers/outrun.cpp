@@ -257,7 +257,8 @@ uint16_t Outrun::main_read(uint32_t address) {
                 result = rom2_[(address & 0x3ffff) >> 1];
                 break;
             case 0x60000 ... 0x7ffff:
-                result = ram2_[(address & 0x7fff) >> 1];
+                // Shared 68k work RAM ($60000), same as MAME share("share1").
+                result = ram_[(address & 0x7fff) >> 1];
                 break;
             case 0x80000 ... 0x8ffff:
                 result = road_ram_[(address & 0xfff) >> 1];
@@ -317,7 +318,7 @@ void Outrun::main_write(uint32_t address, uint16_t value) {
     if (mapper_.contains(5, address)) {
         switch (address & 0xfffff) {
             case 0x60000 ... 0x7ffff:
-                ram2_[(address & 0x7fff) >> 1] = value;
+                ram_[(address & 0x7fff) >> 1] = value;
                 break;
             case 0x80000 ... 0x8ffff:
                 road_ram_[(address & 0xfff) >> 1] = value;
@@ -342,14 +343,14 @@ void Outrun::main_write(uint32_t address, uint16_t value) {
 uint16_t Outrun::sub_read(uint32_t address) {
     address &= 0xfffff;
     if (address <= 0x5ffff) return rom2_[(address & 0x3ffff) >> 1];
-    if (address >= 0x60000 && address <= 0x7ffff) return ram2_[(address & 0x7fff) >> 1];
+    if (address >= 0x60000 && address <= 0x7ffff) return ram_[(address & 0x7fff) >> 1];
     if (address >= 0x80000 && address <= 0x8ffff) return road_ram_[(address & 0xfff) >> 1];
     return 0xffff;
 }
 
 void Outrun::sub_write(uint32_t address, uint16_t value) {
     address &= 0xfffff;
-    if (address >= 0x60000 && address <= 0x67fff) ram2_[(address & 0x7fff) >> 1] = value;
+    if (address >= 0x60000 && address <= 0x67fff) ram_[(address & 0x7fff) >> 1] = value;
     else if (address >= 0x80000 && address <= 0x8ffff) road_ram_[(address & 0xfff) >> 1] = value;
     else if (address >= 0x90000 && address <= 0x9ffff) road_control_ = uint8_t(value & 3);
 }

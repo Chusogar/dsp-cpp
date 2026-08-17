@@ -8,10 +8,13 @@
 
 #include "core/machine.h"
 #include "cpu/m68000.h"
+#include "cpu/mcs48.h"
 #include "cpu/mcs51.h"
 #include "cpu/z80.h"
 #include "machine/i8255.h"
 #include "machine/sega_315_5195.h"
+#include "sound/dac.h"
+#include "sound/upd7759.h"
 #include "sound/ym2151.h"
 #include "video/sega16.h"
 
@@ -20,7 +23,7 @@ namespace dsp {
 // Sega System 16A/16B, ported from system16a_hw.pas and system16b_hw.pas.
 class System16 : public Machine {
 public:
-    enum class Game { Fantzone, Shinobi, Tetris, Altbeast };
+    enum class Game { Fantzone, Shinobi, Tetris, Altbeast, Alexkidd, Aliensyn, Wb3 };
 
     static constexpr int kScreenWidth = 320;
     static constexpr int kScreenHeight = 224;
@@ -47,8 +50,14 @@ public:
 
     const char* title() const override;
 
+    uint32_t debug_pc() const { return main_cpu_.pc(); }
+
 private:
     bool is_16b() const { return game_ == Game::Altbeast; }
+    bool uses_n7751() const {
+        return game_ == Game::Shinobi || game_ == Game::Alexkidd || game_ == Game::Aliensyn;
+    }
+    bool uses_fd1089() const { return game_ == Game::Aliensyn || game_ == Game::Wb3; }
 
     uint16_t main_read(uint32_t address);
     void main_write(uint32_t address, uint16_t value);
@@ -66,6 +75,9 @@ private:
     void update_video();
     bool load_roms(const std::string& rom_path, std::string* error);
     void region2_write(uint32_t address, uint16_t value);
+    void n7751_rom_offset_w(int port, uint8_t value);
+    uint8_t n7751_in(uint16_t port);
+    void n7751_out(uint16_t port, uint8_t value);
 
     Game game_;
     double fps_ = 60.0;
@@ -77,13 +89,18 @@ private:
     I8255 ppi_;
     Sega3155195 mapper_;
     std::unique_ptr<Mcs51> mcu_;
+    std::unique_ptr<Mcs48> n7751_;
+    std::unique_ptr<Upd7759> upd_;
+    Dac dac_;
     Sega16Video video_;
 
     std::vector<uint16_t> rom_;
+    std::vector<uint16_t> rom_data_;
     std::vector<uint16_t> sprite_rom_;
     std::array<uint16_t, 0x10000> ram_{};
     std::array<uint8_t, 0x10000> sound_mem_{};
     std::array<std::array<uint8_t, 0x4000>, 16> sound_bank_{};
+    std::vector<uint8_t> n7751_data_;
 
     std::vector<uint32_t> framebuffer_;
     std::vector<uint32_t> bg_low_, bg_high_, fg_low_, fg_high_, text_low_, text_high_;
@@ -98,6 +115,10 @@ private:
     int sprite_banks_ = 4;
     int tile_n_ = 1;
     bool use_mcu_ = false;
+    bool use_fd1089_ = false;
+    uint8_t n7751_numroms_ = 0;
+    uint8_t n7751_command_ = 0;
+    uint32_t n7751_rom_address_ = 0;
 
     int64_t audio_acc_ = 0;
     std::vector<int16_t> audio_;

@@ -78,8 +78,9 @@ private:
 
     std::vector<uint16_t> rom_;
     std::vector<uint16_t> rom2_;
+    // Shared main/sub work RAM at $60000 (MAME share1). Pascal kept two copies
+    // and the slave handshake at $60070 never completed.
     std::array<uint16_t, 0x4000> ram_{};
-    // Sub 68k work RAM at $60000, also reached from the main CPU via mapper region 5.
     std::array<uint16_t, 0x4000> ram2_{};
     std::array<uint16_t, 0x800> road_ram_{};
     std::array<uint16_t, 0x800> road_buffer_{};

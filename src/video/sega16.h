@@ -72,6 +72,8 @@ void draw_sprites_16a(Sega16Video& video, uint32_t* dest, const std::vector<uint
                       int banks, int pri, int pal_base, uint32_t shadow_index);
 void draw_sprites_hangon(Sega16Video& video, uint32_t* dest, const std::vector<uint16_t>& sprite_rom,
                          const std::vector<uint8_t>& zoom, int banks, int pri);
+void draw_sprites_sharrier(Sega16Video& video, uint32_t* dest, const std::vector<uint32_t>& sprite_rom,
+                           const std::vector<uint8_t>& zoom, int banks, int pri);
 void draw_sprites_16b(Sega16Video& video, uint32_t* dest, const std::vector<uint16_t>& sprite_rom,
                       int banks, int pri, uint32_t shadow_index);
 void draw_sprites_outrun(Sega16Video& video, uint32_t* dest, const std::vector<uint32_t>& sprite_rom,
@@ -83,6 +85,7 @@ void draw_outrun_road(uint32_t* dest, const uint32_t* palette, const uint16_t* b
                       const uint8_t* road_gfx, uint8_t control, uint16_t colorbase1,
                       uint16_t colorbase2, uint16_t colorbase3, uint16_t xoff, int pri);
 void draw_hangon_road(uint32_t* dest, const uint32_t* palette, const uint16_t* road_ram,
-                      const uint8_t* road_gfx, uint16_t colorbase1, uint16_t colorbase2, int pri);
+                      const uint8_t* road_gfx, uint16_t colorbase1, uint16_t colorbase2, int pri,
+                      bool sharrier = false);
 
 }  // namespace dsp

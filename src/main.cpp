@@ -71,7 +71,8 @@ void print_supported_emulators() {
         "    ghouls, ffight, kod, sf2, strider, 3wonders, captcomm,\n"
         "    knights, sf2ce, dino, punisher, willow, 1941, nemo,\n"
         "    rtype, hharry, rtype2,\n"
-        "    outrun, hangon, fantzone, shinobi, tetris, altbeast\n"
+        "    outrun, hangon, enduro, sharrier, fantzone, shinobi,\n"
+        "    alexkidd, aliensyn, wb3, tetris, altbeast\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
@@ -207,10 +208,25 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "rtype2") return std::make_unique<dsp::M72>(dsp::M72::Game::Rtype2);
     if (game == "outrun") return std::make_unique<dsp::Outrun>();
     if (game == "hangon" || game == "hang-on") return std::make_unique<dsp::HangOn>();
+    if (game == "enduro" || game == "enduror" || game == "enduro-racer") {
+        return std::make_unique<dsp::HangOn>(dsp::HangOn::Game::Enduro);
+    }
+    if (game == "sharrier" || game == "spaceharrier" || game == "space-harrier") {
+        return std::make_unique<dsp::HangOn>(dsp::HangOn::Game::Sharrier);
+    }
     if (game == "fantzone" || game == "fantasyzone") {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Fantzone);
     }
     if (game == "shinobi") return std::make_unique<dsp::System16>(dsp::System16::Game::Shinobi);
+    if (game == "alexkidd" || game == "alexkid") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Alexkidd);
+    }
+    if (game == "aliensyn" || game == "aliensynd" || game == "aliensyndrome") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Aliensyn);
+    }
+    if (game == "wb3" || game == "wonderboy3" || game == "wonderboyiii") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Wb3);
+    }
     if (game == "tetris") return std::make_unique<dsp::System16>(dsp::System16::Game::Tetris);
     if (game == "altbeast" || game == "alteredbeast") {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Altbeast);

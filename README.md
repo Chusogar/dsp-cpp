@@ -84,8 +84,11 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Sega PCM | `src/snd/sega_pcm.pas` | 16-channel sample player (OutRun, Hang-On) |
 | 315-5195 mapper | `src/arcade/misc/sega_315_5195.pas` | 68000 memory mapper used by OutRun and System 16B |
 | OutRun driver | `src/arcade/outrun_hw.pas` | Dual 68000, Z80, YM2151, Sega PCM, road + sprites |
-| Hang-On driver | `src/arcade/hangon_hw.pas` | Dual 68000, Z80, YM2203, Sega PCM, Hang-On road |
-| System 16 driver | `src/arcade/system16a_hw.pas`, `system16b_hw.pas` | Fantasy Zone, Shinobi, Tetris (16A); Altered Beast (16B + i8751) |
+| Hang-On driver | `src/arcade/hangon_hw.pas` | Hang-On, Enduro Racer (FD1089), Space Harrier (i8751) |
+| System 16 driver | `src/arcade/system16a_hw.pas`, `system16b_hw.pas` | Fantasy Zone, Shinobi, Alex Kidd, Alien Syndrome, WB3, Tetris, Altered Beast |
+| FD1089 | `src/devices/fd1089.pas` | Hitachi 68000 opcode/data encryption |
+| MCS-48 / N7751 | `src/cpu/mcs48.pas` | Full N7751 + i8243 speech MCU |
+| UPD7759 | `src/snd/upd7759.pas` | ADPCM slave playback (System 16B) |
 
 ## Building
 
@@ -132,8 +135,13 @@ holding the individual files:
 ./build/dsp --game starwars /path/to/starwars.zip
 ./build/dsp --game outrun /path/to/outrun.zip
 ./build/dsp --game hangon /path/to/hangon.zip
+./build/dsp --game enduro /path/to/enduror.zip
+./build/dsp --game sharrier /path/to/sharrier.zip
 ./build/dsp --game fantzone /path/to/fantzone.zip
 ./build/dsp --game shinobi /path/to/shinobi.zip
+./build/dsp --game alexkidd /path/to/alexkidd.zip
+./build/dsp --game aliensyn /path/to/aliensyn.zip
+./build/dsp --game wb3 /path/to/wb3.zip
 ./build/dsp --game tetris /path/to/tetris.zip
 ./build/dsp --game altbeast /path/to/altbeast.zip
 ```
@@ -589,20 +597,27 @@ Ported from [dsp-emulator](https://github.com/leniad/dsp-emulator)
 ```bash
 ./build/dsp --game outrun /path/to/outrun.zip
 ./build/dsp --game hangon /path/to/hangon.zip
+./build/dsp --game enduro /path/to/enduror.zip
+./build/dsp --game sharrier /path/to/sharrier.zip
 ./build/dsp --game fantzone /path/to/fantzone.zip
 ./build/dsp --game shinobi /path/to/shinobi.zip
+./build/dsp --game alexkidd /path/to/alexkidd.zip
+./build/dsp --game aliensyn /path/to/aliensyn.zip
+./build/dsp --game wb3 /path/to/wb3.zip
 ./build/dsp --game tetris /path/to/tetris.zip
 ./build/dsp --game altbeast /path/to/altbeast.zip
 ```
 
-OutRun and Hang-On use analog wheel / gas / brake (arrow keys plus button 1/2)
-and a gear toggle on button 3. System 16 games use a two-button joystick.
+OutRun and Hang-On family games use analog wheel / gas / brake (arrow keys plus
+button 1/2) and a gear toggle on button 3. System 16 games use a two-button
+joystick.
 
-Not ported yet: Enduro Racer and Space Harrier (Hang-On family, need FD1089 /
-MCS-51), plus other System 16 sets that use N7751, UPD7759 samples, or FD1089
-encryption (Alien Syndrome, Wonder Boy III, Golden Axe, E-Swat, …). Shinobi
-music works; its N7751 voice chip is stubbed. Altered Beast’s UPD7759 samples
-are stubbed (the i8751 MCU and 315-5195 mapper are present).
+Enduro Racer decrypts the FD1089B program ROMs with `317-0013a.key`. Space
+Harrier runs the i8751 MCU that raises 68000 IRQs. Shinobi, Alex Kidd and Alien
+Syndrome use a full N7751 (MCS-48 + i8243 + DAC). Alien Syndrome and Wonder Boy
+III decrypt FD1089 program ROMs. Altered Beast plays UPD7759 samples in slave
+mode (DRQ pulses the Z80 NMI). Tetris prefers the decrypted/bootleg program
+ROMs and falls back to FD1089 if only the encrypted pair is present.
 
 ## Tests
 

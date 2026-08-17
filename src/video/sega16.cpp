@@ -512,6 +512,98 @@ void draw_sprites_hangon(Sega16Video& video, uint32_t* dest, const std::vector<u
     }
 }
 
+void draw_sprites_sharrier(Sega16Video& video, uint32_t* dest, const std::vector<uint32_t>& sprite_rom,
+                           const std::vector<uint8_t>& zoom, int banks, int pri) {
+    const uint32_t shadow = video.palette[0x800];
+    for (int f = 0; f < 0x100; f++) {
+        uint16_t* ram = &video.sprite_ram[size_t(f * 8)];
+        const int sprpri = (ram[2] >> 14) & 1;
+        if (sprpri != pri) continue;
+        uint16_t addr = ram[3];
+        ram[7] = addr;
+        const int bottom = ram[0] >> 8;
+        if (bottom > 0xf0) break;
+        const int top = ram[0] & 0xff;
+        const int bank = video.sprite_bank[(ram[1] >> 12) & 0xf];
+        if (top >= bottom || bank == 255) continue;
+        const int xpos = int(ram[1] & 0x1ff) - 0xbd;
+        int pitch = ram[2] & 0x7f;
+        if (pitch > 0x3f) pitch = -(pitch & 0x3f);
+        const int color = (ram[2] >> 8) << 4;
+        const uint16_t vzoom = ram[4] & 0x3f;
+        const uint16_t hzoom = uint16_t(((ram[4] >> 8) & 0x3f) << 1);
+        const uint32_t spritedata = uint32_t(0x8000 * (bank % std::max(banks, 1)));
+        uint16_t zaddr = uint16_t((vzoom & 0x38) << 5);
+        const uint16_t zmask = uint16_t(1 << (vzoom & 7));
+        for (int y = top; y < bottom; y++) {
+            addr = uint16_t(int(addr) + pitch);
+            if (!zoom.empty() && (zoom[zaddr % zoom.size()] & zmask) != 0) {
+                addr = uint16_t(int(addr) + pitch);
+            }
+            zaddr++;
+            if (y >= 256) continue;
+            uint16_t xacc = 0;
+            uint16_t data_7 = addr;
+            int x = xpos;
+            if ((addr & 0x8000) == 0) {
+                while (x < 512) {
+                    const uint32_t pixels =
+                        sprite_rom[(spritedata + (data_7 & 0x7fff)) % sprite_rom.size()];
+                    for (int g = 7; g >= 0; g--) {
+                        xacc = uint16_t((xacc & 0xff) + hzoom);
+                        if (xacc < 0x100) {
+                            const uint16_t pix = uint16_t(((pixels >> (g * 4)) & 0xf) | color);
+                            const int pen = pix & 0xf;
+                            if (x >= 0 && x < 320 && y < 224 && pen != 0 && pen != 15) {
+                                if ((pix & 0x80f) == 0xa) {
+                                    dest[size_t(y * 320 + x)] =
+                                        s16_mix_shadow(dest[size_t(y * 320 + x)], shadow);
+                                } else {
+                                    dest[size_t(y * 320 + x)] =
+                                        video.palette[size_t((pix & 0x3ff) + 0x400)];
+                                }
+                            }
+                            x++;
+                        }
+                    }
+                    if ((pixels & 0xf) == 0xf) {
+                        ram[7] = data_7;
+                        break;
+                    }
+                    data_7++;
+                }
+            } else {
+                while (x < 512) {
+                    const uint32_t pixels =
+                        sprite_rom[(spritedata + (data_7 & 0x7fff)) % sprite_rom.size()];
+                    for (int g = 0; g < 8; g++) {
+                        xacc = uint16_t((xacc & 0xff) + hzoom);
+                        if (xacc < 0x100) {
+                            const uint16_t pix = uint16_t(((pixels >> (g * 4)) & 0xf) | color);
+                            const int pen = pix & 0xf;
+                            if (x >= 0 && x < 320 && y < 224 && pen != 0 && pen != 15) {
+                                if ((pix & 0x80f) == 0xa) {
+                                    dest[size_t(y * 320 + x)] =
+                                        s16_mix_shadow(dest[size_t(y * 320 + x)], shadow);
+                                } else {
+                                    dest[size_t(y * 320 + x)] =
+                                        video.palette[size_t((pix & 0x3ff) + 0x400)];
+                                }
+                            }
+                            x++;
+                        }
+                    }
+                    if (((pixels >> 28) & 0xf) == 0xf) {
+                        ram[7] = data_7;
+                        break;
+                    }
+                    data_7--;
+                }
+            }
+        }
+    }
+}
+
 void draw_sprites_16b(Sega16Video& video, uint32_t* dest, const std::vector<uint16_t>& sprite_rom,
                       int banks, int pri, uint32_t shadow_index) {
     const uint32_t shadow = video.palette[shadow_index];
@@ -823,7 +915,8 @@ void draw_outrun_road(uint32_t* dest, const uint32_t* palette, const uint16_t* b
 }
 
 void draw_hangon_road(uint32_t* dest, const uint32_t* palette, const uint16_t* road_ram,
-                      const uint8_t* road_gfx, uint16_t colorbase1, uint16_t colorbase2, int pri) {
+                      const uint8_t* road_gfx, uint16_t colorbase1, uint16_t colorbase2, int pri,
+                      bool sharrier) {
     for (int y = 0; y < 224; y++) {
         const uint16_t control = road_ram[y];
         const bool plycont = ((control >> 10) & 3) != 0;
@@ -842,9 +935,9 @@ void draw_hangon_road(uint32_t* dest, const uint32_t* palette, const uint16_t* r
             const bool ctr9n9p_ena = (ctr9m == 7);
             if (ctr9n9p == 0xff) ff9j1 = false;
             if ((control & 0x100) == 0) ff9j1 = true;
-            if ((control & 0x200) == 0) ff9j2 = true;
+            if (!sharrier && (control & 0x200) == 0) ff9j2 = true;
             uint8_t md = 3;
-            if ((ctr9n9p & 0xc0) == 0xc0) {
+            if ((!sharrier || (control & 0x200) == 0) && (ctr9n9p & 0xc0) == 0xc0) {
                 const uint32_t index =
                     src + uint32_t(((ctr9n9p & 0x3f) << 3) | ((ss8j & 1) ? ctr9m : (ctr9m ^ 7)));
                 md = road_gfx[index];

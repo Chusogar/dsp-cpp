@@ -26,6 +26,7 @@ add_executable(dsp
   src/cpu/tms7000.cpp
   src/cpu/hu6280.cpp
   src/cpu/mcs51.cpp
+  src/cpu/mcs48.cpp
   src/cpu/nec_v30.cpp
  
   src/sound/ay8910.cpp
@@ -43,6 +44,7 @@ add_executable(dsp
   src/sound/ym3812.cpp
   src/sound/nes_apu.cpp
   src/sound/sega_pcm.cpp
+  src/sound/upd7759.cpp
     
   src/video/gfx.cpp
   src/video/atari_mo.cpp
@@ -71,6 +73,8 @@ add_executable(dsp
   src/machine/mos6532.cpp
   src/machine/starwars_math.cpp
   src/machine/sega_315_5195.cpp
+  src/machine/fd1089.cpp
+  src/machine/i8243.cpp
   
   src/drivers/bagman.cpp
   src/drivers/mikie.cpp
@@ -143,6 +147,7 @@ add_executable(dsp_tests
   src/cpu/upd7801.cpp
   src/cpu/tms7000.cpp
   src/cpu/mcs51.cpp
+  src/cpu/mcs48.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
@@ -159,6 +164,7 @@ add_executable(dsp_tests
   src/sound/ym2612.cpp
   src/sound/ym2203.cpp
   src/sound/sega_pcm.cpp
+  src/sound/upd7759.cpp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/nes_ppu.cpp
@@ -188,6 +194,8 @@ add_executable(dsp_tests
   src/machine/mos6532.cpp
   src/machine/starwars_math.cpp
   src/machine/sega_315_5195.cpp
+  src/machine/fd1089.cpp
+  src/machine/i8243.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
   src/drivers/nes.cpp

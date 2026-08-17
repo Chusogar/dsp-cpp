@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstring>
 
+#include "machine/fd1089.h"
+
 namespace dsp {
 namespace {
 
@@ -52,11 +54,101 @@ const std::vector<RomEntry> kShinobiSprites = {
     {"epr-11297.30", 0x10000, 0x60001, 0xb6e1fd72},
 };
 
+const std::vector<RomEntry> kAlexkiddMain = {
+    {"epr-10447.43", 0x10000, 0x00000, 0x29e87f71},
+    {"epr-10445.26", 0x10000, 0x00001, 0x25ce5b6f},
+    {"epr-10448.42", 0x10000, 0x20000, 0x05baedb5},
+    {"epr-10446.25", 0x10000, 0x20001, 0xcd61d23c},
+};
+const std::vector<RomEntry> kAlexkiddSound = {{"epr-10434.12", 0x8000, 0, 0x77141cce}};
+const std::vector<RomEntry> kAlexkiddTiles = {
+    {"epr-10431.95", 0x8000, 0x0000, 0xa7962c39},
+    {"epr-10432.94", 0x8000, 0x8000, 0xdb8cd24e},
+    {"epr-10433.93", 0x8000, 0x10000, 0xe163c8c2},
+};
+const std::vector<RomEntry> kAlexkiddSprites = {
+    {"epr-10437.10", 0x8000, 0x00000, 0x522f7618},
+    {"epr-10441.11", 0x8000, 0x00001, 0x74e3a35c},
+    {"epr-10438.17", 0x8000, 0x10000, 0x738a6362},
+    {"epr-10442.18", 0x8000, 0x10001, 0x86cb9c14},
+    {"epr-10439.23", 0x8000, 0x20000, 0xb391aca7},
+    {"epr-10443.24", 0x8000, 0x20001, 0x95d32635},
+    {"epr-10440.29", 0x8000, 0x30000, 0x23939508},
+    {"epr-10444.30", 0x8000, 0x30001, 0x82115823},
+};
+const std::vector<RomEntry> kAlexkiddN7751 = {
+    {"epr-10435.1", 0x8000, 0x0000, 0xad89f6e3},
+    {"epr-10436.2", 0x8000, 0x8000, 0x96c76613},
+};
+
+const std::vector<RomEntry> kAliensynMain = {
+    {"epr-10804.43", 0x8000, 0x00000, 0x23f78b83},
+    {"epr-10802.26", 0x8000, 0x00001, 0x996768bd},
+    {"epr-10805.42", 0x8000, 0x10000, 0x53d7fe50},
+    {"epr-10803.25", 0x8000, 0x10001, 0x0536dd33},
+    {"epr-10732.41", 0x8000, 0x20000, 0xc5712bfc},
+    {"epr-10729.24", 0x8000, 0x20001, 0x3e520e30},
+};
+const std::vector<RomEntry> kAliensynKey = {{"317-0037.key", 0x2000, 0, 0x68bb7745}};
+const std::vector<RomEntry> kAliensynSound = {{"epr-10705.12", 0x8000, 0, 0x777b749e}};
+const std::vector<RomEntry> kAliensynTiles = {
+    {"epr-10739.95", 0x10000, 0x00000, 0xa29ec207},
+    {"epr-10740.94", 0x10000, 0x10000, 0x47f93015},
+    {"epr-10741.93", 0x10000, 0x20000, 0x4970739c},
+};
+const std::vector<RomEntry> kAliensynSprites = {
+    {"epr-10709.10", 0x10000, 0x00000, 0xaddf0a90},
+    {"epr-10713.11", 0x10000, 0x00001, 0xececde3a},
+    {"epr-10710.17", 0x10000, 0x20000, 0x992369eb},
+    {"epr-10714.18", 0x10000, 0x20001, 0x91bf42fb},
+    {"epr-10711.23", 0x10000, 0x40000, 0x29166ef6},
+    {"epr-10715.24", 0x10000, 0x40001, 0xa7c57384},
+    {"epr-10712.29", 0x10000, 0x60000, 0x876ad019},
+    {"epr-10716.30", 0x10000, 0x60001, 0x40ba1d48},
+};
+const std::vector<RomEntry> kAliensynN7751 = {
+    {"epr-10706.1", 0x8000, 0x0000, 0xaa114acc},
+    {"epr-10707.2", 0x8000, 0x8000, 0x800c1d82},
+    {"epr-10708.4", 0x8000, 0x10000, 0x5921ef52},
+};
+
+const std::vector<RomEntry> kWb3Main = {
+    {"epr-12120.43", 0x10000, 0x00000, 0xcbd8c99b},
+    {"epr-12118.26", 0x10000, 0x00001, 0xe9a3280c},
+    {"epr-12121.42", 0x10000, 0x20000, 0x5e44c0a9},
+    {"epr-12119.25", 0x10000, 0x20001, 0x01ed3ef9},
+};
+const std::vector<RomEntry> kWb3Key = {{"317-0086.key", 0x2000, 0, 0x5b8e7076}};
+const std::vector<RomEntry> kWb3Sound = {{"epr-12089.12", 0x8000, 0, 0x8321eb0b}};
+const std::vector<RomEntry> kWb3Tiles = {
+    {"epr-12086.95", 0x10000, 0x00000, 0x45b949df},
+    {"epr-12087.94", 0x10000, 0x10000, 0x6f0396b7},
+    {"epr-12088.83", 0x10000, 0x20000, 0xba8c0749},
+};
+const std::vector<RomEntry> kWb3Sprites = {
+    {"epr-12090.10", 0x10000, 0x00000, 0xaeeecfca},
+    {"epr-12094.11", 0x10000, 0x00001, 0x615e4927},
+    {"epr-12091.17", 0x10000, 0x20000, 0x8409a243},
+    {"epr-12095.18", 0x10000, 0x20001, 0xe774ec2c},
+    {"epr-12092.23", 0x10000, 0x40000, 0x5c2f0d90},
+    {"epr-12096.24", 0x10000, 0x40001, 0x0cd59d6e},
+    {"epr-12093.29", 0x10000, 0x60000, 0x4891e7bb},
+    {"epr-12097.30", 0x10000, 0x60001, 0xe645902c},
+};
+
+const std::vector<RomEntry> kN7751Mcu = {{"7751.bin", 0x400, 0, 0x6a9534fc}};
+const std::vector<RomEntry> kShinobiN7751 = {{"epr-11268.1", 0x8000, 0, 0x6d7966da}};
+
 const std::vector<RomEntry> kTetrisMain = {
     // dsp-emulator decrypted names, plus MAME 0.221 tetrisd bootleg files (same CRCs).
     {"xepr12201.rom|bootleg_epr-12200.rom", 0x8000, 1, 0x343c0670},
     {"xepr12200.rom|bootleg_epr-12201.rom", 0x8000, 0, 0x0b694740},
 };
+const std::vector<RomEntry> kTetrisEncrypted = {
+    {"epr-12201.rom", 0x8000, 1, 0},
+    {"epr-12200.rom", 0x8000, 0, 0},
+};
+const std::vector<RomEntry> kTetrisKey = {{"317-0093.key", 0x2000, 0, 0xe0064442}};
 const std::vector<RomEntry> kTetrisSound = {{"epr-12205.rom", 0x8000, 0, 0x6695dc99}};
 const std::vector<RomEntry> kTetrisTiles = {
     {"epr-12202.rom", 0x10000, 0x00000, 0x2f7da741},
@@ -141,6 +233,7 @@ System16::System16(Game game)
     fps_ = is_16b() ? 60.05439 : 60.0;
     sound_clock_ = is_16b() ? 5000000u : 4000000u;
     use_mcu_ = (game == Game::Altbeast);
+    use_fd1089_ = uses_fd1089();
     main_cpu_.set_memory_handlers([this](uint32_t a) { return main_read(a); },
                                   [this](uint32_t a, uint16_t v) { main_write(a, v); });
     sound_cpu_.set_memory_handlers([this](uint16_t a) { return sound_read(a); },
@@ -148,6 +241,17 @@ System16::System16(Game game)
     sound_cpu_.set_io_handlers([this](uint16_t p) { return sound_in(p); },
                                [this](uint16_t p, uint8_t v) { sound_out(p, v); });
     sound_cpu_.set_cycle_handler([this](int cycles) { on_sound_cycles(cycles); });
+    if (uses_n7751()) {
+        n7751_ = std::make_unique<Mcs48>(6000000, Mcs48::Chip::N7751);
+        n7751_->set_io_handlers([this](uint16_t p) { return n7751_in(p); },
+                                [this](uint16_t p, uint8_t v) { n7751_out(p, v); });
+        n7751_->i8243().set_write_handler(
+            [this](int port, uint8_t value) { n7751_rom_offset_w(port, value); });
+        ym_.set_port_handler([this](uint8_t value) {
+            n7751_->set_reset_line((value & 0x01) ? IrqLine::Clear : IrqLine::Assert);
+            n7751_->set_irq((value & 0x02) ? IrqLine::Clear : IrqLine::Assert);
+        });
+    }
     if (!is_16b()) {
         ppi_.set_port_handlers(nullptr, nullptr, nullptr,
                                [this](uint8_t value) { sound_latch_ = value; },
@@ -181,6 +285,10 @@ System16::System16(Game game)
                 }
             });
         mcu_->set_port_read_handler(1, [this]() { return uint8_t(in0_); });
+        upd_ = std::make_unique<Upd7759>(0.9f, true);
+        upd_->set_drq_handler([this](uint8_t value) {
+            if (value & 1) sound_cpu_.set_nmi(IrqLine::Pulse);
+        });
     }
 }
 
@@ -190,6 +298,9 @@ const char* System16::title() const {
         case Game::Shinobi: return "Shinobi";
         case Game::Tetris: return "Tetris";
         case Game::Altbeast: return "Altered Beast";
+        case Game::Alexkidd: return "Alex Kidd: The Lost Stars";
+        case Game::Aliensyn: return "Alien Syndrome";
+        case Game::Wb3: return "Wonder Boy III: Monster Lair";
     }
     return "System 16";
 }
@@ -208,6 +319,9 @@ bool System16::load_roms(const std::string& rom_path, std::string* error) {
     const std::vector<RomEntry>* sound = nullptr;
     const std::vector<RomEntry>* tiles = nullptr;
     const std::vector<RomEntry>* sprites = nullptr;
+    const std::vector<RomEntry>* key = nullptr;
+    const std::vector<RomEntry>* n7751_data = nullptr;
+    Fd1089Type fd_type = Fd1089Type::B;
     bool scramble = false;
     switch (game_) {
         case Game::Fantzone:
@@ -224,9 +338,48 @@ bool System16::load_roms(const std::string& rom_path, std::string* error) {
             sound = &kShinobiSound;
             tiles = &kShinobiTiles;
             sprites = &kShinobiSprites;
+            n7751_data = &kShinobiN7751;
+            n7751_numroms_ = 1;
             tile_n_ = 2;
             sprite_banks_ = 8;
             dsw_b_ = 0xfc;
+            scramble = true;
+            break;
+        case Game::Alexkidd:
+            main = &kAlexkiddMain;
+            sound = &kAlexkiddSound;
+            tiles = &kAlexkiddTiles;
+            sprites = &kAlexkiddSprites;
+            n7751_data = &kAlexkiddN7751;
+            n7751_numroms_ = 2;
+            tile_n_ = 1;
+            sprite_banks_ = 4;
+            dsw_b_ = 0xfc;
+            break;
+        case Game::Aliensyn:
+            main = &kAliensynMain;
+            sound = &kAliensynSound;
+            tiles = &kAliensynTiles;
+            sprites = &kAliensynSprites;
+            key = &kAliensynKey;
+            n7751_data = &kAliensynN7751;
+            n7751_numroms_ = 3;
+            fd_type = Fd1089Type::B;
+            tile_n_ = 2;
+            sprite_banks_ = 8;
+            dsw_b_ = 0xfd;
+            scramble = true;
+            break;
+        case Game::Wb3:
+            main = &kWb3Main;
+            sound = &kWb3Sound;
+            tiles = &kWb3Tiles;
+            sprites = &kWb3Sprites;
+            key = &kWb3Key;
+            fd_type = Fd1089Type::A;
+            tile_n_ = 2;
+            sprite_banks_ = 8;
+            dsw_b_ = 0x7c;
             scramble = true;
             break;
         case Game::Tetris:
@@ -249,7 +402,37 @@ bool System16::load_roms(const std::string& rom_path, std::string* error) {
             video_.tile_banks = 3;
             break;
     }
-    if (!load_roms16w(loader, *main, rom_, error)) return false;
+    if (game_ == Game::Tetris) {
+        std::string ignored;
+        if (load_roms16w(loader, *main, rom_, &ignored)) {
+            use_fd1089_ = false;
+        } else {
+            std::vector<uint8_t> key_bytes;
+            if (!loader.try_read("317-0093.key", key_bytes) || key_bytes.size() < 0x2000 ||
+                !load_roms16w(loader, kTetrisEncrypted, rom_, error)) {
+                return false;
+            }
+            key_bytes.resize(0x2000, 0);
+            rom_data_.assign(rom_.size(), 0);
+            std::vector<uint16_t> encrypted = rom_;
+            fd1089_decrypt(encrypted.data(), rom_.data(), rom_data_.data(),
+                           uint32_t(encrypted.size() * 2), key_bytes.data(), Fd1089Type::A);
+            use_fd1089_ = true;
+        }
+    } else if (key) {
+        std::vector<uint16_t> encrypted;
+        if (!load_roms16w(loader, *main, encrypted, error)) return false;
+        std::vector<uint8_t> key_bytes;
+        if (!load_rom_bytes(loader, *key, key_bytes, error)) return false;
+        key_bytes.resize(0x2000, 0);
+        rom_.assign(encrypted.size(), 0);
+        rom_data_.assign(encrypted.size(), 0);
+        fd1089_decrypt(encrypted.data(), rom_.data(), rom_data_.data(),
+                       uint32_t(encrypted.size() * 2), key_bytes.data(), fd_type);
+        use_fd1089_ = true;
+    } else if (!load_roms16w(loader, *main, rom_, error)) {
+        return false;
+    }
     std::vector<uint8_t> sound_bytes;
     if (!load_rom_bytes(loader, *sound, sound_bytes, error)) return false;
     std::fill(sound_mem_.begin(), sound_mem_.end(), 0);
@@ -280,6 +463,14 @@ bool System16::load_roms(const std::string& rom_path, std::string* error) {
     std::vector<uint8_t> tile_bytes;
     if (!load_rom_bytes(loader, *tiles, tile_bytes, error)) return false;
     decode_s16_tiles(video_.tiles, tile_bytes, tile_n_);
+    if (n7751_) {
+        std::vector<uint8_t> mcu;
+        if (!load_rom_bytes(loader, kN7751Mcu, mcu, error)) return false;
+        std::fill(n7751_->rom(), n7751_->rom() + Mcs48::kRomSize, 0);
+        std::copy(mcu.begin(), mcu.end(), n7751_->rom());
+        if (n7751_data && !load_rom_bytes(loader, *n7751_data, n7751_data_, error)) return false;
+        n7751_data_.resize(0x18000, 0);
+    }
     return true;
 }
 
@@ -290,6 +481,9 @@ void System16::reset() {
     ym_.reset();
     if (!is_16b()) ppi_.reset();
     if (mcu_) mcu_->reset();
+    if (n7751_) n7751_->reset();
+    if (upd_) upd_->reset();
+    dac_.reset();
     video_.reset();
     video_.screen_enabled = !is_16b();
     video_.tile_bank[0] = 0;
@@ -300,6 +494,8 @@ void System16::reset() {
     in2_ = 0xffff;
     sound_latch_ = 0;
     sound_bank_num_ = 0;
+    n7751_command_ = 0;
+    n7751_rom_address_ = 0;
     audio_acc_ = 0;
     audio_.clear();
     std::fill(framebuffer_.begin(), framebuffer_.end(), 0);
@@ -406,7 +602,15 @@ uint16_t System16::io_16b(uint16_t address) {
 
 uint16_t System16::read_16a(uint32_t address) {
     address &= 0xffffff;
-    if (address <= 0x3fffff) return rom_[(address & 0x3ffff) >> 1];
+    if (address <= 0x3fffff) {
+        const size_t index = (address & 0x3ffff) >> 1;
+        if (use_fd1089_ && !rom_data_.empty()) {
+            return main_cpu_.opcode() ? rom_[index % rom_.size()]
+                                      : rom_data_[index % rom_data_.size()];
+        }
+        if (rom_.empty()) return 0xffff;
+        return rom_[index % rom_.size()];
+    }
     if (address >= 0x400000 && address <= 0x7fffff) {
         switch (address & 0x7ffff) {
             case 0x00000 ... 0x0ffff: return video_.tile_ram[(address & 0x7fff) >> 1];
@@ -628,7 +832,7 @@ uint8_t System16::sound_in(uint16_t port) {
     const uint8_t p = uint8_t(port);
     if (p <= 0x3f && (p & 1)) return ym_.status();
     if (is_16b()) {
-        if (p >= 0x80 && p <= 0xbf) return 0x80;  // UPD7759 busy (stub, idle)
+        if (p >= 0x80 && p <= 0xbf) return uint8_t((upd_ ? upd_->busy_r() : 1) << 7);
         if (p >= 0xc0) {
             sound_cpu_.set_irq(IrqLine::Clear);
             return sound_latch_;
@@ -647,7 +851,23 @@ void System16::sound_out(uint16_t port, uint8_t value) {
         return;
     }
     if (is_16b() && p >= 0x40 && p <= 0x7f) {
+        if (upd_) {
+            upd_->start_w(uint8_t((value >> 7) & 1));
+            upd_->reset_w(uint8_t((value >> 6) & 1));
+        }
         sound_bank_num_ = uint8_t(value & 0xf);
+        return;
+    }
+    if (is_16b() && p >= 0x80 && p <= 0xbf) {
+        if (upd_) upd_->port_w(value);
+        return;
+    }
+    if (n7751_ && p >= 0x80 && p <= 0xbf) {
+        n7751_rom_address_ = (n7751_rom_address_ & 0x3fff) | (uint32_t(value & 1) << 14);
+        if ((value & 0x04) == 0 && n7751_numroms_ >= 2) n7751_rom_address_ |= 0x8000;
+        if ((value & 0x08) == 0 && n7751_numroms_ >= 3) n7751_rom_address_ |= 0x10000;
+        if ((value & 0x10) == 0 && n7751_numroms_ >= 4) n7751_rom_address_ |= 0x18000;
+        n7751_command_ = uint8_t(value >> 5);
     }
 }
 
@@ -657,7 +877,10 @@ void System16::on_sound_cycles(int cycles) {
     audio_acc_ += int64_t(cycles) * YM2151::kSampleRate;
     while (audio_acc_ >= sound_clock_) {
         audio_acc_ -= sound_clock_;
-        audio_.push_back(int16_t(std::clamp(ym_.update(), int32_t(-32768), int32_t(32767))));
+        int32_t sample = ym_.update();
+        if (upd_) sample += upd_->update();
+        if (n7751_) sample += dac_.update();
+        audio_.push_back(int16_t(std::clamp(sample, int32_t(-32768), int32_t(32767))));
     }
 }
 
@@ -731,6 +954,8 @@ void System16::run_frame() {
         int(double(sound_clock_) / fps_ / (kScanlines * kCpuSync) + 0.5);
     const int mcu_cycles =
         mcu_ ? int(double(mcu_->clock()) / fps_ / (kScanlines * kCpuSync) + 0.5) : 0;
+    const int n7751_cycles =
+        n7751_ ? int(double(n7751_->clock()) / fps_ / (kScanlines * kCpuSync) + 0.5) : 0;
     for (int line = 0; line < kScanlines; line++) {
         if (line == 224) {
             if (use_mcu_ && mcu_) mcu_->set_irq0_line(IrqLine::Hold);
@@ -741,7 +966,44 @@ void System16::run_frame() {
             main_cpu_.run(main_cycles);
             sound_cpu_.run(sound_cycles);
             if (use_mcu_ && mcu_) mcu_->run(mcu_cycles);
+            if (n7751_) n7751_->run(n7751_cycles);
         }
+    }
+}
+
+void System16::n7751_rom_offset_w(int port, uint8_t value) {
+    const uint32_t mask = (0x0fu << (4 * port)) & 0x3fff;
+    const uint32_t newdata = (uint32_t(value) << (4 * port)) & mask;
+    n7751_rom_address_ = (n7751_rom_address_ & ~mask) | newdata;
+}
+
+uint8_t System16::n7751_in(uint16_t port) {
+    switch (port) {
+        case MCS48_PORT_BUS:
+            if (n7751_data_.empty()) return 0;
+            return n7751_data_[n7751_rom_address_ % n7751_data_.size()];
+        case MCS48_PORT_T1:
+            return 0;
+        case MCS48_PORT_P2:
+            return uint8_t(0x80 | ((n7751_command_ & 7) << 4) | (n7751_->i8243().p2_r() & 0x0f));
+        default:
+            return 0xff;
+    }
+}
+
+void System16::n7751_out(uint16_t port, uint8_t value) {
+    switch (port) {
+        case MCS48_PORT_P1:
+            dac_.data8_w(value);
+            break;
+        case MCS48_PORT_P2:
+            n7751_->i8243().p2_w(value & 0x0f);
+            break;
+        case MCS48_PORT_PROG:
+            n7751_->i8243().prog_w(value);
+            break;
+        default:
+            break;
     }
 }
 

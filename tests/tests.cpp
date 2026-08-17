@@ -37,6 +37,7 @@
 #include "drivers/hangon.h"
 #include "drivers/outrun.h"
 #include "drivers/system16.h"
+#include "machine/fd1089.h"
 #include "machine/bagman_pal.h"
 #include "machine/beta128.h"
 #include "machine/kabuki.h"
@@ -61,6 +62,7 @@
 #include "sound/ym2151.h"
 #include "sound/ym2612.h"
 #include "sound/sega_pcm.h"
+#include "sound/upd7759.h"
 #include "video/atari_mo.h"
 #include "video/gb_ppu.h"
 #include "video/gfx.h"
@@ -2248,6 +2250,17 @@ void test_sega_pcm_and_mapper() {
     dsp::build_s16_palette_luts(normal, shadow, hilight);
     check(normal[0x1f] > 0 && hilight[0x1f] >= normal[0x1f],
           "System 16 resistor-net palette is not black");
+
+    uint16_t src[2] = {0x4e71, 0x4e75};
+    uint16_t opcodes[2] = {};
+    uint16_t data[2] = {};
+    uint8_t key[0x2000] = {};
+    dsp::fd1089_decrypt(src, opcodes, data, 4, key, dsp::Fd1089Type::B);
+    check(opcodes[0] != 0 || data[0] != 0, "FD1089 decrypt produces a word");
+
+    dsp::Upd7759 speech;
+    speech.reset();
+    check(speech.busy_r() == 1, "UPD7759 reports idle as busy=1");
 }
 
 void test_sega_system16_missing_roms() {
@@ -2278,6 +2291,16 @@ void test_sega_system16_missing_roms() {
     check(std::strcmp(altbeast.title(), "Altered Beast") == 0, "Altered Beast title");
     dsp::System16 tetris(dsp::System16::Game::Tetris);
     check(std::strcmp(tetris.title(), "Tetris") == 0, "Tetris title");
+    dsp::HangOn enduro(dsp::HangOn::Game::Enduro);
+    check(std::strcmp(enduro.title(), "Enduro Racer") == 0, "Enduro Racer title");
+    dsp::HangOn sharrier(dsp::HangOn::Game::Sharrier);
+    check(std::strcmp(sharrier.title(), "Space Harrier") == 0, "Space Harrier title");
+    dsp::System16 alexkidd(dsp::System16::Game::Alexkidd);
+    check(std::strcmp(alexkidd.title(), "Alex Kidd: The Lost Stars") == 0, "Alex Kidd title");
+    dsp::System16 aliensyn(dsp::System16::Game::Aliensyn);
+    check(std::strcmp(aliensyn.title(), "Alien Syndrome") == 0, "Alien Syndrome title");
+    dsp::System16 wb3(dsp::System16::Game::Wb3);
+    check(std::strcmp(wb3.title(), "Wonder Boy III: Monster Lair") == 0, "Wonder Boy III title");
 }
 
 int unique_pixels(const dsp::Machine& machine) {
@@ -2301,6 +2324,7 @@ void test_sega_roms_if_present() {
         for (int frame = 0; frame < 240; frame++) machine.run_frame();
         check(machine.debug_pc() != 0x7b1e, "OutRun leaves the mapper boot stub");
         check(machine.debug_sub_pc() != 0x103a, "OutRun sub CPU leaves the handshake wait");
+        check(unique_pixels(machine) > 4, "OutRun attract mode draws after the dual-CPU handshake");
     }
 
     if (exists("/tmp/roms/fantzone.zip")) {
@@ -2341,6 +2365,46 @@ void test_sega_roms_if_present() {
         check(machine.init("/tmp/roms/hangon.zip", &error), "Hang-On MAME set loads");
         for (int frame = 0; frame < 180; frame++) machine.run_frame();
         check(unique_pixels(machine) > 4, "Hang-On attract mode draws more than the text layer");
+    }
+
+    if (exists("/tmp/roms/enduror.zip")) {
+        dsp::HangOn machine(dsp::HangOn::Game::Enduro);
+        std::string error;
+        check(machine.init("/tmp/roms/enduror.zip", &error), "Enduro Racer MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 4, "Enduro Racer attract mode draws a colour picture");
+    }
+
+    if (exists("/tmp/roms/sharrier.zip")) {
+        dsp::HangOn machine(dsp::HangOn::Game::Sharrier);
+        std::string error;
+        check(machine.init("/tmp/roms/sharrier.zip", &error), "Space Harrier MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 4, "Space Harrier attract mode draws a colour picture");
+    }
+
+    if (exists("/tmp/roms/alexkidd.zip")) {
+        dsp::System16 machine(dsp::System16::Game::Alexkidd);
+        std::string error;
+        check(machine.init("/tmp/roms/alexkidd.zip", &error), "Alex Kidd MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 4, "Alex Kidd attract mode draws a colour picture");
+    }
+
+    if (exists("/tmp/roms/aliensyn.zip")) {
+        dsp::System16 machine(dsp::System16::Game::Aliensyn);
+        std::string error;
+        check(machine.init("/tmp/roms/aliensyn.zip", &error), "Alien Syndrome MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 4, "Alien Syndrome attract mode draws a colour picture");
+    }
+
+    if (exists("/tmp/roms/wb3.zip")) {
+        dsp::System16 machine(dsp::System16::Game::Wb3);
+        std::string error;
+        check(machine.init("/tmp/roms/wb3.zip", &error), "Wonder Boy III MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 4, "Wonder Boy III attract mode draws a colour picture");
     }
 }
 
