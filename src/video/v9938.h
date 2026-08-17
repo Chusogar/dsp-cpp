@@ -25,7 +25,7 @@ public:
     void reset();
     uint8_t port_read(int port);
     void port_write(int port, uint8_t value);
-    // LMMC/HMMC CPU→VRAM bytes go through port $98 while a command is live.
+    // LMMC/HMMC CPU→VRAM bytes go through R#44 (and port $98) while a command is live.
     void command_write_byte(uint8_t data);
     bool command_busy() const { return cmd_busy_; }
     int command_op() const { return cmd_op_; }
@@ -57,7 +57,10 @@ private:
     uint8_t get_pixel(int x, int y) const;
     void set_pixel(int x, int y, uint8_t clr);
     void exec_command();
+    void write_register(int index, uint8_t value);
+    void start_cpu_transfer(int cmd, int dx, int dy, int nx, int ny, int arg, uint8_t first);
     uint8_t command_read_byte();
+    int line_x_mask() const;
 
     std::array<uint8_t, kVramSize> vram_{};
     std::array<uint8_t, kNumRegs> regs_{};

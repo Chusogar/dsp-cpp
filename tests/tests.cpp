@@ -60,6 +60,7 @@
 #include "video/gfx.h"
 #include "video/mos6566.h"
 #include "video/tms3556.h"
+#include "video/v9938.h"
 
 namespace {
 
@@ -2350,6 +2351,62 @@ void test_trdos_scl_and_beta() {
     check(scor64->init(dir64.string(), &error), "64 KB scorpion.rom boots from the ZXMak layout");
 }
 
+void test_v9938_line_stays_axis_aligned() {
+    dsp::V9938 vdp;
+    auto wr = [&](int reg, uint8_t value) {
+        vdp.port_write(1, value);
+        vdp.port_write(1, uint8_t(0x80 | reg));
+    };
+    wr(0, 0x04);   // M4 → Graphic 4 (SCREEN 5)
+    wr(1, 0x40);   // display enable
+    wr(2, 0x1f);   // name table page 0
+    wr(7, 0x04);   // backdrop colour 4
+    wr(9, 0x80);   // 212 lines
+
+    auto pixel = [&](int x, int y) -> uint32_t {
+        const uint32_t* fb = vdp.framebuffer();
+        return fb[(dsp::V9938::kBorderV + y) * dsp::V9938::kScreenWidth + dsp::V9938::kBorderH + x] &
+               0x00ffffffu;
+    };
+    auto render_rows = [&](int y0, int y1) {
+        for (int y = y0; y <= y1; y++) vdp.render_line(dsp::V9938::kBorderV + y);
+    };
+
+    // Horizontal LINE: NY=0 must not be expanded to 1024 (that shears the MSX2 logo).
+    wr(36, 20);
+    wr(37, 0);  // DX
+    wr(38, 40);
+    wr(39, 0);  // DY
+    wr(40, 40);
+    wr(41, 0);  // NX
+    wr(42, 0);
+    wr(43, 0);  // NY = 0
+    wr(44, 15); // white
+    wr(45, 0);  // ARG: right, down, X major
+    wr(46, 0x70);
+    render_rows(40, 41);
+    check(pixel(20, 40) != pixel(20, 41), "horizontal LINE with NY=0 does not step in Y");
+    check(pixel(60, 40) == pixel(20, 40), "horizontal LINE reaches DX+NX");
+    check(pixel(60, 41) == pixel(20, 41), "row below a horizontal LINE stays backdrop");
+
+    // Vertical LINE: MAJ=1, NY=0.
+    wr(36, 80);
+    wr(37, 0);
+    wr(38, 10);
+    wr(39, 0);
+    wr(40, 20);
+    wr(41, 0);
+    wr(42, 0);
+    wr(43, 0);
+    wr(44, 15);
+    wr(45, 0x01);  // Y major
+    wr(46, 0x70);
+    render_rows(10, 30);
+    check(pixel(80, 10) != pixel(81, 10), "vertical LINE with NY=0 does not step in X");
+    check(pixel(80, 30) == pixel(80, 10), "vertical LINE reaches DY+NX");
+    check(pixel(81, 30) == pixel(81, 10), "column beside a vertical LINE stays backdrop");
+}
+
 void test_msx2_bios_mapper_and_disk() {
     dsp::V9938 vdp;
     vdp.reset();
@@ -2476,6 +2533,7 @@ int main() {
     test_tms3556_background();
     test_exelv_dummy_bios();
     test_trdos_scl_and_beta();
+    test_v9938_line_stays_axis_aligned();
     test_msx2_bios_mapper_and_disk();
     test_starwars_missing_roms();
     test_atari_system1_missing_roms();

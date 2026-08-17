@@ -446,6 +446,40 @@ void V9938::set_pixel(int x, int y, uint8_t clr) {
     }
 }
 
+int V9938::line_x_mask() const {
+    const int mode = screen_mode();
+    return (mode == 6 || mode == 7) ? 512 : 256;
+}
+
+void V9938::start_cpu_transfer(int cmd, int dx, int dy, int nx, int ny, int arg, uint8_t first) {
+    cmd_op_ = cmd;
+    cmd_dx_ = dx;
+    cmd_dy_ = dy;
+    cmd_nx_ = nx;
+    cmd_ny_ = ny;
+    cmd_px_ = 0;
+    cmd_py_ = 0;
+    cmd_arg_ = arg;
+    cmd_busy_ = true;
+    status_[2] |= 0x81;  // CE + TR
+    command_write_byte(first);
+}
+
+void V9938::write_register(int index, uint8_t value) {
+    if (index == 17) {
+        regs_[17] = value;
+        return;
+    }
+    if (cmd_busy_ && index == 44 && (cmd_op_ == 0x0B || cmd_op_ == 0x0F)) {
+        regs_[44] = value;
+        command_write_byte(value);
+        return;
+    }
+    if (index < 0 || index >= kNumRegs) return;
+    regs_[std::size_t(index)] = value;
+    if (index == 46 && value >= 0x40) exec_command();
+}
+
 // Execute VDP command instantly
 void V9938::exec_command() {
     int cmd = regs_[46] >> 4;
@@ -461,8 +495,16 @@ void V9938::exec_command() {
     int diy = (arg & 0x08) ? -1 : 1;
     int log = regs_[46] & 0x0F;
 
-    if (nx == 0) nx = 512;
-    if (ny == 0) ny = 1024;
+    // Area-move commands treat NX/NY=0 as the maximum size. LINE uses the raw
+    // deltas: NY=0 is a straight horizontal/vertical stroke, which is how the
+    // MSX2 BIOS draws the boot logo.
+    if (cmd != 0x7) {
+        if (nx == 0) nx = 512;
+        if (ny == 0) ny = 1024;
+    } else {
+        nx &= 1023;
+        ny &= 1023;
+    }
 
     cmd_busy_ = false;
     status_[2] &= ~0x01; // clear TR
@@ -494,14 +536,8 @@ void V9938::exec_command() {
                 set_pixel(dpx & 0x1FF, dpy & 0x3FF, log_op(log, src, dst));
             }
         break;
-    case 0xB: // LMMC (logical move CPU→VRAM) - set up for byte-at-a-time transfer
-        cmd_op_ = cmd;
-        cmd_dx_ = dx; cmd_dy_ = dy;
-        cmd_nx_ = nx; cmd_ny_ = ny;
-        cmd_px_ = 0;  cmd_py_ = 0;
-        cmd_arg_ = arg;
-        cmd_busy_ = true;
-        status_[2] |= 0x81; // CE + TR
+    case 0xB: // LMMC (logical move CPU→VRAM); first pixel is already in R#44
+        start_cpu_transfer(cmd, dx, dy, nx, ny, arg, uint8_t(clr));
         return;
     case 0xC: // HMMV (high-speed fill)
         for (int y = 0; y < ny; y++) {
@@ -542,32 +578,37 @@ void V9938::exec_command() {
                 vram_wr(base + dpy * bpl + x, vram_rd(base + spy * bpl + x));
         }
         break;
-    case 0xF: // HMMC (high-speed move CPU→VRAM) - byte transfer
-        cmd_op_ = cmd;
-        cmd_dx_ = dx; cmd_dy_ = dy;
-        cmd_nx_ = nx; cmd_ny_ = ny;
-        cmd_px_ = 0;  cmd_py_ = 0;
-        cmd_arg_ = arg;
-        cmd_busy_ = true;
-        status_[2] |= 0x81;
+    case 0xF: // HMMC (high-speed move CPU→VRAM); first byte is already in R#44
+        start_cpu_transfer(cmd, dx, dy, nx, ny, arg, uint8_t(clr));
         return;
-    case 0x7: // LINE
+    case 0x7: // LINE — MAME/openMSX Bresenham (ASX starts at (NX-1)/2)
     {
-        int maj = nx, min = ny;
-        int cnt = 0;
-        int px = dx, py = dy;
-        int dmaj = (arg & 0x01) ? diy : dix;
-        int dmin = (arg & 0x01) ? dix : diy;
-        bool is_y_major = (arg & 0x01) != 0;
-        for (int i = 0; i <= maj; i++) {
+        int asx = (nx - 1) >> 1;
+        int adx = 0;
+        int px = dx;
+        int py = dy;
+        const bool ymaj = (arg & 0x01) != 0;
+        const int xmask = line_x_mask();
+        for (;;) {
             uint8_t dst = get_pixel(px & 0x1FF, py & 0x3FF);
-            set_pixel(px & 0x1FF, py & 0x3FF, log_op(log, clr, dst));
-            cnt += min;
-            if (cnt >= maj && maj > 0) {
-                cnt -= maj;
-                if (is_y_major) px += dmin; else py += dmin;
+            set_pixel(px & 0x1FF, py & 0x3FF, log_op(log, uint8_t(clr), dst));
+            if (!ymaj) {
+                px += dix;
+                if ((asx -= ny) < 0) {
+                    asx += nx;
+                    py += diy;
+                }
+                asx &= 1023;
+                if (adx++ == nx || (px & xmask)) break;
+            } else {
+                py += diy;
+                if ((asx -= ny) < 0) {
+                    asx += nx;
+                    px += dix;
+                }
+                asx &= 1023;
+                if (adx++ == nx || (px & xmask)) break;
             }
-            if (is_y_major) py += dmaj; else px += dmaj;
         }
         break;
     }
@@ -699,10 +740,14 @@ uint8_t V9938::port_read(int port) {
 
 void V9938::port_write(int port, uint8_t val) {
     switch (port & 3) {
-    case 0: // Port 0x98: VRAM data write
-        read_buf_ = val;
-        vram_wr(vram_addr_, val);
-        vram_addr_ = (vram_addr_ + 1) & (kVramSize - 1);
+    case 0: // Port 0x98: VRAM data write (or HMMC/LMMC payload)
+        if (cmd_busy_ && (cmd_op_ == 0x0B || cmd_op_ == 0x0F)) {
+            command_write_byte(val);
+        } else {
+            read_buf_ = val;
+            vram_wr(vram_addr_, val);
+            vram_addr_ = (vram_addr_ + 1) & (kVramSize - 1);
+        }
         latch_flag_ = false;
         break;
 
@@ -713,13 +758,7 @@ void V9938::port_write(int port, uint8_t val) {
         } else {
             latch_flag_ = false;
             if (val & 0x80) {
-                // Register write
-                uint8_t reg = val & 0x3F;
-                if (reg < kNumRegs) {
-                    regs_[reg] = latch_;
-                    if (reg == 46 && latch_ >= 0x40) // Command register
-                        exec_command();
-                }
+                write_register(val & 0x3F, latch_);
             } else {
                 // VRAM address set
                 vram_addr_ = ((uint32_t)(regs_[14] & 0x07) << 14) |
@@ -754,13 +793,9 @@ void V9938::port_write(int port, uint8_t val) {
     case 3: // Port 0x9B: Indirect register access
     {
         uint8_t reg = regs_[17] & 0x3F;
-        if (reg < kNumRegs && reg != 17) {
-            regs_[reg] = val;
-            if (reg == 46 && val >= 0x40)
-                exec_command();
-        }
+        if (reg != 17) write_register(reg, val);
         if (!(regs_[17] & 0x80))
-            regs_[17] = ((regs_[17] & 0x80) | ((reg + 1) & 0x3F));
+            regs_[17] = uint8_t((regs_[17] & 0x80) | ((reg + 1) & 0x3F));
         break;
     }
     }
