@@ -177,8 +177,11 @@ void TMS9918::render_sprites(int line, std::array<uint8_t, kScreenWidth>& pen) {
     for (int index = 0; index < 32; index++) {
         uint8_t y_byte = vram_[base + index * 4 + 0];
         if (y_byte == 0xd0) break;  // sprite list terminator
-        int top = int(int8_t(y_byte)) + 1;
-        if (line < top || line >= top + draw_size) continue;
+        // Unsigned 8-bit Y: sprite starts at (Y+1) mod 256. int8_t Y hid
+        // every sprite with Y>=128 (the bottom half of the 192-line screen).
+        int top = (int(y_byte) + 1) & 0xff;
+        int row = (line - top) & 0xff;
+        if (row >= draw_size) continue;
 
         if (drawn >= 4) {
             status_ |= 0x40;  // 5th sprite flag
@@ -194,7 +197,7 @@ void TMS9918::render_sprites(int line, std::array<uint8_t, kScreenWidth>& pen) {
         uint8_t color = uint8_t(flags & 0x0f);
         if (color == 0) continue;  // fully transparent
 
-        int analog_row = (line - top) / mag;
+        int analog_row = row / mag;
         uint16_t sprite_base =
             uint16_t(sprite_pattern_base() + (sprites_large() ? (name & 0xfc) : name) * 8);
         uint8_t left_byte, right_byte = 0;
