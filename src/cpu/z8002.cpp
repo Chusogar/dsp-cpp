@@ -7,8 +7,10 @@
 #include <cstdio>
 #include <cstring>
 
-// Little-endian host: overlay of B/W/L/Q matches MAME's BYTE*_XOR_BE mapping.
-#define BYTE8_XOR_BE(a) ((a) ^ 1)
+// Little-endian host overlay of the BE Z8000 register file.
+// Word pairs live in 32-bit units (R0/R1 in L[0], …), so 16-bit indices XOR 1.
+// Byte indices must XOR 3 so RH0/RL0 land in R0, not the swapped neighbour.
+#define BYTE8_XOR_BE(a) ((a) ^ 3)
 #define BYTE4_XOR_BE(a) ((a) ^ 1)
 #define BYTE_XOR_BE(a) ((a) ^ 1)
 

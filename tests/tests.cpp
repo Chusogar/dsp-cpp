@@ -2188,6 +2188,34 @@ void test_polepos_driver() {
     check(cpu.rw(9) == 0x0002, "Z8002 LD R9,#0002 writes R9");
     check(cpu.pc() == 0x0016 || cpu.pc() == 0x0014, "Z8002 HALT sits after LD R9");
 
+    // Byte registers must overlay the same word the opcode names (RH0/RL1).
+    std::array<uint8_t, 0x100> bmem{};
+    bmem[2] = 0x40;
+    bmem[3] = 0x00;
+    bmem[4] = 0x00;
+    bmem[5] = 0x10;
+    bmem[0x10] = 0x21;
+    bmem[0x11] = 0x00;
+    bmem[0x12] = 0x12;
+    bmem[0x13] = 0x34;  // LD R0,#1234
+    bmem[0x14] = 0x21;
+    bmem[0x15] = 0x01;
+    bmem[0x16] = 0x00;
+    bmem[0x17] = 0x00;  // LD R1,#0000
+    bmem[0x18] = 0xc9;
+    bmem[0x19] = 0xff;  // LDB RL1,#FF
+    bmem[0x1a] = 0xc0;
+    bmem[0x1b] = 0xab;  // LDB RH0,#AB
+    bmem[0x1c] = 0x7a;
+    bmem[0x1d] = 0x00;  // HALT
+    dsp::Z8002 bcpu(3072000);
+    bcpu.set_memory_handlers([&](uint16_t a) { return bmem[a & 0xff]; },
+                             [&](uint16_t a, uint8_t v) { bmem[a & 0xff] = v; });
+    bcpu.reset();
+    bcpu.run(80);
+    check(bcpu.rw(0) == 0xab34, "Z8002 LDB RH0 overlays R0 high");
+    check(bcpu.rw(1) == 0x00ff, "Z8002 LDB RL1 overlays R1 low");
+
     const char* rom = "/tmp/roms/polepos.zip";
     std::FILE* f = std::fopen(rom, "rb");
     if (f) {
