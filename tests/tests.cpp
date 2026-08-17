@@ -33,6 +33,7 @@
 #include "drivers/starwars.h"
 #include "drivers/spectrum.h"
 #include "drivers/zx_clone.h"
+#include "drivers/genesis.h"
 #include "machine/bagman_pal.h"
 #include "machine/beta128.h"
 #include "machine/kabuki.h"
@@ -54,11 +55,13 @@
 #include "sound/sn76496.h"
 #include "sound/upd1771.h"
 #include "sound/ym2151.h"
+#include "sound/ym2612.h"
 #include "video/atari_mo.h"
 #include "video/gb_ppu.h"
 #include "video/gfx.h"
 #include "video/mos6566.h"
 #include "video/tms3556.h"
+#include "video/sega_315_5313.h"
 
 namespace {
 
@@ -2386,6 +2389,191 @@ void test_trdos_scl_and_beta() {
     check(scor64->init(dir64.string(), &error), "64 KB scorpion.rom boots from the ZXMak layout");
 }
 
+void test_ym2612() {
+    dsp::YM2612 ym(7670453);
+    ym.reset();
+    bool silent = true;
+    for (int i = 0; i < 128; i++) {
+        if (ym.update() != 0) silent = false;
+    }
+    check(silent, "the YM2612 is silent after reset");
+
+    // Channel 0, algorithm 7, all operators as carriers, max volume, key on.
+    ym.write(0, 0xb0);
+    ym.write(1, 0x07);
+    ym.write(0, 0xb4);
+    ym.write(1, 0xc0);
+    ym.write(0, 0xa4);
+    ym.write(1, 0x22);
+    ym.write(0, 0xa0);
+    ym.write(1, 0x69);
+    for (int op = 0; op < 4; op++) {
+        ym.write(0, uint8_t(0x40 + (op << 2)));
+        ym.write(1, 0x00);
+        ym.write(0, uint8_t(0x50 + (op << 2)));
+        ym.write(1, 0x1f);
+        ym.write(0, uint8_t(0x80 + (op << 2)));
+        ym.write(1, 0x0f);
+    }
+    ym.write(0, 0x28);
+    ym.write(1, 0xf0);
+    bool audible = false;
+    for (int i = 0; i < 4410; i++) {
+        if (ym.update() != 0) audible = true;
+    }
+    check(audible, "the YM2612 produces sound after a key on");
+
+    // DAC on channel 6.
+    ym.reset();
+    ym.write(0, 0x2b);
+    ym.write(1, 0x80);
+    ym.write(0, 0x2a);
+    ym.write(1, 0xff);
+    int32_t dac = ym.update();
+    check(dac != 0, "the YM2612 DAC is audible when enabled");
+}
+
+void test_genesis_vdp() {
+    dsp::Sega3155313 vdp(false);
+    vdp.reset();
+    vdp.write(4, 0x8004);  // mode 1
+    vdp.write(4, 0x8174);  // display + DMA + VINT
+    vdp.write(4, 0x8230);
+    vdp.write(4, 0x8407);
+    vdp.write(4, 0x8c81);  // H40
+    vdp.write(4, 0x8f02);  // auto increment 2
+    check((vdp.reg(1) & 0x40) != 0, "VDP display enable is latched");
+    check((vdp.reg(0x0c) & 0x81) == 0x81, "VDP H40 mode is latched");
+
+    // CRAM write at index 0: command CD=3, addr=0 → $C0000000
+    vdp.write(4, 0xc000);
+    vdp.write(4, 0x0000);
+    vdp.write(0, 0x000e);
+    vdp.write(0, 0x0eee);
+    check((vdp.cram(0) & 0x0eee) == 0x000e, "VDP CRAM colour 0 is red");
+    check((vdp.cram(1) & 0x0eee) == 0x0eee, "VDP CRAM colour 1 is white");
+
+    // DMA fill of VRAM with $1111 (tile of colour 1).
+    vdp.write(4, 0x9300);
+    vdp.write(4, 0x9410);  // length 0x1000 words
+    vdp.write(4, 0x9780);  // fill
+    vdp.write(4, 0x4000);
+    vdp.write(4, 0x0080);  // DMA bit + VRAM write
+    vdp.write(0, 0x1111);
+    check(vdp.vram(0) == 0x11, "DMA fill writes the high byte");
+    check(vdp.vram(3) == 0x11, "DMA fill covers more than one word");
+
+    vdp.handle_scanline(0);
+    const uint32_t* line = vdp.line_buffer();
+    bool saw_white = false;
+    for (int x = 0; x < 320; x++) {
+        if ((line[x] & 0x00ffffff) == 0x00eeeeee || (line[x] & 0x00ffffff) == 0x00ffffff ||
+            ((line[x] >> 16) & 0xff) > 200) {
+            saw_white = true;
+            break;
+        }
+    }
+    check(saw_white, "VDP scanline of a solid colour-1 tile is bright");
+}
+
+std::vector<uint8_t> make_genesis_test_rom() {
+    std::vector<uint8_t> rom(0x800, 0);
+    auto put32 = [&](size_t offset, uint32_t value) {
+        rom[offset] = uint8_t(value >> 24);
+        rom[offset + 1] = uint8_t(value >> 16);
+        rom[offset + 2] = uint8_t(value >> 8);
+        rom[offset + 3] = uint8_t(value);
+    };
+    auto put16 = [&](size_t offset, uint16_t value) {
+        rom[offset] = uint8_t(value >> 8);
+        rom[offset + 1] = uint8_t(value);
+    };
+    put32(0, 0x00fffe00);
+    put32(4, 0x00000200);
+    for (int vec = 2; vec < 64; vec++) put32(size_t(vec * 4), 0x000003e0);
+    std::memcpy(&rom[0x100], "SEGA GENESIS    ", 16);
+    put16(0x3e0, 0x4e73);  // rte
+
+    size_t pc = 0x200;
+    auto emit16 = [&](uint16_t value) {
+        put16(pc, value);
+        pc += 2;
+    };
+    auto emit32 = [&](uint32_t value) {
+        put32(pc, value);
+        pc += 4;
+    };
+    emit16(0x41f9);
+    emit32(0x00c00000);  // lea $c00000, a0
+    emit16(0x43f9);
+    emit32(0x00c00004);  // lea $c00004, a1
+    auto setreg = [&](uint8_t reg, uint8_t value) {
+        emit16(0x32bc);
+        emit16(uint16_t(0x8000 | (uint16_t(reg) << 8) | value));
+    };
+    setreg(0x00, 0x04);
+    setreg(0x01, 0x74);
+    setreg(0x02, 0x30);
+    setreg(0x03, 0x28);
+    setreg(0x04, 0x07);
+    setreg(0x05, 0x7c);
+    setreg(0x07, 0x00);
+    setreg(0x0a, 0xff);
+    setreg(0x0b, 0x00);
+    setreg(0x0c, 0x81);
+    setreg(0x0d, 0x3f);
+    setreg(0x0f, 0x02);
+    setreg(0x10, 0x01);
+    emit16(0x22bc);
+    emit32(0xc0000000);  // CRAM write
+    emit16(0x30bc);
+    emit16(0x000e);
+    emit16(0x30bc);
+    emit16(0x0eee);
+    emit16(0x22bc);
+    emit32(0x40000000);  // VRAM write at 0
+    emit16(0x700f);      // moveq #15, d0
+    emit16(0x30bc);
+    emit16(0x1111);
+    emit16(0x51c8);
+    emit16(0xfff8);  // dbra d0, tile loop
+    emit16(0x60fe);  // bra.s *
+    return rom;
+}
+
+void test_genesis_boot() {
+    dsp::Genesis machine;
+    std::string error;
+    check(machine.load_rom(make_genesis_test_rom(), &error), "Genesis loads a synthetic ROM");
+    check(machine.debug_pc() == 0x200, "Genesis reset vector is $200");
+    for (int frame = 0; frame < 8; frame++) machine.run_frame();
+    check(machine.debug_pc() >= 0x200 && machine.debug_pc() < 0x400,
+          "Genesis 68k stays in the test program");
+    check((machine.vdp().reg(1) & 0x40) != 0, "Genesis test ROM enables the display");
+    check((machine.vdp().cram(1) & 0x0eee) == 0x0eee, "Genesis test ROM writes CRAM");
+    const uint32_t* fb = machine.framebuffer();
+    bool bright = false;
+    for (int i = 0; i < 320 * 16; i++) {
+        if (((fb[i] >> 16) & 0xff) > 180 && ((fb[i] >> 8) & 0xff) > 180) {
+            bright = true;
+            break;
+        }
+    }
+    check(bright, "Genesis test ROM fills the screen with the CRAM colour");
+
+    dsp::MachineInputs inputs;
+    inputs.player1.right = true;
+    inputs.player1.button1 = true;
+    machine.set_inputs(inputs);
+    machine.debug_write_word(0xa10008, 0x4000);  // TH output
+    machine.debug_write_word(0xa10002, 0x4000);  // TH high
+    const uint16_t th_high = machine.debug_read_word(0xa10002);
+    machine.debug_write_word(0xa10002, 0x0000);  // TH low
+    const uint16_t th_low = machine.debug_read_word(0xa10002);
+    check((th_high & 0x0800) == 0, "Genesis pad right is visible with TH high");
+    check((th_low & 0x1000) == 0, "Genesis pad A is visible with TH low");
+}
+
 }  // namespace
 
 int main() {
@@ -2465,6 +2653,9 @@ int main() {
     test_starwars_missing_roms();
     test_atari_system1_missing_roms();
     test_indy_coin_if_present();
+    test_ym2612();
+    test_genesis_vdp();
+    test_genesis_boot();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

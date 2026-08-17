@@ -92,6 +92,9 @@ add_executable(dsp
   
   src/drivers/sms.cpp
   src/machine/sega_vdp.cpp
+  src/video/sega_315_5313.cpp
+  src/sound/ym2612.cpp
+  src/drivers/genesis.cpp
   src/drivers/gamegear.cpp
   src/drivers/pv1000.cpp
   src/drivers/colecovision.cpp
@@ -145,6 +148,8 @@ add_executable(dsp_tests
   src/sound/tms5220.cpp
   src/sound/sid.cpp
   src/sound/gb_apu.cpp
+  src/sound/fmopn.cpp
+  src/sound/ym2612.cpp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/nes_ppu.cpp
@@ -152,6 +157,7 @@ add_executable(dsp_tests
   src/video/mos6566.cpp
   src/video/gb_ppu.cpp
   src/video/avg_starwars.cpp
+  src/video/sega_315_5313.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/via6522.cpp
@@ -183,6 +189,7 @@ add_executable(dsp_tests
   src/drivers/starwars.cpp
   src/drivers/atari_system1.cpp
   src/drivers/zx_clone.cpp
+  src/drivers/genesis.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

@@ -433,7 +433,10 @@ void OpnCore::write_mode(int reg, int value) {
             break;
         case 0x28: {
             int c = value & 0x03;
-            if (c == 3 || c >= int(channels_.size())) return;
+            if (c == 3) return;
+            // YM2612 part 1: channels 3-5 are selected with bit 2.
+            if ((value & 0x04) != 0) c += 3;
+            if (c >= int(channels_.size())) return;
             Channel& ch = channels_[size_t(c)];
             if ((value & 0x10) != 0) key_on(ch, kSlot1); else key_off(ch, kSlot1);
             if ((value & 0x20) != 0) key_on(ch, kSlot2); else key_off(ch, kSlot2);
@@ -489,9 +492,9 @@ void OpnCore::set_sl_rr(Slot& slot, int value) {
     slot.eg_sel_rr = tab.eg_rate_select[slot.rr + slot.ksr];
 }
 
-void OpnCore::write_reg(int reg, int value) {
-    int c = reg & 3;
-    if (c == 3) return;
+void OpnCore::write_reg(int reg, int value, int channel_base) {
+    int c = (reg & 3) + channel_base;
+    if ((reg & 3) == 3) return;
     if (c >= int(channels_.size())) return;
     Channel& ch = channels_[size_t(c)];
     const int slot_index = (reg >> 2) & 3;
@@ -534,11 +537,12 @@ void OpnCore::write_reg(int reg, int value) {
                     fn_h_ = uint8_t(value & 0x3f);
                     break;
                 case 2: {  // 3 channel mode fnum1
+                    const int slot3 = reg & 3;
                     const uint32_t fn = (uint32_t(sl3_.fn_h & 7) << 8) + uint32_t(value);
                     const uint8_t blk = uint8_t(sl3_.fn_h >> 3);
-                    sl3_.kcode[size_t(c)] = uint8_t((blk << 2) | kOpnFkTable[fn >> 7]);
-                    sl3_.fc[size_t(c)] = fn_table_[size_t(fn * 2)] >> (7 - blk);
-                    sl3_.block_fnum[size_t(c)] = fn;
+                    sl3_.kcode[size_t(slot3)] = uint8_t((blk << 2) | kOpnFkTable[fn >> 7]);
+                    sl3_.fc[size_t(slot3)] = fn_table_[size_t(fn * 2)] >> (7 - blk);
+                    sl3_.block_fnum[size_t(slot3)] = fn;
                     if (channels_.size() > 2) channels_[2].slot[kSlot1].incr = -1;
                     break;
                 }
@@ -553,6 +557,12 @@ void OpnCore::write_reg(int reg, int value) {
                 ch.algo = uint8_t(value & 7);
                 ch.fb = feedback != 0 ? uint8_t(feedback + 6) : 0;
                 setup_connection(ch, c);
+            } else if (slot_index == 1) {
+                // 0xB4-0xB6: stereo enable, AMS, PMS (YM2612 / OPN2).
+                ch.pms = (value & 7);
+                ch.ams = uint8_t((value >> 4) & 3);
+                ch.pan_left = (value & 0x80) != 0;
+                ch.pan_right = (value & 0x40) != 0;
             }
             break;
         default:
@@ -627,6 +637,7 @@ void OpnCore::advance_eg_channel(Channel& ch) {
 }
 
 void OpnCore::advance_envelopes() {
+    if (eg_timer_overflow_ <= 0.0) return;
     eg_timer_ += eg_timer_add_;
     while (eg_timer_ >= eg_timer_overflow_) {
         eg_timer_ -= eg_timer_overflow_;

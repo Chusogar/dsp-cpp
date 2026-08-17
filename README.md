@@ -10,7 +10,8 @@ Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC
 Midway **MCR** (**Tapper** and family), and Atari **Star Wars**.
 Computers: **ZX Spectrum 48K**, Amstrad CPC, **Commodore 64**, **EXL-100** /
 **EXELTEL**. Consoles: NES, Game Boy / Game Boy Color, **Atari Lynx**,
-**Super Cassette Vision**.
+**Super Cassette Vision**, Sega Master System / Game Gear, **Sega Genesis /
+Mega Drive**.
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
 explains the port workflow and comes with a driver skeleton (`tools/new_driver.py`).
@@ -73,6 +74,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | WD1793 / Beta 128 | new (MAME `beta_m.cpp`, `wd_fdc`) | TR-DOS FDC, TRD and SCL images |
 | Pentagon 1024 | new (MAME `pentagon.cpp`) | 1024 KB, uncontended 320-line ULA, GLUK, Beta disk |
 | Scorpion ZS-256 | new (MAME `scorpion.cpp`) | 256 KB, port $1FFD, Magic NMI, Beta disk |
+| YM2612 (OPN2) | new (from `fmopn.pas` + YM2612 DAC) | Six FM channels and PCM DAC |
+| 315-5313 VDP | `src/consolas/sega_315_5313.pas` | Planes A/B, window, sprites, DMA, CRAM |
+| Genesis / Mega Drive | `src/consolas/genesis.pas` | 68000 + Z80, VDP, YM2612+PSG, 3-button pads |
 | Atari AVG (Star Wars) | new (MAME `avgdvg.cpp`) | PROM state machine, colour vector list |
 | MOS 6532 RIOT | new (MAME `mos6532.cpp`) | 128-byte RAM, ports, timer IRQ |
 | Star Wars mathbox | new (MAME `starwars_m.cpp`) | PROM microcode, multiply-accumulate, restoring divider |
@@ -116,6 +120,7 @@ holding the individual files:
 ./build/dsp --game nes /path/to/game.nes
 ./build/dsp --game lynx /path/to/game.lnx
 ./build/dsp --game scv /path/to/scv.zip
+./build/dsp --game genesis /path/to/game.md
 ./build/dsp --game exl100 /path/to/exl100.zip
 ./build/dsp --game pentagon --disk game.trd /path/to/pentagon-roms/
 ./build/dsp --game scorpion --disk game.scl /path/to/scorpion.rom
@@ -394,6 +399,35 @@ CHR-RAM carts (header CHR = 0) work. Player 1 uses the arrows plus Ctrl/Alt for
 A/B, `1` for Start and `5` for Select (the arcade coin button). There is no BIOS;
 the CPU starts at the cartridge reset vector. IRQ-heavy boards (VRC, FME-7, …)
 are still rejected at load time.
+
+### Sega Genesis / Mega Drive
+
+The WIP `genesis.pas` driver is completed here: a 7.67 MHz 68000, a 3.58 MHz
+Z80, the 315-5313 VDP (planes A/B, window, sprites, DMA fill/copy/68k, CRAM)
+and a YM2612 plus the VDP's SN76489. Cartridges are raw `.bin` / `.md` /
+`.gen` dumps, interleaved `.smd` (optional 512-byte copier header), or a zip
+holding one of those.
+
+```bash
+./build/dsp --game genesis /path/to/game.md
+./build/dsp --game megadrive /path/to/game.bin
+./build/dsp --game genesis-pal /path/to/game.md
+./build/dsp --game genesis --screenshot title.bmp --frames 180 --mute game.md
+```
+
+`--game genesis` / `megadrive` is NTSC (USA, version register `$A1`).
+`genesis-jp` is NTSC domestic (`$80`). `genesis-pal` is PAL (`$C1`, 313
+lines). `--dip 0:0` / `1` / `2` also selects Japan / USA / Europe on the
+version register (games read it for the SEGA screen and lock-out).
+
+A is Left Ctrl or Space, B is Left Alt or Z, C is X, Start is `1`. The D-pad
+is the arrow keys. Player 2 is R/F/D/G plus A/S/Q.
+
+SRAM at `$200000` is mapped when the cartridge header has an `RA` extra-memory
+block, or for dumps of 2 MiB and under. Super Street Fighter II style 512 KiB
+banks at `$A130F3`–`$A130FF` are used when the image is larger than 4 MiB.
+There is no TMSS lock (bit 7 of the version register is set). Interlace mode
+3, EEPROM mappers and the 6-button pad are not emulated.
 
 ### Commodore 64
 

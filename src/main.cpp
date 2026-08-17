@@ -36,6 +36,7 @@
 // Consoles
 #include "drivers/sms.h"
 #include "drivers/gamegear.h"
+#include "drivers/genesis.h"
 #include "drivers/pv1000.h"
 #include "drivers/colecovision.h"
 #include "drivers/sg1000.h"
@@ -74,7 +75,8 @@ void print_supported_emulators() {
         "    exl100, exeltel\n"
         "\n"
         "  Consoles:\n"
-        "    sms, gamegear, pv1000, coleco, sg1000, gb, nes, lynx, scv\n"
+        "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp,\n"
+        "    pv1000, coleco, sg1000, gb, nes, lynx, scv\n"
         "\n");
 }
 
@@ -230,6 +232,16 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	// consoles
 	if (game == "sms") return std::make_unique<dsp::Sms>();
 	if (game == "gamegear") return std::make_unique<dsp::GameGear>();
+	if (game == "genesis" || game == "megadrive" || game == "mega-drive" ||
+	    game == "md" || game == "gen") {
+	    return std::make_unique<dsp::Genesis>();
+	}
+	if (game == "genesis-pal" || game == "megadrive-pal") {
+	    return std::make_unique<dsp::Genesis>(dsp::Genesis::Region::Europe);
+	}
+	if (game == "genesis-jp" || game == "megadrive-jp") {
+	    return std::make_unique<dsp::Genesis>(dsp::Genesis::Region::Japan);
+	}
 	if (game == "pv1000") return std::make_unique<dsp::Pv1000>();
 	if (game == "coleco") return std::make_unique<dsp::ColecoVision>();
 	if (game == "sg1000") return std::make_unique<dsp::Sg1000>();
