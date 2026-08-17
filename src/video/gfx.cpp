@@ -62,6 +62,14 @@ void GfxSet::decode_elements(const GfxLayout& layout, const std::vector<uint8_t>
             for (int column = width_ - 1; column >= 0; column--) {
                 for (int row = 0; row < height_; row++) {
                     target[dest++] = source[size_t(column + width_ * row)];
+        if (layout.rotate_ccw) {
+            // Matches gfx_engine.pas Rotatel (rol90): dest[r][c] = src[c][w-1-r].
+            uint8_t* target = pixels_.data() + size_t(element) * size_t(width_ * height_);
+            std::vector<uint8_t> source(target, target + size_t(width_ * height_));
+            for (int row = 0; row < height_; row++) {
+                for (int column = 0; column < width_; column++) {
+                    target[row * width_ + column] =
+                        source[size_t(column * width_ + (width_ - 1 - row))];
                 }
             }
         }

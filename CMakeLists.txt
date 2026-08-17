@@ -65,6 +65,7 @@ add_executable(dsp
   src/drivers/mcr.cpp
   src/drivers/dec0.cpp
   src/drivers/m62.cpp
+  src/drivers/snk.cpp
       
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp

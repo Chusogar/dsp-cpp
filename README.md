@@ -6,6 +6,7 @@ Supported games: **Bagman** (Valadon Automation, 1982), **Mikie** (Konami, 1984)
 **Elevator Action** and **Jungle King** (Taito, 1983, Taito SJ hardware),
 **Kung-Fu Master**, **Spelunker**, **Spelunker II**, **Lode Runner** and **Lode Runner II**
 (Irem M62 hardware).
+**Ikari Warriors**, **Athena**, **TNK III** and **ASO** (SNK, 1985–1986).
 It also emulates the **ZX Spectrum 48K** home computer (Sinclair, 1982).
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
@@ -37,6 +38,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Taito SJ driver | `src/arcade/taitosj_hw.pas` | Main and sound Z80, four AY-3-8910, DAC, MCU handshake, three tile layers with per column scroll, sprites and PROM priorities |
 | M6803 MCU | `src/cpu/m680x.pas` (`TCPU_M6803`) | Irem M62 sound CPU: 128 bytes of internal RAM, ports 1-4, no internal ROM |
 | Irem M62 driver | `src/arcade/m62_hw.pas` | Kung-Fu Master, Spelunker, Spelunker II, Lode Runner and Lode Runner II: Z80, M6803, two AY-3-8910, two MSM5205, tiles and multi-height sprites |
+| SNK driver | `src/arcade/snk_hw.pas` | Three Z80s, YM3526, Ikari/Athena/TNK III/ASO video (chars, tiles, 16x16 and 32x32 sprites, hardflags) |
 | Spectrum ULA | `src/computer/spectrum_hw.pas` | Keyboard matrix, border, one bit beeper, EAR input, contended timing |
 | Spectrum driver | `src/computer/spectrum_hw.pas`, `spectrum_misc.pas` | 48K memory map, display file with attributes and flash, Kempston joystick |
 | Tape player | `src/misc/tap_tzx.pas` | `.tap` blocks and `.tzx` images (turbo, pure tone/data, direct recording, pauses, loops), hooked to the ROM loader |
@@ -76,6 +78,7 @@ holding the individual files:
 ./build/dsp --game ddragon2 /path/to/ddragon2.zip
 ./build/dsp --game elevator /path/to/elevator.zip
 ./build/dsp --game junglek /path/to/junglek.zip
+./build/dsp --game ikari /path/to/ikari.zip
 ./build/dsp --game spectrum48 --tape /path/to/game.tzx /path/to/48.rom
 ./build/dsp --game c64 --tape /path/to/game.prg /path/to/c64-roms/
 ```
@@ -83,6 +86,7 @@ holding the individual files:
 The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
 `ddragon2`, `elevator`, `junglek`, `kungfum`, `spelunkr`, `spelunk2`, `ldrun`,
 `ldrun2` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
+`ddragon2`, `elevator`, `junglek`, `ikari`, `athena`, `tnk3`, `aso` or `spectrum48`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 (SLAPSTIC 104) and the two player `136041-xxx` set (SLAPSTIC 107).
 
 Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
@@ -94,6 +98,7 @@ Options:
 --game NAME        machine to run: bagman, mikie, gauntlet, ddragon, ddragon2,
                    elevator, junglek, kungfum, spelunkr, spelunk2, ldrun,
                    ldrun2 or spectrum48
+                   elevator, junglek, ikari, athena, tnk3, aso or spectrum48
 --scale N          window scale factor (default 3)
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
                    mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
@@ -166,6 +171,17 @@ Kung-Fu Master ROM set: `a-4e-c.bin`, `a-4d-c.bin`, `g-4c-a.bin`, `g-4d-a.bin`,
 `g-1h-.bin`, `b-1m-.bin`, `b-1n-.bin`, `b-1l-.bin`, `b-5f-.bin`.
 
 None of these sets has been run here with real ROMs yet.
+### SNK (Ikari Warriors, Athena, TNK III, ASO)
+
+Three Z80s (main and sub at 3.35 MHz, sound at 4 MHz) driving one or two YM3526 chips.
+Ikari Warriors is a portrait 216x288 game with 16x16 and 32x32 sprites and a hardflags
+collision port; Athena is 288x216; TNK III and ASO draw 288x216 and rotate the picture
+270 degrees. DIP banks are 0=A, 1=B and 2=C (bonus life). Ikari defaults are
+`--dip 0:0x3b --dip 1:0x4b --dip 2:0x34`. Button 2 / 3 step the rotary stick on Ikari
+and TNK III.
+
+The Ikari set accepts both the old `1.rom` / `7.rom` / `7122er.prm` names and the
+MAME 0.221 `1.4p` / `p7.3b` / `a6002-1.1k` names.
 
 ### ZX Spectrum 48K
 
