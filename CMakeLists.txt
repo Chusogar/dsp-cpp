@@ -25,6 +25,7 @@ add_executable(dsp
   src/cpu/upd7801.cpp
   src/cpu/hu6280.cpp
   src/cpu/mcs51.cpp
+  src/cpu/nec_v30.cpp
  
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
@@ -70,6 +71,7 @@ add_executable(dsp
   src/drivers/m62.cpp
   src/drivers/snk.cpp
   src/drivers/cps1.cpp
+  src/drivers/m72.cpp
       
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp

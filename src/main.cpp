@@ -21,6 +21,7 @@
 #include "drivers/m62.h"
 #include "drivers/snk.h"
 #include "drivers/cps1.h"
+#include "drivers/m72.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -61,6 +62,7 @@ void print_supported_emulators() {
         "    ikari, athena, tnk3, aso\n"
         "    ghouls, ffight, kod, sf2, strider, 3wonders, captcomm,\n"
         "    knights, sf2ce, dino, punisher, willow, 1941, nemo\n"
+        "    rtype, hharry, rtype2\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3,\n"
@@ -173,6 +175,9 @@ std::string guess_game(const std::string& rom_path) {
     if (lowered.find("willow") != std::string::npos) return "willow";
     if (lowered.find("1941") != std::string::npos) return "1941";
     if (lowered.find("nemo") != std::string::npos) return "nemo";
+    if (lowered.find("rtype2") != std::string::npos) return "rtype2";
+    if (lowered.find("hharry") != std::string::npos) return "hharry";
+    if (lowered.find("rtype") != std::string::npos) return "rtype";
     
     
     // Computers
@@ -285,6 +290,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "willow") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Willow);
     if (game == "1941") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Ca1941);
     if (game == "nemo") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Nemo);
+    if (game == "rtype") return std::make_unique<dsp::M72>(dsp::M72::Game::Rtype);
+    if (game == "hharry") return std::make_unique<dsp::M72>(dsp::M72::Game::Hharry);
+    if (game == "rtype2") return std::make_unique<dsp::M72>(dsp::M72::Game::Rtype2);
     
 
 	// computers
