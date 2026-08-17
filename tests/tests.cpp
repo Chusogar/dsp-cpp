@@ -30,6 +30,7 @@
 #include "drivers/mcr.h"
 #include "drivers/nes.h"
 #include "drivers/scv.h"
+#include "drivers/starwars.h"
 #include "drivers/spectrum.h"
 #include "drivers/zx_clone.h"
 #include "machine/bagman_pal.h"
@@ -37,10 +38,12 @@
 #include "machine/kabuki.h"
 #include "machine/lynx_suzy.h"
 #include "machine/mos6526.h"
+#include "machine/mos6532.h"
 #include "machine/slapstic.h"
 #include "machine/spectrum_tape.h"
 #include "machine/trdos_disk.h"
 #include "machine/wd1793.h"
+#include "machine/starwars_math.h"
 #include "sound/ay8910.h"
 #include "sound/msm5205.h"
 #include "sound/nes_apu.h"
@@ -2141,6 +2144,55 @@ void test_exelv_dummy_bios() {
     check(tel.debug_pc() >= 0xf000, "dummy EXELTEL BIOS idles in TMS7040 ROM");
 }
 
+void test_starwars_missing_roms() {
+    dsp::StarWars machine;
+    check(std::strcmp(machine.title(), "Star Wars") == 0, "Star Wars title");
+    check(machine.screen_width() == 400 && machine.screen_height() == 300,
+          "Star Wars reports the 400x300 vector window");
+    std::string error = "unset";
+    check(!machine.init("/no/such/starwars.zip", &error), "missing Star Wars ROMs fail init");
+    check(error.find("not found") != std::string::npos || error.find("cannot") != std::string::npos ||
+              error.size() > 3,
+          "init reports why the Star Wars ROM set is missing");
+
+    dsp::StarwarsMath math;
+    std::array<uint8_t, 0x1000> prom{};
+    math.init(prom.data());
+    math.write(6, 0x10);
+    math.write(7, 0x00);
+    math.write(4, 0x00);
+    math.write(5, 0x20);
+    const uint16_t quotient = uint16_t((uint16_t(math.div_reh()) << 8) | math.div_rel());
+    check(quotient != 0, "mathbox restoring divider produces a quotient");
+
+    dsp::Mos6532 riot;
+    int irqs = 0;
+    riot.set_irq_callback([&irqs](dsp::IrqLine line) {
+        if (line != dsp::IrqLine::Clear) irqs++;
+    });
+    riot.reset();
+    riot.io_write(0x1c, 0x01);  // timer, /1 prescale, IRQ enabled
+    riot.tick(4);
+    check(irqs > 0, "MOS 6532 timer raises IRQ after countdown");
+
+    const char* rom = "/tmp/roms/starwars.zip";
+    std::FILE* f = std::fopen(rom, "rb");
+    if (f) {
+        std::fclose(f);
+        dsp::StarWars boot;
+        error.clear();
+        check(boot.init(rom, &error), "Star Wars ROM set loads");
+        for (int i = 0; i < 200; i++) boot.run_frame();
+        check(boot.debug_pc() >= 0x6000, "Star Wars main CPU is executing ROM");
+        check(boot.debug_avg_lines() > 10, "AVG produced a vector list in attract");
+        int lit = 0;
+        const uint32_t* fb = boot.framebuffer();
+        const int n = boot.screen_width() * boot.screen_height();
+        for (int i = 0; i < n; i++) {
+            if ((fb[i] & 0x00ffffffu) != 0) lit++;
+        }
+        check(lit > 100, "Star Wars attract draws visible vectors");
+    }
 void test_atari_system1_missing_roms() {
     dsp::AtariSystem1 machine(dsp::AtariSystem1::Game::Indy);
     std::string error = "unset";
@@ -2371,6 +2423,7 @@ int main() {
     test_tms3556_background();
     test_exelv_dummy_bios();
     test_trdos_scl_and_beta();
+    test_starwars_missing_roms();
     test_atari_system1_missing_roms();
     if (failures == 0) {
         std::printf("all tests passed\n");
