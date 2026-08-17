@@ -274,9 +274,17 @@ void PolePos::reset() {
     n06_read_stretch_ = false;
     n06_cycle_acc_ = 0;
     n06_period_cycles_ = 0;
-    n51_read_index_ = 0;
-    n51_command_ = 0;
-    n51_coins_left_ = 0;
+    n51_mode_ = 1;
+    n51_out_index_ = 0;
+    n51_coinage_left_ = 0;
+    n51_out_.fill(0x0f);
+    n51_coinage_ = {1, 1, 1, 1};
+    n51_cred_lo_ = 0;
+    n51_cred_hi_ = 0;
+    n51_coin1_partial_ = 0;
+    n51_coin2_partial_ = 0;
+    n51_in0_prev_ = 0xff;
+    namco51_vblank();
     steer_last_ = steer_;
     steer_delta_ = 0;
     steer_accum_ = 0;
@@ -366,7 +374,7 @@ void PolePos::namco06_ctrl_w(uint8_t data) {
         if (n06_control_ & 0x10) {
             z80_.set_nmi(IrqLine::Clear);
             n06_read_stretch_ = true;
-            n51_read_index_ = 0;
+            n51_out_index_ = 0;
         } else {
             n06_read_stretch_ = false;
         }
@@ -384,16 +392,90 @@ void PolePos::namco06_tick() {
 }
 
 uint8_t PolePos::namco51_read() {
-    const uint8_t ports[4] = {uint8_t(dswb_ & 0x0f), uint8_t(dswb_ >> 4), uint8_t(in0() & 0x0f),
-                              uint8_t(in0() >> 4)};
-    const uint8_t value = ports[n51_read_index_ & 3];
-    n51_read_index_++;
-    return value;
+    const uint8_t lo = n51_out_[size_t(n51_out_index_ & 7)];
+    const uint8_t hi = n51_out_[size_t((n51_out_index_ + 1) & 7)];
+    n51_out_index_ = (n51_out_index_ + 2) & 7;
+    return uint8_t((hi << 4) | (lo & 0x0f));
 }
 
 void PolePos::namco51_write(uint8_t data) {
-    n51_command_ = data;
-    if (data == 0x05) n51_read_index_ = 0;
+    data &= 0x0f;
+    if (n51_coinage_left_ > 0) {
+        n51_coinage_[size_t(n51_coinage_left_ - 1)] = data == 0 ? uint8_t(1) : data;
+        n51_coinage_left_--;
+        return;
+    }
+    switch (data) {
+        case 1:
+            n51_coinage_left_ = 4;
+            break;
+        case 2:
+            n51_mode_ = 0;
+            n51_out_index_ = 0;
+            break;
+        case 5:
+            n51_mode_ = 1;
+            n51_out_index_ = 0;
+            break;
+        default:
+            break;
+    }
+}
+
+void PolePos::namco51_vblank() {
+    const uint8_t in = in0();
+    n51_out_.fill(0x0f);
+    if (n51_mode_ == 1) {
+        n51_out_[0] = uint8_t(in & 0x0f);
+        n51_out_[1] = uint8_t(in >> 4);
+        n51_out_[2] = uint8_t(dswb_ & 0x0f);
+        n51_out_[3] = uint8_t(dswb_ >> 4);
+    } else {
+        const uint8_t coins = uint8_t((~in) & (~n51_in0_prev_) & 0x30);
+        if (coins & 0x10) {
+            n51_coin1_partial_++;
+            if (n51_coin1_partial_ >= n51_coinage_[3]) {
+                n51_coin1_partial_ = 0;
+                n51_cred_lo_ = uint8_t(n51_cred_lo_ + n51_coinage_[2]);
+                while (n51_cred_lo_ > 9) {
+                    n51_cred_lo_ = uint8_t(n51_cred_lo_ - 10);
+                    if (n51_cred_hi_ < 9) n51_cred_hi_++;
+                }
+            }
+        }
+        if (coins & 0x20) {
+            n51_coin2_partial_++;
+            if (n51_coin2_partial_ >= n51_coinage_[1]) {
+                n51_coin2_partial_ = 0;
+                n51_cred_lo_ = uint8_t(n51_cred_lo_ + n51_coinage_[0]);
+                while (n51_cred_lo_ > 9) {
+                    n51_cred_lo_ = uint8_t(n51_cred_lo_ - 10);
+                    if (n51_cred_hi_ < 9) n51_cred_hi_++;
+                }
+            }
+        }
+        n51_out_[0] = n51_cred_lo_;
+        n51_out_[1] = n51_cred_hi_;
+        if (n51_mode_ == 2) {
+            n51_out_[2] = uint8_t(in & 0x0f);
+            n51_out_[3] = 0;
+            n51_out_[4] = uint8_t(in >> 4);
+            n51_out_[5] = gear_hi_ ? 1 : 0;
+        }
+        const bool start = ((~in) & n51_in0_prev_ & 0x04) != 0;
+        if (n51_mode_ == 0 && start && (n51_cred_lo_ || n51_cred_hi_)) {
+            if (n51_cred_lo_ == 0) {
+                n51_cred_hi_--;
+                n51_cred_lo_ = 9;
+            } else {
+                n51_cred_lo_--;
+            }
+            n51_mode_ = 2;
+            n51_out_[0] = n51_cred_lo_;
+            n51_out_[1] = n51_cred_hi_;
+        }
+    }
+    n51_in0_prev_ = in;
 }
 
 uint8_t PolePos::namco53_read() {
@@ -407,7 +489,6 @@ uint8_t PolePos::namco53_read() {
         steer_delta_ = 1;
         steer_accum_--;
     }
-    // Mode 0: P0 clock, P1 direction, P2/P3 = DSWA.
     return uint8_t((steer_accum_ & 1) | (steer_delta_ << 1) | (dswa_ & 0xfc));
 }
 
@@ -538,11 +619,17 @@ void PolePos::z8002_write(int which, uint16_t address, uint8_t value) {
     if (address < 0x8000) {
         // $6000 NVI enable, not shared.
         if ((address & 0xe000) == 0x6000) {
-            sub_irq_mask_ = value & 1;
-            if (!sub_irq_mask_) {
-                sub1_.set_nvi(IrqLine::Clear);
-                sub2_.set_nvi(IrqLine::Clear);
+            // 16-bit BE write of 0x0001: low byte (odd address) holds the enable bit.
+            if (address & 1) {
+                sub_irq_mask_ = value & 1;
+                if (!sub_irq_mask_) {
+                    if (which == 0)
+                        sub1_.set_nvi(IrqLine::Clear);
+                    else
+                        sub2_.set_nvi(IrqLine::Clear);
+                }
             }
+            return;
         }
         return;
     }
@@ -593,6 +680,7 @@ void PolePos::draw_background() {
                 if (sy >= 128) continue;
                 for (int x = 0; x < 8; x++) {
                     int sx = col * 8 + x - int(view_hscroll_ & 0x1ff);
+                    sx %= 512;
                     if (sx < 0) sx += 512;
                     if (sx >= 256) continue;
                     const int pen = 0x200 + color * 4 + pix[y * 8 + x];
@@ -716,7 +804,9 @@ void PolePos::draw_text() {
                 if (sy >= kRawHeight) continue;
                 for (int x = 0; x < 8; x++) {
                     const int sx = col * 8 + x;
-                    const int pen = color * 4 + pix[y * 8 + x];
+                    const uint8_t pixv = pix[y * 8 + x];
+                    if (pixv == 0) continue;
+                    const int pen = color * 4 + pixv;
                     const uint16_t rgb_index = pens_[size_t(pen)];
                     if (rgb_index == 0x2f) continue;
                     bitmap_[size_t(sy * kScreenWidth + sx)] = rgb_[rgb_index < 128 ? rgb_index : 0];
@@ -740,18 +830,27 @@ void PolePos::update_video() {
 }
 
 void PolePos::run_frame() {
+    constexpr int kSlice = 16;
     for (int line = 0; line < kScanlines; line++) {
         scanline_ = line;
         if ((line == 64 || line == 192) && irq_enable_) {
             z80_.set_irq(IrqLine::Assert);
         }
-        if (line == 240 && sub_irq_mask_) {
-            if (!sub1_reset_) sub1_.set_nvi(IrqLine::Assert);
-            if (!sub2_reset_) sub2_.set_nvi(IrqLine::Assert);
+        if (line == 240) {
+            namco51_vblank();
+            if (sub_irq_mask_) {
+                if (!sub1_reset_) sub1_.set_nvi(IrqLine::Assert);
+                if (!sub2_reset_) sub2_.set_nvi(IrqLine::Assert);
+            }
         }
-        z80_.run(kCyclesPerLine);
-        if (!sub1_reset_) sub1_.run(kCyclesPerLine);
-        if (!sub2_reset_) sub2_.run(kCyclesPerLine);
+        int left = kCyclesPerLine;
+        while (left > 0) {
+            const int slice = left < kSlice ? left : kSlice;
+            z80_.run(slice);
+            if (!sub1_reset_) sub1_.run(slice);
+            if (!sub2_reset_) sub2_.run(slice);
+            left -= slice;
+        }
     }
     update_video();
 }

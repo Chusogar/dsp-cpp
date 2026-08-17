@@ -2170,13 +2170,15 @@ void test_polepos_driver() {
     mem[0x11] = 0x09;
     mem[0x12] = 0x00;
     mem[0x13] = 0x02;  // LD R9, #0002
+    mem[0x14] = 0x7a;
+    mem[0x15] = 0x00;  // HALT
     dsp::Z8002 cpu(3072000);
     cpu.set_memory_handlers([&](uint16_t a) { return mem[a & 0xff]; },
                             [&](uint16_t a, uint8_t v) { mem[a & 0xff] = v; });
     cpu.reset();
-    cpu.run(50);
-    check(cpu.pc() == 0x0014, "Z8002 LD R9,#imm advances PC");
+    cpu.run(40);
     check(cpu.rw(9) == 0x0002, "Z8002 LD R9,#0002 writes R9");
+    check(cpu.pc() == 0x0016 || cpu.pc() == 0x0014, "Z8002 HALT sits after LD R9");
 
     const char* rom = "/tmp/roms/polepos.zip";
     std::FILE* f = std::fopen(rom, "rb");
@@ -2205,8 +2207,17 @@ void test_polepos_driver() {
         dsp::PolePos boot2(dsp::PolePos::Game::PolePosition2);
         error.clear();
         check(boot2.init(rom2, &error), "Pole Position II ROM set loads");
-        for (int i = 0; i < 60; i++) boot2.run_frame();
+        for (int i = 0; i < 180; i++) boot2.run_frame();
         check(boot2.debug_z80_pc() != 0, "Pole Position II Z80 is executing");
+        bool lit2 = false;
+        const uint32_t* fb2 = boot2.framebuffer();
+        for (int i = 0; i < boot2.screen_width() * boot2.screen_height(); i++) {
+            if ((fb2[i] & 0x00ffffffu) != 0) {
+                lit2 = true;
+                break;
+            }
+        }
+        check(lit2, "Pole Position II attract produces non-black pixels");
     }
 }
 

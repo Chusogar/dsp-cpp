@@ -52,6 +52,23 @@ public:
     uint16_t debug_z80_pc() const { return z80_.pc(); }
     uint32_t debug_sub1_pc() const { return sub1_.pc(); }
     uint32_t debug_sub2_pc() const { return sub2_.pc(); }
+    uint8_t debug_ls259() const { return ls259_; }
+    uint8_t debug_chacl() const { return chacl_; }
+    uint8_t debug_sub_irq_mask() const { return sub_irq_mask_; }
+    bool debug_sub1_reset() const { return sub1_reset_; }
+    bool debug_sub2_reset() const { return sub2_reset_; }
+    uint16_t debug_view_hscroll() const { return view_hscroll_; }
+    uint16_t debug_road_vscroll() const { return road_vscroll_; }
+    uint16_t debug_alpha_word(int index) const {
+        return uint16_t((uint16_t(alpha_ram_[size_t(index * 2)]) << 8) | alpha_ram_[size_t(index * 2 + 1)]);
+    }
+    uint16_t debug_view_word(int index) const {
+        return uint16_t((uint16_t(view_ram_[size_t(index * 2)]) << 8) | view_ram_[size_t(index * 2 + 1)]);
+    }
+    uint8_t debug_char_pixel(int code, int x, int y) const {
+        const uint8_t* pix = chars_.element(code);
+        return pix[y * 8 + x];
+    }
 
 private:
     uint8_t z80_read(uint16_t address);
@@ -75,6 +92,7 @@ private:
 
     uint8_t namco51_read();
     void namco51_write(uint8_t data);
+    void namco51_vblank();
     uint8_t namco53_read();
 
     uint8_t in0() const;
@@ -139,7 +157,7 @@ private:
     int scanline_ = 0;
 
     uint8_t dswa_ = 0xff;
-    uint8_t dswb_ = 0x7f;  // demo sounds on (bit 7 = 0)
+    uint8_t dswb_ = 0x6b;  // rank B/C, unknown off, demo sounds on
     uint8_t in0_ = 0xff;
     uint8_t accel_ = 0;
     uint8_t brake_ = 0;
@@ -154,10 +172,17 @@ private:
     int n06_cycle_acc_ = 0;
     int n06_period_cycles_ = 0;
 
-    // Namco 51xx (high-level I/O)
-    int n51_read_index_ = 0;
-    uint8_t n51_command_ = 0;
-    int n51_coins_left_ = 0;
+    // Namco 51xx (high-level I/O, Pole Position nibble buffer)
+    int n51_mode_ = 1;  // 0 idle/credit, 1 init/switch, 2 active
+    int n51_out_index_ = 0;
+    int n51_coinage_left_ = 0;
+    std::array<uint8_t, 8> n51_out_{};
+    std::array<uint8_t, 4> n51_coinage_{1, 1, 1, 1};
+    uint8_t n51_cred_lo_ = 0;
+    uint8_t n51_cred_hi_ = 0;
+    uint8_t n51_coin1_partial_ = 0;
+    uint8_t n51_coin2_partial_ = 0;
+    uint8_t n51_in0_prev_ = 0xff;
 
     // Namco 53xx (high-level I/O)
     uint8_t steer_last_ = 0x80;
