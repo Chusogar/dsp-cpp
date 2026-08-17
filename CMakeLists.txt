@@ -42,6 +42,7 @@ add_executable(dsp
   src/sound/ym2203.cpp
   src/sound/ym3812.cpp
   src/sound/nes_apu.cpp
+  src/sound/sega_pcm.cpp
     
   src/video/gfx.cpp
   src/video/atari_mo.cpp
@@ -50,6 +51,7 @@ add_executable(dsp
   src/video/deco_bac06.cpp
   src/video/nes_ppu.cpp
   src/video/avg_starwars.cpp
+  src/video/sega16.cpp
   
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
@@ -68,6 +70,7 @@ add_executable(dsp
   src/machine/beta128.cpp
   src/machine/mos6532.cpp
   src/machine/starwars_math.cpp
+  src/machine/sega_315_5195.cpp
   
   src/drivers/bagman.cpp
   src/drivers/mikie.cpp
@@ -114,6 +117,9 @@ add_executable(dsp
   src/drivers/atari_lynx.cpp
   src/drivers/exelv.cpp
   src/drivers/starwars.cpp
+  src/drivers/outrun.cpp
+  src/drivers/hangon.cpp
+  src/drivers/system16.cpp
       
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
@@ -136,6 +142,7 @@ add_executable(dsp_tests
   src/cpu/lr35902.cpp
   src/cpu/upd7801.cpp
   src/cpu/tms7000.cpp
+  src/cpu/mcs51.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
@@ -150,6 +157,8 @@ add_executable(dsp_tests
   src/sound/gb_apu.cpp
   src/sound/fmopn.cpp
   src/sound/ym2612.cpp
+  src/sound/ym2203.cpp
+  src/sound/sega_pcm.cpp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/nes_ppu.cpp
@@ -158,6 +167,7 @@ add_executable(dsp_tests
   src/video/gb_ppu.cpp
   src/video/avg_starwars.cpp
   src/video/sega_315_5313.cpp
+  src/video/sega16.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/via6522.cpp
@@ -177,6 +187,7 @@ add_executable(dsp_tests
   src/machine/beta128.cpp
   src/machine/mos6532.cpp
   src/machine/starwars_math.cpp
+  src/machine/sega_315_5195.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
   src/drivers/nes.cpp
@@ -190,6 +201,9 @@ add_executable(dsp_tests
   src/drivers/atari_system1.cpp
   src/drivers/zx_clone.cpp
   src/drivers/genesis.cpp
+  src/drivers/outrun.cpp
+  src/drivers/hangon.cpp
+  src/drivers/system16.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

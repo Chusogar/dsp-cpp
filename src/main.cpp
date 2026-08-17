@@ -21,6 +21,9 @@
 #include "drivers/cps1.h"
 #include "drivers/m72.h"
 #include "drivers/starwars.h"
+#include "drivers/outrun.h"
+#include "drivers/hangon.h"
+#include "drivers/system16.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -67,7 +70,8 @@ void print_supported_emulators() {
         "    ikari, athena, tnk3, aso,\n"
         "    ghouls, ffight, kod, sf2, strider, 3wonders, captcomm,\n"
         "    knights, sf2ce, dino, punisher, willow, 1941, nemo,\n"
-        "    rtype, hharry, rtype2\n"
+        "    rtype, hharry, rtype2,\n"
+        "    outrun, hangon, fantzone, shinobi, tetris, altbeast\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
@@ -201,6 +205,16 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "rtype") return std::make_unique<dsp::M72>(dsp::M72::Game::Rtype);
     if (game == "hharry") return std::make_unique<dsp::M72>(dsp::M72::Game::Hharry);
     if (game == "rtype2") return std::make_unique<dsp::M72>(dsp::M72::Game::Rtype2);
+    if (game == "outrun") return std::make_unique<dsp::Outrun>();
+    if (game == "hangon" || game == "hang-on") return std::make_unique<dsp::HangOn>();
+    if (game == "fantzone" || game == "fantasyzone") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Fantzone);
+    }
+    if (game == "shinobi") return std::make_unique<dsp::System16>(dsp::System16::Game::Shinobi);
+    if (game == "tetris") return std::make_unique<dsp::System16>(dsp::System16::Game::Tetris);
+    if (game == "altbeast" || game == "alteredbeast") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Altbeast);
+    }
     
 
 	// computers

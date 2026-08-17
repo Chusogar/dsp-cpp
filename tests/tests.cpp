@@ -34,6 +34,9 @@
 #include "drivers/spectrum.h"
 #include "drivers/zx_clone.h"
 #include "drivers/genesis.h"
+#include "drivers/hangon.h"
+#include "drivers/outrun.h"
+#include "drivers/system16.h"
 #include "machine/bagman_pal.h"
 #include "machine/beta128.h"
 #include "machine/kabuki.h"
@@ -45,6 +48,7 @@
 #include "machine/trdos_disk.h"
 #include "machine/wd1793.h"
 #include "machine/starwars_math.h"
+#include "machine/sega_315_5195.h"
 #include "sound/ay8910.h"
 #include "sound/msm5205.h"
 #include "sound/nes_apu.h"
@@ -56,12 +60,14 @@
 #include "sound/upd1771.h"
 #include "sound/ym2151.h"
 #include "sound/ym2612.h"
+#include "sound/sega_pcm.h"
 #include "video/atari_mo.h"
 #include "video/gb_ppu.h"
 #include "video/gfx.h"
 #include "video/mos6566.h"
 #include "video/tms3556.h"
 #include "video/sega_315_5313.h"
+#include "video/sega16.h"
 
 namespace {
 
@@ -2215,6 +2221,65 @@ void test_atari_system1_missing_roms() {
     check(std::strcmp(road.title(), "Road Runner") == 0, "Road Runner title");
 }
 
+void test_sega_pcm_and_mapper() {
+    dsp::SegaPcm pcm(4000000);
+    pcm.set_bank(dsp::SegaPcm::kBank512);
+    pcm.reset();
+    pcm.set_read_rom([](uint32_t) { return uint8_t(0xff); });
+    pcm.write(0x86, 0x00);
+    pcm.write(0x07, 0x01);
+    pcm.write(0x02, 0x7f);
+    pcm.write(0x03, 0x7f);
+    pcm.clock();
+    check(pcm.left() != 0 || pcm.right() != 0, "Sega PCM produces a sample when a channel is active");
+
+    dsp::Sega3155195 mapper;
+    mapper.reset();
+    mapper.write_reg(0x10, 1);
+    mapper.write_reg(0x11, 0x40);
+    check(mapper.dirs_start(0) == 0x400000, "315-5195 region 0 start follows register $11");
+    check(mapper.dirs_end(0) == 0x420000, "315-5195 size 1 is 128 KiB");
+    mapper.write_reg(2, 3);
+    check(mapper.read_reg(2) == 0, "315-5195 reset bits 0-1 == 3 read as 0");
+    mapper.write_reg(2, 0);
+    check(mapper.read_reg(2) == 0x0f, "315-5195 reset clear reads as $0f");
+
+    uint8_t normal[32], shadow[32], hilight[32];
+    dsp::build_s16_palette_luts(normal, shadow, hilight);
+    check(normal[0x1f] > 0 && hilight[0x1f] >= normal[0x1f],
+          "System 16 resistor-net palette is not black");
+}
+
+void test_sega_system16_missing_roms() {
+    dsp::Outrun outrun;
+    std::string error = "unset";
+    check(!outrun.init("/no/such/outrun.zip", &error), "OutRun init fails without the ROM set");
+    check(error.find("not found") != std::string::npos || error.find("missing") != std::string::npos ||
+              error.find("cannot") != std::string::npos || error.find("Unable") != std::string::npos ||
+              error.find("open") != std::string::npos,
+          "OutRun init reports why the set is missing");
+    check(std::strcmp(outrun.title(), "OutRun") == 0, "OutRun title");
+    check(outrun.screen_width() == 320 && outrun.screen_height() == 224, "OutRun screen is 320x224");
+
+    dsp::HangOn hangon;
+    error = "unset";
+    check(!hangon.init("/no/such/hangon.zip", &error), "Hang-On init fails without the ROM set");
+    check(std::strcmp(hangon.title(), "Hang-On") == 0, "Hang-On title");
+
+    dsp::System16 fantzone(dsp::System16::Game::Fantzone);
+    check(std::strcmp(fantzone.title(), "Fantasy Zone") == 0, "Fantasy Zone title");
+    error = "unset";
+    check(!fantzone.init("/no/such/fantzone.zip", &error),
+          "Fantasy Zone init fails without the ROM set");
+
+    dsp::System16 shinobi(dsp::System16::Game::Shinobi);
+    check(std::strcmp(shinobi.title(), "Shinobi") == 0, "Shinobi title");
+    dsp::System16 altbeast(dsp::System16::Game::Altbeast);
+    check(std::strcmp(altbeast.title(), "Altered Beast") == 0, "Altered Beast title");
+    dsp::System16 tetris(dsp::System16::Game::Tetris);
+    check(std::strcmp(tetris.title(), "Tetris") == 0, "Tetris title");
+}
+
 void test_indy_coin_if_present() {
     const char* rom = "/tmp/roms/indytemp.zip";
     std::ifstream probe(rom);
@@ -2652,6 +2717,8 @@ int main() {
     test_trdos_scl_and_beta();
     test_starwars_missing_roms();
     test_atari_system1_missing_roms();
+    test_sega_pcm_and_mapper();
+    test_sega_system16_missing_roms();
     test_indy_coin_if_present();
     test_ym2612();
     test_genesis_vdp();
