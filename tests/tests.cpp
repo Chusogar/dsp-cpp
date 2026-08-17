@@ -2195,10 +2195,9 @@ void test_polepos_driver() {
         dsp::PolePos boot(dsp::PolePos::Game::PolePosition);
         error.clear();
         check(boot.init(rom, &error), "Pole Position ROM set loads");
-        for (int i = 0; i < 180; i++) boot.run_frame();
+        for (int i = 0; i < 600; i++) boot.run_frame();
         check(boot.debug_z80_pc() != 0, "Pole Position Z80 is executing");
-        check(boot.debug_n51_pc() != 0 || (boot.debug_ls259() & 0x02) == 0,
-              "Pole Position 51xx MCU is clocked or still held in reset");
+        check(boot.debug_n51_pc() != 0, "Pole Position 51xx MCU is executing");
         std::vector<int16_t> audio;
         boot.drain_audio(audio);
         bool heard = false;
@@ -2209,9 +2208,7 @@ void test_polepos_driver() {
             }
         }
         check(!audio.empty(), "Pole Position drain_audio yields samples");
-        if (boot.debug_ls259() & 0x04) {
-            check(heard, "Pole Position WSG/engine produce non-silent samples when enabled");
-        }
+        check(heard, "Pole Position WSG/engine/52xx produce non-silent samples");
         bool lit = false;
         const uint32_t* fb = boot.framebuffer();
         for (int i = 0; i < boot.screen_width() * boot.screen_height(); i++) {
@@ -2230,7 +2227,7 @@ void test_polepos_driver() {
         dsp::PolePos boot2(dsp::PolePos::Game::PolePosition2);
         error.clear();
         check(boot2.init(rom2, &error), "Pole Position II ROM set loads");
-        for (int i = 0; i < 180; i++) boot2.run_frame();
+        for (int i = 0; i < 600; i++) boot2.run_frame();
         check(boot2.debug_z80_pc() != 0, "Pole Position II Z80 is executing");
         bool lit2 = false;
         const uint32_t* fb2 = boot2.framebuffer();
