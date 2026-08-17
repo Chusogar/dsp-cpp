@@ -305,9 +305,13 @@ bool HangOn::load_roms(const std::string& rom_path, std::string* error) {
     decode_hangon_road(road_gfx_, road);
     if (!load_rom_bytes(loader, kSharrierPcm, pcm_rom_, error)) return false;
     std::vector<uint8_t> mcu;
-    if (!load_rom_bytes(loader, kSharrierMcu, mcu, error)) return false;
-    std::fill(mcu_->rom(), mcu_->rom() + Mcs51::kRomSize, 0);
-    std::copy(mcu.begin(), mcu.end(), mcu_->rom());
+    std::string mcu_error;
+    if (mcu_ && load_rom_bytes(loader, kSharrierMcu, mcu, &mcu_error)) {
+        std::fill(mcu_->rom(), mcu_->rom() + Mcs51::kRomSize, 0);
+        std::copy(mcu.begin(), mcu.end(), mcu_->rom());
+    } else {
+        mcu_.reset();
+    }
     sprite_banks_ = 8;
     dsw_b_ = 0xfffc;
     return true;

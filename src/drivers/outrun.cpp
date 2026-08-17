@@ -420,7 +420,16 @@ void Outrun::on_sound_cycles(int cycles) {
 }
 
 void Outrun::update_video() {
-    if (!video_.screen_enabled) {
+    // Attract writes CRAM before PPI port C bit 5. If the palette is live, draw
+    // even while the screen-enable bit is still clear.
+    bool pal_live = false;
+    for (uint16_t v : video_.pal_ram) {
+        if (v) {
+            pal_live = true;
+            break;
+        }
+    }
+    if (!video_.screen_enabled && !pal_live) {
         std::fill(framebuffer_.begin(), framebuffer_.end(), video_.palette[0x2000]);
         return;
     }
@@ -453,11 +462,16 @@ void Outrun::run_frame() {
     const int sound_cycles =
         int(double(kSoundClock) / kFramesPerSecond / (kScanlines * kCpuSync) + 0.5);
     for (int line = 0; line < kScanlines; line++) {
-        if (line == 65 || line == 129 || line == 193) main_cpu_.set_irq(2, IrqLine::Hold);
+        if (line == 65 || line == 129 || line == 193) main_cpu_.set_irq(2, IrqLine::Assert);
+        if (line == 66 || line == 130 || line == 194) main_cpu_.set_irq(2, IrqLine::Clear);
         if (line == 223) {
-            main_cpu_.set_irq(4, IrqLine::Hold);
-            sub_cpu_.set_irq(4, IrqLine::Hold);
+            main_cpu_.set_irq(4, IrqLine::Assert);
+            sub_cpu_.set_irq(4, IrqLine::Assert);
             update_video();
+        }
+        if (line == 224) {
+            main_cpu_.set_irq(4, IrqLine::Clear);
+            sub_cpu_.set_irq(4, IrqLine::Clear);
         }
         for (int slice = 0; slice < kCpuSync; slice++) {
             main_cpu_.run(main_cycles);

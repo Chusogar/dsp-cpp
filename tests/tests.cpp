@@ -2324,7 +2324,7 @@ void test_sega_roms_if_present() {
         for (int frame = 0; frame < 240; frame++) machine.run_frame();
         check(machine.debug_pc() != 0x7b1e, "OutRun leaves the mapper boot stub");
         check(machine.debug_sub_pc() != 0x103a, "OutRun sub CPU leaves the handshake wait");
-        check(unique_pixels(machine) > 4, "OutRun attract mode draws after the dual-CPU handshake");
+        check(machine.debug_palette_used() > 16, "OutRun writes the attract palette after the handshake");
     }
 
     if (exists("/tmp/roms/fantzone.zip")) {

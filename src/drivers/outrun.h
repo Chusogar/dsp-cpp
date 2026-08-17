@@ -48,6 +48,15 @@ public:
 
     uint32_t debug_pc() const { return main_cpu_.pc(); }
     uint32_t debug_sub_pc() const { return sub_cpu_.pc(); }
+    bool debug_screen_enabled() const { return video_.screen_enabled; }
+    uint16_t debug_shared(uint32_t address) const { return ram_[(address & 0x7fff) >> 1]; }
+    int debug_palette_used() const {
+        int n = 0;
+        for (uint16_t v : video_.pal_ram) {
+            if (v) n++;
+        }
+        return n;
+    }
 
 private:
     uint16_t main_read(uint32_t address);

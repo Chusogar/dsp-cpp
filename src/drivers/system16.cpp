@@ -89,27 +89,27 @@ const std::vector<RomEntry> kAliensynMain = {
     {"epr-10732.41", 0x8000, 0x20000, 0xc5712bfc},
     {"epr-10729.24", 0x8000, 0x20001, 0x3e520e30},
 };
-const std::vector<RomEntry> kAliensynKey = {{"317-0037.key", 0x2000, 0, 0x68bb7745}};
-const std::vector<RomEntry> kAliensynSound = {{"epr-10705.12", 0x8000, 0, 0x777b749e}};
+const std::vector<RomEntry> kAliensynKey = {{"317-0037.key|317-0033.key", 0x2000, 0, 0x68bb7745}};
+const std::vector<RomEntry> kAliensynSound = {{"epr-10705.12|epr-10705.b1", 0x8000, 0, 0x777b749e}};
 const std::vector<RomEntry> kAliensynTiles = {
-    {"epr-10739.95", 0x10000, 0x00000, 0xa29ec207},
-    {"epr-10740.94", 0x10000, 0x10000, 0x47f93015},
-    {"epr-10741.93", 0x10000, 0x20000, 0x4970739c},
+    {"epr-10739.95|epr-10739.c9", 0x10000, 0x00000, 0xa29ec207},
+    {"epr-10740.94|epr-10740.c10", 0x10000, 0x10000, 0x47f93015},
+    {"epr-10741.93|epr-10741.c11", 0x10000, 0x20000, 0x4970739c},
 };
 const std::vector<RomEntry> kAliensynSprites = {
-    {"epr-10709.10", 0x10000, 0x00000, 0xaddf0a90},
-    {"epr-10713.11", 0x10000, 0x00001, 0xececde3a},
-    {"epr-10710.17", 0x10000, 0x20000, 0x992369eb},
-    {"epr-10714.18", 0x10000, 0x20001, 0x91bf42fb},
-    {"epr-10711.23", 0x10000, 0x40000, 0x29166ef6},
-    {"epr-10715.24", 0x10000, 0x40001, 0xa7c57384},
-    {"epr-10712.29", 0x10000, 0x60000, 0x876ad019},
-    {"epr-10716.30", 0x10000, 0x60001, 0x40ba1d48},
+    {"epr-10709.10|epr-10709.b1", 0x10000, 0x00000, 0xaddf0a90},
+    {"epr-10713.11|epr-10713.b5", 0x10000, 0x00001, 0xececde3a},
+    {"epr-10710.17|epr-10710.b2", 0x10000, 0x20000, 0x992369eb},
+    {"epr-10714.18|epr-10714.b6", 0x10000, 0x20001, 0x91bf42fb},
+    {"epr-10711.23|epr-10711.b3", 0x10000, 0x40000, 0x29166ef6},
+    {"epr-10715.24|epr-10715.b7", 0x10000, 0x40001, 0xa7c57384},
+    {"epr-10712.29|epr-10712.b4", 0x10000, 0x60000, 0x876ad019},
+    {"epr-10716.30|epr-10716.b8", 0x10000, 0x60001, 0x40ba1d48},
 };
 const std::vector<RomEntry> kAliensynN7751 = {
-    {"epr-10706.1", 0x8000, 0x0000, 0xaa114acc},
-    {"epr-10707.2", 0x8000, 0x8000, 0x800c1d82},
-    {"epr-10708.4", 0x8000, 0x10000, 0x5921ef52},
+    {"epr-10706.1|epr-10706.c1", 0x8000, 0x0000, 0xaa114acc},
+    {"epr-10707.2|epr-10707.c2", 0x8000, 0x8000, 0x800c1d82},
+    {"epr-10708.4|epr-10708.c3", 0x8000, 0x10000, 0x5921ef52},
 };
 
 const std::vector<RomEntry> kWb3Main = {
@@ -119,21 +119,21 @@ const std::vector<RomEntry> kWb3Main = {
     {"epr-12119.25", 0x10000, 0x20001, 0x01ed3ef9},
 };
 const std::vector<RomEntry> kWb3Key = {{"317-0086.key", 0x2000, 0, 0x5b8e7076}};
-const std::vector<RomEntry> kWb3Sound = {{"epr-12089.12", 0x8000, 0, 0x8321eb0b}};
+const std::vector<RomEntry> kWb3Sound = {{"epr-12089.12|epr-12089.bin", 0x8000, 0, 0x8321eb0b}};
 const std::vector<RomEntry> kWb3Tiles = {
-    {"epr-12086.95", 0x10000, 0x00000, 0x45b949df},
-    {"epr-12087.94", 0x10000, 0x10000, 0x6f0396b7},
-    {"epr-12088.83", 0x10000, 0x20000, 0xba8c0749},
+    {"epr-12086.95|epr-12086.bin", 0x10000, 0x00000, 0x45b949df},
+    {"epr-12087.94|epr-12087.bin", 0x10000, 0x10000, 0x6f0396b7},
+    {"epr-12088.83|epr-12088.bin", 0x10000, 0x20000, 0xba8c0749},
 };
 const std::vector<RomEntry> kWb3Sprites = {
-    {"epr-12090.10", 0x10000, 0x00000, 0xaeeecfca},
-    {"epr-12094.11", 0x10000, 0x00001, 0x615e4927},
-    {"epr-12091.17", 0x10000, 0x20000, 0x8409a243},
-    {"epr-12095.18", 0x10000, 0x20001, 0xe774ec2c},
-    {"epr-12092.23", 0x10000, 0x40000, 0x5c2f0d90},
-    {"epr-12096.24", 0x10000, 0x40001, 0x0cd59d6e},
-    {"epr-12093.29", 0x10000, 0x60000, 0x4891e7bb},
-    {"epr-12097.30", 0x10000, 0x60001, 0xe645902c},
+    {"epr-12090.10|epr-12090.b1", 0x10000, 0x00000, 0xaeeecfca},
+    {"epr-12094.11|epr-12094.b5", 0x10000, 0x00001, 0x615e4927},
+    {"epr-12091.17|epr-12091.b2", 0x10000, 0x20000, 0x8409a243},
+    {"epr-12095.18|epr-12095.b6", 0x10000, 0x20001, 0xe774ec2c},
+    {"epr-12092.23|epr-12092.b3", 0x10000, 0x40000, 0x5c2f0d90},
+    {"epr-12096.24|epr-12096.b7", 0x10000, 0x40001, 0x0cd59d6e},
+    {"epr-12093.29|epr-12093.b4", 0x10000, 0x60000, 0x4891e7bb},
+    {"epr-12097.30|epr-12097.b8", 0x10000, 0x60001, 0xe645902c},
 };
 
 const std::vector<RomEntry> kN7751Mcu = {{"7751.bin", 0x400, 0, 0x6a9534fc}};
