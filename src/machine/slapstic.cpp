@@ -65,6 +65,16 @@ const Slapstic::Config kSlapstic107 = {
     {kUnknown, kUnknown}, {kUnknown, kUnknown}, {kUnknown, kUnknown},
     {kUnknown, kUnknown}, {kUnknown, kUnknown}};
 
+const Slapstic::Config kSlapstic108 = {
+    3,
+    {0x0028, 0x002a, 0x002c, 0x002e},
+    {0x007f, 0x001f}, {0x3fff, 0x3772}, {0x3ffc, 0x3764}, {0x3ff9, 0x0028},
+    0,
+    {0x3ff0, 0x0060}, {0x3ff3, 0x0060}, {0x3ff3, 0x0061}, {0x3ff3, 0x0062},
+    {0x3ff3, 0x0063}, {0x3ff8, 0x0070},
+    {kUnknown, kUnknown}, {kUnknown, kUnknown}, {kUnknown, kUnknown},
+    {kUnknown, kUnknown}, {kUnknown, kUnknown}};
+
 bool matches(uint32_t value, const Slapstic::MaskValue& mask_value) {
     return (value & mask_value.mask) == mask_value.value;
 }
@@ -76,6 +86,7 @@ const Slapstic::Config& config_for(int number) {
         case 104: return kSlapstic104;
         case 105: return kSlapstic105;
         case 106: return kSlapstic106;
+        case 108: return kSlapstic108;
         default: return kSlapstic107;
     }
 }

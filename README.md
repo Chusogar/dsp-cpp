@@ -33,9 +33,10 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Lynx Suzy / Mikey | new | Sprite blitter, math coprocessor, timers, LCD DMA, 4-channel sound |
 | Atari Lynx driver | new | 64 KiB DRAM, MAPCTL, LNX/LYX carts, 160×102 LCD |
 | YM2151 FM, POKEY | `src/snd/fm_2151.pas`, `src/snd/pokey.pas` | Gauntlet sound board |
-| SLAPSTIC | `src/arcade/misc/slapstic.pas` | Types 101-107, bank switched protected ROM |
+| SLAPSTIC | `src/arcade/misc/slapstic.pas` | Types 101-108, bank switched protected ROM |
 | Atari motion objects | `src/arcade/misc/atari_mo.pas` | SLIP based sprite lists |
-| Gauntlet driver | `src/arcade/gauntlet_hw.pas` | Memory map, playfield/char/sprite video, EEPROM, sound communication |
+| Gauntlet driver | `src/arcade/gauntlet_hw.pas` | Memory map, playfield/char/sprite video, EEPROM, YM2151+POKEY+TMS5220C |
+| Atari System 1 | `src/arcade/atari_system1.pas` | Marble Madness, Peter Pack Rat, Indiana Jones, Road Runner: 68000+SLAPSTIC, M6502, YM2151, POKEY, TMS5220C+VIA speech, PROM gfx banks |
 | HD63701Y MCU | `src/cpu/m680x.pas` | Double Dragon sub CPU: internal RAM/ROM, I/O ports, output compare timer |
 | MSM5205 ADPCM | `src/snd/msm5205.pas` | Two chips in Double Dragon |
 | OKI MSM6295 | `src/snd/oki6295.pas` | Double Dragon II sample player |
@@ -90,6 +91,8 @@ holding the individual files:
 ./build/dsp --scale 3 --dip 0xfe /path/to/roms/bagman/
 ./build/dsp --game mikie /path/to/mikie.zip
 ./build/dsp --game gauntlet /path/to/gauntlet.zip
+./build/dsp --game indydoom /path/to/indytemp.zip
+./build/dsp --game roadrunn /path/to/roadrunn.zip
 ./build/dsp --game mrdo /path/to/mrdo.zip
 ./build/dsp --game ddragon /path/to/ddragon.zip
 ./build/dsp --game elevator /path/to/elevator.zip
@@ -131,6 +134,32 @@ Options:
                    or EXL-100 / EXELTEL cartridge (.bin/.rom)
 --disk FILE        Amstrad CPC / Spectrum +3 .dsk/.edsk floppy image
 ```
+
+### Atari System 1 (Indiana Jones, Marble Madness, Peter Pack Rat, Road Runner)
+
+Atari System 1 is a 7.16 MHz 68000 behind a SLAPSTIC (105 on Indiana Jones, 103
+on Marble Madness, 107 on Peter Pack Rat, 108 on Road Runner), a 1.79 MHz M6502
+with a YM2151 and a POKEY, and playfield/motion-object banks decoded from a pair
+of colour PROMs (`convert_back` in `atari_system1.pas`). Indiana Jones and Road
+Runner also have a TMS5220C speech chip behind a MOS 6522 VIA at `$1000` (same
+clock as the sound CPU; TMS clock is `14318180/2/11`). The visible area is
+336×240.
+
+Game zips need the Atari System 1 BIOS (`atarisy1.zip` with `136032.205.l13` /
+`136032.206.l12` / `136032.104.f5`). Put `atarisy1.zip` next to the game zip; the
+driver opens it automatically.
+
+```bash
+./build/dsp --game indydoom /path/to/indytemp.zip
+./build/dsp --game marble /path/to/marble.zip
+./build/dsp --game peter /path/to/peterpak.zip
+./build/dsp --game roadrunn /path/to/roadrunn.zip
+```
+
+Whip / hop / button 1 is Left Ctrl or Space. Coins are 5/6. Arrow keys drive the
+digital joystick (Indy, Peter) or the analog stick (Road Runner, through the
+ADC at `$f40000`). The Marble Madness trackball is not emulated yet (reads as
+`$FF`, matching the Pascal stub).
 
 ### Exelvision EXL-100 and EXELTEL
 

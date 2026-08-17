@@ -73,10 +73,11 @@ int k_value(int which, int idx) {
 Tms5220::Tms5220(uint32_t clock) : clock_(clock) { reset(); }
 
 void Tms5220::raise_irq(bool on) {
+    irq_asserted_ = on;
     if (irq_cb_) irq_cb_(on);
 }
 
-void Tms5220::reset() {
+void Tms5220::chip_reset() {
     fifo_.fill(0);
     fifo_head_ = fifo_tail_ = fifo_count_ = 0;
     bit_buffer_ = 0;
@@ -98,10 +99,14 @@ void Tms5220::reset() {
     out_sample_ = 0;
     cycle_acc_ = 0;
     data_latch_ = 0;
-    wsq_ = rsq_ = rs_read_ = true;
     ready_delay_ = 0;
-    volume_ = 1.0f;
     raise_irq(false);
+}
+
+void Tms5220::reset() {
+    wsq_ = rsq_ = rs_read_ = true;
+    volume_ = 1.0f;
+    chip_reset();
 }
 
 void Tms5220::fifo_push(uint8_t v) {
@@ -145,7 +150,7 @@ void Tms5220::process_command(uint8_t cmd) {
             sample_in_subframe_ = 0;
             break;
         case 0x50:  // RESET
-            reset();
+            chip_reset();
             break;
         case 0x60:  // LOAD ADDRESS
             break;
@@ -154,14 +159,29 @@ void Tms5220::process_command(uint8_t cmd) {
     }
 }
 
-void Tms5220::set_wsq(bool level) {
-    if (wsq_ && !level) {
-        // Falling edge: commit latched data
+void Tms5220::apply_rs_ws(bool new_wsq, bool new_rsq) {
+    const uint8_t old_val = uint8_t((wsq_ ? 1 : 0) | (rsq_ ? 2 : 0));
+    const uint8_t new_val = uint8_t((new_wsq ? 1 : 0) | (new_rsq ? 2 : 0));
+    const bool old_wsq = wsq_;
+    const bool old_rsq = rsq_;
+    wsq_ = new_wsq;
+    rsq_ = new_rsq;
+    if (old_val == new_val) return;
+    if (new_val == 0) {
+        // TMS5220C: /WS and /RS both low is a reset.
+        chip_reset();
+        return;
+    }
+    if (old_wsq && !new_wsq && new_rsq) {
         write_data(data_latch_);
         ready_delay_ = 80;
     }
-    wsq_ = level;
+    if (old_rsq && !new_rsq && new_wsq) {
+        ready_delay_ = 80;
+    }
 }
+
+void Tms5220::set_wsq(bool level) { apply_rs_ws(level, rsq_); }
 
 void Tms5220::strobe_ws_rs(uint8_t ws_rs) {
     const bool ws = (ws_rs & 0x01) != 0;
@@ -177,20 +197,11 @@ void Tms5220::strobe_ws_rs(uint8_t ws_rs) {
     rs_read_ = rs;
 }
 
-void Tms5220::set_rsq(bool level) {
-    if (!level) {
-        // Hold in reset while low
-        reset();
-        speak_external_ = false;
-        talk_status_ = false;
-    }
-    rsq_ = level;
-}
+void Tms5220::set_rsq(bool level) { apply_rs_ws(wsq_, level); }
 
 bool Tms5220::readyq() const {
-    // Active-low: assert (true return means pin low / not ready) when FIFO full or talking
-    // MAME readyq_r() returns 1 when ready. We expose readyq() as "pin is low" = busy.
-    if (!rsq_) return true;  // held in reset → treat as not ready
+    // Matches MAME readyq_r(): 1 when /READY is inactive (busy / not ready).
+    if (!wsq_ && !rsq_) return true;
     if (ready_delay_ > 0) return true;
     if (fifo_count_ >= 14) return true;
     return false;
@@ -339,13 +350,16 @@ void Tms5220::tick(int cycles) {
     }
 }
 
+int16_t Tms5220::last_sample() const {
+    const int32_t s = int32_t(float(out_sample_ * 64) * volume_);
+    return int16_t(std::clamp(s, int32_t(-32768), int32_t(32767)));
+}
+
 int16_t Tms5220::update() {
     // Advance synthesis by the number of chip clocks corresponding to one host sample.
     const int clocks = std::max(1, int(clock_ / kSampleRate));
     tick(clocks);
-    const float g = volume_;
-    const int32_t s = int32_t(float(out_sample_ * 64) * g);
-    return int16_t(std::clamp(s, int32_t(-32768), int32_t(32767)));
+    return last_sample();
 }
 
 }  // namespace dsp

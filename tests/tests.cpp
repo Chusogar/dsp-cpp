@@ -23,6 +23,7 @@
 #include "cpu/z80ctc.h"
 #include "drivers/amstrad_cpc.h"
 #include "drivers/atari_lynx.h"
+#include "drivers/atari_system1.h"
 #include "drivers/c64.h"
 #include "drivers/exelv.h"
 #include "drivers/gameboy.h"
@@ -847,6 +848,15 @@ void test_slapstic() {
     // Without the unlock access the bank must not change.
     slapstic.tweak(0x1234);
     check(slapstic.tweak(banks[1]) == 3, "the slapstic ignores bank values while disabled");
+
+    dsp::Slapstic road(108, nullptr);
+    road.reset();
+    check(road.current_bank() == 3, "slapstic 108 starts on bank 3");
+    const uint16_t road_banks[4] = {0x0028, 0x002a, 0x002c, 0x002e};
+    for (uint8_t wanted = 0; wanted < 4; wanted++) {
+        road.tweak(0);
+        check(road.tweak(road_banks[wanted]) == wanted, "slapstic 108 selects the requested bank");
+    }
 }
 
 void test_ym2151() {
@@ -919,7 +929,7 @@ void test_atari_motion_objects() {
     config.height_entry = {0, 0, 0x0007, 0};
     config.hflip_entry = {0, 0, 0x0040, 0};
     // An 8x8 object with code 5, colour 2 at (16, 24). The list ends with an entry
-    // linked to itself, which the hardware uses as the terminator and never draws.
+    // linked to itself; MAME still visits that terminator once (it is not a skip).
     sprite_ram[0x000] = 0x0005;          // code
     sprite_ram[0x400] = 0x0002 | (16 << 7);  // colour and horizontal position
     sprite_ram[0x800] = 0x1e0 << 7;      // vertical position (counted upwards)
@@ -928,18 +938,20 @@ void test_atari_motion_objects() {
 
     dsp::AtariMotionObjects objects(config, slip_ram.data(), sprite_ram.data(), 512, 256);
     int drawn = 0;
-    int last_code = -1, last_color = -1, last_x = -1, last_y = -1;
-    objects.draw(0, 0, 0, [&](int code, int color, bool, bool, int x, int y) {
+    int first_code = -1, first_color = -1, first_x = -1, first_y = -1;
+    objects.draw(0, 0, 0, [&](int code, int color, bool, bool, int x, int y, int, int) {
+        if (drawn == 0) {
+            first_code = code;
+            first_color = color;
+            first_x = x;
+            first_y = y;
+        }
         drawn++;
-        last_code = code;
-        last_color = color;
-        last_x = x;
-        last_y = y;
     });
-    check(drawn == 1, "the motion object list stops on the self link");
-    check(last_code == 5, "the motion object code is extracted");
-    check(last_color == 0x20, "the motion object colour becomes a palette offset");
-    check(last_x == 16 && last_y == 24, "the motion object position is extracted");
+    check(drawn == 2, "the motion object list visits the self-linked terminator once");
+    check(first_code == 5, "the motion object code is extracted");
+    check(first_color == 0x20, "the motion object colour becomes a palette offset");
+    check(first_x == 16 && first_y == 24, "the motion object position is extracted");
 }
 
 // Builds a HD63701 whose internal ROM holds `program` at $c000 and whose reset
@@ -2125,6 +2137,23 @@ void test_exelv_dummy_bios() {
     check(tel.debug_pc() >= 0xf000, "dummy EXELTEL BIOS idles in TMS7040 ROM");
 }
 
+void test_atari_system1_missing_roms() {
+    dsp::AtariSystem1 machine(dsp::AtariSystem1::Game::Indy);
+    std::string error = "unset";
+    check(!machine.init("/no/such/indytemp.zip", &error),
+          "Indiana Jones init fails without the ROM set");
+    check(error.find("not found") != std::string::npos || error.find("missing") != std::string::npos ||
+              error.find("cannot") != std::string::npos,
+          "init reports why the Atari System 1 set is missing");
+    check(std::strcmp(machine.title(), "Indiana Jones and the Temple of Doom") == 0,
+          "Indiana Jones title");
+    check(machine.screen_width() == 336 && machine.screen_height() == 240,
+          "Atari System 1 screen is 336x240");
+
+    dsp::AtariSystem1 road(dsp::AtariSystem1::Game::RoadRunner);
+    check(std::strcmp(road.title(), "Road Runner") == 0, "Road Runner title");
+}
+
 }  // namespace
 
 int main() {
@@ -2200,6 +2229,7 @@ int main() {
     test_tms7000_lvdp_and_int1();
     test_tms3556_background();
     test_exelv_dummy_bios();
+    test_atari_system1_missing_roms();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

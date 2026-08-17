@@ -145,6 +145,7 @@ add_executable(dsp_tests
   src/video/gb_ppu.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
+  src/machine/via6522.cpp
   src/machine/spectrum_tape.cpp
   src/machine/tape_tzx.cpp
   src/machine/i8255.cpp
@@ -165,6 +166,7 @@ add_executable(dsp_tests
   src/drivers/atari_lynx.cpp
   src/drivers/scv.cpp
   src/drivers/exelv.cpp
+  src/drivers/atari_system1.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

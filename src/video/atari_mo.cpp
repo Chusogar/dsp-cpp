@@ -91,13 +91,14 @@ AtariMotionObjects::AtariMotionObjects(const Config& config, const uint16_t* sli
     entrybits_ = compute_log(entrycount);
     slipshift_ = config_.slipheight != 0 ? compute_log(config_.slipheight) : 0;
     sliprammask_ = (bitmapheight >> slipshift_) - 1;
-    // The extra entry keeps Atari System 1 from dropping the last object of a band.
-    config_.maxperline = config_.maxperline == 0 ? kMaxPerBank : uint16_t(config_.maxperline + 1);
+    if (config_.maxperline == 0) config_.maxperline = kMaxPerBank;
 
     code_lookup_.resize(size_t(round_to_powerof2(codemask_.mask())));
     for (size_t i = 0; i < code_lookup_.size(); ++i) code_lookup_[i] = uint16_t(i);
     color_lookup_.resize(size_t(round_to_powerof2(colormask_.mask())));
     for (size_t i = 0; i < color_lookup_.size(); ++i) color_lookup_[i] = uint16_t(i);
+    // Pascal: gfxsize := codesize div 256, filled with config.gfxindex.
+    gfx_lookup_.assign(std::max<size_t>(1, code_lookup_.size() / 256), 0);
 
     active_list_.resize(size_t(kMaxPerBank) * 40);
 }
@@ -135,15 +136,17 @@ void AtariMotionObjects::draw(int xscroll, int yscroll, int prio, const DrawTile
         }
         build_active_list(link);
         next_xpos_ = kNoHold;
-        if (active_last_ == 0) continue;
+        if (active_last_ < 4) continue;
 
         if (config_.reverse) {
-            for (size_t current = active_last_ - 4; current > 0; current -= 4) {
+            for (size_t current = active_last_ - 4;; current -= 4) {
                 render_object(&active_list_[current], xscroll, yscroll, prio, draw_tile);
+                if (current == 0) break;
             }
         } else {
-            for (size_t current = 0; current + 4 < active_last_; current += 4) {
+            for (size_t current = 0;; current += 4) {
                 render_object(&active_list_[current], xscroll, yscroll, prio, draw_tile);
+                if (current + 4 >= active_last_) break;
             }
         }
     }
@@ -157,6 +160,8 @@ void AtariMotionObjects::render_object(const uint16_t* entry, int xscroll, int y
     const uint16_t rawcode = codemask_.extract(entry);
     int code = code_lookup_[rawcode];
     int color = color_lookup_[colormask_.extract(entry)] << 4;
+    int gfx = 0;
+    if (!gfx_lookup_.empty()) gfx = gfx_lookup_[(rawcode >> 8) % gfx_lookup_.size()];
     int xpos = xposmask_.extract(entry);
     int ypos = -int(yposmask_.extract(entry));
     const bool hflip = hflipmask_.extract(entry) != 0;
@@ -209,7 +214,7 @@ void AtariMotionObjects::render_object(const uint16_t* entry, int xscroll, int y
         for (int y = 0; y < height; ++y) {
             int sx = xpos;
             for (int x = 0; x < width; ++x) {
-                if (visible(sx, sy)) draw_tile(code, color, hflip, vflip, sx, sy);
+                if (visible(sx, sy)) draw_tile(code, color, hflip, vflip, sx, sy, gfx, priority);
                 sx += xadv;
                 code++;
             }
@@ -220,7 +225,7 @@ void AtariMotionObjects::render_object(const uint16_t* entry, int xscroll, int y
         for (int x = 0; x < width; ++x) {
             int sy = ypos;
             for (int y = 0; y < height; ++y) {
-                if (visible(sx, sy)) draw_tile(code, color, hflip, vflip, sx, sy);
+                if (visible(sx, sy)) draw_tile(code, color, hflip, vflip, sx, sy, gfx, priority);
                 sy += yadv;
                 code++;
             }

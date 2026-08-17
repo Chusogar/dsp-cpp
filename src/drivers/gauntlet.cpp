@@ -421,9 +421,10 @@ void Gauntlet::sound_write(uint16_t address, uint8_t value) {
         if (bit == 0 && !level) ym_.reset();
         // Q1: TMS WSQ (active low write)
         if (bit == 1) tms_.set_wsq(level);
-        // Q2: TMS RSQ (active low reset)
+        // Q2: TMS /RS (active low). Combined with /WS, both low resets a TMS5220C.
         if (bit == 2) tms_.set_rsq(level);
-        // Q3: speech squeak ? clock select (ignored beyond default rate)
+        // Q3: speech squeak — 650 kHz (low) or ~795 kHz (high)
+        if (bit == 3) tms_.set_clock(kAtariClock / 2 / uint32_t(level ? 9 : 11));
         return;
     }
     if (address == 0x1810) {
@@ -449,12 +450,15 @@ void Gauntlet::sound_write(uint16_t address, uint8_t value) {
 void Gauntlet::on_sound_cycles(int cycles) {
     ym_.run_timers(cycles * 2);  // the YM2151 runs at twice the 6502 clock
     pokey_.run(cycles);
+    const int tms_clocks =
+        int((int64_t(cycles) * int64_t(tms_.clock()) + (kSoundClock / 2)) / kSoundClock);
+    tms_.tick(tms_clocks);
     audio_accumulator_ += int64_t(cycles) * YM2151::kSampleRate;
     while (audio_accumulator_ >= kSoundClock) {
         audio_accumulator_ -= kSoundClock;
         const int32_t sample = int32_t(float(ym_.update()) * ym_gain_) +
                                int32_t(float(pokey_.update()) * pokey_gain_) +
-                               int32_t(tms_.update());
+                               int32_t(tms_.last_sample());
         audio_.push_back(int16_t(std::clamp(sample, int32_t(-32768), int32_t(32767))));
     }
 }
@@ -543,7 +547,8 @@ void Gauntlet::update_video() {
     }
 
     motion_objects_->draw(scroll_x_, uint16_t(scroll_y), -1,
-                          [this](int code, int color, bool hflip, bool vflip, int x, int y) {
+                          [this](int code, int color, bool hflip, bool vflip, int x, int y, int,
+                                 int) {
                               const uint8_t* pixels = tiles_.element(code);
                               for (int row = 0; row < 8; row++) {
                                   int target_y = y + row;
