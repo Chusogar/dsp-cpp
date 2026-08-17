@@ -107,23 +107,20 @@ TMS7041/7042 I/O CPU talking through a 74LS374 mailbox, a TMS3556 VDP
 (40×25 text / 320×250 bitmap, 8 colours, 32 KiB VRAM) and a TMS5220C speech
 synthesizer. The keyboard and joysticks are infrared.
 
-ROMs are **not** shipped. MAME set names:
+ROMs are **not** shipped. MAME split sets from [mdk.cab](https://mdk.cab/download/split/exeltel.zip):
 
 * EXL-100 (`exl100.zip`): `exl100in.bin` (TMS7020, CRC `049109a3`) and
   `exl100_7041.bin` (TMS7041, CRC `38f6fc7a`).
+  https://mdk.cab/download/split/exl100.zip
 * EXELTEL (`exeltel.zip`): `exeltel_7040.bin` (TMS7040, CRC `2792f02f`),
   `exeltel_7042.bin` (I/O CPU, **BAD_DUMP** in MAME, CRC `a0163507`),
   `exeltel14.bin` (French v1.4, 64 KiB, CRC `52a80dd4`) or `amper.bin`
   (Spanish, CRC `45af256c`), and optionally `cm62312.bin` (speech).
-  The same files also live in a nested `exeltel/` folder inside `exl100.zip`.
+  https://mdk.cab/download/split/exeltel.zip
 
 [RetroBIOS](https://github.com/Abdess/retrobios) does not currently publish an
-Exelvision pack. Sources that match the MAME CRCs:
-
-* MAME 0.193 merged `exl100.zip` on Archive.org (TMS7020 + TMS7041, EXELTEL files nested):
-  https://archive.org/download/MAME_0.193_ROMs_merged/MAME_0.193_ROMs_merged.zip/MAME%200.193%20ROMs%20%28merged%29%2Fexl100.zip
-* DCExel “mémoires mortes” dump of the TMS7040 (`exeltel_rom.zip`, CRC `2792f02f`):
-  http://dcexel.free.fr/telechargement/rom/exeltel_rom.zip
+Exelvision pack. The mdk.cab files match the MAME hashes. The TMS7040 also
+matches DCExel’s `exeltel_rom.zip` (CRC `2792f02f`).
 
 The TMS7042 I/O ROM has never been redumped. Running MAME’s image posts mailbox
 `$04` and the TMS7040 hangs at `$FA29`, so this driver ignores that CRC and HLE’s
