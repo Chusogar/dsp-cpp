@@ -364,6 +364,11 @@ void StarWars::update_video() {
 }
 
 void StarWars::draw_line(int x0, int y0, int x1, int y1, uint32_t color, int intensity) {
+    auto plot = [&](int x, int y, int i) {
+        if (x >= 0 && x < kScreenWidth && y >= 0 && y < kScreenHeight) {
+            blend_pixel(framebuffer_[size_t(y * kScreenWidth + x)], color, i);
+        }
+    };
     int dx = std::abs(x1 - x0);
     int sx = x0 < x1 ? 1 : -1;
     int dy = -std::abs(y1 - y0);
@@ -371,9 +376,14 @@ void StarWars::draw_line(int x0, int y0, int x1, int y1, uint32_t color, int int
     int err = dx + dy;
     int x = x0;
     int y = y0;
+    const int glow = intensity / 3;
     while (true) {
-        if (x >= 0 && x < kScreenWidth && y >= 0 && y < kScreenHeight) {
-            blend_pixel(framebuffer_[size_t(y * kScreenWidth + x)], color, intensity);
+        plot(x, y, intensity);
+        if (glow > 0) {
+            plot(x - 1, y, glow);
+            plot(x + 1, y, glow);
+            plot(x, y - 1, glow);
+            plot(x, y + 1, glow);
         }
         if (x == x1 && y == y1) break;
         const int e2 = 2 * err;

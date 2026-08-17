@@ -2158,6 +2158,25 @@ void test_starwars_missing_roms() {
     riot.io_write(0x1c, 0x01);  // timer, /1 prescale, IRQ enabled
     riot.tick(4);
     check(irqs > 0, "MOS 6532 timer raises IRQ after countdown");
+
+    const char* rom = "/tmp/roms/starwars.zip";
+    std::FILE* f = std::fopen(rom, "rb");
+    if (f) {
+        std::fclose(f);
+        dsp::StarWars boot;
+        error.clear();
+        check(boot.init(rom, &error), "Star Wars ROM set loads");
+        for (int i = 0; i < 200; i++) boot.run_frame();
+        check(boot.debug_pc() >= 0x6000, "Star Wars main CPU is executing ROM");
+        check(boot.debug_avg_lines() > 10, "AVG produced a vector list in attract");
+        int lit = 0;
+        const uint32_t* fb = boot.framebuffer();
+        const int n = boot.screen_width() * boot.screen_height();
+        for (int i = 0; i < n; i++) {
+            if ((fb[i] & 0x00ffffffu) != 0) lit++;
+        }
+        check(lit > 100, "Star Wars attract draws visible vectors");
+    }
 }
 
 }  // namespace
