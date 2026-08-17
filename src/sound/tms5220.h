@@ -22,17 +22,23 @@ public:
     void reset();
     void write_data(uint8_t value);
     uint8_t status() const;
-    // Active-low strobes (Gauntlet / System 1 sound board)
-    void set_wsq(bool level);   // write strobe: falling edge commits data_latch_
-    void set_rsq(bool level);   // reset strobe: low holds chip in reset
+    // Active-low /WS and /RS (TMS5220C). Both low resets the chip; a falling
+    // /WS with /RS high commits data_latch_; a falling /RS with /WS high is a
+    // status read. Gauntlet and Atari System 1 share this pin protocol.
+    void set_wsq(bool level);
+    void set_rsq(bool level);
     // EXL-100 I/O CPU: bit0=WS, bit1=RS, both active-low. RS is a status
     // read strobe (not a reset). Either edge makes /RDY busy for a few cycles.
     void strobe_ws_rs(uint8_t ws_rs);
-    bool readyq() const;        // active-low ready (true = not ready / busy)
+    bool readyq() const;        // /READY pin low (true = not ready / busy)
+    bool intq() const { return !irq_asserted_; }  // /INT pin high = no IRQ
     void set_data_latch(uint8_t value) { data_latch_ = value; }
     void set_volume(float v) { volume_ = v; }
+    void set_clock(uint32_t clock) { clock_ = clock ? clock : 1; }
+    uint32_t clock() const { return clock_; }
 
     void tick(int cycles);
+    int16_t last_sample() const;
     int16_t update();
 
     bool talking() const { return talk_status_; }
@@ -44,6 +50,8 @@ private:
     int16_t lattice(int16_t excitation);
     uint32_t extract_bits(int n);
     void raise_irq(bool on);
+    void chip_reset();
+    void apply_rs_ws(bool new_wsq, bool new_rsq);
     void fifo_push(uint8_t v);
     uint8_t fifo_pop();
 
@@ -81,6 +89,7 @@ private:
     bool wsq_ = true;
     bool rsq_ = true;
     bool rs_read_ = true;
+    bool irq_asserted_ = false;
     int ready_delay_ = 0;
     float volume_ = 1.0f;
 };

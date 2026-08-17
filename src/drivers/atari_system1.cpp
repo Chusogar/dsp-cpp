@@ -126,6 +126,55 @@ const std::vector<RomEntry> kMarbleProms = {
     {"136033.119", 0x200, 0x200, 0x19f6e767},
 };
 
+const std::vector<RomEntry> kRoadRom = {
+    {"136040-228.11c|136040.228|136040-228", 0x8000, 0x10000, 0xb66c629a},
+    {"136040-229.11a|136040.229|136040-229", 0x8000, 0x10001, 0x5638959f},
+    {"136040-230.13c|136040.230|136040-230", 0x8000, 0x20000, 0xcd7956a3},
+    {"136040-231.13a|136040.231|136040-231", 0x8000, 0x20001, 0x722f2d3b},
+    {"136040-134.12c|136040.134|136040-134", 0x8000, 0x50000, 0x18f431fe},
+    {"136040-135.12a|136040.135|136040-135", 0x8000, 0x50001, 0xcb06f9ab},
+    {"136040-136.14c|136040.136|136040-136", 0x8000, 0x60000, 0x8050bce4},
+    {"136040-137.14a|136040.137|136040-137", 0x8000, 0x60001, 0x3372a5cf},
+    {"136040-138.16c|136040.138|136040-138", 0x8000, 0x70000, 0xa83155ee},
+    {"136040-139.16a|136040.139|136040-139", 0x8000, 0x70001, 0x23aead1c},
+    {"136040-140.17c|136040.140|136040-140", 0x4000, 0x80000, 0xd1464c88},
+    {"136040-141.17a|136040.141|136040-141", 0x4000, 0x80001, 0xf8f2acdf},
+};
+const std::vector<RomEntry> kRoadSound = {
+    {"136040-143.15e|136040.143|136040-143", 0x4000, 0x8000, 0x62b9878e},
+    {"136040-144.17e|136040.144|136040-144", 0x4000, 0xc000, 0x6ef1b804},
+};
+const std::vector<RomEntry> kRoadBack = {
+    {"136040-101.4b|136040.101|136040-101", 0x8000, 0x000000, 0x26d9f29c},
+    {"136040-107.9b|136040.107|136040-107", 0x8000, 0x010000, 0x8aac0ba4},
+    {"136040-113.4f|136040.113|136040-113", 0x8000, 0x020000, 0x48b74c52},
+    {"136040-119.9f|136040.119|136040-119", 0x8000, 0x030000, 0x17a6510c},
+    {"136040-102.3b|136040.102|136040-102", 0x8000, 0x080000, 0xae88f54b},
+    {"136040-108.8b|136040.108|136040-108", 0x8000, 0x090000, 0xa2ac13d4},
+    {"136040-114.3f|136040.114|136040-114", 0x8000, 0x0a0000, 0xc91c3fcb},
+    {"136040-120.8f|136040.120|136040-120", 0x8000, 0x0b0000, 0x42d25859},
+    {"136040-103.2b|136040.103|136040-103", 0x8000, 0x100000, 0xf2d7ef55},
+    {"136040-109.7b|136040.109|136040-109", 0x8000, 0x110000, 0x11a843dc},
+    {"136040-115.2f|136040.115|136040-115", 0x8000, 0x120000, 0x8b1fa5bc},
+    {"136040-121.7f|136040.121|136040-121", 0x8000, 0x130000, 0xecf278f2},
+    {"136040-104.1b|136040.104|136040-104", 0x8000, 0x180000, 0x0203d89c},
+    {"136040-110.6b|136040.110|136040-110", 0x8000, 0x190000, 0x64801601},
+    {"136040-116.1f|136040.116|136040-116", 0x8000, 0x1a0000, 0x52b23a36},
+    {"136040-122.6f|136040.122|136040-122", 0x8000, 0x1b0000, 0xb1137a9d},
+    {"136040-105.4d|136040.105|136040-105", 0x8000, 0x200000, 0x398a36f8},
+    {"136040-111.9d|136040.111|136040-111", 0x8000, 0x210000, 0xf08b418b},
+    {"136040-117.2d|136040.117|136040-117", 0x8000, 0x220000, 0xc4394834},
+    {"136040-123.7d|136040.123|136040-123", 0x8000, 0x230000, 0xdafd3dbe},
+    {"136040-106.3d|136040.106|136040-106", 0x8000, 0x280000, 0x36a77bc5},
+    {"136040-112.8d|136040.112|136040-112", 0x8000, 0x290000, 0xb6624f3c},
+    {"136040-118.1d|136040.118|136040-118", 0x8000, 0x2a0000, 0xf489a968},
+    {"136040-124.6d|136040.124|136040-124", 0x8000, 0x2b0000, 0x524d65f7},
+};
+const std::vector<RomEntry> kRoadProms = {
+    {"136040-126.7a|136040.126|136040-126", 0x200, 0x000, 0x1713c0cd},
+    {"136040-125.5a|136040.125|136040-125", 0x200, 0x200, 0xa9ca8795},
+};
+
 GfxLayout char_layout() {
     GfxLayout layout;
     layout.width = 8;
@@ -219,6 +268,8 @@ AtariSystem1::AtariSystem1(Game game)
       sound_cpu_(kSoundClock),
       ym_(kYmClock),
       pokey_(kSoundClock),
+      via_(kSoundClock),
+      tms_(kAtariClock / 2 / 11),
       slapstic_(105, &main_cpu_) {
     alpha_.assign(size_t(kAlphaWidth) * kAlphaHeight, kTransparent);
     playfield_.assign(size_t(kPlayfieldWidth) * kPlayfieldHeight, 0);
@@ -235,6 +286,22 @@ AtariSystem1::AtariSystem1(Game game)
     sound_cpu_.set_cycle_handler([this](int cycles) { on_sound_cycles(cycles); });
     ym_.set_irq_handler([this](bool on) { sound_cpu_.set_irq(on ? IrqLine::Hold : IrqLine::Clear); });
 
+    via_.set_port_a([this]() { return tms_.status(); },
+                    [this](uint8_t value) { tms_.set_data_latch(value); });
+    via_.set_port_b(
+        [this]() {
+            uint8_t value = 0;
+            if (tms_.readyq()) value |= 0x04;
+            if (tms_.intq()) value |= 0x08;
+            return value;
+        },
+        [this](uint8_t value) {
+            tms_.set_wsq((value & 0x01) != 0);
+            tms_.set_rsq((value & 0x02) != 0);
+            const int div = 5 | ((value >> 3) & 2);
+            tms_.set_clock(kAtariClock / 2 / uint32_t(16 - div));
+        });
+
     motion_objects_ = std::make_unique<AtariMotionObjects>(
         motion_config(), nullptr, &ram3_[0x2000 >> 1], kScreenWidth + 8, kScreenHeight + 8);
 }
@@ -243,8 +310,20 @@ const char* AtariSystem1::title() const {
     switch (game_) {
         case Game::PeterPak: return "Peter Pack Rat";
         case Game::Indy: return "Indiana Jones and the Temple of Doom";
+        case Game::RoadRunner: return "Road Runner";
         default: return "Marble Madness";
     }
+}
+
+bool AtariSystem1::has_speech() const {
+    return game_ == Game::Indy || game_ == Game::RoadRunner;
+}
+
+bool AtariSystem1::has_adc() const { return game_ != Game::Marble; }
+
+bool AtariSystem1::via_selected(uint16_t address) const {
+    const uint16_t base = uint16_t(address & ~0x27f0);
+    return base >= 0x1000 && base <= 0x100f;
 }
 
 bool AtariSystem1::init(const std::string& rom_path, std::string* error) {
@@ -298,6 +377,7 @@ bool AtariSystem1::load_roms(const std::string& rom_path, std::string* error) {
     uint32_t slapstic_word = 0;
     uint32_t program_bytes = 0;
     uint32_t gfx_bytes = 0;
+    bool absolute_program = false;
 
     switch (game_) {
         case Game::PeterPak:
@@ -330,12 +410,29 @@ bool AtariSystem1::load_roms(const std::string& rom_path, std::string* error) {
             program_bytes = 0x8000 * 4;
             gfx_bytes = 0x100000;
             break;
+        case Game::RoadRunner:
+            program = &kRoadRom;
+            sound = &kRoadSound;
+            back = &kRoadBack;
+            proms = &kRoadProms;
+            slapstic_type = 108;
+            slapstic_word = 0x80000 / 2;
+            gfx_bytes = 0x300000;
+            absolute_program = true;
+            break;
     }
 
     std::vector<uint16_t> game_words;
     if (!load_words(*program, game_words)) return false;
-    const size_t copy_words = std::min(size_t(program_bytes / 2), game_words.size());
-    for (size_t i = 0; i < copy_words; i++) rom_[(0x10000 >> 1) + i] = game_words[i];
+    if (absolute_program) {
+        // Keep the System 1 BIOS at $00000; overlay cart program at MAME offsets.
+        for (size_t i = 0x10000 / 2; i < game_words.size() && i < rom_.size(); i++) {
+            rom_[i] = game_words[i];
+        }
+    } else {
+        const size_t copy_words = std::min(size_t(program_bytes / 2), game_words.size());
+        for (size_t i = 0; i < copy_words; i++) rom_[(0x10000 >> 1) + i] = game_words[i];
+    }
     slapstic_.set_type(slapstic_type);
     for (int bank = 0; bank < 4; bank++) {
         for (int i = 0; i < 0x1000; i++) {
@@ -459,8 +556,17 @@ void AtariSystem1::reset() {
     sound_cpu_.reset();
     ym_.reset();
     pokey_.reset();
+    via_.reset();
+    tms_.reset();
     in0_ = 0xff6f;
     in2_ = 0x87;
+    analog_x_ = analog_y_ = 0x80;
+    joy_bits_ = 0;
+    adc_channel_ = 0;
+    adc_value_ = 0;
+    adc_irq_enable_ = true;
+    adc_busy_ = false;
+    main_cpu_.set_irq(2, IrqLine::Clear);
     scroll_x_ = 0;
     scroll_y_ = 0;
     scroll_y_latch_ = 0;
@@ -510,7 +616,12 @@ uint16_t AtariSystem1::main_read(uint32_t address) {
         return uint16_t(eeprom_[(address & 0xfff) >> 1]);
     }
     if (address >= 0xf20000 && address <= 0xf20007) return 0x00ff;
-    if (address >= 0xf40000 && address <= 0xf4001f) return 0;
+    if (address >= 0xf40000 && address <= 0xf4001f) {
+        if (!has_adc()) return 0;
+        const uint8_t value = adc_value_;
+        adc_start(address);
+        return value;
+    }
     if (address >= 0xf60000 && address <= 0xf60003) {
         return uint16_t(in0_ | vblank_ | (sound_pending_ ? 0x80 : 0));
     }
@@ -599,6 +710,10 @@ void AtariSystem1::main_write(uint32_t address, uint16_t value) {
         }
         return;
     }
+    if (address >= 0xf40000 && address <= 0xf4001f) {
+        if (has_adc()) adc_start(address);
+        return;
+    }
     if (address == 0xf80000 || address == 0xfe0000) {
         sound_latch_ = uint8_t(value);
         sound_pending_ = true;
@@ -621,7 +736,7 @@ void AtariSystem1::set_palette(int index, uint16_t value) {
 
 uint8_t AtariSystem1::sound_read(uint16_t address) {
     if (address <= 0x0fff || address >= 0x4000) return sound_memory_[address];
-    if (address >= 0x1000 && address <= 0x100f) return 0xff;  // VIA6522 unused in Pascal
+    if (has_speech() && via_selected(address)) return via_.read(uint8_t(address & 0x0f));
     if (address == 0x1801) return ym_.status();
     if (address == 0x1810) {
         sound_pending_ = false;
@@ -640,7 +755,10 @@ void AtariSystem1::sound_write(uint16_t address, uint8_t value) {
         sound_memory_[address] = value;
         return;
     }
-    if (address >= 0x1000 && address <= 0x100f) return;  // VIA6522
+    if (has_speech() && via_selected(address)) {
+        via_.write(uint8_t(address & 0x0f), value);
+        return;
+    }
     if (address == 0x1800) {
         ym_.select_register(value);
         return;
@@ -661,10 +779,14 @@ void AtariSystem1::sound_write(uint16_t address, uint8_t value) {
 void AtariSystem1::on_sound_cycles(int cycles) {
     ym_.run_timers(cycles * 2);
     pokey_.run(cycles);
+    if (has_speech()) via_.tick(cycles);
+    const int tms_clocks =
+        int((int64_t(cycles) * int64_t(tms_.clock()) + (kSoundClock / 2)) / kSoundClock);
+    tms_.tick(tms_clocks);
     audio_accumulator_ += int64_t(cycles) * YM2151::kSampleRate;
     while (audio_accumulator_ >= kSoundClock) {
         audio_accumulator_ -= kSoundClock;
-        const int32_t sample = ym_.update() + pokey_.update();
+        const int32_t sample = ym_.update() + pokey_.update() + tms_.last_sample();
         audio_.push_back(int16_t(std::clamp(sample, int32_t(-32768), int32_t(32767))));
     }
 }
@@ -776,6 +898,7 @@ void AtariSystem1::run_frame() {
     for (line_ = 0; line_ < kScanlines; line_++) {
         main_cpu_.run(main_cycles);
         if (!sound_cpu_halted_) sound_cpu_.run(sound_cycles);
+        adc_complete();
         if (line_ == 239) {
             update_video();
             vblank_ = 0;
@@ -793,8 +916,53 @@ void AtariSystem1::set_inputs(const MachineInputs& inputs) {
     if (inputs.player1.button1) in0_ &= uint16_t(~0x0001);
     if (inputs.player2.start || inputs.player1.start) in0_ &= uint16_t(~0x0002);
     if (inputs.player1.button2) in0_ &= uint16_t(~0x0004);
+    if (game_ == Game::RoadRunner && inputs.player1.button2) in0_ &= uint16_t(~0x0002);
     if (inputs.coin1) in2_ = uint8_t(in2_ & ~0x01);
     if (inputs.coin2) in2_ = uint8_t(in2_ & ~0x02);
+
+    joy_bits_ = 0;
+    if (inputs.player1.up) joy_bits_ |= 0x10;
+    if (inputs.player1.down) joy_bits_ |= 0x20;
+    if (inputs.player1.left) joy_bits_ |= 0x40;
+    if (inputs.player1.right) joy_bits_ |= 0x80;
+
+    analog_y_ = 0x80;
+    analog_x_ = 0x80;
+    if (inputs.player1.up) analog_y_ = 0x10;
+    if (inputs.player1.down) analog_y_ = 0xf0;
+    if (inputs.player1.up && inputs.player1.down) analog_y_ = 0x80;
+    // Road Runner X is PORT_REVERSE: left is high, right is low.
+    if (inputs.player1.left) analog_x_ = 0xf0;
+    if (inputs.player1.right) analog_x_ = 0x10;
+    if (inputs.player1.left && inputs.player1.right) analog_x_ = 0x80;
+}
+
+void AtariSystem1::adc_start(uint32_t address) {
+    const int offset = int((address >> 1) & 0xf);
+    adc_channel_ = uint8_t(offset & 7);
+    adc_irq_enable_ = (offset & 8) == 0;
+    adc_busy_ = true;
+    main_cpu_.set_irq(2, IrqLine::Clear);
+}
+
+void AtariSystem1::adc_complete() {
+    if (!has_adc() || !adc_busy_) return;
+    adc_busy_ = false;
+    adc_value_ = adc_channel_value(adc_channel_);
+    if (adc_irq_enable_) main_cpu_.set_irq(2, IrqLine::Hold);
+}
+
+uint8_t AtariSystem1::adc_channel_value(int channel) const {
+    if (game_ == Game::RoadRunner) {
+        if (channel == 6) return analog_y_;
+        if (channel == 7) return analog_x_;
+        return 0x80;
+    }
+    if (channel >= 0 && channel <= 3) {
+        const int bit = 7 - channel;
+        return (joy_bits_ & (1 << bit)) ? 0xf0 : 0x00;
+    }
+    return 0;
 }
 
 void AtariSystem1::set_dip_switch(int, uint8_t) {}

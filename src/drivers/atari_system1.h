@@ -10,17 +10,20 @@
 #include "cpu/m6502.h"
 #include "cpu/m68000.h"
 #include "machine/slapstic.h"
+#include "machine/via6522.h"
 #include "sound/pokey.h"
+#include "sound/tms5220.h"
 #include "sound/ym2151.h"
 #include "video/atari_mo.h"
 #include "video/gfx.h"
 
 namespace dsp {
 
-// Atari System 1 (Marble Madness, Peter Pack Rat, Indiana Jones), ported from
-// atari_system1.pas. Main CPU is a 68000 behind a SLAPSTIC; sound is an M6502
-// with a YM2151 and a POKEY. Playfield/MO banks are selected by a pair of
-// colour PROMs the same way convert_back does in the Pascal driver.
+// Atari System 1 (Marble Madness, Peter Pack Rat, Indiana Jones, Road Runner).
+// Main CPU is a 68000 behind a SLAPSTIC; sound is an M6502 with a YM2151, a
+// POKEY and, on Indy/Road Runner, a TMS5220C behind a 6522 VIA. Playfield/MO
+// banks are selected by a pair of colour PROMs the same way convert_back does
+// in the Pascal driver.
 class AtariSystem1 : public Machine {
 public:
     static constexpr int kScreenWidth = 336;
@@ -36,7 +39,7 @@ public:
     static constexpr uint32_t kYmClock = kAtariClock / 4;
     static constexpr double kFramesPerSecond = 59.922743;
 
-    enum class Game { PeterPak, Indy, Marble };
+    enum class Game { PeterPak, Indy, Marble, RoadRunner };
 
     explicit AtariSystem1(Game game = Game::Indy);
 
@@ -66,6 +69,12 @@ private:
     void sound_write(uint16_t address, uint8_t value);
     void on_sound_cycles(int cycles);
     void set_sound_reset(bool running);
+    bool has_speech() const;
+    bool has_adc() const;
+    void adc_start(uint32_t address);
+    void adc_complete();
+    uint8_t adc_channel_value(int channel) const;
+    bool via_selected(uint16_t address) const;
 
     bool load_roms(const std::string& rom_path, std::string* error);
     void convert_background(std::vector<uint8_t>& gfx_rom, const std::vector<uint8_t>& proms);
@@ -82,6 +91,8 @@ private:
     M6502 sound_cpu_;
     YM2151 ym_;
     Pokey pokey_;
+    Via6522 via_;
+    Tms5220 tms_;
     Slapstic slapstic_;
 
     std::array<uint16_t, 0x40000> rom_{};
@@ -121,6 +132,13 @@ private:
     uint8_t vblank_ = 0x10;
     uint16_t in0_ = 0xff6f;
     uint8_t in2_ = 0x87;
+    uint8_t analog_x_ = 0x80;
+    uint8_t analog_y_ = 0x80;
+    uint8_t joy_bits_ = 0;
+    uint8_t adc_channel_ = 0;
+    uint8_t adc_value_ = 0;
+    bool adc_irq_enable_ = true;
+    bool adc_busy_ = false;
     bool write_eeprom_ = false;
     bool sound_pending_ = false;
     bool main_pending_ = false;

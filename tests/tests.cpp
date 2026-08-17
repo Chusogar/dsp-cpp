@@ -848,6 +848,15 @@ void test_slapstic() {
     // Without the unlock access the bank must not change.
     slapstic.tweak(0x1234);
     check(slapstic.tweak(banks[1]) == 3, "the slapstic ignores bank values while disabled");
+
+    dsp::Slapstic road(108, nullptr);
+    road.reset();
+    check(road.current_bank() == 3, "slapstic 108 starts on bank 3");
+    const uint16_t road_banks[4] = {0x0028, 0x002a, 0x002c, 0x002e};
+    for (uint8_t wanted = 0; wanted < 4; wanted++) {
+        road.tweak(0);
+        check(road.tweak(road_banks[wanted]) == wanted, "slapstic 108 selects the requested bank");
+    }
 }
 
 void test_ym2151() {
@@ -2138,6 +2147,9 @@ void test_atari_system1_missing_roms() {
           "Indiana Jones title");
     check(machine.screen_width() == 336 && machine.screen_height() == 240,
           "Atari System 1 screen is 336x240");
+
+    dsp::AtariSystem1 road(dsp::AtariSystem1::Game::RoadRunner);
+    check(std::strcmp(road.title(), "Road Runner") == 0, "Road Runner title");
 }
 
 }  // namespace

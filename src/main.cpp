@@ -56,7 +56,7 @@ void print_supported_emulators() {
         "\n"
         "  Arcade:\n"
         "    bagman, mikie, gauntlet, mrdo, ddragon, ddragon2,\n"
-        "    elevator, junglek, indydoom, peter, marble,\n"
+        "    elevator, junglek, indydoom, peter, marble, roadrunn,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
 		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
         "    kungfum, spelunkr, spelunk2, ldrun, ldrun2,\n"
@@ -129,6 +129,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "indydoom") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Indy);
 	if (game == "peter") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::PeterPak);	
 	if (game == "marble") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Marble);
+	if (game == "roadrunn" || game == "roadrunner") {
+		return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::RoadRunner);
+	}
 
 	if (game == "tapper") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Tapper);
 	if (game == "tron") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Tron);
