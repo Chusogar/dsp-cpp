@@ -1640,6 +1640,165 @@ void test_c64_pla_and_keyboard() {
     check(machine->peek(0xc400) == 0x42, "a poked program can STA into RAM");
 }
 
+// Reads the whole C64 matrix by selecting one CIA1 PA column at a time.
+std::array<uint8_t, 8> c64_scan(dsp::C64& machine, const std::vector<dsp::Key>& host) {
+    dsp::MachineInputs inputs;
+    for (dsp::Key key : host) inputs.keys[size_t(key)] = true;
+    machine.set_inputs(inputs);
+    std::array<uint8_t, 8> columns{};
+    for (int col = 0; col < 8; col++) {
+        machine.poke(0xdc00, uint8_t(~(1u << col)));
+        columns[size_t(col)] = machine.peek(0xdc01);
+    }
+    return columns;
+}
+
+void test_c64_keyboard_matrix() {
+    using dsp::Key;
+    struct Case {
+        const char* name;
+        std::vector<Key> host;
+        std::vector<std::pair<int, uint8_t>> pressed;
+    };
+    const std::vector<Case> cases = {
+        {"A", {Key::A}, {{1, 0x04}}},
+        {"B", {Key::B}, {{3, 0x10}}},
+        {"C", {Key::C}, {{2, 0x10}}},
+        {"D", {Key::D}, {{2, 0x04}}},
+        {"E", {Key::E}, {{1, 0x40}}},
+        {"F", {Key::F}, {{2, 0x20}}},
+        {"G", {Key::G}, {{3, 0x04}}},
+        {"H", {Key::H}, {{3, 0x20}}},
+        {"I", {Key::I}, {{4, 0x02}}},
+        {"J", {Key::J}, {{4, 0x04}}},
+        {"K", {Key::K}, {{4, 0x20}}},
+        {"L", {Key::L}, {{5, 0x04}}},
+        {"M", {Key::M}, {{4, 0x10}}},
+        {"N", {Key::N}, {{4, 0x80}}},
+        {"O", {Key::O}, {{4, 0x40}}},
+        {"P", {Key::P}, {{5, 0x02}}},
+        {"Q", {Key::Q}, {{7, 0x40}}},
+        {"R", {Key::R}, {{2, 0x02}}},
+        {"S", {Key::S}, {{1, 0x20}}},
+        {"T", {Key::T}, {{2, 0x40}}},
+        {"U", {Key::U}, {{3, 0x40}}},
+        {"V", {Key::V}, {{3, 0x80}}},
+        {"W", {Key::W}, {{1, 0x02}}},
+        {"X", {Key::X}, {{2, 0x80}}},
+        {"Y", {Key::Y}, {{3, 0x02}}},
+        {"Z", {Key::Z}, {{1, 0x10}}},
+        {"1", {Key::Num1}, {{7, 0x01}}},
+        {"2", {Key::Num2}, {{7, 0x08}}},
+        {"3", {Key::Num3}, {{1, 0x01}}},
+        {"4", {Key::Num4}, {{1, 0x08}}},
+        {"5", {Key::Num5}, {{2, 0x01}}},
+        {"6", {Key::Num6}, {{2, 0x08}}},
+        {"7", {Key::Num7}, {{3, 0x01}}},
+        {"8", {Key::Num8}, {{3, 0x08}}},
+        {"9", {Key::Num9}, {{4, 0x01}}},
+        {"0", {Key::Num0}, {{4, 0x08}}},
+        {"+", {Key::LeftShift, Key::Equals}, {{5, 0x01}}},
+        {"-", {Key::Minus}, {{5, 0x08}}},
+        {"*", {Key::LeftShift, Key::Num8}, {{6, 0x02}}},
+        {"/", {Key::Slash}, {{6, 0x80}}},
+        {"GBP", {Key::Backslash}, {{6, 0x01}}},
+        {"@", {Key::LeftShift, Key::Num2}, {{5, 0x40}}},
+        {":", {Key::LeftShift, Key::Semicolon}, {{5, 0x20}}},
+        {";", {Key::Semicolon}, {{6, 0x04}}},
+        {"=", {Key::Equals}, {{6, 0x20}}},
+        {".", {Key::Period}, {{5, 0x10}}},
+        {",", {Key::Comma}, {{5, 0x80}}},
+        {"up arrow", {Key::LeftShift, Key::Num6}, {{6, 0x40}}},
+        {"left arrow", {Key::Grave}, {{7, 0x02}}},
+        {"RETURN", {Key::Enter}, {{0, 0x02}}},
+        {"SPACE", {Key::Space}, {{7, 0x10}}},
+        {"CTRL", {Key::LeftCtrl}, {{7, 0x04}}},
+        {"C=", {Key::LeftAlt}, {{7, 0x20}}},
+        {"RUN/STOP", {Key::Tab}, {{7, 0x80}}},
+        {"CLR/HOME", {Key::Home}, {{6, 0x08}}},
+        {"INST/DEL", {Key::Backspace}, {{0, 0x01}}},
+        {"INST", {Key::Insert}, {{0, 0x01}, {6, 0x10}}},
+        {"LEFT SHIFT", {Key::LeftShift}, {{1, 0x80}}},
+        {"RIGHT SHIFT", {Key::RightShift}, {{6, 0x10}}},
+        {"F1", {Key::F1}, {{0, 0x10}}},
+        {"F2", {Key::F2}, {{0, 0x10}, {6, 0x10}}},
+        {"F3", {Key::F3}, {{0, 0x20}}},
+        {"F4", {Key::F4}, {{0, 0x20}, {6, 0x10}}},
+        {"F5", {Key::F5}, {{0, 0x40}}},
+        {"F6", {Key::F6}, {{0, 0x40}, {6, 0x10}}},
+        {"F7", {Key::F7}, {{0, 0x08}}},
+        {"F8", {Key::F8}, {{0, 0x08}, {6, 0x10}}},
+        {"CRSR right", {Key::Right}, {{0, 0x04}}},
+        {"CRSR left", {Key::Left}, {{0, 0x04}, {6, 0x10}}},
+        {"CRSR down", {Key::Down}, {{0, 0x80}}},
+        {"CRSR up", {Key::Up}, {{0, 0x80}, {6, 0x10}}},
+        // Symbols the host and the C64 reach with different shift combinations.
+        {"\"", {Key::LeftShift, Key::Quote}, {{7, 0x08}, {6, 0x10}, {1, 0x80}}},
+        {"'", {Key::Quote}, {{3, 0x01}, {6, 0x10}}},
+        {"&", {Key::LeftShift, Key::Num7}, {{2, 0x08}, {1, 0x80}}},
+        {"(", {Key::LeftShift, Key::Num9}, {{3, 0x08}, {1, 0x80}}},
+        {")", {Key::LeftShift, Key::Num0}, {{4, 0x01}, {1, 0x80}}},
+        {"!", {Key::LeftShift, Key::Num1}, {{7, 0x01}, {1, 0x80}}},
+        {"[", {Key::LeftBracket}, {{5, 0x20}, {6, 0x10}}},
+        {"]", {Key::RightBracket}, {{6, 0x04}, {6, 0x10}}},
+        {"keypad *", {Key::KeypadMultiply}, {{6, 0x02}}},
+        {"keypad ENTER", {Key::KeypadEnter}, {{0, 0x02}}},
+    };
+
+    auto machine = std::make_unique<dsp::C64>();
+    machine->init_synthetic_roms();
+    for (const Case& item : cases) {
+        std::array<uint8_t, 8> expected;
+        expected.fill(0xff);
+        for (const auto& bit : item.pressed) {
+            expected[size_t(bit.first)] = uint8_t(expected[size_t(bit.first)] & ~bit.second);
+        }
+        const std::array<uint8_t, 8> got = c64_scan(*machine, item.host);
+        const std::string what = std::string("C64 key ") + item.name + " scans as expected";
+        check(got == expected, what.c_str());
+    }
+
+    // Caps Lock latches SHIFT LOCK and keeps left shift down once released.
+    c64_scan(*machine, {dsp::Key::CapsLock});
+    check((c64_scan(*machine, {})[1] & 0x80) == 0, "Caps Lock latches SHIFT LOCK");
+    c64_scan(*machine, {dsp::Key::CapsLock});
+    check((c64_scan(*machine, {})[1] & 0x80) != 0, "Caps Lock again releases SHIFT LOCK");
+
+    // Reverse scan: drive PB and read the columns back on PA.
+    dsp::MachineInputs inputs;
+    inputs.keys[size_t(dsp::Key::A)] = true;  // column 1, row 2
+    machine->set_inputs(inputs);
+    machine->poke(0xdc02, 0x00);  // PA all inputs
+    machine->poke(0xdc03, 0xff);  // PB all outputs
+    machine->poke(0xdc01, uint8_t(~0x04));
+    check((machine->peek(0xdc00) & 0x02) == 0, "A is reported on CIA1 PA bit 1 in a reverse scan");
+    machine->poke(0xdc01, uint8_t(~0x08));
+    check((machine->peek(0xdc00) & 0x02) != 0, "an unselected row leaves CIA1 PA alone");
+    machine->poke(0xdc02, 0xff);
+    machine->poke(0xdc03, 0x00);
+}
+
+void test_c64_restore_nmi() {
+    auto machine = std::make_unique<dsp::C64>();
+    machine->init_synthetic_roms();
+    for (uint16_t address = 0x0100; address <= 0x01ff; address++) machine->poke(address, 0);
+    machine->set_pc(0xc000);  // JMP $C000, never touches the stack
+    for (int i = 0; i < 2; i++) machine->run_frame();
+    auto stack_used = [&]() {
+        for (uint16_t address = 0x0100; address <= 0x01ff; address++) {
+            if (machine->peek(address) != 0) return true;
+        }
+        return false;
+    };
+    check(!stack_used(), "the idle loop does not push anything");
+
+    dsp::MachineInputs inputs;
+    inputs.keys[size_t(dsp::Key::PageUp)] = true;  // RESTORE
+    machine->set_inputs(inputs);
+    machine->run_frame();
+    check(stack_used(), "RESTORE pulses the 6510 NMI line");
+}
+
 void test_c64_prg_media() {
     auto machine = std::make_unique<dsp::C64>();
     machine->init_synthetic_roms();
@@ -2444,6 +2603,8 @@ int main() {
     test_c64_vic_raster();
     test_c64_sid_triangle();
     test_c64_pla_and_keyboard();
+    test_c64_keyboard_matrix();
+    test_c64_restore_nmi();
     test_c64_prg_media();
     test_gbc_cart_detection();
     test_gbc_boot_rom_map();

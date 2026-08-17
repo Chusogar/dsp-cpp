@@ -318,7 +318,8 @@ uint8_t Spectrum48k::io_in(uint16_t port) {
 void Spectrum48k::io_out(uint16_t port, uint8_t value) {
     if ((port & 1) == 0) {
         border_ = value & 7;
-                speaker_ = (value & 0x10) ? 0x10 : 0x00;
+        // The speaker bit is mirrored back on bit 6 of port $FE, like the tape input.
+        speaker_ = (value & 0x10) ? 0x40 : 0x00;
         beeper_level_ = (value & 0x10) ? int16_t(8192) : int16_t(-8192);
     }
 

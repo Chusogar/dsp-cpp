@@ -408,11 +408,28 @@ zip that holds them; common aliases such as `kernal.bin` / `basic.bin` /
 ./build/dsp --game c64 --tape game.tap /path/to/c64-roms/
 ```
 
-The host keyboard is mapped onto the C64 matrix (Left Shift is C64 left shift,
-Left Ctrl is CTRL, Tab is RUN/STOP). F1/F3/F5/F7 are the C64 function keys.
-F6 starts and stops a `.tap` cassette (the 6510 motor bit still has to enable
-the datasette). Arrows are also a joystick in Control Port 2. There is no 1541:
-a `.d64` image injects its first PRG into RAM.
+The whole 66-key C64 keyboard is mapped onto the host one:
+
+| C64 key | Host key |
+| --- | --- |
+| A-Z, 0-9, RETURN, SPACE, `,` `.` `/` `;` `-` | same key (keypad `+ - * / . ENTER` work too) |
+| `@` `*` `+` `=` `:` | `Shift+2`, `Shift+8`, `Shift+=`, `=`, `Shift+;` |
+| up arrow, left arrow, GBP | `Shift+6`, `` ` ``, `\` |
+| CTRL / C= / RUN/STOP | Ctrl / Alt or Left Gui / Tab |
+| CLR/HOME | Home or End |
+| INST/DEL | Backspace or Delete (Insert types INST) |
+| left SHIFT / right SHIFT / SHIFT LOCK | Left Shift / Right Shift / Caps Lock (latched) |
+| F1-F8 | F1-F8 (the even ones add shift by themselves) |
+| CRSR right/down, CRSR left/up | arrows (left and up add shift by themselves) |
+| RESTORE | Page Up (pulses the 6510 NMI, so Tab+Page Up breaks to BASIC) |
+
+Both the normal scan (PA selects columns, PB reads rows) and the reverse scan
+used by some titles (PB drives, PA reads back) are emulated. On machines with a
+keyboard the frontend hotkeys only trigger unshifted, so `Shift+F1` … `Shift+F7`
+reach the matrix; F3 resets only with Ctrl, and Escape quits (use Tab for
+RUN/STOP). F6 starts and stops a `.tap` cassette (the 6510 motor bit still has
+to enable the datasette). Arrows are also a joystick in Control Port 2. There is
+no 1541: a `.d64` image injects its first PRG into RAM.
 
 ### Game Boy / Game Boy Color
 

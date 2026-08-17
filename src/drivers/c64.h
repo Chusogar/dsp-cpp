@@ -99,6 +99,9 @@ private:
     bool cia_irq_ = false;
     bool vic_irq_ = false;
     bool cia_nmi_ = false;
+    bool shift_lock_ = false;
+    bool caps_held_ = false;
+    bool restore_held_ = false;
 
     std::vector<int16_t> audio_;
     int64_t audio_acc_ = 0;
