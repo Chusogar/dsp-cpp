@@ -40,6 +40,7 @@
 #include "drivers/gameboy.h"
 #include "drivers/nes.h"
 #include "drivers/atari_lynx.h"
+#include "drivers/scv.h"
 //#include "drivers/nes.h"
 
 #include "frontend/sdl_app.h"
@@ -73,6 +74,7 @@ void print_supported_emulators() {
         "  Consoles:\n"
         "    sms, gamegear, pv1000, coleco, sg1000, gb, nes\n"
         "    sms, gamegear, pv1000, coleco, sg1000, gb, lynx\n"
+        "    sms, gamegear, pv1000, coleco, sg1000, gb, scv\n"
         "\n");
 }
 
@@ -211,6 +213,10 @@ std::string guess_game(const std::string& rom_path) {
         lowered.find(".lyx") != std::string::npos) {
         return "lynx";
     }
+	if (lowered.find("scv") != std::string::npos ||
+	    lowered.find("cassette") != std::string::npos) {
+	    return "scv";
+	}
 	//if (lowered.find("nes") != std::string::npos) return "nes";
     
 
@@ -326,6 +332,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "gb") return std::make_unique<dsp::GameBoy>();
 	if (game == "nes") return std::make_unique<dsp::Nes>();
 	if (game == "lynx") return std::make_unique<dsp::AtariLynx>();
+	if (game == "scv") return std::make_unique<dsp::Scv>();
 	//if (game == "nes") return std::make_unique<dsp::Nes>();
 	
 

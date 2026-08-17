@@ -63,6 +63,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | MOS 6526 CIA | `mos6526_old.pas` | Two chips: CIA1 IRQ + keyboard, CIA2 NMI + VIC bank |
 | SID 6581 | `sid_sound.pas` | Three voices, 44100 Hz mono |
 | Front end | `src/misc/main_engine.pas` | SDL2 window, texture, audio queue, keyboard |
+| µPD7801 CPU | `src/cpu/upd7810.pas` (`CPU_7801`) | Epoch Super Cassette Vision CPU, 4 MHz crystal /2 |
+| µPD1771C | `src/snd/upd1771.pas` | SCV tone / noise / ADPCM sound |
+| Super Cassette Vision | `src/consolas/super_cassette_vision.pas` | BIOS + cartridge map, 192×222 video, keyboard and two joysticks |
 
 ## Building
 
@@ -105,6 +108,11 @@ The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
 
 The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
 `ddragon2`, `elevator`, `junglek`, `spectrum48` or `lynx`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
+./build/dsp --game scv /path/to/scv.zip
+```
+
+The game is taken from `--game` (`bagman`, `mikie`, `gauntlet`, `ddragon`,
+`ddragon2`, `elevator`, `junglek`, `spectrum48` or `scv`); when omitted it is guessed from the ROM set name. Gauntlet accepts both the four player parent set
 (SLAPSTIC 104) and the two player `136041-xxx` set (SLAPSTIC 107).
 
 Required files: `e9_b05.bin`, `f9_b06.bin`, `f9_b07.bin`, `k9_b08.bin`, `m9_b09s.bin`,
@@ -118,6 +126,7 @@ Options:
                    ldrun2 or spectrum48
                    elevator, junglek, ikari, athena, tnk3, aso or spectrum48
                    elevator, junglek, rtype, hharry, rtype2 or spectrum48
+                   elevator, junglek, spectrum48 or scv
 --scale N          window scale factor (default 3)
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
                    mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
@@ -339,6 +348,24 @@ the Atari ROM.
 
 Lynx controls: arrows, Left Ctrl/Space = A, Left Alt/Z = B, X = Option 1, 1 = Option 2,
 5 = Pause.
+### Super Cassette Vision
+
+Epoch's Super Cassette Vision (1984) needs the 4 KiB BIOS `upd7801g.s01`
+(CRC `7ac06182`) and the 1 KiB character ROM `epochtv.chr` (CRC `db521533`).
+Those two files are the MAME `scv.zip` set (for example
+[Abdess/retrobios](https://github.com/Abdess/retrobios) ships them under
+`bios/Epoch/Super Cassette Vision/`). Give a directory or zip that holds both,
+or put them next to the cartridge:
+
+```bash
+./build/dsp --game scv /path/to/scv.zip
+./build/dsp --game scv /path/to/AstroWars.bin
+```
+
+The cartridge is the positional ROM path (plain `.bin`, a zip, or a split
+`.0`/`.1` pair). Extra RAM and the Pole Position II mapper follow the same CRCs
+as `super_cassette_vision.pas`. The host keyboard supplies 0–9, Q, W and P
+(pause); the arrows and buttons are the two joysticks.
 
 ### Controls
 
@@ -397,6 +424,10 @@ src/cpu/        Z80, M6809, M6502, M68000, HD63701 and M6805 cores
 src/sound/      AY-3-8910, SN76496, NES 2A03 APU, SID 6581
 src/video/      graphics decoding, resistor palettes, NES PPU, VIC-II
 src/machine/    Bagman PAL16R6, SLAPSTIC, Spectrum tape player, NES mappers, MOS 6526 CIA
+src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805 and µPD7801 cores
+src/sound/      AY-3-8910, SN76496, µPD1771C and the other arcade chips
+src/video/      graphics decoding and resistor based palette helpers
+src/machine/    Bagman PAL16R6, SLAPSTIC, Spectrum tape player
 src/drivers/    the machines themselves (memory map, video, inputs)
 src/frontend/   SDL2 front end, driven through the core/machine.h interface
 src/core/       ROM loader (directory or zip) and the Machine interface

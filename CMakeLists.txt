@@ -120,6 +120,7 @@ add_executable(dsp_tests
   src/cpu/m6805.cpp
   src/cpu/lr35902.cpp
   src/cpu/z80ctc.cpp
+  src/cpu/upd7801.cpp
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
@@ -128,6 +129,7 @@ add_executable(dsp_tests
   src/sound/okim6295.cpp
   src/sound/nes_apu.cpp
   src/sound/qsound.cpp
+  src/sound/upd1771.cpp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/nes_ppu.cpp
@@ -157,6 +159,7 @@ add_executable(dsp_tests
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
   src/drivers/atari_lynx.cpp
+  src/drivers/scv.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)
