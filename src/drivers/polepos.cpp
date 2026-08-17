@@ -90,6 +90,7 @@ const std::vector<RomEntry> kPp2Voice = {
 };
 const std::vector<RomEntry> kNamco51Rom = {{"51xx.bin", 0x0400, 0, 0xc2f57ef8}};
 const std::vector<RomEntry> kNamco52Rom = {{"52xx.bin", 0x0400, 0, 0x3257d11e}};
+const std::vector<RomEntry> kNamco53Rom = {{"53xx.bin", 0x0400, 0, 0xb326fecb}};
 const std::vector<RomEntry> kNamco54Rom = {{"54xx.bin", 0x0400, 0, 0xee7357e0}};
 
 constexpr const char* kMameMergedBase = "https://archive.org/download/mame-0.221-roms-merged/";
@@ -252,6 +253,7 @@ PolePos::PolePos(Game game)
       sub2_(kCpuClock),
       n51_(kMcuClock),
       n52_(kMcuClock),
+      n53_(kMcuClock),
       n54_(kMcuClock),
       wsg_(kMasterClock / 512),
       engine_(kCpuClock) {
@@ -271,6 +273,11 @@ PolePos::PolePos(Game game)
     n51_.set_input(3, [this] { return uint8_t(in0() >> 4); });
     n52_.set_rom_read([this](uint16_t offset) { return namco52_rom_r(offset); });
     n52_.set_si_read([] { return 1; });
+    n53_.set_k_read([] { return uint8_t(0); });
+    n53_.set_input(0, [this] { return steering_changed_r(); });
+    n53_.set_input(1, [this] { return steering_delta_r(); });
+    n53_.set_input(2, [this] { return uint8_t(dswa_ & 0x0f); });
+    n53_.set_input(3, [this] { return uint8_t(dswa_ >> 4); });
 }
 
 bool PolePos::init(const std::string& rom_path, std::string* error) {
@@ -301,12 +308,14 @@ bool PolePos::init(const std::string& rom_path, std::string* error) {
     if (!loader.load(pp2 ? kPp2Engine : kPpEngine, engine_rom_, error)) return false;
     if (!loader.load(pp2 ? kPp2Voice : kPpVoice, voice_rom_, error)) return false;
 
-    std::vector<uint8_t> n51_rom, n52_rom, n54_rom;
+    std::vector<uint8_t> n51_rom, n52_rom, n53_rom, n54_rom;
     if (!load_mcu_rom(rom_path, "namco51.zip", kNamco51Rom, n51_rom, error)) return false;
     if (!load_mcu_rom(rom_path, "namco52.zip", kNamco52Rom, n52_rom, error)) return false;
+    if (!load_mcu_rom(rom_path, "namco53.zip", kNamco53Rom, n53_rom, error)) return false;
     if (!load_mcu_rom(rom_path, "namco54.zip", kNamco54Rom, n54_rom, error)) return false;
     if (!n51_.load_rom(n51_rom, error)) return false;
     if (!n52_.load_rom(n52_rom, error)) return false;
+    if (!n53_.load_rom(n53_rom, error)) return false;
     if (!n54_.load_rom(n54_rom, error)) return false;
 
     wsg_.set_wavetable(namco_wavetable_.data(), namco_wavetable_.size());
@@ -393,9 +402,11 @@ void PolePos::reset() {
     mcu_cycle_acc_ = 0;
     n51_.reset();
     n52_.reset();
+    n53_.reset();
     n54_.reset();
     n51_.set_reset(false);
     n52_.set_reset(false);
+    n53_.set_reset(false);
     n54_.set_reset(false);
     wsg_.reset();
     engine_.reset();
@@ -444,6 +455,7 @@ void PolePos::ls259_w(int bit, bool value) {
         case 1:
             n51_.set_reset(value);
             n52_.set_reset(value);
+            n53_.set_reset(value);
             n54_.set_reset(value);
             break;
         case 2:
@@ -490,6 +502,7 @@ void PolePos::namco06_ctrl_w(uint8_t data) {
         n06_timer_state_ = false;
         z80_.set_nmi(IrqLine::Clear);
         n51_.set_chip_select(false);
+        n53_.set_chip_select(false);
         n52_.set_chip_select(false);
         n54_.set_chip_select(false);
     } else {
@@ -516,11 +529,12 @@ void PolePos::namco06_tick() {
     }
     n06_read_stretch_ = false;
     n51_.set_chip_select((n06_control_ & 0x01) && n06_timer_state_);
+    n53_.set_chip_select((n06_control_ & 0x02) && n06_timer_state_);
     n52_.set_chip_select((n06_control_ & 0x04) && n06_timer_state_);
     n54_.set_chip_select((n06_control_ & 0x08) && n06_timer_state_);
 }
 
-uint8_t PolePos::namco53_read() {
+uint8_t PolePos::steering_changed_r() {
     const uint8_t steer_new = steer_;
     steer_accum_ = int16_t(steer_accum_ + int8_t(steer_new - steer_last_) * 2);
     steer_last_ = steer_new;
@@ -531,14 +545,14 @@ uint8_t PolePos::namco53_read() {
         steer_delta_ = 1;
         steer_accum_--;
     }
-    return uint8_t((steer_accum_ & 1) | (steer_delta_ << 1) | (dswa_ & 0xfc));
+    return uint8_t(steer_accum_ & 1);
 }
 
 uint8_t PolePos::namco06_data_r() {
     if (!(n06_control_ & 0x10)) return 0;
     uint8_t result = 0xff;
     if (n06_control_ & 0x01) result &= n51_.read();
-    if (n06_control_ & 0x02) result &= namco53_read();
+    if (n06_control_ & 0x02) result &= n53_.read();
     return result;
 }
 
@@ -567,6 +581,7 @@ void PolePos::on_z80_cycles(int cycles) {
     while (mcu_cycle_acc_ >= 12) {
         mcu_cycle_acc_ -= 12;
         n51_.run(1);
+        n53_.run(1);
         n52_.run(1);
         n54_.run(1);
     }

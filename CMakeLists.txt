@@ -74,6 +74,7 @@ add_executable(dsp
   src/machine/starwars_math.cpp
   src/machine/namco51.cpp
   src/machine/namco52.cpp
+  src/machine/namco53.cpp
   src/machine/namco54.cpp
   
   src/drivers/bagman.cpp
@@ -185,6 +186,7 @@ add_executable(dsp_tests
   src/machine/starwars_math.cpp
   src/machine/namco51.cpp
   src/machine/namco52.cpp
+  src/machine/namco53.cpp
   src/machine/namco54.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp

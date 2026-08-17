@@ -79,8 +79,8 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Star Wars mathbox | new (MAME `starwars_m.cpp`) | PROM microcode, multiply-accumulate, restoring divider |
 | Star Wars driver | new (MAME `starwars.cpp`) | Dual 6809, AVG, 4×POKEY, TMS5220, analog stick |
 | Z8002 CPU | new (MAME `z8000`) | Unsegmented 16-bit Z8002 used by Pole Position |
-| MB88xx MCU | new (MAME `mb88xx`) | Fujitsu 4-bit MCU used by Namco 51/52/54xx |
-| Pole Position driver | new (MAME `namco/polepos.cpp`) | Z80 + dual Z8002, road, sprites, real 51xx, WSG/engine |
+| MB88xx MCU | new (MAME `mb88xx`) | Fujitsu 4-bit MCU used by Namco 51/52/53/54xx |
+| Pole Position driver | new (MAME `namco/polepos.cpp`) | Z80 + dual Z8002, road, sprites, real 51/52/53/54xx, WSG/engine |
 
 ## Building
 
@@ -543,15 +543,16 @@ committed. The MAME parent set `starwars` is enough:
 
 ### Namco Pole Position / Pole Position II
 
-Z80 + two Z8002s at 3.072 MHz, 256×224, ~60.6 Hz. The Namco 06xx talks to a
-real MB8843 51xx (coins, DIPs, start) plus a high-level 53xx (steering). Audio
+Z80 + two Z8002s at 3.072 MHz, 256×224, ~60.6 Hz. The Namco 06xx talks to
+real MB88 MCUs: 51xx (coins, DIPs, start) and 53xx (steering + DSWA). Audio
 is the Pole Position WSG, engine sample player, and MB88 52xx/54xx DACs. Use
-the MAME 0.221 merged parent sets `polepos` and `polepos2`. The 51xx/52xx/54xx
+the MAME 0.221 merged parent sets `polepos` and `polepos2`. The 51xx–54xx
 MCU dumps come from the same archive and are fetched automatically if they are
 not already next to the game zip:
 
 - https://archive.org/download/mame-0.221-roms-merged/namco51.zip
 - https://archive.org/download/mame-0.221-roms-merged/namco52.zip
+- https://archive.org/download/mame-0.221-roms-merged/namco53.zip
 - https://archive.org/download/mame-0.221-roms-merged/namco54.zip
 
 ```bash

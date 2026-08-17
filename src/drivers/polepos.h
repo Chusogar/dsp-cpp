@@ -10,6 +10,7 @@
 #include "cpu/z8002.h"
 #include "machine/namco51.h"
 #include "machine/namco52.h"
+#include "machine/namco53.h"
 #include "machine/namco54.h"
 #include "sound/polepos_engine.h"
 #include "sound/polepos_wsg.h"
@@ -64,6 +65,7 @@ public:
     bool debug_sub1_reset() const { return sub1_reset_; }
     bool debug_sub2_reset() const { return sub2_reset_; }
     uint16_t debug_n51_pc() const { return n51_.debug_pc(); }
+    uint16_t debug_n53_pc() const { return n53_.debug_pc(); }
     uint16_t debug_view_hscroll() const { return view_hscroll_; }
     uint16_t debug_road_vscroll() const { return road_vscroll_; }
     uint16_t debug_alpha_word(int index) const {
@@ -97,7 +99,8 @@ private:
     void namco06_ctrl_w(uint8_t data);
     void namco06_tick();
 
-    uint8_t namco53_read();
+    uint8_t steering_changed_r();
+    uint8_t steering_delta_r() const { return steer_delta_; }
     uint8_t namco52_rom_r(uint16_t offset) const;
 
     uint8_t in0() const;
@@ -120,6 +123,7 @@ private:
     Z8002 sub2_;
     Namco51xx n51_;
     Namco52xx n52_;
+    Namco53xx n53_;
     Namco54xx n54_;
     PolePosWsg wsg_;
     PolePosEngine engine_;
@@ -185,7 +189,7 @@ private:
     int n06_period_cycles_ = 0;
     int mcu_cycle_acc_ = 0;
 
-    // Namco 53xx (high-level I/O)
+    // Steering encoder clocked by the 53xx R0/R1 ports.
     uint8_t steer_last_ = 0x80;
     uint8_t steer_delta_ = 0;
     int16_t steer_accum_ = 0;
