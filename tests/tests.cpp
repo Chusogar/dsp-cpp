@@ -929,7 +929,7 @@ void test_atari_motion_objects() {
     config.height_entry = {0, 0, 0x0007, 0};
     config.hflip_entry = {0, 0, 0x0040, 0};
     // An 8x8 object with code 5, colour 2 at (16, 24). The list ends with an entry
-    // linked to itself, which the hardware uses as the terminator and never draws.
+    // linked to itself; MAME still visits that terminator once (it is not a skip).
     sprite_ram[0x000] = 0x0005;          // code
     sprite_ram[0x400] = 0x0002 | (16 << 7);  // colour and horizontal position
     sprite_ram[0x800] = 0x1e0 << 7;      // vertical position (counted upwards)
@@ -938,18 +938,20 @@ void test_atari_motion_objects() {
 
     dsp::AtariMotionObjects objects(config, slip_ram.data(), sprite_ram.data(), 512, 256);
     int drawn = 0;
-    int last_code = -1, last_color = -1, last_x = -1, last_y = -1;
-    objects.draw(0, 0, 0, [&](int code, int color, bool, bool, int x, int y, int) {
+    int first_code = -1, first_color = -1, first_x = -1, first_y = -1;
+    objects.draw(0, 0, 0, [&](int code, int color, bool, bool, int x, int y, int, int) {
+        if (drawn == 0) {
+            first_code = code;
+            first_color = color;
+            first_x = x;
+            first_y = y;
+        }
         drawn++;
-        last_code = code;
-        last_color = color;
-        last_x = x;
-        last_y = y;
     });
-    check(drawn == 1, "the motion object list stops on the self link");
-    check(last_code == 5, "the motion object code is extracted");
-    check(last_color == 0x20, "the motion object colour becomes a palette offset");
-    check(last_x == 16 && last_y == 24, "the motion object position is extracted");
+    check(drawn == 2, "the motion object list visits the self-linked terminator once");
+    check(first_code == 5, "the motion object code is extracted");
+    check(first_color == 0x20, "the motion object colour becomes a palette offset");
+    check(first_x == 16 && first_y == 24, "the motion object position is extracted");
 }
 
 // Builds a HD63701 whose internal ROM holds `program` at $c000 and whose reset

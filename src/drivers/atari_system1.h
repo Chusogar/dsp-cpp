@@ -83,6 +83,8 @@ private:
     void update_video();
     void draw_alpha_tile(int offset);
     void draw_playfield_tile(int offset);
+    void mix_motion_object_pixel(int x, int y, uint16_t mo);
+    void reschedule_int3(int scanline);
 
     static constexpr int16_t kTransparent = -1;
 
@@ -118,7 +120,7 @@ private:
 
     std::vector<int16_t> alpha_;
     std::vector<int16_t> playfield_;
-    std::vector<uint32_t> composite_;
+    std::vector<uint16_t> pf_index_;
     std::vector<uint32_t> framebuffer_;
     std::array<bool, 0x800> alpha_dirty_{};
     std::array<bool, 0x1000> playfield_dirty_{};
@@ -127,9 +129,15 @@ private:
     uint16_t scroll_x_ = 0;
     uint16_t scroll_y_ = 0;
     uint16_t scroll_y_latch_ = 0;
+    std::array<uint16_t, kScanlines> scroll_x_line_{};
+    std::array<uint16_t, kScanlines> scroll_y_line_{};
     uint16_t bankselect_ = 0;
     uint8_t playfield_tile_bank_ = 0;
+    uint16_t playfield_priority_pens_ = 0;
     uint8_t vblank_ = 0x10;
+    int int3_line_ = -1;
+    int int3_off_line_ = -1;
+    bool int3_state_ = false;
     uint16_t in0_ = 0xff6f;
     uint8_t in2_ = 0x87;
     uint8_t analog_x_ = 0x80;

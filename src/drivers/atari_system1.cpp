@@ -273,7 +273,7 @@ AtariSystem1::AtariSystem1(Game game)
       slapstic_(105, &main_cpu_) {
     alpha_.assign(size_t(kAlphaWidth) * kAlphaHeight, kTransparent);
     playfield_.assign(size_t(kPlayfieldWidth) * kPlayfieldHeight, 0);
-    composite_.assign(size_t(kPlayfieldWidth) * kPlayfieldHeight, 0xff000000u);
+    pf_index_.assign(size_t(kScreenWidth) * kScreenHeight, 0);
     framebuffer_.assign(size_t(kScreenWidth) * kScreenHeight, 0xff000000u);
 
     main_cpu_.set_memory_handlers([this](uint32_t address) { return main_read(address); },
@@ -458,7 +458,9 @@ bool AtariSystem1::load_roms(const std::string& rom_path, std::string* error) {
     std::vector<uint16_t>& colors = motion_objects_->color_lookup();
     std::vector<uint8_t>& gfxs = motion_objects_->gfx_lookup();
     for (size_t i = 0; i < colors.size() && i < 256; i++) {
-        colors[i] = uint16_t(((motable_[i] >> 12) & 0xf) << 1);
+        // AtariMotionObjects shifts by 4 (×16). MAME uses granularity 8 after a
+        // ×2 PROM nibble, which is the same as storing the raw nibble here.
+        colors[i] = uint16_t((motable_[i] >> 12) & 0xf);
     }
     for (size_t i = 0; i < gfxs.size() && i < 256; i++) {
         gfxs[i] = uint8_t((motable_[i] >> 8) & 0xf);
@@ -526,8 +528,10 @@ void AtariSystem1::convert_background(std::vector<uint8_t>& gfx_rom,
             const uint8_t prom1 = proms[size_t(i + 0x100 * obj)];
             const uint8_t prom2 = proms[size_t(0x200 + i + 0x100 * obj)];
             int bpp = 4;
-            if (prom2 & kPlane4) bpp = 5;
-            else if (prom2 & kPlane5) bpp = 6;
+            if (prom2 & kPlane4) {
+                bpp = 5;
+                if (prom2 & kPlane5) bpp = 6;
+            }
             const uint8_t offset = uint8_t(prom1 & kOffsetMask);
             uint8_t bank = decode_bank(prom1, prom2, bpp, gfx_rom);
             if (obj == 0) {
@@ -570,9 +574,16 @@ void AtariSystem1::reset() {
     scroll_x_ = 0;
     scroll_y_ = 0;
     scroll_y_latch_ = 0;
+    scroll_x_line_.fill(0);
+    scroll_y_line_.fill(0);
     vblank_ = 0x10;
     bankselect_ = 0;
     playfield_tile_bank_ = 0;
+    playfield_priority_pens_ = 0;
+    int3_line_ = -1;
+    int3_off_line_ = -1;
+    int3_state_ = false;
+    main_cpu_.set_irq(3, IrqLine::Clear);
     write_eeprom_ = false;
     sound_pending_ = false;
     main_pending_ = false;
@@ -586,6 +597,7 @@ void AtariSystem1::reset() {
     playfield_dirty_.fill(true);
     std::fill(alpha_.begin(), alpha_.end(), kTransparent);
     std::fill(playfield_.begin(), playfield_.end(), 0);
+    std::fill(pf_index_.begin(), pf_index_.end(), 0);
     std::fill(framebuffer_.begin(), framebuffer_.end(), 0xff000000u);
 }
 
@@ -607,7 +619,7 @@ uint16_t AtariSystem1::main_read(uint32_t address) {
         rom_bank_ = slapstic_.tweak(uint16_t((address & 0x7fff) >> 1));
         return value;
     }
-    if (address == 0x2e0000) return 0;
+    if (address == 0x2e0000) return int3_state_ ? 0x0080 : 0;
     if (address >= 0x400000 && address <= 0x401fff) return ram_[(address & 0x1fff) >> 1];
     if (address >= 0x900000 && address <= 0x9fffff) return ram2_[(address & 0xfffff) >> 1];
     if (address >= 0xa00000 && address <= 0xa03fff) return ram3_[(address & 0x3fff) >> 1];
@@ -653,7 +665,10 @@ void AtariSystem1::main_write(uint32_t address, uint16_t value) {
         scroll_y_ = (line_ < 240) ? uint16_t(value - (line_ + 1)) : value;
         return;
     }
-    if (address == 0x840000) return;  // priority
+    if (address == 0x840000) {
+        playfield_priority_pens_ = value;
+        return;
+    }
     if (address == 0x860000) {
         const uint16_t diff = uint16_t(bankselect_ ^ value);
         if (diff & 0x04) {
@@ -663,6 +678,7 @@ void AtariSystem1::main_write(uint32_t address, uint16_t value) {
         if (diff & 0x80) set_sound_reset((value & 0x80) != 0);
         motion_objects_->set_bank((value >> 3) & 7);
         bankselect_ = value;
+        if (diff & 0x38) reschedule_int3(line_);
         return;
     }
     if (address == 0x880000) return;  // watchdog
@@ -687,7 +703,17 @@ void AtariSystem1::main_write(uint32_t address, uint16_t value) {
         return;
     }
     if (address >= 0xa02000 && address <= 0xa02fff) {
+        const int spr_off = int((address & 0xfff) >> 1);
+        const uint16_t old = ram3_[(address & 0x3fff) >> 1];
         ram3_[(address & 0x3fff) >> 1] = value;
+        if (game_ == Game::RoadRunner && old != value &&
+            (spr_off >> 8) == int(motion_objects_->bank())) {
+            const uint16_t* spr = &ram3_[0x1000];
+            if (((spr_off & 0xc0) == 0x00 && spr[spr_off | 0x40] == 0xffff) ||
+                ((spr_off & 0xc0) == 0x40 && (value == 0xffff || old == 0xffff))) {
+                reschedule_int3(line_);
+            }
+        }
         return;
     }
     if (address >= 0xa03000 && address <= 0xa03fff) {
@@ -818,7 +844,8 @@ void AtariSystem1::draw_playfield_tile(int offset) {
     const int gfx_index = (lookup >> 8) & 0xf;
     const int shift = bank_color_shift_[size_t(gfx_index)];
     const int color = 0x20 + ((((lookup >> 12) & 0xf) << shift));
-    const int base = color << 4;
+    // MAME gfx granularity is 8, colorbase 0x100: palette = 0x100 + color * 8.
+    const int base = 0x100 + (color << 3);
     const int code = ((lookup & 0xff) << 8) | (atrib & 0xff);
     const bool hflip = (atrib & 0x8000) != 0;
     const GfxSet& tiles = gfx_[size_t(gfx_index)].total() > 0 ? gfx_[size_t(gfx_index)] : gfx_[1];
@@ -845,20 +872,20 @@ void AtariSystem1::update_video() {
         playfield_dirty_[size_t(offset)] = false;
     }
 
-    const int sx = scroll_x_ & (kPlayfieldWidth - 1);
-    const int sy = scroll_y_ & (kPlayfieldHeight - 1);
     for (int y = 0; y < kScreenHeight; y++) {
+        const int sx = int(scroll_x_line_[size_t(y)]) & (kPlayfieldWidth - 1);
+        const int sy = int(scroll_y_line_[size_t(y)]) & (kPlayfieldHeight - 1);
         const int py = (y + sy) & (kPlayfieldHeight - 1);
         for (int x = 0; x < kScreenWidth; x++) {
             const int px = (x + sx) & (kPlayfieldWidth - 1);
-            const int16_t index = playfield_[size_t(py * kPlayfieldWidth + px)];
-            composite_[size_t(y * kPlayfieldWidth + x)] = palette_[size_t(index) & 0x3ff];
+            pf_index_[size_t(y * kScreenWidth + x)] =
+                uint16_t(playfield_[size_t(py * kPlayfieldWidth + px)] & 0x3ff);
         }
     }
 
     motion_objects_->draw(0, 256, -1,
                           [this](int code, int color, bool hflip, bool vflip, int x, int y,
-                                 int gfx) {
+                                 int gfx, int priority) {
                               const GfxSet& tiles =
                                   (gfx > 0 && gfx < int(gfx_.size()) && gfx_[size_t(gfx)].total() > 0)
                                       ? gfx_[size_t(gfx)]
@@ -867,16 +894,17 @@ void AtariSystem1::update_video() {
                               const uint8_t* pixels = tiles.element(code);
                               for (int row = 0; row < 8; row++) {
                                   const int ty = y + row;
-                                  if (ty < 0 || ty >= kPlayfieldHeight) continue;
+                                  if (ty < 0 || ty >= kScreenHeight) continue;
                                   const int src_row = vflip ? (7 - row) : row;
                                   for (int column = 0; column < 8; column++) {
                                       const int tx = x + column;
-                                      if (tx < 0 || tx >= kPlayfieldWidth) continue;
+                                      if (tx < 0 || tx >= kScreenWidth) continue;
                                       const int src_col = hflip ? (7 - column) : column;
                                       const uint8_t pen = pixels[src_row * 8 + src_col];
                                       if (pen == 0) continue;
-                                      composite_[size_t(ty * kPlayfieldWidth + tx)] =
-                                          palette_[size_t((color + pen) & 0x3ff)];
+                                      const uint16_t mo = uint16_t(((color + pen) & 0x0fff) |
+                                                                   ((priority ? 1 : 0) << 12));
+                                      mix_motion_object_pixel(tx, ty, mo);
                                   }
                               }
                           });
@@ -884,21 +912,79 @@ void AtariSystem1::update_video() {
     for (int y = 0; y < kScreenHeight; y++) {
         for (int x = 0; x < kScreenWidth; x++) {
             const int16_t character = alpha_[size_t(y * kAlphaWidth + x)];
-            uint32_t pixel = composite_[size_t(y * kPlayfieldWidth + x)];
-            if (character != kTransparent) pixel = palette_[size_t(character) & 0x3ff];
-            framebuffer_[size_t(y * kScreenWidth + x)] = pixel;
+            uint16_t index = pf_index_[size_t(y * kScreenWidth + x)];
+            if (character != kTransparent) index = uint16_t(character & 0x3ff);
+            framebuffer_[size_t(y * kScreenWidth + x)] = palette_[size_t(index) & 0x3ff];
         }
     }
+}
+
+void AtariSystem1::mix_motion_object_pixel(int x, int y, uint16_t mo) {
+    uint16_t& pf = pf_index_[size_t(y * kScreenWidth + x)];
+    if (mo & 0xf000) {
+        // High priority: mix PF pen into palette 0x300 unless the MO pen is 1.
+        if ((mo & 0x0f) != 1) {
+            pf = uint16_t(0x300 + ((pf & 0x0f) << 4) + (mo & 0x0f));
+        }
+    } else if ((pf & 0xf8) != 0 || (playfield_priority_pens_ & (1u << (pf & 7))) == 0) {
+        pf = uint16_t(mo & 0x0fff);
+    }
+}
+
+void AtariSystem1::reschedule_int3(int scanline) {
+    if (game_ != Game::RoadRunner) {
+        int3_line_ = -1;
+        return;
+    }
+    const uint16_t* spr = &ram3_[0x1000];
+    const int offset = int(motion_objects_->bank()) * 256;
+    int link = 0;
+    int best = scanline;
+    bool found = false;
+    std::array<bool, 64> visited{};
+    while (!visited[size_t(link & 63)]) {
+        visited[size_t(link & 63)] = true;
+        if (spr[offset + link + 0x40] == 0xffff) {
+            const uint16_t data = spr[offset + link];
+            const int vsize = (data & 15) + 1;
+            const int ypos = (256 - (data >> 5) - vsize * 8 - 1) & 0x1ff;
+            found = true;
+            if (best <= scanline) {
+                if ((ypos <= scanline && ypos < best) || ypos > scanline) best = ypos;
+            } else if (ypos < best) {
+                best = ypos;
+            }
+        }
+        link = spr[offset + link + 0xc0] & 0x3f;
+    }
+    if (!found) best = -1;
+    // Timers past the last scanline fire on the next frame after reschedule(-1).
+    if (best >= kScanlines) best = -1;
+    int3_line_ = best;
 }
 
 void AtariSystem1::run_frame() {
     const int main_cycles = int(double(kMainClock) / kFramesPerSecond / kScanlines + 0.5);
     const int sound_cycles = int(double(kSoundClock) / kFramesPerSecond / kScanlines + 0.5);
 
+    reschedule_int3(-1);
     for (line_ = 0; line_ < kScanlines; line_++) {
         main_cpu_.run(main_cycles);
         if (!sound_cpu_halted_) sound_cpu_.run(sound_cycles);
         adc_complete();
+        scroll_x_line_[size_t(line_)] = scroll_x_;
+        scroll_y_line_[size_t(line_)] = scroll_y_;
+        if (int3_off_line_ == line_) {
+            int3_state_ = false;
+            int3_off_line_ = -1;
+            main_cpu_.set_irq(3, IrqLine::Clear);
+        }
+        if (int3_line_ == line_) {
+            int3_state_ = true;
+            main_cpu_.set_irq(3, IrqLine::Assert);
+            int3_off_line_ = (line_ + 1) % kScanlines;
+            reschedule_int3(line_);
+        }
         if (line_ == 239) {
             update_video();
             vblank_ = 0;

@@ -47,13 +47,16 @@ public:
 
     // Called once per 8x8 (or tile sized) piece of a motion object.
     // `gfx` is the Atari System 1 graphics bank (0 when the driver has one tileset).
+    // `priority` is the raw priority field from sprite RAM (System 1 uses bit 0).
     using DrawTile =
-        std::function<void(int code, int color, bool hflip, bool vflip, int x, int y, int gfx)>;
+        std::function<void(int code, int color, bool hflip, bool vflip, int x, int y, int gfx,
+                           int priority)>;
 
     AtariMotionObjects(const Config& config, const uint16_t* slip_ram, const uint16_t* sprite_ram,
                        int xmax, int ymax);
 
     void set_bank(uint32_t bank) { bank_ = bank; }
+    uint32_t bank() const { return bank_; }
     // `prio` of -1 renders every priority.
     void draw(int xscroll, int yscroll, int prio, const DrawTile& draw_tile);
 

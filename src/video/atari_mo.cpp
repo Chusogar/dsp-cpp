@@ -91,8 +91,7 @@ AtariMotionObjects::AtariMotionObjects(const Config& config, const uint16_t* sli
     entrybits_ = compute_log(entrycount);
     slipshift_ = config_.slipheight != 0 ? compute_log(config_.slipheight) : 0;
     sliprammask_ = (bitmapheight >> slipshift_) - 1;
-    // The extra entry keeps Atari System 1 from dropping the last object of a band.
-    config_.maxperline = config_.maxperline == 0 ? kMaxPerBank : uint16_t(config_.maxperline + 1);
+    if (config_.maxperline == 0) config_.maxperline = kMaxPerBank;
 
     code_lookup_.resize(size_t(round_to_powerof2(codemask_.mask())));
     for (size_t i = 0; i < code_lookup_.size(); ++i) code_lookup_[i] = uint16_t(i);
@@ -137,15 +136,17 @@ void AtariMotionObjects::draw(int xscroll, int yscroll, int prio, const DrawTile
         }
         build_active_list(link);
         next_xpos_ = kNoHold;
-        if (active_last_ == 0) continue;
+        if (active_last_ < 4) continue;
 
         if (config_.reverse) {
-            for (size_t current = active_last_ - 4; current > 0; current -= 4) {
+            for (size_t current = active_last_ - 4;; current -= 4) {
                 render_object(&active_list_[current], xscroll, yscroll, prio, draw_tile);
+                if (current == 0) break;
             }
         } else {
-            for (size_t current = 0; current + 4 < active_last_; current += 4) {
+            for (size_t current = 0;; current += 4) {
                 render_object(&active_list_[current], xscroll, yscroll, prio, draw_tile);
+                if (current + 4 >= active_last_) break;
             }
         }
     }
@@ -213,7 +214,7 @@ void AtariMotionObjects::render_object(const uint16_t* entry, int xscroll, int y
         for (int y = 0; y < height; ++y) {
             int sx = xpos;
             for (int x = 0; x < width; ++x) {
-                if (visible(sx, sy)) draw_tile(code, color, hflip, vflip, sx, sy, gfx);
+                if (visible(sx, sy)) draw_tile(code, color, hflip, vflip, sx, sy, gfx, priority);
                 sx += xadv;
                 code++;
             }
@@ -224,7 +225,7 @@ void AtariMotionObjects::render_object(const uint16_t* entry, int xscroll, int y
         for (int x = 0; x < width; ++x) {
             int sy = ypos;
             for (int y = 0; y < height; ++y) {
-                if (visible(sx, sy)) draw_tile(code, color, hflip, vflip, sx, sy, gfx);
+                if (visible(sx, sy)) draw_tile(code, color, hflip, vflip, sx, sy, gfx, priority);
                 sy += yadv;
                 code++;
             }
