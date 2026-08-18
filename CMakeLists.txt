@@ -49,6 +49,7 @@ add_executable(dsp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/tms9918.cpp
+  src/video/v9938.cpp
   src/video/tms3556.cpp
   src/video/deco_bac06.cpp
   src/video/nes_ppu.cpp
@@ -69,6 +70,8 @@ add_executable(dsp
   src/machine/lynx_mikey.cpp
   src/machine/trdos_disk.cpp
   src/machine/wd1793.cpp
+  src/machine/msx_dsk.cpp
+  src/machine/rp5c01.cpp
   src/machine/beta128.cpp
   src/machine/mos6532.cpp
   src/machine/starwars_math.cpp
@@ -96,6 +99,7 @@ add_executable(dsp
   src/drivers/zx_clone.cpp
   src/drivers/amstrad_cpc.cpp
   src/drivers/msx1.cpp
+  src/drivers/msx2.cpp
   
   src/drivers/sms.cpp
   src/machine/sega_vdp.cpp
@@ -171,6 +175,7 @@ add_executable(dsp_tests
   src/video/nes_ppu.cpp
   src/video/tms3556.cpp
   src/video/tms9918.cpp
+  src/video/v9938.cpp
   src/video/mos6566.cpp
   src/video/gb_ppu.cpp
   src/video/avg_starwars.cpp
@@ -192,6 +197,8 @@ add_executable(dsp_tests
   src/machine/lynx_mikey.cpp
   src/machine/trdos_disk.cpp
   src/machine/wd1793.cpp
+  src/machine/msx_dsk.cpp
+  src/machine/rp5c01.cpp
   src/machine/beta128.cpp
   src/machine/mos6532.cpp
   src/machine/starwars_math.cpp
@@ -200,6 +207,7 @@ add_executable(dsp_tests
   src/machine/i8243.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
+  src/drivers/msx2.cpp
   src/drivers/nes.cpp
   src/drivers/c64.cpp
   src/drivers/gameboy.cpp
