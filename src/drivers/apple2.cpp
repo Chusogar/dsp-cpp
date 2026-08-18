@@ -290,8 +290,8 @@ void Apple2::init_synthetic_roms() {
 void Apple2::reset() {
     main_.fill(0);
     aux_.fill(0);
-    lc_bank2_.fill(0);
-    aux_lc_bank2_.fill(0);
+    lc_bank2_ram_.fill(0);
+    aux_lc_bank2_ram_.fill(0);
     text_ = true;
     mixed_ = false;
     page2_ = false;
@@ -308,7 +308,7 @@ void Apple2::reset() {
     c8rom_ = false;
     lc_read_ram_ = false;
     lc_write_ram_ = false;
-    lc_bank2_ = true;
+    lc_use_bank2_ = true;
     lc_prewrite_ = false;
     caps_lock_ = true;
     speaker_ = false;
@@ -327,7 +327,7 @@ void Apple2::reset() {
 
 void Apple2::access_language_card(uint16_t address) {
     const int n = address & 0x0F;
-    lc_bank2_ = (n & 0x08) == 0;
+    lc_use_bank2_ = (n & 0x08) == 0;
     const int mode = n & 3;
     const bool odd = (mode & 1) != 0;
     lc_read_ram_ = (mode == 0 || mode == 3);
@@ -344,8 +344,8 @@ void Apple2::access_language_card(uint16_t address) {
 
 uint8_t* Apple2::lc_ptr(uint16_t address, bool aux) {
     if (address < 0xE000) {
-        uint8_t* bank = aux ? aux_lc_bank2_.data() : lc_bank2_.data();
-        if (!lc_bank2_) {
+        uint8_t* bank = aux ? aux_lc_bank2_ram_.data() : lc_bank2_ram_.data();
+        if (!lc_use_bank2_) {
             bank = (aux ? aux_ : main_).data() + 0xD000;
         }
         return bank + (address - 0xD000);
@@ -403,7 +403,7 @@ uint8_t Apple2::read_io(uint16_t address) {
             return strobe;
         }
         case 0x11:
-            return lc_bank2_ ? 0x80 : 0x00;
+            return lc_use_bank2_ ? 0x80 : 0x00;
         case 0x12:
             return lc_read_ram_ ? 0x80 : 0x00;
         case 0x13:

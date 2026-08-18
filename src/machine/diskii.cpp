@@ -21,10 +21,10 @@ const uint8_t kDiskByte[0x40] = {
 };
 
 // Physical sector -> logical sector in a DOS 3.3-order image.
-const uint8_t kDosOrder[16] = {0x00, 0x07, 0x0E, 0x06, 0x0D, 0x05, 0x0C, 0x04,
-                               0x0B, 0x03, 0x0A, 0x02, 0x09, 0x01, 0x08, 0x0F};
-const uint8_t kProdosOrder[16] = {0x00, 0x08, 0x01, 0x09, 0x02, 0x0A, 0x03, 0x0B,
-                                  0x04, 0x0C, 0x05, 0x0D, 0x06, 0x0E, 0x07, 0x0F};
+const uint8_t kDosSkew[16] = {0x00, 0x07, 0x0E, 0x06, 0x0D, 0x05, 0x0C, 0x04,
+                              0x0B, 0x03, 0x0A, 0x02, 0x09, 0x01, 0x08, 0x0F};
+const uint8_t kProdosSkew[16] = {0x00, 0x08, 0x01, 0x09, 0x02, 0x0A, 0x03, 0x0B,
+                                 0x04, 0x0C, 0x05, 0x0D, 0x06, 0x0E, 0x07, 0x0F};
 
 std::string to_lower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(),
@@ -154,9 +154,9 @@ void DiskIi::reset() {
 int DiskIi::dos_sector_for_physical(int physical) const {
     physical &= 0x0F;
     if (kind_ == kProdosOrder) {
-        return kProdosOrder[physical];
+        return kProdosSkew[physical];
     }
-    return kDosOrder[physical];
+    return kDosSkew[physical];
 }
 
 void DiskIi::encode_track(int track) {
@@ -375,7 +375,12 @@ uint8_t DiskIi::read_io(uint8_t offset) {
             break;
         case 0xC:
             q6_ = false;
-            if (q7_ && write_mode_) {
+            if (!q7_) {
+                const uint8_t value = latch_;
+                latch_ &= 0x7F;
+                return value;
+            }
+            if (write_mode_) {
                 write_nibble(latch_);
             }
             return latch_;

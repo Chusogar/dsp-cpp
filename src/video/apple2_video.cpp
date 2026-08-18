@@ -58,44 +58,46 @@ uint8_t Apple2Video::glyph_row(const uint8_t* chargen, int chargen_size, uint8_t
         return 0x7F;
     }
 
-    int index = code;
+    unsigned index = code;
+    unsigned invert_mask = iie ? 0x7Fu : 0x00u;
     const bool flash = ((flash_phase / 15) & 1) != 0;
-    if (!iie || chargen_size < 0x1000) {
-        if (code < 0x40) {
-            *invert = true;
-            index = code & 0x3F;
-        } else if (code < 0x80) {
-            *invert = flash && !altcharset;
-            index = code & 0x3F;
-        } else {
-            index = code & 0x3F;
-        }
-        const int addr = (index * 8 + (row & 7)) % chargen_size;
-        return chargen[addr];
-    }
 
-    // IIe 4K character generator: two 2K banks (primary / MouseText).
-    if (code < 0x40) {
-        *invert = true;
-        index = code;
-    } else if (code < 0x80) {
-        if (altcharset) {
-            index = code;  // MouseText in the upper 2K, no flash
-        } else {
-            *invert = flash;
-            index = code & 0x3F;
+    if (iie) {
+        if (!altcharset) {
+            if (code >= 0x40 && code <= 0x7F) {
+                index = code & 0x3F;
+                if (flash) {
+                    invert_mask ^= 0x7F;
+                }
+            }
+        } else if (code >= 0x60 && code <= 0x7F) {
+            index = code | 0x80;
+            invert_mask ^= 0x7F;
         }
     } else {
-        index = code;
+        if (code >= 0x40 && code <= 0x7F) {
+            if (flash) {
+                invert_mask ^= 0x7F;
+            }
+        } else if (code < 0x40) {
+            invert_mask ^= 0x7F;
+        }
     }
-    int addr = (index & 0xFF) * 8 + (row & 7);
-    if (altcharset && code >= 0x40 && code < 0x80) {
-        addr += 0x800;
+
+    int addr = int((index * 8 + unsigned(row & 7)) % unsigned(chargen_size));
+    unsigned bits = chargen[addr] & 0x7F;
+    bits ^= invert_mask;
+    if (!iie) {
+        // Original ][ / II+ character ROM is stored mirrored vs the IIe.
+        unsigned reversed = 0;
+        for (int i = 0; i < 7; i++) {
+            if (bits & (1u << i)) {
+                reversed |= 1u << (6 - i);
+            }
+        }
+        bits = reversed;
     }
-    if (addr >= chargen_size) {
-        addr %= chargen_size;
-    }
-    return chargen[addr];
+    return uint8_t(bits);
 }
 
 void Apple2Video::draw_text_row(uint32_t* dest, int row, const uint8_t* main, const uint8_t* aux,
@@ -120,7 +122,7 @@ void Apple2Video::draw_text_row(uint32_t* dest, int row, const uint8_t* main, co
             const uint8_t bits = glyph_row(chargen, chargen_size, code, y, &invert);
             for (int x = 0; x < 7; x++) {
                 const bool on = ((bits >> x) & 1) != 0;
-                const uint32_t color = (on ^ invert) ? kWhite : kBlack;
+                const uint32_t color = on ? kWhite : kBlack;
                 put(dest, col * 7 + x, row * 8 + y, color, xscale);
             }
         }

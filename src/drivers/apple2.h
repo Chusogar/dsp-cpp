@@ -82,8 +82,8 @@ private:
 
     std::array<uint8_t, 0x10000> main_{};
     std::array<uint8_t, 0x10000> aux_{};
-    std::array<uint8_t, 0x1000> lc_bank2_{};
-    std::array<uint8_t, 0x1000> aux_lc_bank2_{};
+    std::array<uint8_t, 0x1000> lc_bank2_ram_{};
+    std::array<uint8_t, 0x1000> aux_lc_bank2_ram_{};
     std::array<uint8_t, 0x4000> rom_{};
     std::array<uint8_t, 0x1000> chargen_{};
     std::array<uint8_t, 0x100> disk_prom_{};
@@ -106,7 +106,7 @@ private:
     bool c8rom_ = false;
     bool lc_read_ram_ = false;
     bool lc_write_ram_ = false;
-    bool lc_bank2_ = true;
+    bool lc_use_bank2_ = true;
     bool lc_prewrite_ = false;
     bool caps_lock_ = true;
     bool speaker_ = false;
