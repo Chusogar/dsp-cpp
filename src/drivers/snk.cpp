@@ -93,28 +93,28 @@ const std::vector<RomEntry> kIkariProms = {
 };
 
 const std::vector<RomEntry> kAthenaMain = {
-    {"up02_p4.rom", 0x4000, 0x0000, 0x900a113c},
-    {"up02_m4.rom", 0x8000, 0x4000, 0x61c69474},
+    {"athena_p1.4p", 0x4000, 0x0000, 0x900a113c},
+    {"athena_p2.4m", 0x8000, 0x4000, 0x61c69474},
 };
 const std::vector<RomEntry> kAthenaSub = {
-    {"up02_p8.rom", 0x4000, 0x0000, 0xdf50af7e},
-    {"up02_m8.rom", 0x8000, 0x4000, 0xf3c933df},
+    {"athena_p3.8p", 0x4000, 0x0000, 0xdf50af7e},
+    {"athena_p4.8m", 0x8000, 0x4000, 0xf3c933df},
 };
 const std::vector<RomEntry> kAthenaSnd = {
-    {"up02_g6.rom", 0x4000, 0x0000, 0x42dbe029},
-    {"up02_k6.rom", 0x8000, 0x4000, 0x596f1c8a},
+    {"p5.6g", 0x4000, 0x0000, 0x42dbe029},
+    {"p6.6k", 0x8000, 0x4000, 0x596f1c8a},
 };
-const std::vector<RomEntry> kAthenaChars = {{"up01_d2.rom", 0x4000, 0, 0x18b4bcca}};
-const std::vector<RomEntry> kAthenaTiles = {{"up01_b2.rom", 0x8000, 0, 0xf269c0eb}};
+const std::vector<RomEntry> kAthenaChars = {{"p11.2d", 0x4000, 0, 0x18b4bcca}};
+const std::vector<RomEntry> kAthenaTiles = {{"p10.2b", 0x8000, 0, 0xf269c0eb}};
 const std::vector<RomEntry> kAthenaSp16 = {
-    {"up01_p2.rom", 0x8000, 0x00000, 0xc63a871f},
-    {"up01_s2.rom", 0x8000, 0x08000, 0x760568d8},
-    {"up01_t2.rom", 0x8000, 0x10000, 0x57b35c73},
+    {"p7.2p", 0x8000, 0x00000, 0xc63a871f},
+    {"p8.2s", 0x8000, 0x08000, 0x760568d8},
+    {"p9.2t", 0x8000, 0x10000, 0x57b35c73},
 };
 const std::vector<RomEntry> kAthenaProms = {
-    {"up02_c2.rom", 0x400, 0x000, 0x294279ae},
-    {"up02_b1.rom", 0x400, 0x400, 0xd25c9099},
-    {"up02_c1.rom", 0x400, 0x800, 0xa4a4e7dc},
+    {"3.2c", 0x400, 0x000, 0x294279ae},
+    {"2.1b", 0x400, 0x400, 0xd25c9099},
+    {"1.1c", 0x400, 0x800, 0xa4a4e7dc},
 };
 
 const std::vector<RomEntry> kTnk3Main = {
