@@ -9,7 +9,7 @@ Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 **OutRun**, **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
 **Altered Beast**).
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
-**Commodore 64**, **EXL-100** / **EXELTEL**. Consoles: NES, Game Boy / Game Boy
+**MSX1** / **MSX2**, **Commodore 64**, **EXL-100** / **EXELTEL**. Consoles: NES, Game Boy / Game Boy
 Color, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
 **Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
 
@@ -75,6 +75,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | WD1793 / Beta 128 | new (MAME `beta_m.cpp`, `wd_fdc`) | TR-DOS FDC, TRD and SCL images |
 | Pentagon 1024 | new (MAME `pentagon.cpp`) | 1024 KB, uncontended 320-line ULA, GLUK, Beta disk |
 | Scorpion ZS-256 | new (MAME `scorpion.cpp`) | 256 KB, port $1FFD, Magic NMI, Beta disk |
+| Yamaha V9938 | new (MSX2 VDP) | 128 KiB VRAM, SCREEN 0–8, sprites, command engine |
+| MSX floppy / RP-5C01 | new | WD2793-compatible FDC (512-byte FAT12 `.dsk`) and RTC |
+| MSX2 driver | new (NMS 8250 layout) | Z80, V9938, 256 KiB mapper RAM, disk ROM, cartridges |
 | YM2612 (OPN2) | new (from `fmopn.pas` + YM2612 DAC) | Six FM channels and PCM DAC |
 | 315-5313 VDP | `src/consolas/sega_315_5313.pas` | Planes A/B, window, sprites, DMA, CRAM |
 | Genesis / Mega Drive | `src/consolas/genesis.pas` | 68000 + Z80, VDP, YM2612+PSG, 3-button pads |
@@ -134,6 +137,8 @@ holding the individual files:
 ./build/dsp --game exl100 /path/to/exl100.zip
 ./build/dsp --game pentagon --disk game.trd /path/to/pentagon-roms/
 ./build/dsp --game scorpion --disk game.scl /path/to/scorpion.rom
+./build/dsp --game msx /path/to/msx1-bios/
+./build/dsp --game msx2 --disk game.dsk /path/to/msx2-roms/
 ./build/dsp --game starwars /path/to/starwars.zip
 ./build/dsp --game outrun /path/to/outrun.zip
 ./build/dsp --game hangon /path/to/hangon.zip
@@ -170,7 +175,7 @@ Options:
 --frames N         frames to run in headless mode (default 300)
 --tape FILE        tape/cart: Spectrum/CPC/C64 (.tap/.tzx/.cdt/.prg/.t64),
                    EXL-100 / EXELTEL cartridge, or PV-2000 cart (.bin/.rom)
---disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, Pentagon/Scorpion .trd/.scl
+--disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, MSX2 .dsk, Pentagon/Scorpion .trd/.scl
 ```
 
 ### Atari System 1 (Indiana Jones, Marble Madness, Peter Pack Rat, Road Runner)
@@ -402,6 +407,44 @@ archive; pass the zip or the extracted files.
 TR-DOS is paged in by executing at `$3D00` while the 48K ROM is selected
 (`RANDOMIZE USR 15616`). Kempston on port `$1F` is disabled while DOS is paged
 so it does not clash with the FDC.
+
+### MSX1 and MSX2
+
+MSX1 (`--game msx`) is a Panasonic-style machine: Z80 at 3.579545 MHz, TMS9918A,
+AY-3-8910, i8255 slot/keyboard/tape, 64 KiB RAM. It needs a 32 KiB MSX1 BIOS
+(`mpc100bios.rom` / generic `MSX.rom`). Cartridges (`.rom`) go in slot 1 via
+`--tape` / `load_media`; cassettes are `.tzx` / `.cas`.
+
+MSX2 (`--game msx2`, aliases `nms8250` and `philips-msx2`) follows the Philips
+NMS 8250 map rather than a Pascal original: Yamaha V9938 (512×212, 128 KiB
+VRAM), 256 KiB mapper RAM, RP-5C01 RTC, and a WD2793 disk interface.
+
+| Slot | Contents |
+| --- | --- |
+| 0 | 32 KiB main BIOS (pages 0–1) |
+| 1 | cartridge (linear ≤48 KiB, ASCII16 above that) |
+| 3 expanded | 3-0: 16 KiB sub-ROM; 3-1: mapper RAM; 3-2: 16 KiB disk ROM + FDC |
+
+ROMs are **not** shipped. A directory or zip with these names works (MAME
+`nms8250` hashes in brackets):
+
+* `MSX2.ROM` / `nms8250_basic-bios2.rom` (32 KiB, CRC `6cdaf3a5`)
+* `MSX2EXT.ROM` / `nms8250_msx2sub.rom` (16 KiB, CRC `66237ecf`)
+* `nms8250_disk.rom` / `DISK.ROM` (16 KiB, optional; floppy disabled if missing)
+
+[RetroBIOS](https://github.com/Abdess/retrobios) publishes matching dumps under
+`bios/Microsoft/MSX/`. The FDC accepts raw FAT12 `.dsk` images (720K / 640K /
+360K / 180K) and CPC-style `MV - CPC` / `EXTENDED` DSK files, decoded at both
+type 1 (`$7FF8`) and type 2 (`$7FB8`) addresses.
+
+```bash
+./build/dsp --game msx /path/to/msx1-bios/
+./build/dsp --game msx2 /path/to/msx2-roms/
+./build/dsp --game msx2 --disk game.dsk /path/to/nms8250.zip
+```
+
+The host keyboard is the MSX matrix (same layout as MSX1). Joysticks are on the
+AY-3-8910 port A. F6 toggles cassette play when a `.cas`/`.tzx` is loaded.
 
 ### Casio PV-2000
 
@@ -666,8 +709,8 @@ cmake --build build --target dsp_zexdoc
 ```
 src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805, µPD7801, TMS7000, NEC V30, MCS-51
 src/sound/      AY-3-8910, SN76496, NES APU, SID, µPD1771C, QSound, TMS5220, Sega PCM
-src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556, AVG, Sega 16
-src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, 6532, Lynx, mathbox, 315-5195
+src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556, V9938, AVG, Sega 16
+src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, 6532, Lynx, mathbox, 315-5195, MSX FDC/RTC
 src/drivers/    the machines themselves (memory map, video, inputs)
 src/frontend/   SDL2 front end, driven through the core/machine.h interface
 src/core/       ROM loader (directory or zip) and the Machine interface

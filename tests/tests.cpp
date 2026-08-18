@@ -28,6 +28,7 @@
 #include "drivers/exelv.h"
 #include "drivers/gameboy.h"
 #include "drivers/mcr.h"
+#include "drivers/msx2.h"
 #include "drivers/nes.h"
 #include "drivers/pv2000.h"
 #include "drivers/scv.h"
@@ -43,8 +44,10 @@
 #include "machine/beta128.h"
 #include "machine/kabuki.h"
 #include "machine/lynx_suzy.h"
+#include "machine/msx_dsk.h"
 #include "machine/mos6526.h"
 #include "machine/mos6532.h"
+#include "machine/rp5c01.h"
 #include "machine/slapstic.h"
 #include "machine/spectrum_tape.h"
 #include "machine/trdos_disk.h"
@@ -64,6 +67,7 @@
 #include "sound/ym2612.h"
 #include "sound/sega_pcm.h"
 #include "sound/upd7759.h"
+#include "video/v9938.h"
 #include "video/atari_mo.h"
 #include "video/gb_ppu.h"
 #include "video/gfx.h"
@@ -2887,6 +2891,165 @@ void test_genesis_boot() {
     check((th_low & 0x1000) == 0, "Genesis pad A is visible with TH low");
 }
 
+void write_msx2_dummy_roms(const std::string& dir, bool with_disk) {
+    std::filesystem::create_directories(dir);
+    std::vector<uint8_t> bios(0x8000, 0x00);
+    bios[0] = 0x76;  // HALT
+    {
+        std::ofstream out(dir + "/MSX2.ROM", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bios.data()), std::streamsize(bios.size()));
+    }
+    std::vector<uint8_t> sub(0x4000, 0xff);
+    sub[0] = 'C';
+    sub[1] = 'D';
+    {
+        std::ofstream out(dir + "/MSX2EXT.ROM", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(sub.data()), std::streamsize(sub.size()));
+    }
+    if (with_disk) {
+        std::vector<uint8_t> disk(0x4000, 0xff);
+        disk[0] = 'A';
+        disk[1] = 'B';
+        {
+            std::ofstream out(dir + "/nms8250_disk.rom", std::ios::binary);
+            out.write(reinterpret_cast<const char*>(disk.data()), std::streamsize(disk.size()));
+        }
+    }
+}
+
+void test_v9938_status_and_hmmv() {
+    dsp::V9938 vdp(nullptr);
+    vdp.reset();
+    auto setreg = [&](int index, uint8_t value) {
+        vdp.register_write(value);
+        vdp.register_write(uint8_t(0x80 | index));
+    };
+    setreg(15, 1);
+    uint8_t id = vdp.status_read();
+    check((id & 0x3e) == 0, "V9938 status 1 identification bits are 0");
+
+    setreg(0, 0x06);   // GRAPHIC 4
+    setreg(1, 0x40);   // display on
+    setreg(7, 0x01);   // backdrop 1
+    setreg(36, 0);     // DX
+    setreg(37, 0);
+    setreg(38, 0);     // DY
+    setreg(39, 0);
+    setreg(40, 32);    // NX
+    setreg(41, 0);
+    setreg(42, 8);     // NY
+    setreg(43, 0);
+    setreg(44, 0x0f);  // white
+    setreg(45, 0);
+    setreg(46, 0xc0);  // HMMV
+    check(!vdp.command_executing(), "V9938 HMMV completes immediately");
+    for (int line = 0; line < 16; line++) vdp.refresh_line(line, 262);
+    const uint32_t* fb = vdp.framebuffer();
+    const uint32_t pixel = fb[2 * dsp::V9938::kScreenWidth + 4];
+    check(((pixel >> 16) & 0xff) > 180 && ((pixel >> 8) & 0xff) > 180 && (pixel & 0xff) > 180,
+          "V9938 HMMV fills GRAPHIC 4 pixels with palette colour 15");
+}
+
+void test_msx_disk_and_fdc() {
+    std::vector<uint8_t> image(737280, 0xe5);
+    image[0] = 0xeb;
+    image[1] = 0xfe;
+    image[2] = 0x90;
+    std::memcpy(image.data() + 3, "MSXTEST ", 8);
+    dsp::MsxDisk disk;
+    std::string error;
+    check(disk.load_bytes(image.data(), image.size(), &error), "720 KiB raw DSK is accepted");
+    check(disk.tracks() == 80 && disk.heads() == 2 && disk.sectors_per_track() == 9,
+          "720 KiB DSK is 80 tracks, 2 sides, 9 sectors");
+    const uint8_t* boot = disk.sector(0, 0, 1);
+    check(boot != nullptr && boot[0] == 0xeb && std::memcmp(boot + 3, "MSXTEST ", 8) == 0,
+          "boot sector is track 0 head 0 sector 1");
+
+    dsp::MsxFdc fdc;
+    fdc.reset();
+    fdc.set_disk(&disk);
+    fdc.command_w(0x80);
+    check((fdc.status_r() & 0x02) != 0, "MSX FDC read sector raises DRQ");
+    check(fdc.data_r() == 0xeb, "MSX FDC returns the first boot-sector byte");
+    for (int i = 1; i < 512; i++) (void)fdc.data_r();
+    check(fdc.intrq(), "MSX FDC sector read completes with INTRQ");
+}
+
+void test_rp5c01_fixed_clock() {
+    dsp::Rp5c01 rtc;
+    rtc.reset();
+    rtc.set_address(4);
+    check(rtc.read() == 7, "RP-5C01 hours ones is 7");
+    rtc.set_address(7);
+    check(rtc.read() == 8, "RP-5C01 day ones is 8");
+}
+
+void test_msx2_missing_roms_mapper_and_disk() {
+    dsp::Msx2 missing;
+    std::string error = "unset";
+    check(!missing.init("/no/such/msx2.zip", &error), "MSX2 init fails without the BIOS");
+    check(error.find("not found") != std::string::npos || error.find("missing") != std::string::npos,
+          "MSX2 init reports why the BIOS is missing");
+    check(std::strcmp(missing.title(), "MSX2") == 0, "MSX2 title");
+    check(missing.screen_width() == 512 && missing.screen_height() == 212, "MSX2 screen is 512x212");
+    check(missing.uses_keyboard(), "MSX2 reads the host keyboard");
+
+    const std::string dir = "/tmp/dsp-msx2-test";
+    write_msx2_dummy_roms(dir, true);
+    dsp::Msx2 boot;
+    error.clear();
+    check(boot.init(dir, &error), "MSX2 loads dummy BIOS/sub-ROM/disk ROM from a directory");
+    check(boot.disk_rom_loaded(), "MSX2 reports the disk ROM as loaded");
+    for (int frame = 0; frame < 3; frame++) boot.run_frame();
+    check(boot.framebuffer() != nullptr, "MSX2 produces a framebuffer");
+
+    boot.debug_write_port(0xa8, 0xff);          // all pages slot 3
+    boot.debug_write_byte(0xffff, 0x55);        // all subslots 1 (mapper RAM)
+    check(boot.debug_read_byte(0xffff) == uint8_t(~0x55),
+          "expanded slot 3 reads the inverted subslot register at $FFFF");
+    boot.debug_write_port(0xff, 0);
+    boot.debug_write_byte(0xc000, 0xa5);
+    check(boot.debug_read_byte(0xc000) == 0xa5, "mapper RAM segment 0 is writable in page 3");
+    boot.debug_write_port(0xff, 1);
+    check(boot.debug_read_byte(0xc000) == 0, "mapper port $FF switches the RAM segment");
+    boot.debug_write_port(0xff, 0);
+    check(boot.debug_read_byte(0xc000) == 0xa5, "mapper RAM keeps the previous segment");
+
+    boot.debug_write_byte(0xffff, 0xaa);  // subslot 2: disk ROM
+    check(boot.debug_read_byte(0x4000) == 'A' && boot.debug_read_byte(0x4001) == 'B',
+          "disk ROM is visible in slot 3-2 page 1");
+
+    std::vector<uint8_t> dsk(737280, 0xe5);
+    const std::string dsk_path = dir + "/blank.dsk";
+    {
+        std::ofstream out(dsk_path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(dsk.data()), std::streamsize(dsk.size()));
+    }
+    error.clear();
+    check(boot.load_media(dsk_path, &error), "MSX2 attaches a 720 KiB .dsk");
+
+    auto exists = [](const char* path) {
+        std::ifstream probe(path);
+        return bool(probe);
+    };
+    const char* romdir = "/tmp/roms/msx2";
+    if (exists((std::string(romdir) + "/MSX2.ROM").c_str()) ||
+        exists((std::string(romdir) + "/nms8250_basic-bios2.rom").c_str())) {
+        dsp::Msx2 real;
+        error.clear();
+        check(real.init(romdir, &error), "MSX2 BIOS set loads from /tmp/roms/msx2");
+        for (int frame = 0; frame < 220; frame++) real.run_frame();
+        const uint32_t* fb = real.framebuffer();
+        const int n = real.screen_width() * real.screen_height();
+        int lit = 0;
+        for (int i = 0; i < n; i++) {
+            const uint32_t p = fb[i];
+            if (((p >> 16) & 0xff) + ((p >> 8) & 0xff) + (p & 0xff) > 40) lit++;
+        }
+        check(lit > 200, "MSX2 BIOS paints the V9938 framebuffer");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -2975,6 +3138,10 @@ int main() {
     test_ym2612();
     test_genesis_vdp();
     test_genesis_boot();
+    test_v9938_status_and_hmmv();
+    test_msx_disk_and_fdc();
+    test_rp5c01_fixed_clock();
+    test_msx2_missing_roms_mapper_and_disk();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
