@@ -2161,8 +2161,12 @@ void test_pv2000_missing_roms_and_dummy_bios() {
         for (int frame = 0; frame < 180; frame++) real.run_frame();
         const uint32_t* fb = real.framebuffer();
         const int n = real.screen_width() * real.screen_height();
-        std::set<uint32_t> colors(fb, fb + n);
-        check(int(colors.size()) > 1, "PV-2000 BIOS draws more than one colour");
+        bool has_green = false, has_white = false;
+        for (int i = 0; i < n; i++) {
+            if (fb[i] == 0xff21b03bu) has_green = true;  // TMS colour 12
+            if (fb[i] == 0xffffffffu) has_white = true;
+        }
+        check(has_green && has_white, "PV-2000 BIOS menu is white text on green");
     }
 }
 

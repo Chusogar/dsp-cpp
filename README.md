@@ -406,9 +406,11 @@ so it does not clash with the FDC.
 ### Casio PV-2000
 
 Home computer/console hybrid from 1983, ported from `pv2000.pas`. The positional
-argument is the 16 KiB BIOS (`hn613128pc64.bin`, MAME set `pv2000.zip`); the
-cartridge (8 KiB or 16 KiB `.bin` / `.rom`, plain or zipped) is attached with
-`--tape`, the same way ColecoVision carts are.
+argument is the 16 KiB BIOS (`hn613128pc64.bin`, CRC `8f31f297`, MAME set
+`pv2000.zip`). A verified dump is in
+[Abdess/retrobios](https://github.com/Abdess/retrobios) at
+`bios/Casio/PV-2000/`. The cartridge (8 KiB or 16 KiB `.bin` / `.rom`, plain or
+zipped) is attached with `--tape`.
 
 ```bash
 ./build/dsp --game pv2000 /path/to/pv2000.zip
