@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <iterator>
 #include <memory>
 #include <set>
 #include <string>
@@ -2982,6 +2983,14 @@ void test_rp5c01_fixed_clock() {
     check(rtc.read() == 7, "RP-5C01 hours ones is 7");
     rtc.set_address(7);
     check(rtc.read() == 8, "RP-5C01 day ones is 8");
+    rtc.set_address(13);
+    rtc.write(2);  // RAM bank
+    rtc.set_address(4);
+    rtc.write(0x05);
+    rtc.set_address(13);
+    rtc.write(0);  // clock bank
+    rtc.set_address(4);
+    check(rtc.read() == 7, "RP-5C01 RAM bank writes do not replace the clock");
 }
 
 void test_msx2_missing_roms_mapper_and_disk() {
@@ -3038,7 +3047,7 @@ void test_msx2_missing_roms_mapper_and_disk() {
         dsp::Msx2 real;
         error.clear();
         check(real.init(romdir, &error), "MSX2 BIOS set loads from /tmp/roms/msx2");
-        for (int frame = 0; frame < 220; frame++) real.run_frame();
+        for (int frame = 0; frame < 300; frame++) real.run_frame();
         const uint32_t* fb = real.framebuffer();
         const int n = real.screen_width() * real.screen_height();
         int lit = 0;

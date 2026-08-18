@@ -59,6 +59,7 @@ public:
     uint8_t debug_read_port(uint16_t port) { return read_port(port); }
     void debug_write_port(uint16_t port, uint8_t value) { write_port(port, value); }
     bool disk_rom_loaded() const { return disk_rom_loaded_; }
+    uint8_t debug_vdp_reg(int index) const { return vdp_.register_value(index); }
 
 private:
     uint8_t read_byte(uint16_t address);

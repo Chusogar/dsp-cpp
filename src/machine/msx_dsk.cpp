@@ -60,7 +60,7 @@ bool MsxDisk::load_file(const std::string& path, std::string* error) {
         if (error) *error = "empty disk image";
         return false;
     }
-    std::vector<uint8_t> data(size_t(size));
+    std::vector<uint8_t> data(static_cast<size_t>(size), uint8_t(0));
     in.read(reinterpret_cast<char*>(data.data()), size);
     if (!in) {
         if (error) *error = "cannot read " + path;
