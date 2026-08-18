@@ -6,7 +6,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <iterator>
 #include <memory>
 #include <set>
 #include <string>
@@ -3132,6 +3131,18 @@ void test_diskii_encode_roundtrip() {
         if (n == 0xD5) saw_d5 = true;
     }
     check(saw_d5, "Disk II track contains an address/data prologue");
+
+    disk.read_io(0xE9);  // motor on
+    disk.tick(32);
+    check((disk.latch() & 0x80) != 0, "Disk II latch bit 7 is set when a nibble is ready");
+    const int pos = disk.nibble_pos();
+    disk.tick(32 * 40);
+    check(disk.nibble_pos() == pos, "Disk II holds an unread nibble instead of dropping it");
+    const uint8_t first = disk.read_io(0xEC);
+    check((first & 0x80) != 0, "Disk II $C0EC returns the held nibble with bit 7 set");
+    check((disk.latch() & 0x80) == 0, "Disk II $C0EC consumes the nibble (clears bit 7)");
+    disk.tick(32);
+    check(disk.nibble_pos() != pos, "Disk II advances after the CPU consumes the nibble");
 }
 
 void test_apple2_missing_roms_and_dummy() {
@@ -3215,6 +3226,41 @@ void test_apple2_roms_if_present() {
         plus.reset();
         for (int frame = 0; frame < 240; frame++) plus.run_frame();
         check(count_lit_pixels(plus) > 50, "Disk II boot PROM paints from the synthetic sector");
+    }
+
+    const char* compilation = "/tmp/roms/apple2/spyhunter-compilation.dsk";
+    if (exists(prom) && exists(concat) && exists(compilation)) {
+        std::ifstream in(compilation, std::ios::binary);
+        std::vector<uint8_t> image((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+        dsp::Apple2 plus(dsp::Apple2::Model::IIPlus);
+        std::string error;
+        check(plus.init(concat, &error), "Apple II+ loads firmware for the compilation disk");
+        check(plus.disk().load_bytes(image.data(), image.size(), compilation, &error),
+              "Spy Hunter compilation .dsk loads");
+        plus.reset();
+        for (int frame = 0; frame < 220; frame++) plus.run_frame();
+        check(plus.peek(0x0800) == 0x01, "boot0 loaded track 0 sector 0 into $0800");
+        static const uint8_t kBoot1Phys[] = {0x0A, 0x0C, 0x0E, 0x01, 0x03,
+                                            0x05, 0x07, 0x09, 0x0B, 0x0D};
+        static const uint8_t kDosSkew[] = {0x00, 0x07, 0x0E, 0x06, 0x0D, 0x05, 0x0C, 0x04,
+                                           0x0B, 0x03, 0x0A, 0x02, 0x09, 0x01, 0x08, 0x0F};
+        bool pages_ok = true;
+        for (int i = 0; i < 10; i++) {
+            const int phys = kBoot1Phys[i];
+            const int logical = kDosSkew[phys];
+            const uint16_t page = uint16_t((0x3F - i) << 8);
+            for (int b = 0; b < 256; b++) {
+                if (plus.peek(uint16_t(page + b)) != image[logical * 256 + b]) {
+                    pages_ok = false;
+                    break;
+                }
+            }
+            if (!pages_ok) {
+                break;
+            }
+        }
+        check(pages_ok, "boot1 loaded DOS pages $3600-$3FFF from track 0");
     }
 }
 

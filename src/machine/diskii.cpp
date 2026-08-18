@@ -163,6 +163,8 @@ void DiskIi::encode_track(int track) {
     nibbles_.clear();
     encoded_track_ = track;
     nibble_pos_ = 0;
+    latch_ = 0;
+    cycles_until_nibble_ = kCyclesPerNibble;
     dirty_ = false;
     if (!loaded_ || track < 0 || track >= kTracks) {
         return;
@@ -339,9 +341,16 @@ void DiskIi::tick(int cycles) {
     cycles_until_nibble_ -= cycles;
     while (cycles_until_nibble_ <= 0) {
         cycles_until_nibble_ += kCyclesPerNibble;
-        if (!q7_) {
-            latch_ = next_nibble();
+        if (q7_) {
+            continue;
         }
+        // Hold an unread nibble (bit 7 still set). The P5 PROM data-field
+        // loop is only ~27 cycles; if tick() overwrote the latch on a 32-cycle
+        // cadence the CPU would miss bytes and DOS 3.3 would never relocate.
+        if ((latch_ & 0x80) != 0) {
+            continue;
+        }
+        latch_ = next_nibble();
     }
 }
 

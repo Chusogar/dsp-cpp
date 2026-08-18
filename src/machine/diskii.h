@@ -31,6 +31,8 @@ public:
 
     int half_track() const { return half_track_; }
     bool motor_on() const { return motor_on_; }
+    int nibble_pos() const { return nibble_pos_; }
+    uint8_t latch() const { return latch_; }
 
     // Rebuilds the nibble stream of the current track (used by tests).
     void rebuild_track();
