@@ -9,7 +9,8 @@ Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 **OutRun**, **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
 **Altered Beast**).
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
-**MSX1** / **MSX2**, **Commodore 64**, **EXL-100** / **EXELTEL**. Consoles: NES, Game Boy / Game Boy
+**MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**,
+**EXL-100** / **EXELTEL**. Consoles: NES, Game Boy / Game Boy
 Color, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
 **Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
 
@@ -60,6 +61,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | NES mappers | `src/consolas/nes_mappers.pas` | 0, 1 (MMC1), 2, 3, 4 (MMC3/MMC6), 7, 9–11, 13, 15, 34, 66, 68, 70, 71, 76, 79/146, 87, 88, 93–95, 113, 180, 184, 185, 206 |
 | NES driver | `src/consolas/nes.pas` | NTSC 256×240, iNES carts (plain or zipped), two controllers |
 | C64 driver | `ordenadores/commodore64.pas` | PLA, 6510 port, keyboard matrix, TAP/PRG/T64/D64 loaders |
+| Apple Disk II | new (AppleWin 6-and-2 / MAME `a2diskiing`) | Slot 6 analog card, DOS 3.3 `.dsk`/`.do`, ProDOS `.po`, `.nib` |
+| Apple II video | new | 40/80-col text, lo-res, hi-res, double hi-res, 560×384 |
+| Apple II driver | new (MAME `apple2` / `apple2e`) | II, II+, IIe, IIe Enhanced, language card, IIe MMU, Disk II |
 | Game Boy driver | `src/consolas/gb.pas` | DMG / CGB from cart header `$0143`, optional boot ROMs |
 | VIC-II | `mos6566.pas` | PAL 6569, 384×270, sprites, bad lines |
 | MOS 6526 CIA | `mos6526_old.pas` | Two chips: CIA1 IRQ + keyboard, CIA2 NMI + VIC bank |
@@ -139,6 +143,8 @@ holding the individual files:
 ./build/dsp --game scorpion --disk game.scl /path/to/scorpion.rom
 ./build/dsp --game msx /path/to/msx1-bios/
 ./build/dsp --game msx2 --disk game.dsk /path/to/msx2-roms/
+./build/dsp --game apple2 /path/to/apple2p.zip
+./build/dsp --game apple2e --disk game.dsk /path/to/apple2e.zip
 ./build/dsp --game starwars /path/to/starwars.zip
 ./build/dsp --game outrun /path/to/outrun.zip
 ./build/dsp --game hangon /path/to/hangon.zip
@@ -175,7 +181,8 @@ Options:
 --frames N         frames to run in headless mode (default 300)
 --tape FILE        tape/cart: Spectrum/CPC/C64 (.tap/.tzx/.cdt/.prg/.t64),
                    EXL-100 / EXELTEL cartridge, or PV-2000 cart (.bin/.rom)
---disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, MSX2 .dsk, Pentagon/Scorpion .trd/.scl
+--disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, MSX2 .dsk, Apple II .dsk/.do/.po/.nib,
+                   Pentagon/Scorpion .trd/.scl
 ```
 
 ### Atari System 1 (Indiana Jones, Marble Madness, Peter Pack Rat, Road Runner)
@@ -533,6 +540,40 @@ Left Ctrl is CTRL, Tab is RUN/STOP). F1/F3/F5/F7 are the C64 function keys.
 F6 starts and stops a `.tap` cassette (the 6510 motor bit still has to enable
 the datasette). Arrows are also a joystick in Control Port 2. There is no 1541:
 a `.d64` image injects its first PRG into RAM.
+
+### Apple II, II+, IIe and IIe Enhanced
+
+There is no Pascal original in dsp-emulator; the driver follows the MAME
+`apple2` / `apple2e` map (6502 at 1.020484 MHz, 262×65 cycles per frame) with a
+Disk II card in slot 6. Four `--game` names pick the firmware:
+
+| `--game` | Aliases | CPU | Firmware |
+| --- | --- | --- | --- |
+| `apple2` | `appleii`, `apple2plus`, `apple2p` | 6502 | II+ Applesoft + Autostart (12 KiB at `$D000`) |
+| `apple2orig` | `apple2integer` | 6502 | original ][ Integer BASIC + Autostart (8 KiB at `$E000`) |
+| `apple2e` | `appleiie` | 6502 | unenhanced IIe (16 KiB `$C000`–`$FFFF`) |
+| `apple2ee` | `apple2eplus`, `apple2e+`, `apple2enhanced` | 65C02 | IIe Enhanced + MouseText |
+
+ROMs are **not** shipped. Point the emulator at a directory or zip from
+[Abdess/retrobios](https://github.com/Abdess/retrobios) (`bios/Apple/Apple II/`):
+
+* II+: MAME `apple2p.zip` (`341-0011.d0` … `341-0020-00.f8` + `341-0036.chr`) or the
+  concatenated `apple2-asoft-auto.rom` (12 KiB)
+* IIe: `apple2e.zip` (`342-0135-b.64` + `342-0134-a.64` + `342-0133-a.chr`)
+* IIe Enhanced: `apple2ee.zip` (`342-0304-a.e10` + `342-0303-a.e8` + `342-0265-a.chr`)
+* Disk II P5 PROM (optional, slot 6): `341-0027-a.p5` / `disk2-16boot.rom` (256 bytes).
+  Without it Autostart drops into BASIC; with it a missing floppy waits on the drive
+  the same way a real Disk II does.
+
+`--disk` accepts 140K DOS 3.3 `.dsk`/`.do`, ProDOS-order `.po`, and `.nib` tracks.
+The host keyboard is the Apple keyboard (high-bit ASCII, Ctrl as Control). On the
+IIe, Z / Left Alt is Open-Apple and X is Closed-Apple. F3 still resets the machine.
+
+```bash
+./build/dsp --game apple2 /path/to/apple2p.zip
+./build/dsp --game apple2e /path/to/apple2e.zip
+./build/dsp --game apple2ee --disk game.dsk /path/to/apple2ee.zip
+```
 
 ### Game Boy / Game Boy Color
 

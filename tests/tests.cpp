@@ -6,7 +6,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <iterator>
 #include <memory>
 #include <set>
 #include <string>
@@ -26,6 +25,7 @@
 #include "drivers/atari_lynx.h"
 #include "drivers/atari_system1.h"
 #include "drivers/c64.h"
+#include "drivers/apple2.h"
 #include "drivers/exelv.h"
 #include "drivers/gameboy.h"
 #include "drivers/mcr.h"
@@ -46,6 +46,7 @@
 #include "machine/kabuki.h"
 #include "machine/lynx_suzy.h"
 #include "machine/msx_dsk.h"
+#include "machine/diskii.h"
 #include "machine/mos6526.h"
 #include "machine/mos6532.h"
 #include "machine/rp5c01.h"
@@ -3098,6 +3099,171 @@ void test_msx2_missing_roms_mapper_and_disk() {
     }
 }
 
+int count_lit_pixels(const dsp::Machine& machine) {
+    const uint32_t* fb = machine.framebuffer();
+    const int n = machine.screen_width() * machine.screen_height();
+    int lit = 0;
+    for (int i = 0; i < n; i++) {
+        const uint32_t p = fb[i];
+        if (((p >> 16) & 0xff) + ((p >> 8) & 0xff) + (p & 0xff) > 40) lit++;
+    }
+    return lit;
+}
+
+void test_diskii_encode_roundtrip() {
+    uint8_t sector[256];
+    for (int i = 0; i < 256; i++) sector[i] = uint8_t(i * 3 + 17);
+    uint8_t encoded[343];
+    dsp::DiskIi::encode_62(sector, encoded);
+    uint8_t decoded[256];
+    check(dsp::DiskIi::decode_62(encoded, decoded), "Disk II 6-and-2 checksum is valid");
+    check(std::memcmp(sector, decoded, 256) == 0, "Disk II 6-and-2 roundtrips a sector");
+
+    std::vector<uint8_t> image(dsp::DiskIi::kDosSize, 0);
+    for (int s = 0; s < 16; s++) image[s * 256] = uint8_t(0xA0 + s);
+    std::memcpy(image.data() + 1, "HELLO", 5);
+    dsp::DiskIi disk;
+    std::string error;
+    check(disk.load_bytes(image.data(), image.size(), "test.dsk", &error), "Disk II loads a 140K .dsk");
+    check(disk.nibbles().size() >= 6000, "Disk II nibblizes track 0");
+    bool saw_d5 = false;
+    for (uint8_t n : disk.nibbles()) {
+        if (n == 0xD5) saw_d5 = true;
+    }
+    check(saw_d5, "Disk II track contains an address/data prologue");
+
+    disk.read_io(0xE9);  // motor on
+    disk.tick(32);
+    check((disk.latch() & 0x80) != 0, "Disk II latch bit 7 is set when a nibble is ready");
+    const int pos = disk.nibble_pos();
+    disk.tick(32 * 40);
+    check(disk.nibble_pos() == pos, "Disk II holds an unread nibble instead of dropping it");
+    const uint8_t first = disk.read_io(0xEC);
+    check((first & 0x80) != 0, "Disk II $C0EC returns the held nibble with bit 7 set");
+    check((disk.latch() & 0x80) == 0, "Disk II $C0EC consumes the nibble (clears bit 7)");
+    disk.tick(32);
+    check(disk.nibble_pos() != pos, "Disk II advances after the CPU consumes the nibble");
+}
+
+void test_apple2_missing_roms_and_dummy() {
+    dsp::Apple2 machine;
+    std::string error;
+    check(!machine.init("/tmp/no-such-apple2-bios-set", &error), "Apple II without BIOS fails init");
+
+    machine.init_synthetic_roms();
+    machine.poke(0x0400, 0xC1);
+    machine.poke(0x0401, 0xD0);
+    machine.poke(0x0402, 0xD0);
+    machine.poke(0x0403, 0xCC);
+    machine.poke(0x0404, 0xC5);
+    for (int i = 0; i < 3; i++) machine.run_frame();
+    check(count_lit_pixels(machine) > 50, "Apple II dummy chargen paints text cells");
+    check(machine.pc() == 0xF000, "Apple II synthetic ROM sits in the JMP loop");
+
+    dsp::MachineInputs inputs{};
+    inputs.keys[size_t(dsp::Key::A)] = true;
+    machine.set_inputs(inputs);
+    check((machine.peek(0xC000) & 0x80) != 0, "Apple II keyboard strobe sets bit 7");
+    check((machine.peek(0xC000) & 0x7F) == 'A', "Apple II keyboard returns ASCII A");
+    machine.peek(0xC010);
+    check((machine.peek(0xC000) & 0x80) == 0, "Apple II $C010 clears the keyboard strobe");
+}
+
+void test_apple2_roms_if_present() {
+    const char* plus_zip = "/tmp/roms/apple2/apple2p.zip";
+    const char* iie_zip = "/tmp/roms/apple2/apple2e.zip";
+    const char* ee_zip = "/tmp/roms/apple2/apple2ee.zip";
+    auto exists = [](const char* path) {
+        std::ifstream in(path, std::ios::binary);
+        return bool(in);
+    };
+    if (exists(plus_zip)) {
+        dsp::Apple2 plus(dsp::Apple2::Model::IIPlus);
+        std::string error;
+        check(plus.init(plus_zip, &error), "Apple II+ BIOS set loads");
+        check(!plus.disk_prom_loaded(), "apple2p.zip has no Disk II PROM so Autostart reaches BASIC");
+        for (int frame = 0; frame < 180; frame++) plus.run_frame();
+        check(count_lit_pixels(plus) > 200, "Apple II+ Autostart paints the text screen");
+    }
+    if (exists(iie_zip)) {
+        dsp::Apple2 iie(dsp::Apple2::Model::IIe);
+        std::string error;
+        check(iie.init(iie_zip, &error), "Apple IIe BIOS set loads");
+        for (int frame = 0; frame < 180; frame++) iie.run_frame();
+        check(count_lit_pixels(iie) > 200, "Apple IIe firmware paints the text screen");
+    }
+    if (exists(ee_zip)) {
+        dsp::Apple2 ee(dsp::Apple2::Model::IIeEnhanced);
+        std::string error;
+        check(ee.init(ee_zip, &error), "Apple IIe Enhanced BIOS set loads");
+        check(ee.pc() != 0, "Apple IIe Enhanced 65C02 starts from the reset vector");
+    }
+
+    const char* prom = "/tmp/roms/apple2/disk2-16boot.rom";
+    const char* concat = "/tmp/roms/apple2/apple2-asoft-auto.rom";
+    if (exists(prom) && exists(concat) && exists("/tmp/roms/apple2/apple2-character.rom")) {
+        dsp::Apple2 plus(dsp::Apple2::Model::IIPlus);
+        std::string error;
+        check(plus.init(concat, &error), "Apple II+ concatenated ROM + sibling Disk II PROM load");
+        check(plus.disk_prom_loaded(), "Disk II PROM is mapped in slot 6");
+
+        std::vector<uint8_t> image(dsp::DiskIi::kDosSize, 0);
+        // Track 0 sector 0: boot stub that HOMEs and COUTs "DISK OK".
+        const uint8_t boot[] = {
+            0x01,
+            0x20, 0x58, 0xFC,
+            0xA0, 0x00,
+            0xB9, 0x11, 0x08,
+            0xF0, 0xFE,
+            0x20, 0xED, 0xFD,
+            0xC8,
+            0xD0, 0xF5,
+            0xC4, 0xC9, 0xD3, 0xCB, 0xA0, 0xCF, 0xCB, 0x00,
+        };
+        std::memcpy(image.data(), boot, sizeof(boot));
+        check(plus.disk().load_bytes(image.data(), image.size(), "boot.dsk", &error),
+              "synthetic boot disk loads");
+        plus.reset();
+        for (int frame = 0; frame < 240; frame++) plus.run_frame();
+        check(count_lit_pixels(plus) > 50, "Disk II boot PROM paints from the synthetic sector");
+    }
+
+    const char* compilation = "/tmp/roms/apple2/spyhunter-compilation.dsk";
+    if (exists(prom) && exists(concat) && exists(compilation)) {
+        std::ifstream in(compilation, std::ios::binary);
+        std::vector<uint8_t> image((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+        dsp::Apple2 plus(dsp::Apple2::Model::IIPlus);
+        std::string error;
+        check(plus.init(concat, &error), "Apple II+ loads firmware for the compilation disk");
+        check(plus.disk().load_bytes(image.data(), image.size(), compilation, &error),
+              "Spy Hunter compilation .dsk loads");
+        plus.reset();
+        for (int frame = 0; frame < 220; frame++) plus.run_frame();
+        check(plus.peek(0x0800) == 0x01, "boot0 loaded track 0 sector 0 into $0800");
+        static const uint8_t kBoot1Phys[] = {0x0A, 0x0C, 0x0E, 0x01, 0x03,
+                                            0x05, 0x07, 0x09, 0x0B, 0x0D};
+        static const uint8_t kDosSkew[] = {0x00, 0x07, 0x0E, 0x06, 0x0D, 0x05, 0x0C, 0x04,
+                                           0x0B, 0x03, 0x0A, 0x02, 0x09, 0x01, 0x08, 0x0F};
+        bool pages_ok = true;
+        for (int i = 0; i < 10; i++) {
+            const int phys = kBoot1Phys[i];
+            const int logical = kDosSkew[phys];
+            const uint16_t page = uint16_t((0x3F - i) << 8);
+            for (int b = 0; b < 256; b++) {
+                if (plus.peek(uint16_t(page + b)) != image[logical * 256 + b]) {
+                    pages_ok = false;
+                    break;
+                }
+            }
+            if (!pages_ok) {
+                break;
+            }
+        }
+        check(pages_ok, "boot1 loaded DOS pages $3600-$3FFF from track 0");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -3190,6 +3356,9 @@ int main() {
     test_msx_disk_and_fdc();
     test_rp5c01_fixed_clock();
     test_msx2_missing_roms_mapper_and_disk();
+    test_diskii_encode_roundtrip();
+    test_apple2_missing_roms_and_dummy();
+    test_apple2_roms_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
