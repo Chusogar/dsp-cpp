@@ -11,7 +11,7 @@ Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
 **Commodore 64**, **EXL-100** / **EXELTEL**. Consoles: NES, Game Boy / Game Boy
 Color, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
-**Sega Genesis / Mega Drive**.
+**Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
 explains the port workflow and comes with a driver skeleton (`tools/new_driver.py`).
@@ -68,6 +68,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | µPD7801 CPU | `src/cpu/upd7810.pas` (`CPU_7801`) | Epoch Super Cassette Vision CPU, 4 MHz crystal /2 |
 | µPD1771C | `src/snd/upd1771.pas` | SCV tone / noise / ADPCM sound |
 | Super Cassette Vision | `src/consolas/super_cassette_vision.pas` | BIOS + cartridge map, 192×222 video, keyboard and two joysticks |
+| PV-2000 driver | `src/consolas/pv2000.pas` | Z80, TMS9918A, SN76489, 16 KiB BIOS, keyboard + joystick |
 | TMS7000 CPU | new (MAME `tms7000` behaviour) | TMS7020/7040/7041/7042, EXL LVDP opcode |
 | TMS3556 VDP | new (MAME `tms3556` behaviour) | Text 40×25, bitmap 320×250, mixed, 8 colours |
 | EXL-100 / EXELTEL | new (MAME `exelv.cpp`) | Dual TMS7000, mailbox, IR keyboard, TMS5220, cartridge |
@@ -128,6 +129,7 @@ holding the individual files:
 ./build/dsp --game nes /path/to/game.nes
 ./build/dsp --game lynx /path/to/game.lnx
 ./build/dsp --game scv /path/to/scv.zip
+./build/dsp --game pv2000 --tape game.bin /path/to/pv2000.zip
 ./build/dsp --game genesis /path/to/game.md
 ./build/dsp --game exl100 /path/to/exl100.zip
 ./build/dsp --game pentagon --disk game.trd /path/to/pentagon-roms/
@@ -167,7 +169,7 @@ Options:
 --screenshot FILE  headless mode: render frames and write FILE (BMP)
 --frames N         frames to run in headless mode (default 300)
 --tape FILE        tape/cart: Spectrum/CPC/C64 (.tap/.tzx/.cdt/.prg/.t64),
-                   or EXL-100 / EXELTEL cartridge (.bin/.rom)
+                   EXL-100 / EXELTEL cartridge, or PV-2000 cart (.bin/.rom)
 --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, Pentagon/Scorpion .trd/.scl
 ```
 
@@ -400,6 +402,26 @@ archive; pass the zip or the extracted files.
 TR-DOS is paged in by executing at `$3D00` while the 48K ROM is selected
 (`RANDOMIZE USR 15616`). Kempston on port `$1F` is disabled while DOS is paged
 so it does not clash with the FDC.
+
+### Casio PV-2000
+
+Home computer/console hybrid from 1983, ported from `pv2000.pas`. The positional
+argument is the 16 KiB BIOS (`hn613128pc64.bin`, CRC `8f31f297`, MAME set
+`pv2000.zip`). A verified dump is in
+[Abdess/retrobios](https://github.com/Abdess/retrobios) at
+`bios/Casio/PV-2000/`. The cartridge (8 KiB or 16 KiB `.bin` / `.rom`, plain or
+zipped) is attached with `--tape`.
+
+```bash
+./build/dsp --game pv2000 /path/to/pv2000.zip
+./build/dsp --game pv2000 --tape /path/to/game.bin /path/to/pv2000.zip
+```
+
+Hardware: Z80 and SN76489 at 3.579545 MHz, TMS9918A (256×192, NMI on vblank),
+4 KiB RAM at `$7000` and the cartridge window at `$c000`. The BIOS keyboard
+matrix is mapped to the host keys (letters, digits, arrows, Enter, Backspace,
+Shift, Tab for HOME). The arcade stick (arrows + Ctrl/Alt) is the built-in
+joystick / Attack 0 and Attack 1. Cassette I/O is stubbed.
 
 ### Nintendo Entertainment System
 

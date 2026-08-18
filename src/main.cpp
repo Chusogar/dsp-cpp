@@ -41,6 +41,7 @@
 #include "drivers/gamegear.h"
 #include "drivers/genesis.h"
 #include "drivers/pv1000.h"
+#include "drivers/pv2000.h"
 #include "drivers/colecovision.h"
 #include "drivers/sg1000.h"
 #include "drivers/gameboy.h"
@@ -81,7 +82,7 @@ void print_supported_emulators() {
         "\n"
         "  Consoles:\n"
         "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp,\n"
-        "    pv1000, coleco, sg1000, gb, nes, lynx, scv\n"
+        "    pv1000, pv2000, coleco, sg1000, gb, nes, lynx, scv\n"
         "\n");
 }
 
@@ -95,7 +96,7 @@ void print_usage(const char* program) {
         "Options:\n"
         "  --game NAME        emulator / game to run (required; see list above)\n"
         "  --tape FILE        tape/cart: Spectrum/CPC/C64 (.tap/.tzx/.cdt/.prg/.t64),\n"
-        "                     or EXL-100 / EXELTEL cartridge (.bin/.rom)\n"
+        "                     EXL-100 / EXELTEL cartridge, or PV-2000 cart (.bin/.rom)\n"
         "  --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, Pentagon/Scorpion .trd/.scl\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
@@ -273,6 +274,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	    return std::make_unique<dsp::Genesis>(dsp::Genesis::Region::Japan);
 	}
 	if (game == "pv1000") return std::make_unique<dsp::Pv1000>();
+	if (game == "pv2000" || game == "pv-2000" || game == "casio-pv2000") {
+	    return std::make_unique<dsp::Pv2000>();
+	}
 	if (game == "coleco") return std::make_unique<dsp::ColecoVision>();
 	if (game == "sg1000") return std::make_unique<dsp::Sg1000>();
 	if (game == "gb") return std::make_unique<dsp::GameBoy>();

@@ -104,6 +104,7 @@ add_executable(dsp
   src/drivers/genesis.cpp
   src/drivers/gamegear.cpp
   src/drivers/pv1000.cpp
+  src/drivers/pv2000.cpp
   src/drivers/colecovision.cpp
   src/machine/i2cmem.cpp
   src/drivers/sg1000.cpp
@@ -169,6 +170,7 @@ add_executable(dsp_tests
   src/video/atari_mo.cpp
   src/video/nes_ppu.cpp
   src/video/tms3556.cpp
+  src/video/tms9918.cpp
   src/video/mos6566.cpp
   src/video/gb_ppu.cpp
   src/video/avg_starwars.cpp
@@ -204,6 +206,7 @@ add_executable(dsp_tests
   src/drivers/mcr.cpp
   src/drivers/atari_lynx.cpp
   src/drivers/scv.cpp
+  src/drivers/pv2000.cpp
   src/drivers/exelv.cpp
   src/drivers/starwars.cpp
   src/drivers/atari_system1.cpp

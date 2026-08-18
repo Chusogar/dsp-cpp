@@ -29,6 +29,7 @@
 #include "drivers/gameboy.h"
 #include "drivers/mcr.h"
 #include "drivers/nes.h"
+#include "drivers/pv2000.h"
 #include "drivers/scv.h"
 #include "drivers/starwars.h"
 #include "drivers/spectrum.h"
@@ -2115,6 +2116,60 @@ void test_scv_cartridge_window() {
     check(scv->debug_a() == 0xA5, "SCV maps an 8 KiB cart at $8000");
 }
 
+void test_pv2000_missing_roms_and_dummy_bios() {
+    dsp::Pv2000 machine;
+    std::string error = "unset";
+    check(!machine.init("/no/such/pv2000.zip", &error), "PV-2000 init fails without the BIOS");
+    check(error.find("not found") != std::string::npos || error.find("missing") != std::string::npos ||
+              error.find("cannot") != std::string::npos,
+          "PV-2000 init reports why the BIOS is missing");
+    check(std::strcmp(machine.title(), "Casio PV-2000") == 0, "PV-2000 title");
+    check(machine.screen_width() == 256 && machine.screen_height() == 192, "PV-2000 screen is 256x192");
+    check(machine.uses_keyboard(), "PV-2000 reads the host keyboard");
+
+    const std::string dir = "/tmp/dsp-pv2000-test";
+    std::filesystem::create_directories(dir);
+    {
+        std::vector<uint8_t> bios(0x4000, 0x00);  // NOPs; CRC mismatch is a warning
+        std::ofstream out(dir + "/hn613128pc64.bin", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bios.data()), std::streamsize(bios.size()));
+    }
+    dsp::Pv2000 boot;
+    error.clear();
+    check(boot.init(dir, &error), "PV-2000 loads a dummy 16 KiB BIOS from a directory");
+    for (int frame = 0; frame < 5; frame++) boot.run_frame();
+    check(boot.framebuffer() != nullptr, "PV-2000 produces a framebuffer");
+
+    {
+        std::vector<uint8_t> cart(0x2000, 0xc9);  // RET
+        std::ofstream out(dir + "/cart.bin", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(cart.data()), std::streamsize(cart.size()));
+    }
+    error.clear();
+    check(boot.load_media(dir + "/cart.bin", &error), "PV-2000 attaches an 8 KiB cartridge");
+    for (int frame = 0; frame < 2; frame++) boot.run_frame();
+
+    auto exists = [](const char* path) {
+        std::ifstream probe(path);
+        return bool(probe);
+    };
+    const char* rom = "/tmp/roms/pv2000.zip";
+    if (exists(rom)) {
+        dsp::Pv2000 real;
+        error.clear();
+        check(real.init(rom, &error), "PV-2000 MAME BIOS set loads");
+        for (int frame = 0; frame < 180; frame++) real.run_frame();
+        const uint32_t* fb = real.framebuffer();
+        const int n = real.screen_width() * real.screen_height();
+        bool has_green = false, has_white = false;
+        for (int i = 0; i < n; i++) {
+            if (fb[i] == 0xff21b03bu) has_green = true;  // TMS colour 12
+            if (fb[i] == 0xffffffffu) has_white = true;
+        }
+        check(has_green && has_white, "PV-2000 BIOS menu is white text on green");
+    }
+}
+
 void test_tms7000_mov_add_call() {
     dsp::Tms7000 cpu(4915200, dsp::Tms7000::Chip::Tms7020);
     std::vector<uint8_t> rom(0x800, 0x00);
@@ -2905,6 +2960,7 @@ int main() {
     test_upd1771_tone();
     test_scv_init_and_block_graphics();
     test_scv_cartridge_window();
+    test_pv2000_missing_roms_and_dummy_bios();
     test_tms7000_mov_add_call();
     test_tms7000_lvdp_and_int1();
     test_tms3556_background();
