@@ -125,6 +125,9 @@ void C64::reset() {
     vic_.reset();
     sid_.reset();
     keyboard_.fill(0xff);
+    shift_lock_ = false;
+    caps_held_ = false;
+    restore_held_ = false;
     ram_.fill(0);
     color_ram_.fill(0);
     tape_control_ = 0x10;
@@ -327,7 +330,18 @@ void C64::drain_audio(std::vector<int16_t>& out) {
 
 void C64::set_dip_switch(int, uint8_t) {}
 
-uint8_t C64::cia1_pa_read() { return cia1_.joystick1; }
+uint8_t C64::cia1_pa_read() {
+    // Reverse scan: some programs drive PB and read the columns back on PA.
+    uint8_t ret = 0xff;
+    const uint8_t pb = cia1_.pb();
+    for (int col = 0; col < 8; col++) {
+        for (int row = 0; row < 8; row++) {
+            const bool pressed = (keyboard_[size_t(col)] & uint8_t(1 << row)) == 0;
+            if (pressed && (pb & uint8_t(1 << row)) == 0) ret = uint8_t(ret & ~uint8_t(1 << col));
+        }
+    }
+    return uint8_t(ret & cia1_.joystick1);
+}
 
 uint8_t C64::cia1_pb_read() {
     uint8_t ret = 0xff;
@@ -340,76 +354,163 @@ uint8_t C64::cia1_pb_read() {
 
 void C64::cia2_pa_write(uint8_t value) { vic_.changed_va(uint16_t((~value) & 3)); }
 
+// Complete host -> C64 keyboard matrix. `keyboard_` is indexed by column (the
+// CIA1 PA line the KERNAL pulls low) and holds one active-low bit per row (the
+// PB bit read back), so the 8x8 matrix is:
+//   col 0: DEL     RETURN  CRSR->  F7  F1  F3  F5  CRSR-DOWN
+//   col 1: 3       W       A       4   Z   S   E   LEFT SHIFT
+//   col 2: 5       R       D       6   C   F   T   X
+//   col 3: 7       Y       G       8   B   H   U   V
+//   col 4: 9       I       J       0   M   K   O   N
+//   col 5: +       P       L       -   .   :   @   ,
+//   col 6: GBP     *       ;      HOME RSHIFT =  UP-ARROW /
+//   col 7: 1   LEFT-ARROW CTRL     2  SPACE  C=  Q  RUN/STOP
+// RESTORE and SHIFT LOCK are not in the matrix and are handled separately.
 void C64::apply_keyboard(const MachineInputs& in) {
     keyboard_.fill(0xff);
-    const bool rshift = in.key(Key::RightShift);
+
     const bool lshift = in.key(Key::LeftShift);
+    const bool rshift = in.key(Key::RightShift);
+    const bool shift = lshift || rshift;
 
-    key_bit(keyboard_, 0, 0x01, in.key(Key::Backspace));
-    key_bit(keyboard_, 0, 0x02, in.key(Key::Enter));
-    key_bit(keyboard_, 0, 0x04, in.key(Key::Right) || (in.key(Key::Left) && lshift));
-    key_bit(keyboard_, 0, 0x08, in.key(Key::F7) || (in.key(Key::Num7) && rshift));
-    key_bit(keyboard_, 0, 0x10, in.key(Key::F1) || (in.key(Key::Num1) && rshift));
-    key_bit(keyboard_, 0, 0x20, in.key(Key::F3) || (in.key(Key::Num3) && rshift));
-    key_bit(keyboard_, 0, 0x40, in.key(Key::F5));
-    key_bit(keyboard_, 0, 0x80, in.key(Key::Down) || (in.key(Key::Up) && lshift));
+    // Caps Lock latches SHIFT LOCK, the mechanical left shift of the C64.
+    const bool caps = in.key(Key::CapsLock);
+    if (caps && !caps_held_) shift_lock_ = !shift_lock_;
+    caps_held_ = caps;
 
-    key_bit(keyboard_, 1, 0x01, in.key(Key::Num3) && !rshift);
-    key_bit(keyboard_, 1, 0x02, in.key(Key::W));
-    key_bit(keyboard_, 1, 0x04, in.key(Key::A));
-    key_bit(keyboard_, 1, 0x08, in.key(Key::Num4));
-    key_bit(keyboard_, 1, 0x10, in.key(Key::Z));
-    key_bit(keyboard_, 1, 0x20, in.key(Key::S));
-    key_bit(keyboard_, 1, 0x40, in.key(Key::E));
-    key_bit(keyboard_, 1, 0x80, lshift);
+    // RESTORE is wired to the 6510 NMI line, not to the matrix.
+    const bool restore = in.key(Key::PageUp);
+    if (restore && !restore_held_) cpu_.set_nmi(IrqLine::Pulse);
+    restore_held_ = restore;
 
-    key_bit(keyboard_, 2, 0x01, in.key(Key::Num5) && !rshift);
-    key_bit(keyboard_, 2, 0x02, in.key(Key::R));
-    key_bit(keyboard_, 2, 0x04, in.key(Key::D));
-    key_bit(keyboard_, 2, 0x08, in.key(Key::Num6));
-    key_bit(keyboard_, 2, 0x10, in.key(Key::C));
-    key_bit(keyboard_, 2, 0x20, in.key(Key::F));
-    key_bit(keyboard_, 2, 0x40, in.key(Key::T));
-    key_bit(keyboard_, 2, 0x80, in.key(Key::X));
+    // Symbols the host types with shift but the C64 has as plain keys ('@',
+    // '*', '+', up arrow): the host shift must not reach the matrix.
+    bool drop_shift = false;
+    // The opposite case: keys the C64 only has as shifted ones ('[', INST, the
+    // even function keys, cursor left/up).
+    bool add_shift = false;
 
-    key_bit(keyboard_, 3, 0x01, in.key(Key::Num7) && !rshift);
-    key_bit(keyboard_, 3, 0x02, in.key(Key::Y));
-    key_bit(keyboard_, 3, 0x04, in.key(Key::G));
-    key_bit(keyboard_, 3, 0x08, in.key(Key::Num8));
-    key_bit(keyboard_, 3, 0x10, in.key(Key::B));
-    key_bit(keyboard_, 3, 0x20, in.key(Key::H));
-    key_bit(keyboard_, 3, 0x40, in.key(Key::U));
-    key_bit(keyboard_, 3, 0x80, in.key(Key::V));
+    auto press = [this](int col, uint8_t mask, bool pressed) {
+        if (pressed) key_bit(keyboard_, col, mask, true);
+    };
 
-    key_bit(keyboard_, 4, 0x01, in.key(Key::Num9));
-    key_bit(keyboard_, 4, 0x02, in.key(Key::I));
-    key_bit(keyboard_, 4, 0x04, in.key(Key::J));
-    key_bit(keyboard_, 4, 0x08, in.key(Key::Num0));
-    key_bit(keyboard_, 4, 0x10, in.key(Key::M));
-    key_bit(keyboard_, 4, 0x20, in.key(Key::K));
-    key_bit(keyboard_, 4, 0x40, in.key(Key::O));
-    key_bit(keyboard_, 4, 0x80, in.key(Key::N));
+    press(1, 0x04, in.key(Key::A));
+    press(3, 0x10, in.key(Key::B));
+    press(2, 0x10, in.key(Key::C));
+    press(2, 0x04, in.key(Key::D));
+    press(1, 0x40, in.key(Key::E));
+    press(2, 0x20, in.key(Key::F));
+    press(3, 0x04, in.key(Key::G));
+    press(3, 0x20, in.key(Key::H));
+    press(4, 0x02, in.key(Key::I));
+    press(4, 0x04, in.key(Key::J));
+    press(4, 0x20, in.key(Key::K));
+    press(5, 0x04, in.key(Key::L));
+    press(4, 0x10, in.key(Key::M));
+    press(4, 0x80, in.key(Key::N));
+    press(4, 0x40, in.key(Key::O));
+    press(5, 0x02, in.key(Key::P));
+    press(7, 0x40, in.key(Key::Q));
+    press(2, 0x02, in.key(Key::R));
+    press(1, 0x20, in.key(Key::S));
+    press(2, 0x40, in.key(Key::T));
+    press(3, 0x40, in.key(Key::U));
+    press(3, 0x80, in.key(Key::V));
+    press(1, 0x02, in.key(Key::W));
+    press(2, 0x80, in.key(Key::X));
+    press(3, 0x02, in.key(Key::Y));
+    press(1, 0x10, in.key(Key::Z));
 
-    key_bit(keyboard_, 5, 0x02, in.key(Key::P));
-    key_bit(keyboard_, 5, 0x04, in.key(Key::L));
-    key_bit(keyboard_, 5, 0x08, in.key(Key::Minus));
-    key_bit(keyboard_, 5, 0x10, in.key(Key::Period));
-    key_bit(keyboard_, 5, 0x20, in.key(Key::Semicolon) && rshift);  // :
-    key_bit(keyboard_, 5, 0x80, in.key(Key::Comma));
+    // Digits. '!', '#', '$' and '%' sit on the same digit on both keyboards.
+    press(7, 0x01, in.key(Key::Num1));
+    press(1, 0x01, in.key(Key::Num3));
+    press(1, 0x08, in.key(Key::Num4));
+    press(2, 0x01, in.key(Key::Num5));
+    press(7, 0x08, in.key(Key::Num2) && !shift);
+    press(2, 0x08, in.key(Key::Num6) && !shift);
+    press(3, 0x01, in.key(Key::Num7) && !shift);
+    press(3, 0x08, in.key(Key::Num8) && !shift);
+    press(4, 0x01, in.key(Key::Num9) && !shift);
+    press(4, 0x08, in.key(Key::Num0) && !shift);
+    if (shift) {
+        if (in.key(Key::Num2)) {  // '@' is a key of its own
+            press(5, 0x40, true);
+            drop_shift = true;
+        }
+        if (in.key(Key::Num6)) {  // '^' types the up arrow
+            press(6, 0x40, true);
+            drop_shift = true;
+        }
+        if (in.key(Key::Num8)) {  // '*' is a key of its own
+            press(6, 0x02, true);
+            drop_shift = true;
+        }
+        press(2, 0x08, in.key(Key::Num7));  // '&' is SHIFT+6
+        press(3, 0x08, in.key(Key::Num9));  // '(' is SHIFT+8
+        press(4, 0x01, in.key(Key::Num0));  // ')' is SHIFT+9
+    }
 
-    key_bit(keyboard_, 6, 0x04, in.key(Key::Semicolon) && !rshift);
-    key_bit(keyboard_, 6, 0x10, rshift);
-    key_bit(keyboard_, 6, 0x80, in.key(Key::Slash));
+    press(5, 0x08, in.key(Key::Minus) || in.key(Key::KeypadMinus));
+    press(5, 0x01, in.key(Key::KeypadPlus));
+    press(6, 0x02, in.key(Key::KeypadMultiply));
+    press(6, 0x80, in.key(Key::Slash) || in.key(Key::KeypadDivide));
+    press(5, 0x10, in.key(Key::Period) || in.key(Key::KeypadPeriod));
+    press(5, 0x80, in.key(Key::Comma));
+    press(6, 0x01, in.key(Key::Backslash));  // GBP
+    press(7, 0x02, in.key(Key::Grave));      // left arrow
+    if (in.key(Key::Equals)) {
+        if (shift) {
+            press(5, 0x01, true);  // '+'
+            drop_shift = true;
+        } else {
+            press(6, 0x20, true);  // '='
+        }
+    }
+    if (in.key(Key::Semicolon)) {
+        if (shift) {
+            press(5, 0x20, true);  // ':'
+            drop_shift = true;
+        } else {
+            press(6, 0x04, true);  // ';'
+        }
+    }
+    if (in.key(Key::Quote)) {
+        // The C64 types ' with SHIFT+7 and " with SHIFT+2.
+        if (shift) {
+            press(7, 0x08, true);
+        } else {
+            press(3, 0x01, true);
+        }
+        add_shift = true;
+    }
+    press(5, 0x20, in.key(Key::LeftBracket));   // '[' is SHIFT+:
+    press(6, 0x04, in.key(Key::RightBracket));  // ']' is SHIFT+;
+    if (in.key(Key::LeftBracket) || in.key(Key::RightBracket)) add_shift = true;
 
-    key_bit(keyboard_, 7, 0x01, in.key(Key::Num1) && !rshift);
-    key_bit(keyboard_, 7, 0x04, in.key(Key::LeftCtrl));
-    key_bit(keyboard_, 7, 0x08, in.key(Key::Num2));
-    key_bit(keyboard_, 7, 0x10, in.key(Key::Space));
-    key_bit(keyboard_, 7, 0x40, in.key(Key::Q));
-    key_bit(keyboard_, 7, 0x80, in.key(Key::Escape) || in.key(Key::Tab));
+    press(0, 0x02, in.key(Key::Enter) || in.key(Key::KeypadEnter));
+    press(7, 0x10, in.key(Key::Space));
+    press(7, 0x04, in.key(Key::LeftCtrl) || in.key(Key::RightCtrl));
+    press(7, 0x20, in.key(Key::LeftAlt) || in.key(Key::RightAlt) || in.key(Key::LeftGui));  // C=
+    press(7, 0x80, in.key(Key::Escape) || in.key(Key::Tab));                                // RUN/STOP
+    press(6, 0x08, in.key(Key::Home) || in.key(Key::End));                                  // CLR/HOME
+    press(0, 0x01, in.key(Key::Backspace) || in.key(Key::Delete) || in.key(Key::Insert));
+    if (in.key(Key::Insert)) add_shift = true;  // INST is SHIFT+DEL
 
-    // CRSR left/up need C64 right-shift as well as the CRSR key.
-    if (in.key(Key::Left) || in.key(Key::Up)) key_bit(keyboard_, 6, 0x10, true);
+    // The even function keys are the shifted odd ones.
+    press(0, 0x10, in.key(Key::F1) || in.key(Key::F2));
+    press(0, 0x20, in.key(Key::F3) || in.key(Key::F4));
+    press(0, 0x40, in.key(Key::F5) || in.key(Key::F6));
+    press(0, 0x08, in.key(Key::F7) || in.key(Key::F8));
+    if (in.key(Key::F2) || in.key(Key::F4) || in.key(Key::F6) || in.key(Key::F8)) add_shift = true;
+
+    // Cursor left / up are the shifted right / down keys.
+    press(0, 0x04, in.key(Key::Right) || in.key(Key::Left));
+    press(0, 0x80, in.key(Key::Down) || in.key(Key::Up));
+    if (in.key(Key::Left) || in.key(Key::Up)) add_shift = true;
+
+    // Both shifts last, once every remap above decided what the C64 needs.
+    press(1, 0x80, (lshift && !drop_shift) || shift_lock_);
+    press(6, 0x10, (rshift && !drop_shift) || add_shift);
 }
 
 void C64::set_inputs(const MachineInputs& inputs) {

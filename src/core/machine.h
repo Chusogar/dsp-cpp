@@ -18,6 +18,10 @@ enum class Key {
     Up, Down, Left, Right, Comma, Period, Semicolon, Quote, Slash, Minus,
     Escape, Tab, CapsLock,
     F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+    Equals, LeftBracket, RightBracket, Backslash, Grave,
+    Home, End, Insert, Delete, PageUp, PageDown,
+    LeftAlt, RightAlt, LeftGui,
+    KeypadPlus, KeypadMinus, KeypadMultiply, KeypadDivide, KeypadEnter, KeypadPeriod,
     Count
 };
 

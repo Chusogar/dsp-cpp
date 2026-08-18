@@ -45,6 +45,19 @@ constexpr struct {
 	{Key::F1, SDL_SCANCODE_F1}, {Key::F2, SDL_SCANCODE_F2}, {Key::F3, SDL_SCANCODE_F3}, {Key::F4, SDL_SCANCODE_F4},
 	{Key::F5, SDL_SCANCODE_F5}, {Key::F6, SDL_SCANCODE_F6}, {Key::F7, SDL_SCANCODE_F7}, {Key::F8, SDL_SCANCODE_F8},
 	{Key::F9, SDL_SCANCODE_F9}, {Key::F10, SDL_SCANCODE_F10}, {Key::F11, SDL_SCANCODE_F11}, {Key::F12, SDL_SCANCODE_F12},
+    {Key::Escape, SDL_SCANCODE_ESCAPE}, {Key::Tab, SDL_SCANCODE_TAB},
+    {Key::CapsLock, SDL_SCANCODE_CAPSLOCK},
+    {Key::Equals, SDL_SCANCODE_EQUALS}, {Key::LeftBracket, SDL_SCANCODE_LEFTBRACKET},
+    {Key::RightBracket, SDL_SCANCODE_RIGHTBRACKET}, {Key::Backslash, SDL_SCANCODE_BACKSLASH},
+    {Key::Grave, SDL_SCANCODE_GRAVE}, {Key::Home, SDL_SCANCODE_HOME},
+    {Key::End, SDL_SCANCODE_END}, {Key::Insert, SDL_SCANCODE_INSERT},
+    {Key::Delete, SDL_SCANCODE_DELETE}, {Key::PageUp, SDL_SCANCODE_PAGEUP},
+    {Key::PageDown, SDL_SCANCODE_PAGEDOWN}, {Key::LeftAlt, SDL_SCANCODE_LALT},
+    {Key::RightAlt, SDL_SCANCODE_RALT}, {Key::LeftGui, SDL_SCANCODE_LGUI},
+    {Key::KeypadPlus, SDL_SCANCODE_KP_PLUS}, {Key::KeypadMinus, SDL_SCANCODE_KP_MINUS},
+    {Key::KeypadMultiply, SDL_SCANCODE_KP_MULTIPLY},
+    {Key::KeypadDivide, SDL_SCANCODE_KP_DIVIDE},
+    {Key::KeypadEnter, SDL_SCANCODE_KP_ENTER}, {Key::KeypadPeriod, SDL_SCANCODE_KP_PERIOD},
 };
 
 void collect_inputs(Machine& machine) {
@@ -178,6 +191,17 @@ int SdlApp::run(Machine& machine) {
     // Accumulator for sub-ms frame pacing when muted (avoids integer truncation drift).
     double frame_debt_ms = 0.0;
 
+    // On machines with a real keyboard the shifted function keys belong to the
+    // emulated matrix (C64 F2/F4/F6/F8), and F3 only resets with Ctrl so plain
+    // F3 reaches the machine.
+    const bool emulates_keyboard = machine.uses_keyboard();
+    auto hotkey = [emulates_keyboard](const SDL_Keysym& sym) {
+        return !emulates_keyboard || (sym.mod & KMOD_SHIFT) == 0;
+    };
+    auto reset_hotkey = [emulates_keyboard](const SDL_Keysym& sym) {
+        return !emulates_keyboard || (sym.mod & KMOD_CTRL) != 0;
+    };
+
     auto update_title = [&]() {
         std::string t = std::string("DSP C++ - ") + machine.title();
         if (paused) t += " [PAUSED]";
@@ -189,10 +213,12 @@ int SdlApp::run(Machine& machine) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) running = false;
-            if (event.type == SDL_KEYDOWN) {
+            if (event.type == SDL_KEYDOWN && hotkey(event.key.keysym)) {
                 switch (event.key.keysym.sym) {
                     case SDLK_ESCAPE: running = false; break;
-                    case SDLK_F3: machine.reset(); break;
+                    case SDLK_F3:
+                        if (reset_hotkey(event.key.keysym)) machine.reset();
+                        break;
                     case SDLK_F2:
                         paused = !paused;
                         update_title();
@@ -241,14 +267,15 @@ int SdlApp::run(Machine& machine) {
                         running = false;
                         break;
                     }
-                    if (event.type == SDL_KEYDOWN) {
+                    if (event.type == SDL_KEYDOWN && hotkey(event.key.keysym)) {
                         if (event.key.keysym.sym == SDLK_ESCAPE) running = false;
                         if (event.key.keysym.sym == SDLK_F2 ||
                             (event.key.keysym.sym == SDLK_p && !machine.uses_keyboard())) {
                             paused = true;
                             update_title();
                         }
-                        if (event.key.keysym.sym == SDLK_F3) machine.reset();
+                        if (event.key.keysym.sym == SDLK_F3 && reset_hotkey(event.key.keysym))
+                            machine.reset();
                         if (event.key.keysym.sym == SDLK_F12) {
                             turbo = !turbo;
                             frame_debt_ms = 0.0;
