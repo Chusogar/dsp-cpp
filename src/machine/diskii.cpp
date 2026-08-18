@@ -9,7 +9,9 @@
 namespace dsp {
 namespace {
 
-constexpr int kCyclesPerNibble = 32;
+// ~32.5 is authentic (4 µs bit cells). 40 keeps the P5 PROM 27-cycle data
+// field loop from missing a nibble with post-instruction Disk II ticks.
+constexpr int kCyclesPerNibble = 40;
 constexpr uint8_t kVolume = 0xFE;
 constexpr uint8_t kGap = 0xFF;
 
@@ -341,16 +343,9 @@ void DiskIi::tick(int cycles) {
     cycles_until_nibble_ -= cycles;
     while (cycles_until_nibble_ <= 0) {
         cycles_until_nibble_ += kCyclesPerNibble;
-        if (q7_) {
-            continue;
+        if (!q7_) {
+            latch_ = next_nibble();
         }
-        // Hold an unread nibble (bit 7 still set). The P5 PROM data-field
-        // loop is only ~27 cycles; if tick() overwrote the latch on a 32-cycle
-        // cadence the CPU would miss bytes and DOS 3.3 would never relocate.
-        if ((latch_ & 0x80) != 0) {
-            continue;
-        }
-        latch_ = next_nibble();
     }
 }
 
