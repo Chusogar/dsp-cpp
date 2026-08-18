@@ -55,6 +55,7 @@ add_executable(dsp
   src/video/nes_ppu.cpp
   src/video/avg_starwars.cpp
   src/video/sega16.cpp
+  src/video/apple2_video.cpp
   
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
@@ -78,6 +79,7 @@ add_executable(dsp
   src/machine/sega_315_5195.cpp
   src/machine/fd1089.cpp
   src/machine/i8243.cpp
+  src/machine/diskii.cpp
   
   src/drivers/bagman.cpp
   src/drivers/mikie.cpp
@@ -123,6 +125,7 @@ add_executable(dsp
   src/video/mos6566.cpp
   src/sound/sid.cpp
   src/drivers/c64.cpp
+  src/drivers/apple2.cpp
   src/drivers/atari_lynx.cpp
   src/drivers/exelv.cpp
   src/drivers/starwars.cpp
@@ -181,6 +184,7 @@ add_executable(dsp_tests
   src/video/avg_starwars.cpp
   src/video/sega_315_5313.cpp
   src/video/sega16.cpp
+  src/video/apple2_video.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/via6522.cpp
@@ -205,11 +209,13 @@ add_executable(dsp_tests
   src/machine/sega_315_5195.cpp
   src/machine/fd1089.cpp
   src/machine/i8243.cpp
+  src/machine/diskii.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
   src/drivers/msx2.cpp
   src/drivers/nes.cpp
   src/drivers/c64.cpp
+  src/drivers/apple2.cpp
   src/drivers/gameboy.cpp
   src/drivers/mcr.cpp
   src/drivers/atari_lynx.cpp

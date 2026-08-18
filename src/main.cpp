@@ -33,6 +33,7 @@
 #include "drivers/msx1.h"
 #include "drivers/msx2.h"
 #include "drivers/c64.h"
+#include "drivers/apple2.h"
 #include "drivers/exelv.h"
 #include "drivers/pentagon.h"
 #include "drivers/scorpion.h"
@@ -79,7 +80,7 @@ void print_supported_emulators() {
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
         "    cpc464, cpc664, cpc6128, msx, msx2, nms8250, c64,\n"
-        "    exl100, exeltel\n"
+        "    apple2, apple2plus, apple2e, apple2ee, exl100, exeltel\n"
         "\n"
         "  Consoles:\n"
         "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp,\n"
@@ -98,7 +99,8 @@ void print_usage(const char* program) {
         "  --game NAME        emulator / game to run (required; see list above)\n"
         "  --tape FILE        tape/cart: Spectrum/CPC/C64/MSX (.tap/.tzx/.cdt/.prg/.t64/.cas),\n"
         "                     EXL-100 / EXELTEL cartridge, or PV-2000 cart (.bin/.rom)\n"
-        "  --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, MSX2 .dsk, Pentagon/Scorpion .trd/.scl\n"
+        "  --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, MSX2 .dsk, Apple II .dsk/.do/.po/.nib,\n"
+        "                     Pentagon/Scorpion .trd/.scl\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
         "                     bank, mikie has three (0=A, 1=B, 2=C); cpc: 0=colour(1)/\n"
@@ -256,6 +258,20 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	}
 	if (game == "c64" || game == "commodore64" || game == "commodore") {
         return std::make_unique<dsp::C64>();
+    }
+    if (game == "apple2orig" || game == "apple2integer" || game == "appleii-integer") {
+        return std::make_unique<dsp::Apple2>(dsp::Apple2::Model::II);
+    }
+    if (game == "apple2" || game == "appleii" || game == "apple2plus" || game == "apple2p" ||
+        game == "apple2+") {
+        return std::make_unique<dsp::Apple2>(dsp::Apple2::Model::IIPlus);
+    }
+    if (game == "apple2e" || game == "appleiie") {
+        return std::make_unique<dsp::Apple2>(dsp::Apple2::Model::IIe);
+    }
+    if (game == "apple2ee" || game == "apple2eplus" || game == "apple2e+" ||
+        game == "apple2enhanced" || game == "appleiiee") {
+        return std::make_unique<dsp::Apple2>(dsp::Apple2::Model::IIeEnhanced);
     }
 	if (game == "exl100" || game == "exl-100" || game == "exelvision") {
 	    return std::make_unique<dsp::Exelv>(dsp::Exelv::Model::Exl100);
