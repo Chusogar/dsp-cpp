@@ -428,14 +428,16 @@ VRAM), 256 KiB mapper RAM, RP-5C01 RTC, and a WD2793 disk interface.
 ROMs are **not** shipped. A directory or zip with these names works (MAME
 `nms8250` hashes in brackets):
 
-* `MSX2.ROM` / `nms8250_basic-bios2.rom` (32 KiB, CRC `6cdaf3a5`)
-* `MSX2EXT.ROM` / `nms8250_msx2sub.rom` (16 KiB, CRC `66237ecf`)
-* `nms8250_disk.rom` / `DISK.ROM` (16 KiB, optional; floppy disabled if missing)
+* `MSX2.ROM` / `nms8250_basic-bios2.rom` / `msx2_bios.rom` (32 KiB, CRC `6cdaf3a5`)
+* `MSX2EXT.ROM` / `nms8250_msx2sub.rom` / `msx2_ext.rom` (16 KiB, CRC `66237ecf`)
+* `nms8250_disk.rom` / `DISK.ROM` / `cbios_disk.rom` (16 KiB, optional; floppy disabled if missing)
 
-[RetroBIOS](https://github.com/Abdess/retrobios) publishes matching dumps under
-`bios/Microsoft/MSX/`. The FDC accepts raw FAT12 `.dsk` images (720K / 640K /
-360K / 180K) and CPC-style `MV - CPC` / `EXTENDED` DSK files, decoded at both
-type 1 (`$7FF8`) and type 2 (`$7FB8`) addresses.
+[zxtiny](https://github.com/Chusogar/zxtiny/tree/main/roms) ships the same BIOS as
+`msx2_bios.rom` + `msx2_ext.rom`. C-BIOS (`cbios_main_msx2.rom` + `cbios_sub.rom`,
+optional `cbios_logo_msx2.rom` in slot 0 page 2) also loads. [RetroBIOS](https://github.com/Abdess/retrobios)
+publishes matching dumps under `bios/Microsoft/MSX/`. The FDC accepts raw FAT12 `.dsk`
+images (720K / 640K / 360K / 180K) and CPC-style `MV - CPC` / `EXTENDED` DSK files,
+decoded at both type 1 (`$7FF8`) and type 2 (`$7FB8`) addresses.
 
 ```bash
 ./build/dsp --game msx /path/to/msx1-bios/

@@ -80,24 +80,9 @@ void V9938::write_register(int index, uint8_t value) {
     index &= 63;
     registers_[size_t(index)] = value;
     if (index == 15) status_read_s0_ = (value & 0x0f) == 0;
-    if (index == 44 && command_ce_ && command_tr_) {
+    if (index == 44 && command_ce_) {
         uint8_t kind = uint8_t(command_ >> 4);
-        if (kind == 0x0b || kind == 0x0a) {
-            if (kind == 0x0b) put_pixel(cmd_dx_, cmd_dy_, value);
-            else {
-                uint8_t dst = get_pixel(cmd_dx_, cmd_dy_);
-                put_pixel(cmd_dx_, cmd_dy_, logical_op(dst, value, command_ & 0x0f));
-            }
-            int dummy = 0;
-            command_advance(&cmd_dx_, &cmd_dy_, cmd_nx_, cmd_ny_, &dummy);
-            cmd_nx_--;
-            if (cmd_nx_ <= 0) {
-                cmd_nx_ = registers_[40] | (int(registers_[41] & 3) << 8);
-                if (cmd_nx_ == 0) cmd_nx_ = 512;
-                cmd_ny_--;
-                if (cmd_ny_ <= 0) finish_command();
-            }
-        }
+        if (kind == 0x0f || kind == 0x0b) cpu_data_byte(value);
     }
     if (index == 46) start_command(value);
     update_interrupt_line();
@@ -317,36 +302,43 @@ int V9938::bits_per_pixel() const {
     }
 }
 
+int V9938::pixels_per_byte() const { return std::max(8 / std::max(bits_per_pixel(), 1), 1); }
+
 uint32_t V9938::pixel_address(int x, int y) const {
-    int bpp = bits_per_pixel();
+    Mode mode = current_mode();
+    y &= 1023;
+    x &= 511;
+    if (mode == kG6) {
+        // SCREEN 7: even/odd VRAM planes in the two 64 KiB banks.
+        return ((uint32_t(x) & 2) << 15) + (uint32_t(y & 511) << 7) + (uint32_t(x) >> 2);
+    }
+    if (mode == kG7) {
+        return ((uint32_t(x) & 1) << 16) + (uint32_t(y & 511) << 7) + ((uint32_t(x) >> 1) & 127);
+    }
+    int ppb = pixels_per_byte();
     int width = screen_width_px();
     if (width <= 0) width = 256;
-    int pixels_per_byte = 8 / std::max(bpp, 1);
-    int bytes_per_line = width / std::max(pixels_per_byte, 1);
+    int bytes_per_line = width / ppb;
     uint32_t page = 0;
-    Mode mode = current_mode();
-    if (mode == kG4) page = uint32_t((registers_[2] >> 5) & 1) * 0x8000u;
-    else if (mode == kG5 || mode == kG6) page = uint32_t((registers_[2] >> 5) & 1) * 0x8000u;
-    else if (mode == kG7) page = uint32_t((registers_[2] >> 5) & 1) * 0x10000u;
-    y &= (mode == kG6 || mode == kG7) ? 1023 : 255;
-    return page + uint32_t(y) * uint32_t(bytes_per_line) + uint32_t(x / pixels_per_byte);
+    if (mode == kG4 || mode == kG5) page = uint32_t((registers_[2] >> 5) & 3) * 0x8000u;
+    return page + uint32_t(y & 255) * uint32_t(bytes_per_line) + uint32_t(x / ppb);
 }
 
 uint8_t V9938::get_pixel(int x, int y) const {
     int bpp = bits_per_pixel();
-    int pixels_per_byte = 8 / std::max(bpp, 1);
+    int ppb = pixels_per_byte();
     uint8_t data = vram_get(pixel_address(x, y));
-    int shift = (pixels_per_byte - 1 - (x % pixels_per_byte)) * bpp;
+    int shift = (ppb - 1 - (x % ppb)) * bpp;
     uint8_t mask = uint8_t((1 << bpp) - 1);
     return uint8_t((data >> shift) & mask);
 }
 
 void V9938::put_pixel(int x, int y, uint8_t color) {
     int bpp = bits_per_pixel();
-    int pixels_per_byte = 8 / std::max(bpp, 1);
+    int ppb = pixels_per_byte();
     uint32_t addr = pixel_address(x, y);
     uint8_t data = vram_get(addr);
-    int shift = (pixels_per_byte - 1 - (x % pixels_per_byte)) * bpp;
+    int shift = (ppb - 1 - (x % ppb)) * bpp;
     uint8_t mask = uint8_t((1 << bpp) - 1);
     data = uint8_t((data & ~(mask << shift)) | ((color & mask) << shift));
     vram_set(addr, data);
@@ -472,15 +464,15 @@ uint8_t V9938::logical_op(uint8_t dst, uint8_t src, uint8_t op) const {
     }
 }
 
-void V9938::command_advance(int* x, int* y, int nx, int ny, int* count_x) {
-    int dix = (cmd_arg_ & 0x04) ? -1 : 1;
+void V9938::command_advance(int* x, int* y, int nx, int ny, int* count_x, int step) {
+    int dix = (cmd_arg_ & 0x04) ? -step : step;
     int diy = (cmd_arg_ & 0x08) ? -1 : 1;
     (void)ny;
     *x += dix;
-    (*count_x)++;
+    (*count_x) += step;
     if (*count_x >= nx) {
         *count_x = 0;
-        *x -= dix * nx;
+        *x -= (dix > 0 ? nx : -nx);
         *y += diy;
     }
 }
@@ -495,21 +487,37 @@ void V9938::start_command(uint8_t cmd) {
     cmd_ny_ = registers_[42] | (int(registers_[43] & 3) << 8);
     cmd_clr_ = registers_[44];
     cmd_arg_ = registers_[45];
-    if (cmd_nx_ == 0) cmd_nx_ = 512;
-    if (cmd_ny_ == 0) cmd_ny_ = 1024;
+    uint8_t kind = uint8_t(cmd >> 4);
+    int ppb = pixels_per_byte();
+    if (kind != 0x07 && kind != 0x05 && kind != 0x04) {
+        if (cmd_nx_ == 0) cmd_nx_ = screen_width_px();
+        if (cmd_ny_ == 0) cmd_ny_ = 1024;
+    }
+    if (kind >= 0x0c) {
+        cmd_dx_ &= ~(ppb - 1);
+        cmd_sx_ &= ~(ppb - 1);
+        cmd_nx_ &= ~(ppb - 1);
+        if (cmd_nx_ == 0) cmd_nx_ = screen_width_px();
+        cmd_step_x_ = ppb;
+    } else {
+        cmd_step_x_ = 1;
+    }
+    cmd_x0_ = cmd_dx_;
+    cmd_sx0_ = cmd_sx_;
+    cmd_remaining_x_ = cmd_nx_;
     command_ce_ = true;
     command_tr_ = false;
-    uint8_t kind = uint8_t(cmd >> 4);
     switch (kind) {
         case 0x0c: exec_hmmv(); break;
         case 0x0d: exec_hmmm(); break;
+        case 0x0e: exec_ymmm(); break;
         case 0x08: exec_lmmv(); break;
         case 0x09: exec_lmmm(); break;
         case 0x07: exec_line(); break;
         case 0x05: exec_pset(); break;
-        case 0x0b:  // HMMC
-        case 0x0a:  // LMMC
-            command_tr_ = true;
+        case 0x0f:  // HMMC: first byte is already in R44
+        case 0x0b:  // LMMC
+            cpu_data_byte(cmd_clr_);
             return;
         case 0x04:  // POINT
             status_[7] = get_pixel(cmd_sx_, cmd_sy_);
@@ -526,21 +534,76 @@ void V9938::finish_command() {
     command_tr_ = false;
 }
 
+bool V9938::command_advance_dst() {
+    int dix = (cmd_arg_ & 0x04) ? -cmd_step_x_ : cmd_step_x_;
+    int diy = (cmd_arg_ & 0x08) ? -1 : 1;
+    cmd_dx_ += dix;
+    cmd_remaining_x_ -= cmd_step_x_;
+    if (cmd_remaining_x_ <= 0) {
+        cmd_remaining_x_ = cmd_nx_;
+        cmd_dx_ = cmd_x0_;
+        cmd_dy_ += diy;
+        cmd_ny_--;
+        if (cmd_ny_ <= 0) {
+            finish_command();
+            return false;
+        }
+    }
+    return true;
+}
+
+void V9938::cpu_data_byte(uint8_t value) {
+    uint8_t kind = uint8_t(command_ >> 4);
+    command_tr_ = false;
+    if (kind == 0x0f) {
+        vram_set(pixel_address(cmd_dx_, cmd_dy_), value);
+    } else if (kind == 0x0b) {
+        uint8_t dst = get_pixel(cmd_dx_, cmd_dy_);
+        put_pixel(cmd_dx_, cmd_dy_, logical_op(dst, value, command_ & 0x0f));
+    } else {
+        return;
+    }
+    if (command_advance_dst()) command_tr_ = true;
+}
+
 void V9938::exec_hmmv() {
     int x = cmd_dx_, y = cmd_dy_, cx = 0;
-    for (int n = 0; n < cmd_nx_ * cmd_ny_; n++) {
-        put_pixel(x, y, cmd_clr_);
-        command_advance(&x, &y, cmd_nx_, cmd_ny_, &cx);
+    int step = cmd_step_x_;
+    const int total = std::max(cmd_nx_ / std::max(step, 1), 1) * cmd_ny_;
+    for (int n = 0; n < total; n++) {
+        vram_set(pixel_address(x, y), cmd_clr_);
+        command_advance(&x, &y, cmd_nx_, cmd_ny_, &cx, step);
     }
     finish_command();
 }
 
 void V9938::exec_hmmm() {
     int sx = cmd_sx_, sy = cmd_sy_, dx = cmd_dx_, dy = cmd_dy_, cx = 0, cs = 0;
-    for (int n = 0; n < cmd_nx_ * cmd_ny_; n++) {
-        put_pixel(dx, dy, get_pixel(sx, sy));
-        command_advance(&dx, &dy, cmd_nx_, cmd_ny_, &cx);
-        command_advance(&sx, &sy, cmd_nx_, cmd_ny_, &cs);
+    int step = cmd_step_x_;
+    const int total = std::max(cmd_nx_ / std::max(step, 1), 1) * cmd_ny_;
+    for (int n = 0; n < total; n++) {
+        vram_set(pixel_address(dx, dy), vram_get(pixel_address(sx, sy)));
+        command_advance(&dx, &dy, cmd_nx_, cmd_ny_, &cx, step);
+        command_advance(&sx, &sy, cmd_nx_, cmd_ny_, &cs, step);
+    }
+    finish_command();
+}
+
+void V9938::exec_ymmm() {
+    int sy = cmd_sy_, dx = cmd_dx_, dy = cmd_dy_;
+    int step = cmd_step_x_;
+    int width = screen_width_px();
+    int diy = (cmd_arg_ & 0x08) ? -1 : 1;
+    int dix = (cmd_arg_ & 0x04) ? -step : step;
+    for (int n = 0; n < cmd_ny_; n++) {
+        int x = dx;
+        for (;;) {
+            vram_set(pixel_address(x, dy), vram_get(pixel_address(x, sy)));
+            x += dix;
+            if (x < 0 || x >= width) break;
+        }
+        sy += diy;
+        dy += diy;
     }
     finish_command();
 }
@@ -551,7 +614,7 @@ void V9938::exec_lmmv() {
     for (int n = 0; n < cmd_nx_ * cmd_ny_; n++) {
         uint8_t dst = get_pixel(x, y);
         put_pixel(x, y, logical_op(dst, cmd_clr_, op));
-        command_advance(&x, &y, cmd_nx_, cmd_ny_, &cx);
+        command_advance(&x, &y, cmd_nx_, cmd_ny_, &cx, 1);
     }
     finish_command();
 }
@@ -562,8 +625,8 @@ void V9938::exec_lmmm() {
     for (int n = 0; n < cmd_nx_ * cmd_ny_; n++) {
         uint8_t dst = get_pixel(dx, dy);
         put_pixel(dx, dy, logical_op(dst, get_pixel(sx, sy), op));
-        command_advance(&dx, &dy, cmd_nx_, cmd_ny_, &cx);
-        command_advance(&sx, &sy, cmd_nx_, cmd_ny_, &cs);
+        command_advance(&dx, &dy, cmd_nx_, cmd_ny_, &cx, 1);
+        command_advance(&sx, &sy, cmd_nx_, cmd_ny_, &cs, 1);
     }
     finish_command();
 }
@@ -575,31 +638,40 @@ void V9938::exec_pset() {
 }
 
 void V9938::exec_line() {
-    int maj = cmd_nx_;
-    int min = cmd_ny_;
-    int dix = (cmd_arg_ & 0x04) ? -1 : 1;
-    int diy = (cmd_arg_ & 0x08) ? -1 : 1;
-    bool swapped = (cmd_arg_ & 0x01) != 0;
+    int nx = cmd_nx_;
+    int ny = cmd_ny_;
+    int tx = (cmd_arg_ & 0x04) ? -1 : 1;
+    int ty = (cmd_arg_ & 0x08) ? -1 : 1;
     int x = cmd_dx_;
     int y = cmd_dy_;
-    int err = maj / 2;
+    int asx = (nx - 1) >> 1;
+    int adx = 0;
     uint8_t op = command_ & 0x0f;
-    for (int i = 0; i <= maj; i++) {
+    const int max_x = screen_width_px();
+    bool x_major = (cmd_arg_ & 0x01) == 0;
+    for (int n = 0; n < 2048; n++) {
         uint8_t dst = get_pixel(x, y);
         put_pixel(x, y, logical_op(dst, cmd_clr_, op));
-        err -= min;
-        if (swapped) {
-            y += diy;
-            if (err < 0) {
-                err += maj;
-                x += dix;
+        if (x_major) {
+            x += tx;
+            if (adx++ == nx || (x & max_x) != 0) break;
+            if (asx < ny) {
+                asx += nx;
+                y += ty;
+                if (ty < 0 && y < 0) break;
             }
+            asx -= ny;
+            asx &= 1023;
         } else {
-            x += dix;
-            if (err < 0) {
-                err += maj;
-                y += diy;
+            y += ty;
+            if (ty < 0 && y < 0) break;
+            if (asx < ny) {
+                asx += nx;
+                x += tx;
             }
+            asx -= ny;
+            asx &= 1023;
+            if (adx++ == nx || (x & max_x) != 0) break;
         }
     }
     finish_command();

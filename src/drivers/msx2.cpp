@@ -12,10 +12,13 @@ namespace dsp {
 namespace {
 
 const std::vector<RomEntry> kBiosRom = {
-    {"MSX2.ROM|nms8250_basic-bios2.rom|msx2.rom", 0x8000, 0x0000, 0x6cdaf3a5},
+    {"MSX2.ROM|nms8250_basic-bios2.rom|msx2.rom|msx2_bios.rom|cbios_main_msx2.rom|"
+     "cbios_main_msx2_eu.rom",
+     0x8000, 0x0000, 0x6cdaf3a5},
 };
 const std::vector<RomEntry> kSubRom = {
-    {"MSX2EXT.ROM|nms8250_msx2sub.rom|msx2ext.rom", 0x4000, 0x0000, 0x66237ecf},
+    {"MSX2EXT.ROM|nms8250_msx2sub.rom|msx2ext.rom|msx2_ext.rom|cbios_sub.rom", 0x4000, 0x0000,
+     0x66237ecf},
 };
 
 bool read_plain_or_zip_file(const std::string& path, std::vector<uint8_t>& data, size_t max_size,
@@ -93,7 +96,8 @@ bool Msx2::init(const std::string& rom_path, std::string* error) {
 
     diskrom_.fill(0xff);
     disk_rom_loaded_ = false;
-    const char* disk_names[] = {"nms8250_disk.rom", "DISK.ROM", "disk.rom", "DISKROM.ROM"};
+    const char* disk_names[] = {"nms8250_disk.rom", "DISK.ROM", "disk.rom", "DISKROM.ROM",
+                                "cbios_disk.rom"};
     for (const char* name : disk_names) {
         std::vector<uint8_t> disk;
         if (loader.try_read(name, disk) && disk.size() == 0x4000) {
@@ -104,6 +108,18 @@ bool Msx2::init(const std::string& rom_path, std::string* error) {
     }
     if (!disk_rom_loaded_) {
         warnings_.emplace_back("MSX2 disk ROM not found; floppy support disabled");
+    }
+
+    logorom_.fill(0xff);
+    logo_rom_loaded_ = false;
+    const char* logo_names[] = {"cbios_logo_msx2.rom", "cbios_logo.rom"};
+    for (const char* name : logo_names) {
+        std::vector<uint8_t> logo;
+        if (loader.try_read(name, logo) && logo.size() == 0x4000) {
+            std::copy(logo.begin(), logo.end(), logorom_.begin());
+            logo_rom_loaded_ = true;
+            break;
+        }
     }
 
     warnings_.insert(warnings_.end(), loader.warnings().begin(), loader.warnings().end());
@@ -144,6 +160,7 @@ uint8_t Msx2::read_slot(int prim, int sub, int page, uint16_t address) {
     const uint16_t offset = address & 0x3fff;
     if (prim == 0) {
         if (page <= 1) return bios_[size_t(page) * 0x4000 + offset];
+        if (page == 2 && logo_rom_loaded_) return logorom_[offset];
         return 0xff;
     }
     if (prim == 1) {

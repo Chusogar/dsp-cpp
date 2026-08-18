@@ -79,6 +79,7 @@ private:
     uint32_t pixel_address(int x, int y) const;
     int screen_width_px() const;
     int bits_per_pixel() const;
+    int pixels_per_byte() const;
     uint8_t get_pixel(int x, int y) const;
     void put_pixel(int x, int y, uint8_t color);
 
@@ -88,9 +89,12 @@ private:
     void exec_hmmm();
     void exec_lmmv();
     void exec_lmmm();
+    void exec_ymmm();
     void exec_line();
     void exec_pset();
-    void command_advance(int* x, int* y, int nx, int ny, int* count_x);
+    void command_advance(int* x, int* y, int nx, int ny, int* count_x, int step);
+    void cpu_data_byte(uint8_t value);
+    bool command_advance_dst();
 
     uint8_t logical_op(uint8_t dst, uint8_t src, uint8_t op) const;
 
@@ -118,6 +122,8 @@ private:
     uint8_t command_ = 0;
     int cmd_sx_ = 0, cmd_sy_ = 0, cmd_dx_ = 0, cmd_dy_ = 0;
     int cmd_nx_ = 0, cmd_ny_ = 0;
+    int cmd_x0_ = 0, cmd_sx0_ = 0;
+    int cmd_step_x_ = 1, cmd_remaining_x_ = 0;
     uint8_t cmd_clr_ = 0, cmd_arg_ = 0;
 };
 

@@ -103,6 +103,7 @@ private:
     std::array<uint8_t, 0x8000> bios_{};
     std::array<uint8_t, 0x4000> subrom_{};
     std::array<uint8_t, 0x4000> diskrom_{};
+    std::array<uint8_t, 0x4000> logorom_{};
     std::array<std::array<uint8_t, 0x4000>, kMapperSegments> ram_{};
     std::array<uint8_t, 4> mapper_{3, 2, 1, 0};
     std::vector<uint8_t> cart_;
@@ -110,6 +111,7 @@ private:
     int cart_bank1_ = 1;
     bool cart_ascii16_ = false;
     bool disk_rom_loaded_ = false;
+    bool logo_rom_loaded_ = false;
 
     uint8_t subslot_[4] = {};
     uint8_t teclado_ = 0;

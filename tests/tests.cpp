@@ -2940,7 +2940,7 @@ void test_v9938_status_and_hmmv() {
     setreg(41, 0);
     setreg(42, 8);     // NY
     setreg(43, 0);
-    setreg(44, 0x0f);  // white
+    setreg(44, 0xff);  // both GRAPHIC 4 pixels in the byte are colour 15
     setreg(45, 0);
     setreg(46, 0xc0);  // HMMV
     check(!vdp.command_executing(), "V9938 HMMV completes immediately");
@@ -2949,6 +2949,41 @@ void test_v9938_status_and_hmmv() {
     const uint32_t pixel = fb[2 * dsp::V9938::kScreenWidth + 4];
     check(((pixel >> 16) & 0xff) > 180 && ((pixel >> 8) & 0xff) > 180 && (pixel & 0xff) > 180,
           "V9938 HMMV fills GRAPHIC 4 pixels with palette colour 15");
+
+    // GRAPHIC 5 HMMC writes packed bytes (4 pixels), not a single 2-bit colour.
+    dsp::V9938 g5(nullptr);
+    g5.reset();
+    auto setreg5 = [&](int index, uint8_t value) {
+        g5.register_write(value);
+        g5.register_write(uint8_t(0x80 | index));
+    };
+    setreg5(0, 0x08);   // GRAPHIC 5
+    setreg5(1, 0x40);
+    setreg5(8, 0x20);   // TP: colour 0 is black, not transparent
+    setreg5(36, 0);
+    setreg5(37, 0);
+    setreg5(38, 0);
+    setreg5(39, 0);
+    setreg5(40, 8);     // 8 dots = 2 bytes
+    setreg5(41, 0);
+    setreg5(42, 1);
+    setreg5(43, 0);
+    setreg5(44, 0x1b);  // pixels 0,1,2,3
+    setreg5(45, 0);
+    setreg5(46, 0xf0);  // HMMC consumes the first byte
+    check(g5.command_executing(), "V9938 HMMC waits for the remaining CPU bytes");
+    setreg5(44, 0xe4);  // pixels 3,2,1,0
+    check(!g5.command_executing(), "V9938 HMMC finishes after NX dots");
+    for (int line = 0; line < 2; line++) g5.refresh_line(line, 262);
+    const uint32_t* g5fb = g5.framebuffer();
+    const uint32_t p0 = g5fb[0];
+    const uint32_t p1 = g5fb[1];
+    const uint32_t p2 = g5fb[2];
+    const uint32_t p6 = g5fb[6];
+    check(((p0 >> 16) & 0xff) + ((p0 >> 8) & 0xff) + (p0 & 0xff) < 40,
+          "V9938 GRAPHIC 5 HMMC first pixel is colour 0");
+    check(p1 != p2, "V9938 GRAPHIC 5 HMMC packs four distinct 2-bit pixels per byte");
+    check(p2 != p6, "V9938 GRAPHIC 5 HMMC second byte is not a 1-pixel colour smear");
 }
 
 void test_msx_disk_and_fdc() {
@@ -3042,11 +3077,15 @@ void test_msx2_missing_roms_mapper_and_disk() {
         return bool(probe);
     };
     const char* romdir = "/tmp/roms/msx2";
-    if (exists((std::string(romdir) + "/MSX2.ROM").c_str()) ||
-        exists((std::string(romdir) + "/nms8250_basic-bios2.rom").c_str())) {
+    const char* zxtiny = "/tmp/roms/zxtiny";
+    const bool have_official = exists((std::string(romdir) + "/MSX2.ROM").c_str()) ||
+                               exists((std::string(romdir) + "/nms8250_basic-bios2.rom").c_str());
+    const bool have_zxtiny = exists((std::string(zxtiny) + "/msx2_bios.rom").c_str());
+    const char* biosdir = have_zxtiny ? zxtiny : (have_official ? romdir : nullptr);
+    if (biosdir != nullptr) {
         dsp::Msx2 real;
         error.clear();
-        check(real.init(romdir, &error), "MSX2 BIOS set loads from /tmp/roms/msx2");
+        check(real.init(biosdir, &error), "MSX2 BIOS set loads");
         for (int frame = 0; frame < 300; frame++) real.run_frame();
         const uint32_t* fb = real.framebuffer();
         const int n = real.screen_width() * real.screen_height();
