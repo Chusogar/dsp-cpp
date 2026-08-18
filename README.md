@@ -5,13 +5,13 @@ Arcade: **Bagman**, **Mikie**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
 **Double Dragon II**, Taito SJ (**Elevator Action**, **Jungle King**), Irem M62
 (**Kung-Fu Master**, **Spelunker**, **Lode Runner**), SNK (**Ikari Warriors**,
 **Athena**, **TNK III**, **ASO**), Capcom **CPS1**, Irem **M72** (**R-Type**),
-and Midway **MCR** (**Tapper** and family).
-Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC, **Commodore 64**, **EXL-100** /
-Midway **MCR** (**Tapper** and family), and Atari **Star Wars**.
-Computers: **ZX Spectrum 48K**, Amstrad CPC, **Commodore 64**, **EXL-100** /
-**EXELTEL**. Consoles: NES, Game Boy / Game Boy Color, **Atari Lynx**,
-**Super Cassette Vision**, Sega Master System / Game Gear, **Sega Genesis /
-Mega Drive**.
+Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
+**OutRun**, **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
+**Altered Beast**).
+Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
+**Commodore 64**, **EXL-100** / **EXELTEL**. Consoles: NES, Game Boy / Game Boy
+Color, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
+**Sega Genesis / Mega Drive**.
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
 explains the port workflow and comes with a driver skeleton (`tools/new_driver.py`).
@@ -81,6 +81,14 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | MOS 6532 RIOT | new (MAME `mos6532.cpp`) | 128-byte RAM, ports, timer IRQ |
 | Star Wars mathbox | new (MAME `starwars_m.cpp`) | PROM microcode, multiply-accumulate, restoring divider |
 | Star Wars driver | new (MAME `starwars.cpp`) | Dual 6809, AVG, 4×POKEY, TMS5220, analog stick |
+| Sega PCM | `src/snd/sega_pcm.pas` | 16-channel sample player (OutRun, Hang-On) |
+| 315-5195 mapper | `src/arcade/misc/sega_315_5195.pas` | 68000 memory mapper used by OutRun and System 16B |
+| OutRun driver | `src/arcade/outrun_hw.pas` | Dual 68000, Z80, YM2151, Sega PCM, road + sprites |
+| Hang-On driver | `src/arcade/hangon_hw.pas` | Hang-On, Enduro Racer (FD1089), Space Harrier (i8751) |
+| System 16 driver | `src/arcade/system16a_hw.pas`, `system16b_hw.pas` | Fantasy Zone, Shinobi, Alex Kidd, Alien Syndrome, WB3, Tetris, Altered Beast |
+| FD1089 | `src/devices/fd1089.pas` | Hitachi 68000 opcode/data encryption |
+| MCS-48 / N7751 | `src/cpu/mcs48.pas` | Full N7751 + i8243 speech MCU |
+| UPD7759 | `src/snd/upd7759.pas` | ADPCM slave playback (System 16B) |
 
 ## Building
 
@@ -125,6 +133,17 @@ holding the individual files:
 ./build/dsp --game pentagon --disk game.trd /path/to/pentagon-roms/
 ./build/dsp --game scorpion --disk game.scl /path/to/scorpion.rom
 ./build/dsp --game starwars /path/to/starwars.zip
+./build/dsp --game outrun /path/to/outrun.zip
+./build/dsp --game hangon /path/to/hangon.zip
+./build/dsp --game enduro /path/to/enduror.zip
+./build/dsp --game sharrier /path/to/sharrier.zip
+./build/dsp --game fantzone /path/to/fantzone.zip
+./build/dsp --game shinobi /path/to/shinobi.zip
+./build/dsp --game alexkidd /path/to/alexkidd.zip
+./build/dsp --game aliensyn /path/to/aliensyn.zip
+./build/dsp --game wb3 /path/to/wb3.zip
+./build/dsp --game tetris /path/to/tetris.zip
+./build/dsp --game altbeast /path/to/altbeast.zip
 ```
 
 `--game` is required (`dsp --help` lists every name). Gauntlet accepts both the
@@ -575,6 +594,37 @@ committed. The MAME parent set `starwars` is enough:
 `136021-208.1h`, AVG PROM `136021-109.4b`, mathbox `136021-110.7h` …
 `136021-113.7l`.
 
+### Sega OutRun, Hang-On, and System 16
+
+Ported from [dsp-emulator](https://github.com/leniad/dsp-emulator)
+(`outrun_hw.pas`, `hangon_hw.pas`, `system16a_hw.pas`, `system16b_hw.pas`).
+`--game` names match the MAME parent sets. Screen is 320×224.
+
+```bash
+./build/dsp --game outrun /path/to/outrun.zip
+./build/dsp --game hangon /path/to/hangon.zip
+./build/dsp --game enduro /path/to/enduror.zip
+./build/dsp --game sharrier /path/to/sharrier.zip
+./build/dsp --game fantzone /path/to/fantzone.zip
+./build/dsp --game shinobi /path/to/shinobi.zip
+./build/dsp --game alexkidd /path/to/alexkidd.zip
+./build/dsp --game aliensyn /path/to/aliensyn.zip
+./build/dsp --game wb3 /path/to/wb3.zip
+./build/dsp --game tetris /path/to/tetris.zip
+./build/dsp --game altbeast /path/to/altbeast.zip
+```
+
+OutRun and Hang-On family games use analog wheel / gas / brake (arrow keys plus
+button 1/2) and a gear toggle on button 3. System 16 games use a two-button
+joystick.
+
+Enduro Racer decrypts the FD1089B program ROMs with `317-0013a.key`. Space
+Harrier runs the i8751 MCU that raises 68000 IRQs. Shinobi, Alex Kidd and Alien
+Syndrome use a full N7751 (MCS-48 + i8243 + DAC). Alien Syndrome and Wonder Boy
+III decrypt FD1089 program ROMs. Altered Beast plays UPD7759 samples in slave
+mode (DRQ pulses the Z80 NMI). Tetris prefers the decrypted/bootleg program
+ROMs and falls back to FD1089 if only the encrypted pair is present.
+
 ## Tests
 
 ```bash
@@ -592,12 +642,10 @@ cmake --build build --target dsp_zexdoc
 ## Layout
 
 ```
-src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805, µPD7801, TMS7000, NEC V30
-src/sound/      AY-3-8910, SN76496, NES APU, SID, µPD1771C, QSound, TMS5220
-src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556
-src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, Lynx, WD1793/Beta
-src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556, AVG
-src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, 6532, Lynx, mathbox
+src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805, µPD7801, TMS7000, NEC V30, MCS-51
+src/sound/      AY-3-8910, SN76496, NES APU, SID, µPD1771C, QSound, TMS5220, Sega PCM
+src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556, AVG, Sega 16
+src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, 6532, Lynx, mathbox, 315-5195
 src/drivers/    the machines themselves (memory map, video, inputs)
 src/frontend/   SDL2 front end, driven through the core/machine.h interface
 src/core/       ROM loader (directory or zip) and the Machine interface

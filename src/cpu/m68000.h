@@ -61,6 +61,8 @@ public:
     uint32_t pc() const { return pc_.l; }
     uint32_t ppc() const { return ppc_.l; }
     uint16_t peek_word(uint32_t address) { return getword(address); }
+    // True while fetching instructions / extension words (FD1089 opcode stream).
+    bool opcode() const { return opcode_; }
 
     std::array<Reg32, 8> d{};
     std::array<Reg32, 8> a{};
@@ -121,6 +123,7 @@ private:
 
     uint32_t clock_;
     Type type_;
+    bool opcode_ = true;
     uint32_t ea_ = 0;
     Reg32 other_sp_{};  // the stack pointer of the mode we are not in
     bool halted_ = false;
