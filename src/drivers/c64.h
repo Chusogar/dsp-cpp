@@ -85,9 +85,12 @@ private:
     bool tape_motor_ = false;
 
     // PLA
+    // These values must describe the power-on C64 banking before reset().
+    // M6502::reset() reads $FFFC/$FFFD immediately, so KERNAL must already
+    // be visible in the $E000-$FFFF window at that moment.
     bool write_ram_ = false;
-    bool read_ram_a_ = true;
-    bool read_ram_e_ = true;
+    bool read_ram_a_ = false;
+    bool read_ram_e_ = false;
     uint8_t read_ram_d_ = 2;  // 0=RAM 1=CHAR 2=IO
 
     bool cia_irq_ = false, vic_irq_ = false, cia_nmi_ = false;
