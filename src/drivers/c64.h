@@ -8,22 +8,29 @@
 #include "core/machine.h"
 #include "cpu/m6502.h"
 #include "machine/mos6526.h"
-#include "sound/sid.h"
-#include "video/mos6566.h"
+#include "machine/mos6566.h"
+#include "sound/sid6581.h"
+#include "machine/tape_tzx.h"
+#include "machine/d64_image.h"
+#include "machine/c1541.h"
 
 namespace dsp {
 
-// Commodore 64 (PAL), ported from commodore64.pas + mos6566.pas +
-// mos6526_old.pas + sid_sound.pas.
+// Commodore 64 (PAL), ported from leniad/dsp-emulator
+// src/ordenadores/commodore64.pas.
+//
+// Chips: M6502 (6510 port @ $00/$01), MOS 6569 VIC-II, MOS 6581 SID,
+// dual MOS 6526 CIA. PLA banking matches the Pascal actualiza_mem table.
 class C64 : public Machine {
 public:
-    static constexpr uint32_t kClock = 985248;
+    static constexpr int kScreenWidth = Mos6566::kScreenWidth;
+    static constexpr int kScreenHeight = Mos6566::kScreenHeight;
+    static constexpr uint32_t kCpuClock = 985248;
     static constexpr int kScanlines = 312;
     static constexpr int kCyclesPerLine = 63;
-    static constexpr int kScreenWidth = 384;
-    static constexpr int kScreenHeight = 270;
-    static constexpr double kFramesPerSecond = double(kClock) / (kScanlines * kCyclesPerLine);
-    static constexpr int kSampleRate = Sid::kSampleRate;
+    static constexpr double kFramesPerSecond =
+        double(kCpuClock) / (kScanlines * kCyclesPerLine);
+    static constexpr int kSampleRate = Sid6581::kSampleRate;
 
     C64();
 
@@ -45,71 +52,57 @@ public:
     const char* title() const override { return "Commodore 64"; }
     bool uses_keyboard() const override { return true; }
 
+    bool load_roms(const std::string& dir, std::string* error);
+    bool load_1541_rom(const std::string& path, std::string* error);
+    C1541& drive() { return drive_; }
     bool load_media(const std::string& path, std::string* error) override;
-    void tape_toggle_play() override;
-    bool tape_loaded() const override { return tape_loaded_; }
-
-    // Debug / test helpers (same API the existing C64 debug tools expect).
-    void poke(uint16_t address, uint8_t value) { write_byte(address, value); }
-    uint8_t peek(uint16_t address) { return read_byte(address); }
-    void set_pc(uint16_t value) { cpu_.set_pc(value); }
-    uint16_t pc() const { return cpu_.pc(); }
-
-    // Unit tests that do not ship copyrighted KERNAL/BASIC/CHAR ROMs.
-    void init_synthetic_roms();
 
 private:
-    uint8_t read_byte(uint16_t address);
-    void write_byte(uint16_t address, uint8_t value);
+    uint8_t read_byte(uint16_t addr);
+    void write_byte(uint16_t addr, uint8_t value);
+    void on_cycles(int cycles);
     void update_pla();
-    void on_cpu_cycles(int cycles);
-    uint8_t cia1_pa_read();
-    uint8_t cia1_pb_read();
-    void cia2_pa_write(uint8_t value);
-    void apply_keyboard(const MachineInputs& inputs);
-    bool load_prg(const uint8_t* data, size_t size, std::string* error);
-    bool load_t64(const uint8_t* data, size_t size, std::string* error);
-    bool load_tap(const uint8_t* data, size_t size, std::string* error);
-    bool load_d64(const uint8_t* data, size_t size, std::string* error);
-    void advance_tape(int cycles);
-    void inject_prg_payload(uint16_t address, const uint8_t* data, size_t size);
+    void update_irq();
+    uint8_t cia1_portb_r();
+    bool inject_prg(const std::vector<uint8_t>& data, std::string* error);
 
     M6502 cpu_;
     Mos6566 vic_;
+    Sid6581 sid_;
     Mos6526 cia1_;
     Mos6526 cia2_;
-    Sid sid_;
 
     std::array<uint8_t, 0x10000> ram_{};
-    std::array<uint8_t, 0x2000> kernal_{};
-    std::array<uint8_t, 0x2000> basic_{};
-    std::array<uint8_t, 0x1000> chargen_{};
+    std::array<uint8_t, 0x2000> kernel_rom_{};
+    std::array<uint8_t, 0x2000> basic_rom_{};
+    std::array<uint8_t, 0x1000> char_rom_{};
     std::array<uint8_t, 0x400> color_ram_{};
-    std::array<uint8_t, 8> keyboard_{};
-    std::array<uint32_t, kScreenWidth * kScreenHeight> framebuffer_{};
 
-    uint8_t port_bits_ = 0xef;
-    uint8_t port_val_ = 0xef;
-    uint8_t tape_control_ = 0x10;
-    bool write_ram_ = false;
-    bool read_ram_a_ = false;
-    bool read_ram_e_ = false;
-    uint8_t read_ram_d_ = 2;
+    // 6510 on-chip I/O
+    uint8_t port_bits_ = 0x2F;
+    uint8_t port_val_ = 0x37;
+    uint8_t tape_control_ = 0x10;  // sense high = no button
     bool tape_motor_ = false;
-    bool cia_irq_ = false;
-    bool vic_irq_ = false;
-    bool cia_nmi_ = false;
 
-    std::vector<int16_t> audio_;
+    // PLA
+    bool write_ram_ = false;
+    bool read_ram_a_ = true;
+    bool read_ram_e_ = true;
+    uint8_t read_ram_d_ = 2;  // 0=RAM 1=CHAR 2=IO
+
+    bool cia_irq_ = false, vic_irq_ = false, cia_nmi_ = false;
+
+    std::array<uint8_t, 8> keyboard_{};
+
+    TapeTzx tape_;
+    D64Image disk_;  // legacy autoload helper
+    C1541 drive_;
+    bool tape_play_ = false;
+    bool iec_enabled_ = true;
+
     int64_t audio_acc_ = 0;
-
-    bool tape_loaded_ = false;
-    bool tape_playing_ = false;
-    std::vector<uint8_t> tape_data_;
-    size_t tape_pos_ = 0;
-    int tape_cycles_left_ = 0;
-    uint8_t tape_level_ = 0;
-    uint8_t tape_version_ = 0;
+    std::vector<uint32_t> framebuffer_;
+    std::vector<int16_t> audio_;
 };
 
 }  // namespace dsp

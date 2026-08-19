@@ -88,7 +88,12 @@ add_executable(dsp
   src/machine/fd1089.cpp
   src/machine/i8243.cpp
   src/machine/diskii.cpp
+  src/machine/c1541.cpp
+  src/machine/d64_image.cpp
+  src/machine/g64_image.cpp
+  src/machine/gcr.cpp
   
+    
   src/drivers/bagman.cpp
   src/drivers/mikie.cpp
   src/drivers/gauntlet.cpp
@@ -115,6 +120,7 @@ add_executable(dsp
   src/drivers/msx1.cpp
   src/drivers/msx2.cpp
   src/sound/sid.cpp
+  src/sound/sid6581.cpp
   src/drivers/c64.cpp
   src/drivers/apple2.cpp
     
@@ -137,9 +143,11 @@ add_executable(dsp
   src/drivers/nes.cpp
   src/drivers/scv.cpp
   src/machine/mos6526.cpp
-  src/video/mos6566.cpp
+  src/machine/mos6566.cpp
   src/drivers/atari_lynx.cpp
   src/drivers/exelv.cpp
+
+
       
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
@@ -192,7 +200,6 @@ add_executable(dsp_tests
   src/video/tms3556.cpp
   src/video/tms9918.cpp
   src/video/v9938.cpp
-  src/video/mos6566.cpp
   src/video/gb_ppu.cpp
   src/video/avg_starwars.cpp
   src/video/sega_315_5313.cpp
