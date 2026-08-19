@@ -295,7 +295,7 @@ void YM2151::set_irq_bit(uint8_t bit) {
 void YM2151::clear_irq_bit(uint8_t bit) {
     const uint8_t oldstate = irq_line_state_;
     irq_line_state_ = uint8_t(irq_line_state_ & ~bit);
-    if (oldstate == bit && irq_handler_) irq_handler_(false);
+    if (oldstate != 0 && irq_line_state_ == 0 && irq_handler_) irq_handler_(false);
 }
 
 void YM2151::key_on(int op_index, uint32_t key_set) {

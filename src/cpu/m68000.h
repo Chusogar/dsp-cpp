@@ -14,6 +14,8 @@ class M68000 {
 public:
     using ReadWordHandler = std::function<uint16_t(uint32_t)>;
     using WriteWordHandler = std::function<void(uint32_t, uint16_t)>;
+    using ReadByteHandler = std::function<uint8_t(uint32_t)>;
+    using WriteByteHandler = std::function<void(uint32_t, uint8_t)>;
     using CycleHandler = std::function<void(int)>;
 
     enum class Type { M68000, M68010 };
@@ -39,6 +41,12 @@ public:
     explicit M68000(uint32_t clock, Type type = Type::M68000);
 
     void set_memory_handlers(ReadWordHandler read, WriteWordHandler write);
+    // Optional byte accessors. Without them, byte ops read-modify-write a word,
+    // which is wrong for write-only ports (Genesis VDP, I/O).
+    void set_byte_handlers(ReadByteHandler read, WriteByteHandler write) {
+        read_byte_ = std::move(read);
+        write_byte_ = std::move(write);
+    }
     void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
 
     void reset();
@@ -53,6 +61,8 @@ public:
     uint32_t pc() const { return pc_.l; }
     uint32_t ppc() const { return ppc_.l; }
     uint16_t peek_word(uint32_t address) { return getword(address); }
+    // True while fetching instructions / extension words (FD1089 opcode stream).
+    bool opcode() const { return opcode_; }
 
     std::array<Reg32, 8> d{};
     std::array<Reg32, 8> a{};
@@ -113,6 +123,7 @@ private:
 
     uint32_t clock_;
     Type type_;
+    bool opcode_ = true;
     uint32_t ea_ = 0;
     Reg32 other_sp_{};  // the stack pointer of the mode we are not in
     bool halted_ = false;
@@ -124,6 +135,8 @@ private:
 
     ReadWordHandler read_;
     WriteWordHandler write_;
+    ReadByteHandler read_byte_;
+    WriteByteHandler write_byte_;
     CycleHandler cycle_handler_;
 };
 

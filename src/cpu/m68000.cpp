@@ -100,6 +100,7 @@ void M68000::reset() {
     cc.s = true;
     cc.z = true;
     cc.im = 7;
+    opcode_ = true;
     other_sp_ = Reg32{};
     a[7].set_wh(getword(0));
     a[7].set_wl(getword(2));
@@ -113,11 +114,16 @@ void M68000::reset() {
 }
 
 uint8_t M68000::getbyte(uint32_t address) {
+    if (read_byte_) return read_byte_(address);
     uint16_t value = getword(address);
     return (address & 1) ? uint8_t(value & 0xff) : uint8_t(value >> 8);
 }
 
 void M68000::putbyte(uint32_t address, uint8_t value) {
+    if (write_byte_) {
+        write_byte_(address, value);
+        return;
+    }
     uint16_t old = getword(address);
     if (address & 1) putword(address, uint16_t((old & 0xff00) | value));
     else putword(address, uint16_t((old & 0x00ff) | (uint16_t(value) << 8)));
@@ -202,7 +208,10 @@ uint8_t M68000::read_b(uint8_t dir) {
         pc_.l += 2;
         return uint8_t(getword(ea_) & 0xff);
     }
-    return getbyte(ea_);
+    opcode_ = false;
+    const uint8_t value = getbyte(ea_);
+    opcode_ = true;
+    return value;
 }
 
 void M68000::write_b2(uint8_t dir, uint8_t value) {
@@ -269,7 +278,10 @@ uint16_t M68000::read_w(uint8_t dir) {
         pc_.l += 2;
         return getword(ea_);
     }
-    return getword(ea_);
+    opcode_ = false;
+    const uint16_t value = getword(ea_);
+    opcode_ = true;
+    return value;
 }
 
 void M68000::write_w2(uint8_t dir, uint16_t value) {
@@ -335,7 +347,10 @@ uint32_t M68000::read_l(uint8_t dir) {
         ea_ = pc_.l;
         return fetch_long();
     }
-    return (uint32_t(getword(ea_)) << 16) | getword(ea_ + 2);
+    opcode_ = false;
+    const uint32_t value = (uint32_t(getword(ea_)) << 16) | getword(ea_ + 2);
+    opcode_ = true;
+    return value;
 }
 
 void M68000::write_l2(uint8_t dir, uint32_t value) {
@@ -427,8 +442,10 @@ void M68000::exception(uint32_t vector, int cycles) {
     putword(a[7].l, flags);
     putword(a[7].l + 2, pc_.wh());
     putword(a[7].l + 4, pc_.wl());
+    opcode_ = false;
     pc_.set_wh(getword(vector));
     pc_.set_wl(getword(vector + 2));
+    opcode_ = true;
 }
 
 bool M68000::check_supervisor() {
@@ -2379,8 +2396,10 @@ void M68000::group_4(uint16_t instruction) {
                 putword(a[7].l + 4, pc_.wl());
                 putword(a[7].l + 2, pc_.wh());
                 putword(a[7].l, flags);
+                opcode_ = false;
                 pc_.set_wh(getword(0x80 + ((instruction & 0x0f) * 4)));
                 pc_.set_wl(getword(0x82 + ((instruction & 0x0f) * 4)));
+                opcode_ = true;
             } else if (dir <= 0x17) {  // link
                 cycles_ += 16;
                 const int16_t displacement = int16_t(fetch_word());
@@ -2531,8 +2550,10 @@ bool M68000::take_irq() {
         putword(a[7].l, flags);
         putword(a[7].l + 2, pc_.wh());
         putword(a[7].l + 4, pc_.wl());
+        opcode_ = false;
         pc_.set_wh(getword(0x64 + uint32_t((level - 1) * 4)));
         pc_.set_wl(getword(0x66 + uint32_t((level - 1) * 4)));
+        opcode_ = true;
         if (irq_[size_t(level)] == IrqLine::Hold) irq_[size_t(level)] = IrqLine::Clear;
         cc.im = uint8_t(level);
         return true;

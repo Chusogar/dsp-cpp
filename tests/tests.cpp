@@ -25,10 +25,13 @@
 #include "drivers/atari_lynx.h"
 #include "drivers/atari_system1.h"
 #include "drivers/c64.h"
+#include "drivers/apple2.h"
 #include "drivers/exelv.h"
 #include "drivers/gameboy.h"
 #include "drivers/mcr.h"
+#include "drivers/msx2.h"
 #include "drivers/nes.h"
+#include "drivers/pv2000.h"
 #include "drivers/scv.h"
 #include "drivers/starwars.h"
 #include "drivers/polepos.h"
@@ -36,17 +39,26 @@
 #include "cpu/z8002.h"
 #include "drivers/spectrum.h"
 #include "drivers/zx_clone.h"
+#include "drivers/genesis.h"
+#include "drivers/hangon.h"
+#include "drivers/outrun.h"
+#include "drivers/system16.h"
+#include "machine/fd1089.h"
 #include "machine/bagman_pal.h"
 #include "machine/beta128.h"
 #include "machine/kabuki.h"
 #include "machine/lynx_suzy.h"
+#include "machine/msx_dsk.h"
+#include "machine/diskii.h"
 #include "machine/mos6526.h"
 #include "machine/mos6532.h"
+#include "machine/rp5c01.h"
 #include "machine/slapstic.h"
 #include "machine/spectrum_tape.h"
 #include "machine/trdos_disk.h"
 #include "machine/wd1793.h"
 #include "machine/starwars_math.h"
+#include "machine/sega_315_5195.h"
 #include "sound/ay8910.h"
 #include "sound/msm5205.h"
 #include "sound/nes_apu.h"
@@ -57,11 +69,17 @@
 #include "sound/sn76496.h"
 #include "sound/upd1771.h"
 #include "sound/ym2151.h"
+#include "sound/ym2612.h"
+#include "sound/sega_pcm.h"
+#include "sound/upd7759.h"
+#include "video/v9938.h"
 #include "video/atari_mo.h"
 #include "video/gb_ppu.h"
 #include "video/gfx.h"
 #include "video/mos6566.h"
 #include "video/tms3556.h"
+#include "video/sega_315_5313.h"
+#include "video/sega16.h"
 
 namespace {
 
@@ -1700,7 +1718,7 @@ void test_gbc_cart_detection() {
     check(load_gb_rom(*gb, make_gb_rom(0x80), "/tmp/dsp_cpp_gbc_80.gb"), "load $80 cart");
     check(gb->debug_is_cgb(), "$80 carts run as Game Boy Color without a boot ROM");
     check(std::strcmp(gb->title(), "Game Boy Color") == 0, "title is Game Boy Color for $80");
-    check(gb->debug_state().a == 0x01, "CGB post-boot A is $01 (gb.pas, not hardware)");
+    check(gb->debug_state().a == 0x11, "CGB post-boot A is $11, how carts detect Game Boy Color");
 
     check(load_gb_rom(*gb, make_gb_rom(0xc0), "/tmp/dsp_cpp_gbc_c0.gb"), "load $c0 cart");
     check(gb->debug_is_cgb(), "$c0 carts run as Game Boy Color");
@@ -1708,6 +1726,71 @@ void test_gbc_cart_detection() {
     check(load_gb_rom(*gb, make_gb_rom(0x00), "/tmp/dsp_cpp_gb_dmg.gb"), "load DMG cart");
     check(!gb->debug_is_cgb(), "$00 carts stay on DMG");
     check(std::strcmp(gb->title(), "Game Boy") == 0, "title is Game Boy for DMG");
+    check(gb->debug_state().a == 0x01, "DMG post-boot A is $01");
+    check(gb->debug_read(0xff40) == 0x91, "DMG post-boot LCDC is $91");
+    check(gb->debug_read(0xff47) == 0xfc, "DMG post-boot BGP is $FC");
+}
+
+void test_gb_cgb_registers_absent_on_dmg() {
+    auto gb = std::make_unique<dsp::GameBoy>();
+    check(load_gb_rom(*gb, make_gb_rom(0x00), "/tmp/dsp_cpp_gb_dmg_regs.gb"), "load DMG cart");
+
+    for (uint16_t reg : {0xff4dU, 0xff4fU, 0xff55U, 0xff56U, 0xff68U, 0xff69U, 0xff6aU, 0xff6bU,
+                         0xff70U}) {
+        gb->debug_write(reg, 0x01);
+        check(gb->debug_read(reg) == 0xff, "CGB-only register reads as $FF on DMG");
+    }
+
+    // VBK stays on bank 0 and SVBK does not move WRAM $D000-$DFFF.
+    gb->debug_write(0x8000, 0x11);
+    gb->debug_write(0xff4f, 0x01);
+    check(gb->debug_read(0x8000) == 0x11, "DMG ignores VBK: VRAM has no second bank");
+    gb->debug_write(0xd000, 0x22);
+    gb->debug_write(0xff70, 0x02);
+    check(gb->debug_read(0xd000) == 0x22, "DMG ignores SVBK: WRAM has no banks");
+
+    // KEY1 does not exist either, so STOP must not switch to double speed.
+    gb->debug_write(0xff4d, 0x01);
+    gb->run_frame();
+    check(gb->debug_speed() == 0, "DMG stays at single speed");
+}
+
+void test_gbc_hdma_control() {
+    auto gb = std::make_unique<dsp::GameBoy>();
+    check(load_gb_rom(*gb, make_gb_rom(0x80), "/tmp/dsp_cpp_gbc_hdma.gb"), "load cart for HDMA");
+
+    // A general-purpose transfer reports "finished" ($FF) when it is done.
+    gb->debug_write(0xff51, 0xc0);
+    gb->debug_write(0xff52, 0x00);
+    gb->debug_write(0xff53, 0x00);
+    gb->debug_write(0xff54, 0x00);
+    gb->debug_write(0xff55, 0x01);  // two blocks
+    check(gb->debug_read(0xff55) == 0xff, "GDMA leaves $FF55 at $FF once complete");
+
+    // Clearing bit 7 aborts a running HBlank transfer and keeps the remaining
+    // length readable with bit 7 set.
+    gb->debug_write(0xff54, 0x40);
+    gb->debug_write(0xff55, 0x83);  // four blocks, HBlank
+    check(gb->debug_read(0xff55) == 0x03, "an active HDMA reports its remaining length");
+    gb->debug_write(0xff55, 0x00);
+    check(gb->debug_read(0xff55) == 0x83, "clearing bit 7 aborts the HDMA");
+    uint8_t before = gb->debug_read(0x8040);
+    gb->run_frame();
+    check(gb->debug_read(0x8040) == before, "an aborted HDMA copies nothing");
+
+    // Restarting with bit 7 set reloads the length instead of aborting.
+    for (int i = 0; i < 32; i++) gb->debug_write(uint16_t(0xc000 + i), uint8_t(0xa0 + i));
+    gb->debug_write(0xff51, 0xc0);
+    gb->debug_write(0xff52, 0x00);
+    gb->debug_write(0xff54, 0x40);
+    gb->debug_write(0xff55, 0x81);
+    check(gb->debug_read(0xff55) == 0x01, "writing bit 7 again restarts the HDMA");
+
+    // With the LCD off there is no HBlank, but the transfer still progresses.
+    gb->debug_write(0xff40, 0x00);  // LCD off
+    gb->run_frame();
+    check(gb->debug_read(0x8040) == 0xa0, "HDMA keeps copying while the LCD is off");
+    check(gb->debug_hdma_size() == 0xff, "the LCD-off HDMA runs to completion");
 }
 
 void test_gbc_boot_rom_map() {
@@ -2042,6 +2125,60 @@ void test_scv_cartridge_window() {
     check(scv->debug_a() == 0xA5, "SCV maps an 8 KiB cart at $8000");
 }
 
+void test_pv2000_missing_roms_and_dummy_bios() {
+    dsp::Pv2000 machine;
+    std::string error = "unset";
+    check(!machine.init("/no/such/pv2000.zip", &error), "PV-2000 init fails without the BIOS");
+    check(error.find("not found") != std::string::npos || error.find("missing") != std::string::npos ||
+              error.find("cannot") != std::string::npos,
+          "PV-2000 init reports why the BIOS is missing");
+    check(std::strcmp(machine.title(), "Casio PV-2000") == 0, "PV-2000 title");
+    check(machine.screen_width() == 256 && machine.screen_height() == 192, "PV-2000 screen is 256x192");
+    check(machine.uses_keyboard(), "PV-2000 reads the host keyboard");
+
+    const std::string dir = "/tmp/dsp-pv2000-test";
+    std::filesystem::create_directories(dir);
+    {
+        std::vector<uint8_t> bios(0x4000, 0x00);  // NOPs; CRC mismatch is a warning
+        std::ofstream out(dir + "/hn613128pc64.bin", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bios.data()), std::streamsize(bios.size()));
+    }
+    dsp::Pv2000 boot;
+    error.clear();
+    check(boot.init(dir, &error), "PV-2000 loads a dummy 16 KiB BIOS from a directory");
+    for (int frame = 0; frame < 5; frame++) boot.run_frame();
+    check(boot.framebuffer() != nullptr, "PV-2000 produces a framebuffer");
+
+    {
+        std::vector<uint8_t> cart(0x2000, 0xc9);  // RET
+        std::ofstream out(dir + "/cart.bin", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(cart.data()), std::streamsize(cart.size()));
+    }
+    error.clear();
+    check(boot.load_media(dir + "/cart.bin", &error), "PV-2000 attaches an 8 KiB cartridge");
+    for (int frame = 0; frame < 2; frame++) boot.run_frame();
+
+    auto exists = [](const char* path) {
+        std::ifstream probe(path);
+        return bool(probe);
+    };
+    const char* rom = "/tmp/roms/pv2000.zip";
+    if (exists(rom)) {
+        dsp::Pv2000 real;
+        error.clear();
+        check(real.init(rom, &error), "PV-2000 MAME BIOS set loads");
+        for (int frame = 0; frame < 180; frame++) real.run_frame();
+        const uint32_t* fb = real.framebuffer();
+        const int n = real.screen_width() * real.screen_height();
+        bool has_green = false, has_white = false;
+        for (int i = 0; i < n; i++) {
+            if (fb[i] == 0xff21b03bu) has_green = true;  // TMS colour 12
+            if (fb[i] == 0xffffffffu) has_white = true;
+        }
+        check(has_green && has_white, "PV-2000 BIOS menu is white text on green");
+    }
+}
+
 void test_tms7000_mov_add_call() {
     dsp::Tms7000 cpu(4915200, dsp::Tms7000::Chip::Tms7020);
     std::vector<uint8_t> rom(0x800, 0x00);
@@ -2367,6 +2504,228 @@ void test_atari_system1_missing_roms() {
     check(std::strcmp(road.title(), "Road Runner") == 0, "Road Runner title");
 }
 
+void test_sega_pcm_and_mapper() {
+    dsp::SegaPcm pcm(4000000);
+    pcm.set_bank(dsp::SegaPcm::kBank512);
+    pcm.reset();
+    pcm.set_read_rom([](uint32_t) { return uint8_t(0xff); });
+    pcm.write(0x86, 0x00);
+    pcm.write(0x07, 0x01);
+    pcm.write(0x02, 0x7f);
+    pcm.write(0x03, 0x7f);
+    pcm.clock();
+    check(pcm.left() != 0 || pcm.right() != 0, "Sega PCM produces a sample when a channel is active");
+
+    dsp::Sega3155195 mapper;
+    mapper.reset();
+    mapper.write_reg(0x10, 1);
+    mapper.write_reg(0x11, 0x40);
+    check(mapper.dirs_start(0) == 0x400000, "315-5195 region 0 start follows register $11");
+    check(mapper.dirs_end(0) == 0x420000, "315-5195 size 1 is 128 KiB");
+    mapper.write_reg(2, 3);
+    check(mapper.read_reg(2) == 0, "315-5195 reset bits 0-1 == 3 read as 0");
+    mapper.write_reg(2, 0);
+    check(mapper.read_reg(2) == 0x0f, "315-5195 reset clear reads as $0f");
+
+    uint8_t normal[32], shadow[32], hilight[32];
+    dsp::build_s16_palette_luts(normal, shadow, hilight);
+    check(normal[0x1f] > 0 && hilight[0x1f] >= normal[0x1f],
+          "System 16 resistor-net palette is not black");
+
+    uint16_t src[2] = {0x4e71, 0x4e75};
+    uint16_t opcodes[2] = {};
+    uint16_t data[2] = {};
+    uint8_t key[0x2000] = {};
+    dsp::fd1089_decrypt(src, opcodes, data, 4, key, dsp::Fd1089Type::B);
+    check(opcodes[0] != 0 || data[0] != 0, "FD1089 decrypt produces a word");
+
+    dsp::Upd7759 speech;
+    speech.reset();
+    check(speech.busy_r() == 1, "UPD7759 reports idle as busy=1");
+}
+
+void test_sega_system16_missing_roms() {
+    dsp::Outrun outrun;
+    std::string error = "unset";
+    check(!outrun.init("/no/such/outrun.zip", &error), "OutRun init fails without the ROM set");
+    check(error.find("not found") != std::string::npos || error.find("missing") != std::string::npos ||
+              error.find("cannot") != std::string::npos || error.find("Unable") != std::string::npos ||
+              error.find("open") != std::string::npos,
+          "OutRun init reports why the set is missing");
+    check(std::strcmp(outrun.title(), "OutRun") == 0, "OutRun title");
+    check(outrun.screen_width() == 320 && outrun.screen_height() == 224, "OutRun screen is 320x224");
+
+    dsp::HangOn hangon;
+    error = "unset";
+    check(!hangon.init("/no/such/hangon.zip", &error), "Hang-On init fails without the ROM set");
+    check(std::strcmp(hangon.title(), "Hang-On") == 0, "Hang-On title");
+
+    dsp::System16 fantzone(dsp::System16::Game::Fantzone);
+    check(std::strcmp(fantzone.title(), "Fantasy Zone") == 0, "Fantasy Zone title");
+    error = "unset";
+    check(!fantzone.init("/no/such/fantzone.zip", &error),
+          "Fantasy Zone init fails without the ROM set");
+
+    dsp::System16 shinobi(dsp::System16::Game::Shinobi);
+    check(std::strcmp(shinobi.title(), "Shinobi") == 0, "Shinobi title");
+    dsp::System16 altbeast(dsp::System16::Game::Altbeast);
+    check(std::strcmp(altbeast.title(), "Altered Beast") == 0, "Altered Beast title");
+    dsp::System16 tetris(dsp::System16::Game::Tetris);
+    check(std::strcmp(tetris.title(), "Tetris") == 0, "Tetris title");
+    dsp::HangOn enduro(dsp::HangOn::Game::Enduro);
+    check(std::strcmp(enduro.title(), "Enduro Racer") == 0, "Enduro Racer title");
+    dsp::HangOn sharrier(dsp::HangOn::Game::Sharrier);
+    check(std::strcmp(sharrier.title(), "Space Harrier") == 0, "Space Harrier title");
+    dsp::System16 alexkidd(dsp::System16::Game::Alexkidd);
+    check(std::strcmp(alexkidd.title(), "Alex Kidd: The Lost Stars") == 0, "Alex Kidd title");
+    dsp::System16 aliensyn(dsp::System16::Game::Aliensyn);
+    check(std::strcmp(aliensyn.title(), "Alien Syndrome") == 0, "Alien Syndrome title");
+    dsp::System16 wb3(dsp::System16::Game::Wb3);
+    check(std::strcmp(wb3.title(), "Wonder Boy III: Monster Lair") == 0, "Wonder Boy III title");
+}
+
+int unique_pixels(const dsp::Machine& machine) {
+    const uint32_t* fb = machine.framebuffer();
+    const int n = machine.screen_width() * machine.screen_height();
+    std::set<uint32_t> colors(fb, fb + n);
+    return int(colors.size());
+}
+
+void test_sega_roms_if_present() {
+    auto exists = [](const char* path) {
+        std::ifstream probe(path);
+        return bool(probe);
+    };
+
+    if (exists("/tmp/roms/outrun.zip")) {
+        dsp::Outrun machine;
+        std::string error;
+        check(machine.init("/tmp/roms/outrun.zip", &error), "OutRun MAME set loads");
+        check(machine.debug_pc() == 0x7b1e, "OutRun reset vector is the 315-5195 boot stub");
+        for (int frame = 0; frame < 240; frame++) machine.run_frame();
+        check(machine.debug_pc() != 0x7b1e, "OutRun leaves the mapper boot stub");
+        check(machine.debug_sub_pc() != 0x103a, "OutRun sub CPU leaves the handshake wait");
+        check(machine.debug_palette_used() > 16, "OutRun writes the attract palette after the handshake");
+    }
+
+    if (exists("/tmp/roms/fantzone.zip")) {
+        dsp::System16 machine(dsp::System16::Game::Fantzone);
+        std::string error;
+        check(machine.init("/tmp/roms/fantzone.zip", &error), "Fantasy Zone MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 8, "Fantasy Zone attract mode draws a colour picture");
+    }
+
+    if (exists("/tmp/roms/shinobi.zip")) {
+        dsp::System16 machine(dsp::System16::Game::Shinobi);
+        std::string error;
+        check(machine.init("/tmp/roms/shinobi.zip", &error), "Shinobi MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 8, "Shinobi attract mode draws a colour picture");
+    }
+
+    if (exists("/tmp/roms/tetris.zip")) {
+        dsp::System16 machine(dsp::System16::Game::Tetris);
+        std::string error;
+        check(machine.init("/tmp/roms/tetris.zip", &error), "Tetris MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 4, "Tetris attract mode draws the warning screen");
+    }
+
+    if (exists("/tmp/roms/altbeast.zip")) {
+        dsp::System16 machine(dsp::System16::Game::Altbeast);
+        std::string error;
+        check(machine.init("/tmp/roms/altbeast.zip", &error), "Altered Beast MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 4, "Altered Beast attract mode draws a colour picture");
+    }
+
+    if (exists("/tmp/roms/hangon.zip")) {
+        dsp::HangOn machine;
+        std::string error;
+        check(machine.init("/tmp/roms/hangon.zip", &error), "Hang-On MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 4, "Hang-On attract mode draws more than the text layer");
+    }
+
+    if (exists("/tmp/roms/enduror.zip")) {
+        dsp::HangOn machine(dsp::HangOn::Game::Enduro);
+        std::string error;
+        check(machine.init("/tmp/roms/enduror.zip", &error), "Enduro Racer MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 4, "Enduro Racer attract mode draws a colour picture");
+    }
+
+    if (exists("/tmp/roms/sharrier.zip")) {
+        dsp::HangOn machine(dsp::HangOn::Game::Sharrier);
+        std::string error;
+        check(machine.init("/tmp/roms/sharrier.zip", &error), "Space Harrier MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 4, "Space Harrier attract mode draws a colour picture");
+    }
+
+    if (exists("/tmp/roms/alexkidd.zip")) {
+        dsp::System16 machine(dsp::System16::Game::Alexkidd);
+        std::string error;
+        check(machine.init("/tmp/roms/alexkidd.zip", &error), "Alex Kidd MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 4, "Alex Kidd attract mode draws a colour picture");
+    }
+
+    if (exists("/tmp/roms/aliensyn.zip")) {
+        dsp::System16 machine(dsp::System16::Game::Aliensyn);
+        std::string error;
+        check(machine.init("/tmp/roms/aliensyn.zip", &error), "Alien Syndrome MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 4, "Alien Syndrome attract mode draws a colour picture");
+    }
+
+    if (exists("/tmp/roms/wb3.zip")) {
+        dsp::System16 machine(dsp::System16::Game::Wb3);
+        std::string error;
+        check(machine.init("/tmp/roms/wb3.zip", &error), "Wonder Boy III MAME set loads");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 4, "Wonder Boy III attract mode draws a colour picture");
+    }
+}
+
+void test_indy_coin_if_present() {
+    const char* rom = "/tmp/roms/indytemp.zip";
+    std::ifstream probe(rom);
+    if (!probe) return;
+    probe.close();
+
+    dsp::AtariSystem1 machine(dsp::AtariSystem1::Game::Indy);
+    std::string error;
+    check(machine.init(rom, &error), "Indiana Jones ROM set loads for the coin test");
+    bool armed = false;
+    for (int i = 0; i < 600; i++) {
+        machine.run_frame();
+        if ((machine.debug_bankselect() & 0x80) != 0 &&
+            (machine.debug_sound_ram(0x30) & 0x1f) == 0x1f) {
+            armed = true;
+            break;
+        }
+    }
+    check(armed, "YM Timer A has armed the coin-1 debounce at $30");
+    check(!machine.debug_sound_halted(), "6502 sound CPU is running so it can see coins on $1820");
+    check(machine.debug_sound_pc() >= 0x4000, "6502 is executing sound ROM");
+
+    const uint8_t credits_before = machine.debug_sound_ram(0x2c);
+    dsp::MachineInputs coin;
+    for (int pulse = 0; pulse < 4; pulse++) {
+        coin.coin1 = true;
+        machine.set_inputs(coin);
+        check((machine.debug_in2() & 0x01) == 0, "coin 1 clears $1820 bit 0");
+        for (int i = 0; i < 3; i++) machine.run_frame();
+        coin.coin1 = false;
+        machine.set_inputs(coin);
+        for (int i = 0; i < 20; i++) machine.run_frame();
+    }
+    check(machine.debug_sound_ram(0x2c) > credits_before,
+          "inserting a coin is counted by the 6502 coin scan at $FE38");
+}
+
 void test_trdos_scl_and_beta() {
     std::vector<uint8_t> scl(9 + 14 + 256, 0);
     std::memcpy(scl.data(), "SINCLAIR", 8);
@@ -2504,6 +2863,568 @@ void test_trdos_scl_and_beta() {
     check(scor64->init(dir64.string(), &error), "64 KB scorpion.rom boots from the ZXMak layout");
 }
 
+void test_ym2612() {
+    dsp::YM2612 ym(7670453);
+    ym.reset();
+    bool silent = true;
+    for (int i = 0; i < 128; i++) {
+        if (ym.update() != 0) silent = false;
+    }
+    check(silent, "the YM2612 is silent after reset");
+
+    // Channel 0, algorithm 7, all operators as carriers, max volume, key on.
+    ym.write(0, 0xb0);
+    ym.write(1, 0x07);
+    ym.write(0, 0xb4);
+    ym.write(1, 0xc0);
+    ym.write(0, 0xa4);
+    ym.write(1, 0x22);
+    ym.write(0, 0xa0);
+    ym.write(1, 0x69);
+    for (int op = 0; op < 4; op++) {
+        ym.write(0, uint8_t(0x40 + (op << 2)));
+        ym.write(1, 0x00);
+        ym.write(0, uint8_t(0x50 + (op << 2)));
+        ym.write(1, 0x1f);
+        ym.write(0, uint8_t(0x80 + (op << 2)));
+        ym.write(1, 0x0f);
+    }
+    ym.write(0, 0x28);
+    ym.write(1, 0xf0);
+    bool audible = false;
+    for (int i = 0; i < 4410; i++) {
+        if (ym.update() != 0) audible = true;
+    }
+    check(audible, "the YM2612 produces sound after a key on");
+
+    // DAC on channel 6.
+    ym.reset();
+    ym.write(0, 0x2b);
+    ym.write(1, 0x80);
+    ym.write(0, 0x2a);
+    ym.write(1, 0xff);
+    int32_t dac = ym.update();
+    check(dac != 0, "the YM2612 DAC is audible when enabled");
+}
+
+void test_genesis_vdp() {
+    dsp::Sega3155313 vdp(false);
+    vdp.reset();
+    vdp.write(4, 0x8004);  // mode 1
+    vdp.write(4, 0x8174);  // display + DMA + VINT
+    vdp.write(4, 0x8230);
+    vdp.write(4, 0x8407);
+    vdp.write(4, 0x8c81);  // H40
+    vdp.write(4, 0x8f02);  // auto increment 2
+    check((vdp.reg(1) & 0x40) != 0, "VDP display enable is latched");
+    check((vdp.reg(0x0c) & 0x81) == 0x81, "VDP H40 mode is latched");
+
+    // CRAM write at index 0: command CD=3, addr=0 → $C0000000
+    vdp.write(4, 0xc000);
+    vdp.write(4, 0x0000);
+    vdp.write(0, 0x000e);
+    vdp.write(0, 0x0eee);
+    check((vdp.cram(0) & 0x0eee) == 0x000e, "VDP CRAM colour 0 is red");
+    check((vdp.cram(1) & 0x0eee) == 0x0eee, "VDP CRAM colour 1 is white");
+
+    // DMA fill of VRAM with $1111 (tile of colour 1).
+    vdp.write(4, 0x9300);
+    vdp.write(4, 0x9410);  // length 0x1000 words
+    vdp.write(4, 0x9780);  // fill
+    vdp.write(4, 0x4000);
+    vdp.write(4, 0x0080);  // DMA bit + VRAM write
+    vdp.write(0, 0x1111);
+    check(vdp.vram(0) == 0x11, "DMA fill writes the high byte");
+    check(vdp.vram(3) == 0x11, "DMA fill covers more than one word");
+
+    vdp.handle_scanline(0);
+    const uint32_t* line = vdp.line_buffer();
+    bool saw_white = false;
+    for (int x = 0; x < 320; x++) {
+        if ((line[x] & 0x00ffffff) == 0x00eeeeee || (line[x] & 0x00ffffff) == 0x00ffffff ||
+            ((line[x] >> 16) & 0xff) > 200) {
+            saw_white = true;
+            break;
+        }
+    }
+    check(saw_white, "VDP scanline of a solid colour-1 tile is bright");
+}
+
+std::vector<uint8_t> make_genesis_test_rom() {
+    std::vector<uint8_t> rom(0x800, 0);
+    auto put32 = [&](size_t offset, uint32_t value) {
+        rom[offset] = uint8_t(value >> 24);
+        rom[offset + 1] = uint8_t(value >> 16);
+        rom[offset + 2] = uint8_t(value >> 8);
+        rom[offset + 3] = uint8_t(value);
+    };
+    auto put16 = [&](size_t offset, uint16_t value) {
+        rom[offset] = uint8_t(value >> 8);
+        rom[offset + 1] = uint8_t(value);
+    };
+    put32(0, 0x00fffe00);
+    put32(4, 0x00000200);
+    for (int vec = 2; vec < 64; vec++) put32(size_t(vec * 4), 0x000003e0);
+    std::memcpy(&rom[0x100], "SEGA GENESIS    ", 16);
+    put16(0x3e0, 0x4e73);  // rte
+
+    size_t pc = 0x200;
+    auto emit16 = [&](uint16_t value) {
+        put16(pc, value);
+        pc += 2;
+    };
+    auto emit32 = [&](uint32_t value) {
+        put32(pc, value);
+        pc += 4;
+    };
+    emit16(0x41f9);
+    emit32(0x00c00000);  // lea $c00000, a0
+    emit16(0x43f9);
+    emit32(0x00c00004);  // lea $c00004, a1
+    auto setreg = [&](uint8_t reg, uint8_t value) {
+        emit16(0x32bc);
+        emit16(uint16_t(0x8000 | (uint16_t(reg) << 8) | value));
+    };
+    setreg(0x00, 0x04);
+    setreg(0x01, 0x74);
+    setreg(0x02, 0x30);
+    setreg(0x03, 0x28);
+    setreg(0x04, 0x07);
+    setreg(0x05, 0x7c);
+    setreg(0x07, 0x00);
+    setreg(0x0a, 0xff);
+    setreg(0x0b, 0x00);
+    setreg(0x0c, 0x81);
+    setreg(0x0d, 0x3f);
+    setreg(0x0f, 0x02);
+    setreg(0x10, 0x01);
+    emit16(0x22bc);
+    emit32(0xc0000000);  // CRAM write
+    emit16(0x30bc);
+    emit16(0x000e);
+    emit16(0x30bc);
+    emit16(0x0eee);
+    emit16(0x22bc);
+    emit32(0x40000000);  // VRAM write at 0
+    emit16(0x700f);      // moveq #15, d0
+    emit16(0x30bc);
+    emit16(0x1111);
+    emit16(0x51c8);
+    emit16(0xfff8);  // dbra d0, tile loop
+    emit16(0x60fe);  // bra.s *
+    return rom;
+}
+
+void test_genesis_boot() {
+    dsp::Genesis machine;
+    std::string error;
+    check(machine.load_rom(make_genesis_test_rom(), &error), "Genesis loads a synthetic ROM");
+    check(machine.debug_pc() == 0x200, "Genesis reset vector is $200");
+    for (int frame = 0; frame < 8; frame++) machine.run_frame();
+    check(machine.debug_pc() >= 0x200 && machine.debug_pc() < 0x400,
+          "Genesis 68k stays in the test program");
+    check((machine.vdp().reg(1) & 0x40) != 0, "Genesis test ROM enables the display");
+    check((machine.vdp().cram(1) & 0x0eee) == 0x0eee, "Genesis test ROM writes CRAM");
+    const uint32_t* fb = machine.framebuffer();
+    bool bright = false;
+    for (int i = 0; i < 320 * 16; i++) {
+        if (((fb[i] >> 16) & 0xff) > 180 && ((fb[i] >> 8) & 0xff) > 180) {
+            bright = true;
+            break;
+        }
+    }
+    check(bright, "Genesis test ROM fills the screen with the CRAM colour");
+
+    dsp::MachineInputs inputs;
+    inputs.player1.right = true;
+    inputs.player1.button1 = true;
+    machine.set_inputs(inputs);
+    machine.debug_write_word(0xa10008, 0x4000);  // TH output
+    machine.debug_write_word(0xa10002, 0x4000);  // TH high
+    const uint16_t th_high = machine.debug_read_word(0xa10002);
+    machine.debug_write_word(0xa10002, 0x0000);  // TH low
+    const uint16_t th_low = machine.debug_read_word(0xa10002);
+    check((th_high & 0x0800) == 0, "Genesis pad right is visible with TH high");
+    check((th_low & 0x1000) == 0, "Genesis pad A is visible with TH low");
+}
+
+void write_msx2_dummy_roms(const std::string& dir, bool with_disk) {
+    std::filesystem::create_directories(dir);
+    std::vector<uint8_t> bios(0x8000, 0x00);
+    bios[0] = 0x76;  // HALT
+    {
+        std::ofstream out(dir + "/MSX2.ROM", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bios.data()), std::streamsize(bios.size()));
+    }
+    std::vector<uint8_t> sub(0x4000, 0xff);
+    sub[0] = 'C';
+    sub[1] = 'D';
+    {
+        std::ofstream out(dir + "/MSX2EXT.ROM", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(sub.data()), std::streamsize(sub.size()));
+    }
+    if (with_disk) {
+        std::vector<uint8_t> disk(0x4000, 0xff);
+        disk[0] = 'A';
+        disk[1] = 'B';
+        {
+            std::ofstream out(dir + "/nms8250_disk.rom", std::ios::binary);
+            out.write(reinterpret_cast<const char*>(disk.data()), std::streamsize(disk.size()));
+        }
+    }
+}
+
+void test_v9938_status_and_hmmv() {
+    dsp::V9938 vdp(nullptr);
+    vdp.reset();
+    auto setreg = [&](int index, uint8_t value) {
+        vdp.register_write(value);
+        vdp.register_write(uint8_t(0x80 | index));
+    };
+    setreg(15, 1);
+    uint8_t id = vdp.status_read();
+    check((id & 0x3e) == 0, "V9938 status 1 identification bits are 0");
+
+    setreg(0, 0x06);   // GRAPHIC 4
+    setreg(1, 0x40);   // display on
+    setreg(7, 0x01);   // backdrop 1
+    setreg(36, 0);     // DX
+    setreg(37, 0);
+    setreg(38, 0);     // DY
+    setreg(39, 0);
+    setreg(40, 32);    // NX
+    setreg(41, 0);
+    setreg(42, 8);     // NY
+    setreg(43, 0);
+    setreg(44, 0xff);  // both GRAPHIC 4 pixels in the byte are colour 15
+    setreg(45, 0);
+    setreg(46, 0xc0);  // HMMV
+    check(!vdp.command_executing(), "V9938 HMMV completes immediately");
+    for (int line = 0; line < 16; line++) vdp.refresh_line(line, 262);
+    const uint32_t* fb = vdp.framebuffer();
+    const uint32_t pixel = fb[2 * dsp::V9938::kScreenWidth + 4];
+    check(((pixel >> 16) & 0xff) > 180 && ((pixel >> 8) & 0xff) > 180 && (pixel & 0xff) > 180,
+          "V9938 HMMV fills GRAPHIC 4 pixels with palette colour 15");
+
+    // GRAPHIC 5 HMMC writes packed bytes (4 pixels), not a single 2-bit colour.
+    dsp::V9938 g5(nullptr);
+    g5.reset();
+    auto setreg5 = [&](int index, uint8_t value) {
+        g5.register_write(value);
+        g5.register_write(uint8_t(0x80 | index));
+    };
+    setreg5(0, 0x08);   // GRAPHIC 5
+    setreg5(1, 0x40);
+    setreg5(8, 0x20);   // TP: colour 0 is black, not transparent
+    setreg5(36, 0);
+    setreg5(37, 0);
+    setreg5(38, 0);
+    setreg5(39, 0);
+    setreg5(40, 8);     // 8 dots = 2 bytes
+    setreg5(41, 0);
+    setreg5(42, 1);
+    setreg5(43, 0);
+    setreg5(44, 0x1b);  // pixels 0,1,2,3
+    setreg5(45, 0);
+    setreg5(46, 0xf0);  // HMMC consumes the first byte
+    check(g5.command_executing(), "V9938 HMMC waits for the remaining CPU bytes");
+    setreg5(44, 0xe4);  // pixels 3,2,1,0
+    check(!g5.command_executing(), "V9938 HMMC finishes after NX dots");
+    for (int line = 0; line < 2; line++) g5.refresh_line(line, 262);
+    const uint32_t* g5fb = g5.framebuffer();
+    const uint32_t p0 = g5fb[0];
+    const uint32_t p1 = g5fb[1];
+    const uint32_t p2 = g5fb[2];
+    const uint32_t p6 = g5fb[6];
+    check(((p0 >> 16) & 0xff) + ((p0 >> 8) & 0xff) + (p0 & 0xff) < 40,
+          "V9938 GRAPHIC 5 HMMC first pixel is colour 0");
+    check(p1 != p2, "V9938 GRAPHIC 5 HMMC packs four distinct 2-bit pixels per byte");
+    check(p2 != p6, "V9938 GRAPHIC 5 HMMC second byte is not a 1-pixel colour smear");
+}
+
+void test_msx_disk_and_fdc() {
+    std::vector<uint8_t> image(737280, 0xe5);
+    image[0] = 0xeb;
+    image[1] = 0xfe;
+    image[2] = 0x90;
+    std::memcpy(image.data() + 3, "MSXTEST ", 8);
+    dsp::MsxDisk disk;
+    std::string error;
+    check(disk.load_bytes(image.data(), image.size(), &error), "720 KiB raw DSK is accepted");
+    check(disk.tracks() == 80 && disk.heads() == 2 && disk.sectors_per_track() == 9,
+          "720 KiB DSK is 80 tracks, 2 sides, 9 sectors");
+    const uint8_t* boot = disk.sector(0, 0, 1);
+    check(boot != nullptr && boot[0] == 0xeb && std::memcmp(boot + 3, "MSXTEST ", 8) == 0,
+          "boot sector is track 0 head 0 sector 1");
+
+    dsp::MsxFdc fdc;
+    fdc.reset();
+    fdc.set_disk(&disk);
+    fdc.command_w(0x80);
+    check((fdc.status_r() & 0x02) != 0, "MSX FDC read sector raises DRQ");
+    check(fdc.data_r() == 0xeb, "MSX FDC returns the first boot-sector byte");
+    for (int i = 1; i < 512; i++) (void)fdc.data_r();
+    check(fdc.intrq(), "MSX FDC sector read completes with INTRQ");
+}
+
+void test_rp5c01_fixed_clock() {
+    dsp::Rp5c01 rtc;
+    rtc.reset();
+    rtc.set_address(4);
+    check(rtc.read() == 7, "RP-5C01 hours ones is 7");
+    rtc.set_address(7);
+    check(rtc.read() == 8, "RP-5C01 day ones is 8");
+    rtc.set_address(13);
+    rtc.write(2);  // RAM bank
+    rtc.set_address(4);
+    rtc.write(0x05);
+    rtc.set_address(13);
+    rtc.write(0);  // clock bank
+    rtc.set_address(4);
+    check(rtc.read() == 7, "RP-5C01 RAM bank writes do not replace the clock");
+}
+
+void test_msx2_missing_roms_mapper_and_disk() {
+    dsp::Msx2 missing;
+    std::string error = "unset";
+    check(!missing.init("/no/such/msx2.zip", &error), "MSX2 init fails without the BIOS");
+    check(error.find("not found") != std::string::npos || error.find("missing") != std::string::npos,
+          "MSX2 init reports why the BIOS is missing");
+    check(std::strcmp(missing.title(), "MSX2") == 0, "MSX2 title");
+    check(missing.screen_width() == 512 && missing.screen_height() == 212, "MSX2 screen is 512x212");
+    check(missing.uses_keyboard(), "MSX2 reads the host keyboard");
+
+    const std::string dir = "/tmp/dsp-msx2-test";
+    write_msx2_dummy_roms(dir, true);
+    dsp::Msx2 boot;
+    error.clear();
+    check(boot.init(dir, &error), "MSX2 loads dummy BIOS/sub-ROM/disk ROM from a directory");
+    check(boot.disk_rom_loaded(), "MSX2 reports the disk ROM as loaded");
+    for (int frame = 0; frame < 3; frame++) boot.run_frame();
+    check(boot.framebuffer() != nullptr, "MSX2 produces a framebuffer");
+
+    boot.debug_write_port(0xa8, 0xff);          // all pages slot 3
+    boot.debug_write_byte(0xffff, 0x55);        // all subslots 1 (mapper RAM)
+    check(boot.debug_read_byte(0xffff) == uint8_t(~0x55),
+          "expanded slot 3 reads the inverted subslot register at $FFFF");
+    boot.debug_write_port(0xff, 0);
+    boot.debug_write_byte(0xc000, 0xa5);
+    check(boot.debug_read_byte(0xc000) == 0xa5, "mapper RAM segment 0 is writable in page 3");
+    boot.debug_write_port(0xff, 1);
+    check(boot.debug_read_byte(0xc000) == 0, "mapper port $FF switches the RAM segment");
+    boot.debug_write_port(0xff, 0);
+    check(boot.debug_read_byte(0xc000) == 0xa5, "mapper RAM keeps the previous segment");
+
+    boot.debug_write_byte(0xffff, 0xaa);  // subslot 2: disk ROM
+    check(boot.debug_read_byte(0x4000) == 'A' && boot.debug_read_byte(0x4001) == 'B',
+          "disk ROM is visible in slot 3-2 page 1");
+
+    std::vector<uint8_t> dsk(737280, 0xe5);
+    const std::string dsk_path = dir + "/blank.dsk";
+    {
+        std::ofstream out(dsk_path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(dsk.data()), std::streamsize(dsk.size()));
+    }
+    error.clear();
+    check(boot.load_media(dsk_path, &error), "MSX2 attaches a 720 KiB .dsk");
+
+    auto exists = [](const char* path) {
+        std::ifstream probe(path);
+        return bool(probe);
+    };
+    const char* romdir = "/tmp/roms/msx2";
+    const char* zxtiny = "/tmp/roms/zxtiny";
+    const bool have_official = exists((std::string(romdir) + "/MSX2.ROM").c_str()) ||
+                               exists((std::string(romdir) + "/nms8250_basic-bios2.rom").c_str());
+    const bool have_zxtiny = exists((std::string(zxtiny) + "/msx2_bios.rom").c_str());
+    const char* biosdir = have_zxtiny ? zxtiny : (have_official ? romdir : nullptr);
+    if (biosdir != nullptr) {
+        dsp::Msx2 real;
+        error.clear();
+        check(real.init(biosdir, &error), "MSX2 BIOS set loads");
+        for (int frame = 0; frame < 300; frame++) real.run_frame();
+        const uint32_t* fb = real.framebuffer();
+        const int n = real.screen_width() * real.screen_height();
+        int lit = 0;
+        for (int i = 0; i < n; i++) {
+            const uint32_t p = fb[i];
+            if (((p >> 16) & 0xff) + ((p >> 8) & 0xff) + (p & 0xff) > 40) lit++;
+        }
+        check(lit > 200, "MSX2 BIOS paints the V9938 framebuffer");
+    }
+}
+
+int count_lit_pixels(const dsp::Machine& machine) {
+    const uint32_t* fb = machine.framebuffer();
+    const int n = machine.screen_width() * machine.screen_height();
+    int lit = 0;
+    for (int i = 0; i < n; i++) {
+        const uint32_t p = fb[i];
+        if (((p >> 16) & 0xff) + ((p >> 8) & 0xff) + (p & 0xff) > 40) lit++;
+    }
+    return lit;
+}
+
+void test_diskii_encode_roundtrip() {
+    uint8_t sector[256];
+    for (int i = 0; i < 256; i++) sector[i] = uint8_t(i * 3 + 17);
+    uint8_t encoded[343];
+    dsp::DiskIi::encode_62(sector, encoded);
+    uint8_t decoded[256];
+    check(dsp::DiskIi::decode_62(encoded, decoded), "Disk II 6-and-2 checksum is valid");
+    check(std::memcmp(sector, decoded, 256) == 0, "Disk II 6-and-2 roundtrips a sector");
+
+    std::vector<uint8_t> image(dsp::DiskIi::kDosSize, 0);
+    for (int s = 0; s < 16; s++) image[s * 256] = uint8_t(0xA0 + s);
+    std::memcpy(image.data() + 1, "HELLO", 5);
+    dsp::DiskIi disk;
+    std::string error;
+    check(disk.load_bytes(image.data(), image.size(), "test.dsk", &error), "Disk II loads a 140K .dsk");
+    check(disk.nibbles().size() >= 6000, "Disk II nibblizes track 0");
+    bool saw_d5 = false;
+    for (uint8_t n : disk.nibbles()) {
+        if (n == 0xD5) saw_d5 = true;
+    }
+    check(saw_d5, "Disk II track contains an address/data prologue");
+
+    disk.read_io(0xE9);  // motor on
+    disk.tick(40);
+    check((disk.latch() & 0x80) != 0, "Disk II latch bit 7 is set when a nibble is ready");
+    const int pos = disk.nibble_pos();
+    disk.tick(27);
+    check(disk.nibble_pos() == pos, "Disk II keeps the current nibble for a 27-cycle PROM data loop");
+    const uint8_t first = disk.read_io(0xEC);
+    check((first & 0x80) != 0, "Disk II $C0EC returns the held nibble with bit 7 set");
+    check((disk.latch() & 0x80) == 0, "Disk II $C0EC consumes the nibble (clears bit 7)");
+    disk.tick(40);
+    check(disk.nibble_pos() != pos, "Disk II advances after the CPU consumes the nibble");
+}
+
+void test_apple2_missing_roms_and_dummy() {
+    dsp::Apple2 machine;
+    std::string error;
+    check(!machine.init("/tmp/no-such-apple2-bios-set", &error), "Apple II without BIOS fails init");
+
+    machine.init_synthetic_roms();
+    machine.poke(0x0400, 0xC1);
+    machine.poke(0x0401, 0xD0);
+    machine.poke(0x0402, 0xD0);
+    machine.poke(0x0403, 0xCC);
+    machine.poke(0x0404, 0xC5);
+    for (int i = 0; i < 3; i++) machine.run_frame();
+    check(count_lit_pixels(machine) > 50, "Apple II dummy chargen paints text cells");
+    check(machine.pc() == 0xF000, "Apple II synthetic ROM sits in the JMP loop");
+
+    dsp::MachineInputs inputs{};
+    inputs.keys[size_t(dsp::Key::A)] = true;
+    machine.set_inputs(inputs);
+    check((machine.peek(0xC000) & 0x80) != 0, "Apple II keyboard strobe sets bit 7");
+    check((machine.peek(0xC000) & 0x7F) == 'A', "Apple II keyboard returns ASCII A");
+    machine.peek(0xC010);
+    check((machine.peek(0xC000) & 0x80) == 0, "Apple II $C010 clears the keyboard strobe");
+}
+
+void test_apple2_roms_if_present() {
+    const char* plus_zip = "/tmp/roms/apple2/apple2p.zip";
+    const char* iie_zip = "/tmp/roms/apple2/apple2e.zip";
+    const char* ee_zip = "/tmp/roms/apple2/apple2ee.zip";
+    auto exists = [](const char* path) {
+        std::ifstream in(path, std::ios::binary);
+        return bool(in);
+    };
+    if (exists(plus_zip)) {
+        dsp::Apple2 plus(dsp::Apple2::Model::IIPlus);
+        std::string error;
+        check(plus.init(plus_zip, &error), "Apple II+ BIOS set loads");
+        check(!plus.disk_prom_loaded(), "apple2p.zip has no Disk II PROM so Autostart reaches BASIC");
+        for (int frame = 0; frame < 180; frame++) plus.run_frame();
+        check(count_lit_pixels(plus) > 200, "Apple II+ Autostart paints the text screen");
+    }
+    if (exists(iie_zip)) {
+        dsp::Apple2 iie(dsp::Apple2::Model::IIe);
+        std::string error;
+        check(iie.init(iie_zip, &error), "Apple IIe BIOS set loads");
+        for (int frame = 0; frame < 180; frame++) iie.run_frame();
+        check(count_lit_pixels(iie) > 200, "Apple IIe firmware paints the text screen");
+    }
+    if (exists(ee_zip)) {
+        dsp::Apple2 ee(dsp::Apple2::Model::IIeEnhanced);
+        std::string error;
+        check(ee.init(ee_zip, &error), "Apple IIe Enhanced BIOS set loads");
+        check(ee.pc() != 0, "Apple IIe Enhanced 65C02 starts from the reset vector");
+    }
+
+    const char* prom = "/tmp/roms/apple2/disk2-16boot.rom";
+    const char* concat = "/tmp/roms/apple2/apple2-asoft-auto.rom";
+    if (exists(prom) && exists(concat) && exists("/tmp/roms/apple2/apple2-character.rom")) {
+        dsp::Apple2 plus(dsp::Apple2::Model::IIPlus);
+        std::string error;
+        check(plus.init(concat, &error), "Apple II+ concatenated ROM + sibling Disk II PROM load");
+        check(plus.disk_prom_loaded(), "Disk II PROM is mapped in slot 6");
+
+        std::vector<uint8_t> image(dsp::DiskIi::kDosSize, 0);
+        // Track 0 sector 0: boot stub that HOMEs and COUTs "DISK OK".
+        const uint8_t boot[] = {
+            0x01,
+            0x20, 0x58, 0xFC,
+            0xA0, 0x00,
+            0xB9, 0x11, 0x08,
+            0xF0, 0xFE,
+            0x20, 0xED, 0xFD,
+            0xC8,
+            0xD0, 0xF5,
+            0xC4, 0xC9, 0xD3, 0xCB, 0xA0, 0xCF, 0xCB, 0x00,
+        };
+        std::memcpy(image.data(), boot, sizeof(boot));
+        check(plus.disk().load_bytes(image.data(), image.size(), "boot.dsk", &error),
+              "synthetic boot disk loads");
+        plus.reset();
+        for (int frame = 0; frame < 240; frame++) plus.run_frame();
+        check(count_lit_pixels(plus) > 50, "Disk II boot PROM paints from the synthetic sector");
+    }
+
+    const char* compilation = "/tmp/roms/apple2/spyhunter-compilation.dsk";
+    if (exists(prom) && exists(concat) && exists(compilation)) {
+        std::ifstream in(compilation, std::ios::binary);
+        std::vector<uint8_t> image((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+        dsp::Apple2 plus(dsp::Apple2::Model::IIPlus);
+        std::string error;
+        check(plus.init(concat, &error), "Apple II+ loads firmware for the compilation disk");
+        check(plus.disk().load_bytes(image.data(), image.size(), compilation, &error),
+              "Spy Hunter compilation .dsk loads");
+        plus.reset();
+        bool pages_ok = false;
+        for (int frame = 0; frame < 250; frame++) {
+            plus.run_frame();
+            if (plus.peek(0x08FF) != 0xFF || plus.pc() < 0xC600) {
+                continue;
+            }
+            static const uint8_t kBoot1Phys[] = {0x0C, 0x0E, 0x01, 0x03, 0x05,
+                                                0x07, 0x09, 0x0B, 0x0D};
+            static const uint8_t kDosSkew[] = {0x00, 0x07, 0x0E, 0x06, 0x0D, 0x05, 0x0C, 0x04,
+                                               0x0B, 0x03, 0x0A, 0x02, 0x09, 0x01, 0x08, 0x0F};
+            pages_ok = true;
+            for (int i = 0; i < 9; i++) {
+                const int logical = kDosSkew[kBoot1Phys[i]];
+                const uint16_t page = uint16_t((0x3F - i) << 8);
+                for (int b = 0; b < 256; b++) {
+                    if (plus.peek(uint16_t(page + b)) != image[logical * 256 + b]) {
+                        pages_ok = false;
+                        break;
+                    }
+                }
+                if (!pages_ok) {
+                    break;
+                }
+            }
+            break;
+        }
+        check(plus.peek(0x0800) == 0x01, "boot0 loaded track 0 sector 0 into $0800");
+        check(pages_ok, "boot1 loaded DOS pages $3700-$3FFF from track 0");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -2564,6 +3485,8 @@ int main() {
     test_c64_pla_and_keyboard();
     test_c64_prg_media();
     test_gbc_cart_detection();
+    test_gb_cgb_registers_absent_on_dmg();
+    test_gbc_hdma_control();
     test_gbc_boot_rom_map();
     test_gbc_ppu_lcdc0_and_priority();
     test_gbc_io_hdma_and_unused_oam();
@@ -2575,6 +3498,7 @@ int main() {
     test_upd1771_tone();
     test_scv_init_and_block_graphics();
     test_scv_cartridge_window();
+    test_pv2000_missing_roms_and_dummy_bios();
     test_tms7000_mov_add_call();
     test_tms7000_lvdp_and_int1();
     test_tms3556_background();
@@ -2583,6 +3507,20 @@ int main() {
     test_starwars_missing_roms();
     test_polepos_driver();
     test_atari_system1_missing_roms();
+    test_sega_pcm_and_mapper();
+    test_sega_system16_missing_roms();
+    test_sega_roms_if_present();
+    test_indy_coin_if_present();
+    test_ym2612();
+    test_genesis_vdp();
+    test_genesis_boot();
+    test_v9938_status_and_hmmv();
+    test_msx_disk_and_fdc();
+    test_rp5c01_fixed_clock();
+    test_msx2_missing_roms_mapper_and_disk();
+    test_diskii_encode_roundtrip();
+    test_apple2_missing_roms_and_dummy();
+    test_apple2_roms_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

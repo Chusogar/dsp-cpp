@@ -26,6 +26,7 @@ add_executable(dsp
   src/cpu/tms7000.cpp
   src/cpu/hu6280.cpp
   src/cpu/mcs51.cpp
+  src/cpu/mcs48.cpp
   src/cpu/nec_v30.cpp
   src/cpu/z8002.cpp
   src/cpu/mb88xx.cpp
@@ -46,14 +47,19 @@ add_executable(dsp
   src/sound/nes_apu.cpp
   src/sound/polepos_wsg.cpp
   src/sound/polepos_engine.cpp
+  src/sound/sega_pcm.cpp
+  src/sound/upd7759.cpp
     
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/tms9918.cpp
+  src/video/v9938.cpp
   src/video/tms3556.cpp
   src/video/deco_bac06.cpp
   src/video/nes_ppu.cpp
   src/video/avg_starwars.cpp
+  src/video/sega16.cpp
+  src/video/apple2_video.cpp
   
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
@@ -69,6 +75,8 @@ add_executable(dsp
   src/machine/lynx_mikey.cpp
   src/machine/trdos_disk.cpp
   src/machine/wd1793.cpp
+  src/machine/msx_dsk.cpp
+  src/machine/rp5c01.cpp
   src/machine/beta128.cpp
   src/machine/mos6532.cpp
   src/machine/starwars_math.cpp
@@ -76,6 +84,10 @@ add_executable(dsp
   src/machine/namco52.cpp
   src/machine/namco53.cpp
   src/machine/namco54.cpp
+  src/machine/sega_315_5195.cpp
+  src/machine/fd1089.cpp
+  src/machine/i8243.cpp
+  src/machine/diskii.cpp
   
   src/drivers/bagman.cpp
   src/drivers/mikie.cpp
@@ -90,18 +102,30 @@ add_executable(dsp
   src/drivers/snk.cpp
   src/drivers/cps1.cpp
   src/drivers/m72.cpp
-      
+  src/drivers/starwars.cpp
+  src/drivers/polepos.cpp
+  src/drivers/hangon.cpp
+  src/drivers/system16.cpp
+        
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
   src/drivers/spectrum_3.cpp
   src/drivers/zx_clone.cpp
   src/drivers/amstrad_cpc.cpp
   src/drivers/msx1.cpp
-  
+  src/drivers/msx2.cpp
+  src/sound/sid.cpp
+  src/drivers/c64.cpp
+  src/drivers/apple2.cpp
+    
   src/drivers/sms.cpp
   src/machine/sega_vdp.cpp
+  src/video/sega_315_5313.cpp
+  src/sound/ym2612.cpp
+  src/drivers/genesis.cpp
   src/drivers/gamegear.cpp
   src/drivers/pv1000.cpp
+  src/drivers/pv2000.cpp
   src/drivers/colecovision.cpp
   src/machine/i2cmem.cpp
   src/drivers/sg1000.cpp
@@ -114,12 +138,8 @@ add_executable(dsp
   src/drivers/scv.cpp
   src/machine/mos6526.cpp
   src/video/mos6566.cpp
-  src/sound/sid.cpp
-  src/drivers/c64.cpp
   src/drivers/atari_lynx.cpp
   src/drivers/exelv.cpp
-  src/drivers/starwars.cpp
-  src/drivers/polepos.cpp
       
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
@@ -144,6 +164,9 @@ add_executable(dsp_tests
   src/cpu/tms7000.cpp
   src/cpu/z8002.cpp
   src/cpu/mb88xx.cpp
+  src/cpu/mcs51.cpp
+  src/cpu/mcs48.cpp
+  
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
@@ -158,13 +181,23 @@ add_executable(dsp_tests
   src/sound/gb_apu.cpp
   src/sound/polepos_wsg.cpp
   src/sound/polepos_engine.cpp
+  src/sound/fmopn.cpp
+  src/sound/ym2612.cpp
+  src/sound/ym2203.cpp
+  src/sound/sega_pcm.cpp
+  src/sound/upd7759.cpp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/nes_ppu.cpp
   src/video/tms3556.cpp
+  src/video/tms9918.cpp
+  src/video/v9938.cpp
   src/video/mos6566.cpp
   src/video/gb_ppu.cpp
   src/video/avg_starwars.cpp
+  src/video/sega_315_5313.cpp
+  src/video/sega16.cpp
+  src/video/apple2_video.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/via6522.cpp
@@ -181,6 +214,8 @@ add_executable(dsp_tests
   src/machine/lynx_mikey.cpp
   src/machine/trdos_disk.cpp
   src/machine/wd1793.cpp
+  src/machine/msx_dsk.cpp
+  src/machine/rp5c01.cpp
   src/machine/beta128.cpp
   src/machine/mos6532.cpp
   src/machine/starwars_math.cpp
@@ -188,19 +223,30 @@ add_executable(dsp_tests
   src/machine/namco52.cpp
   src/machine/namco53.cpp
   src/machine/namco54.cpp
+  src/machine/sega_315_5195.cpp
+  src/machine/fd1089.cpp
+  src/machine/i8243.cpp
+  src/machine/diskii.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
+  src/drivers/msx2.cpp
   src/drivers/nes.cpp
   src/drivers/c64.cpp
+  src/drivers/apple2.cpp
   src/drivers/gameboy.cpp
   src/drivers/mcr.cpp
   src/drivers/atari_lynx.cpp
   src/drivers/scv.cpp
+  src/drivers/pv2000.cpp
   src/drivers/exelv.cpp
   src/drivers/starwars.cpp
   src/drivers/polepos.cpp
   src/drivers/atari_system1.cpp
   src/drivers/zx_clone.cpp
+  src/drivers/genesis.cpp
+  src/drivers/outrun.cpp
+  src/drivers/hangon.cpp
+  src/drivers/system16.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

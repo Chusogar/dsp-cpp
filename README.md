@@ -12,6 +12,14 @@ Midway **MCR** (**Tapper** and family), and Atari **Star Wars**.
 Computers: **ZX Spectrum 48K**, Amstrad CPC, **Commodore 64**, **EXL-100** /
 **EXELTEL**. Consoles: NES, Game Boy / Game Boy Color, **Atari Lynx**,
 **Super Cassette Vision**.
+Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
+**OutRun**, **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
+**Altered Beast**).
+Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
+**MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**,
+**EXL-100** / **EXELTEL**. Consoles: NES, Game Boy / Game Boy
+Color, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
+**Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
 explains the port workflow and comes with a driver skeleton (`tools/new_driver.py`).
@@ -60,6 +68,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | NES mappers | `src/consolas/nes_mappers.pas` | 0, 1 (MMC1), 2, 3, 4 (MMC3/MMC6), 7, 9–11, 13, 15, 34, 66, 68, 70, 71, 76, 79/146, 87, 88, 93–95, 113, 180, 184, 185, 206 |
 | NES driver | `src/consolas/nes.pas` | NTSC 256×240, iNES carts (plain or zipped), two controllers |
 | C64 driver | `ordenadores/commodore64.pas` | PLA, 6510 port, keyboard matrix, TAP/PRG/T64/D64 loaders |
+| Apple Disk II | new (AppleWin 6-and-2 / MAME `a2diskiing`) | Slot 6 analog card, DOS 3.3 `.dsk`/`.do`, ProDOS `.po`, `.nib` |
+| Apple II video | new | 40/80-col text, lo-res, hi-res, double hi-res, 560×384 |
+| Apple II driver | new (MAME `apple2` / `apple2e`) | II, II+, IIe, IIe Enhanced, language card, IIe MMU, Disk II |
 | Game Boy driver | `src/consolas/gb.pas` | DMG / CGB from cart header `$0143`, optional boot ROMs |
 | VIC-II | `mos6566.pas` | PAL 6569, 384×270, sprites, bad lines |
 | MOS 6526 CIA | `mos6526_old.pas` | Two chips: CIA1 IRQ + keyboard, CIA2 NMI + VIC bank |
@@ -68,12 +79,19 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | µPD7801 CPU | `src/cpu/upd7810.pas` (`CPU_7801`) | Epoch Super Cassette Vision CPU, 4 MHz crystal /2 |
 | µPD1771C | `src/snd/upd1771.pas` | SCV tone / noise / ADPCM sound |
 | Super Cassette Vision | `src/consolas/super_cassette_vision.pas` | BIOS + cartridge map, 192×222 video, keyboard and two joysticks |
+| PV-2000 driver | `src/consolas/pv2000.pas` | Z80, TMS9918A, SN76489, 16 KiB BIOS, keyboard + joystick |
 | TMS7000 CPU | new (MAME `tms7000` behaviour) | TMS7020/7040/7041/7042, EXL LVDP opcode |
 | TMS3556 VDP | new (MAME `tms3556` behaviour) | Text 40×25, bitmap 320×250, mixed, 8 colours |
 | EXL-100 / EXELTEL | new (MAME `exelv.cpp`) | Dual TMS7000, mailbox, IR keyboard, TMS5220, cartridge |
 | WD1793 / Beta 128 | new (MAME `beta_m.cpp`, `wd_fdc`) | TR-DOS FDC, TRD and SCL images |
 | Pentagon 1024 | new (MAME `pentagon.cpp`) | 1024 KB, uncontended 320-line ULA, GLUK, Beta disk |
 | Scorpion ZS-256 | new (MAME `scorpion.cpp`) | 256 KB, port $1FFD, Magic NMI, Beta disk |
+| Yamaha V9938 | new (MSX2 VDP) | 128 KiB VRAM, SCREEN 0–8, sprites, command engine |
+| MSX floppy / RP-5C01 | new | WD2793-compatible FDC (512-byte FAT12 `.dsk`) and RTC |
+| MSX2 driver | new (NMS 8250 layout) | Z80, V9938, 256 KiB mapper RAM, disk ROM, cartridges |
+| YM2612 (OPN2) | new (from `fmopn.pas` + YM2612 DAC) | Six FM channels and PCM DAC |
+| 315-5313 VDP | `src/consolas/sega_315_5313.pas` | Planes A/B, window, sprites, DMA, CRAM |
+| Genesis / Mega Drive | `src/consolas/genesis.pas` | 68000 + Z80, VDP, YM2612+PSG, 3-button pads |
 | Atari AVG (Star Wars) | new (MAME `avgdvg.cpp`) | PROM state machine, colour vector list |
 | MOS 6532 RIOT | new (MAME `mos6532.cpp`) | 128-byte RAM, ports, timer IRQ |
 | Star Wars mathbox | new (MAME `starwars_m.cpp`) | PROM microcode, multiply-accumulate, restoring divider |
@@ -81,6 +99,14 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Z8002 CPU | new (MAME `z8000`) | Unsegmented 16-bit Z8002 used by Pole Position |
 | MB88xx MCU | new (MAME `mb88xx`) | Fujitsu 4-bit MCU used by Namco 51/52/53/54xx |
 | Pole Position driver | new (MAME `namco/polepos.cpp`) | Z80 + dual Z8002, road, sprites, real 51/52/53/54xx, WSG/engine |
+| Sega PCM | `src/snd/sega_pcm.pas` | 16-channel sample player (OutRun, Hang-On) |
+| 315-5195 mapper | `src/arcade/misc/sega_315_5195.pas` | 68000 memory mapper used by OutRun and System 16B |
+| OutRun driver | `src/arcade/outrun_hw.pas` | Dual 68000, Z80, YM2151, Sega PCM, road + sprites |
+| Hang-On driver | `src/arcade/hangon_hw.pas` | Hang-On, Enduro Racer (FD1089), Space Harrier (i8751) |
+| System 16 driver | `src/arcade/system16a_hw.pas`, `system16b_hw.pas` | Fantasy Zone, Shinobi, Alex Kidd, Alien Syndrome, WB3, Tetris, Altered Beast |
+| FD1089 | `src/devices/fd1089.pas` | Hitachi 68000 opcode/data encryption |
+| MCS-48 / N7751 | `src/cpu/mcs48.pas` | Full N7751 + i8243 speech MCU |
+| UPD7759 | `src/snd/upd7759.pas` | ADPCM slave playback (System 16B) |
 
 ## Building
 
@@ -120,12 +146,29 @@ holding the individual files:
 ./build/dsp --game nes /path/to/game.nes
 ./build/dsp --game lynx /path/to/game.lnx
 ./build/dsp --game scv /path/to/scv.zip
+./build/dsp --game pv2000 --tape game.bin /path/to/pv2000.zip
+./build/dsp --game genesis /path/to/game.md
 ./build/dsp --game exl100 /path/to/exl100.zip
 ./build/dsp --game pentagon --disk game.trd /path/to/pentagon-roms/
 ./build/dsp --game scorpion --disk game.scl /path/to/scorpion.rom
+./build/dsp --game msx /path/to/msx1-bios/
+./build/dsp --game msx2 --disk game.dsk /path/to/msx2-roms/
+./build/dsp --game apple2 /path/to/apple2p.zip
+./build/dsp --game apple2e --disk game.dsk /path/to/apple2e.zip
 ./build/dsp --game starwars /path/to/starwars.zip
 ./build/dsp --game polepos /path/to/polepos.zip
 ./build/dsp --game polepos2 /path/to/polepos2.zip
+./build/dsp --game outrun /path/to/outrun.zip
+./build/dsp --game hangon /path/to/hangon.zip
+./build/dsp --game enduro /path/to/enduror.zip
+./build/dsp --game sharrier /path/to/sharrier.zip
+./build/dsp --game fantzone /path/to/fantzone.zip
+./build/dsp --game shinobi /path/to/shinobi.zip
+./build/dsp --game alexkidd /path/to/alexkidd.zip
+./build/dsp --game aliensyn /path/to/aliensyn.zip
+./build/dsp --game wb3 /path/to/wb3.zip
+./build/dsp --game tetris /path/to/tetris.zip
+./build/dsp --game altbeast /path/to/altbeast.zip
 ```
 
 `--game` is required (`dsp --help` lists every name). Gauntlet accepts both the
@@ -149,8 +192,9 @@ Options:
 --screenshot FILE  headless mode: render frames and write FILE (BMP)
 --frames N         frames to run in headless mode (default 300)
 --tape FILE        tape/cart: Spectrum/CPC/C64 (.tap/.tzx/.cdt/.prg/.t64),
-                   or EXL-100 / EXELTEL cartridge (.bin/.rom)
---disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, Pentagon/Scorpion .trd/.scl
+                   EXL-100 / EXELTEL cartridge, or PV-2000 cart (.bin/.rom)
+--disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, MSX2 .dsk, Apple II .dsk/.do/.po/.nib,
+                   Pentagon/Scorpion .trd/.scl
 ```
 
 ### Atari System 1 (Indiana Jones, Marble Madness, Peter Pack Rat, Road Runner)
@@ -383,6 +427,66 @@ TR-DOS is paged in by executing at `$3D00` while the 48K ROM is selected
 (`RANDOMIZE USR 15616`). Kempston on port `$1F` is disabled while DOS is paged
 so it does not clash with the FDC.
 
+### MSX1 and MSX2
+
+MSX1 (`--game msx`) is a Panasonic-style machine: Z80 at 3.579545 MHz, TMS9918A,
+AY-3-8910, i8255 slot/keyboard/tape, 64 KiB RAM. It needs a 32 KiB MSX1 BIOS
+(`mpc100bios.rom` / generic `MSX.rom`). Cartridges (`.rom`) go in slot 1 via
+`--tape` / `load_media`; cassettes are `.tzx` / `.cas`.
+
+MSX2 (`--game msx2`, aliases `nms8250` and `philips-msx2`) follows the Philips
+NMS 8250 map rather than a Pascal original: Yamaha V9938 (512×212, 128 KiB
+VRAM), 256 KiB mapper RAM, RP-5C01 RTC, and a WD2793 disk interface.
+
+| Slot | Contents |
+| --- | --- |
+| 0 | 32 KiB main BIOS (pages 0–1) |
+| 1 | cartridge (linear ≤48 KiB, ASCII16 above that) |
+| 3 expanded | 3-0: 16 KiB sub-ROM; 3-1: mapper RAM; 3-2: 16 KiB disk ROM + FDC |
+
+ROMs are **not** shipped. A directory or zip with these names works (MAME
+`nms8250` hashes in brackets):
+
+* `MSX2.ROM` / `nms8250_basic-bios2.rom` / `msx2_bios.rom` (32 KiB, CRC `6cdaf3a5`)
+* `MSX2EXT.ROM` / `nms8250_msx2sub.rom` / `msx2_ext.rom` (16 KiB, CRC `66237ecf`)
+* `nms8250_disk.rom` / `DISK.ROM` / `cbios_disk.rom` (16 KiB, optional; floppy disabled if missing)
+
+[zxtiny](https://github.com/Chusogar/zxtiny/tree/main/roms) ships the same BIOS as
+`msx2_bios.rom` + `msx2_ext.rom`. C-BIOS (`cbios_main_msx2.rom` + `cbios_sub.rom`,
+optional `cbios_logo_msx2.rom` in slot 0 page 2) also loads. [RetroBIOS](https://github.com/Abdess/retrobios)
+publishes matching dumps under `bios/Microsoft/MSX/`. The FDC accepts raw FAT12 `.dsk`
+images (720K / 640K / 360K / 180K) and CPC-style `MV - CPC` / `EXTENDED` DSK files,
+decoded at both type 1 (`$7FF8`) and type 2 (`$7FB8`) addresses.
+
+```bash
+./build/dsp --game msx /path/to/msx1-bios/
+./build/dsp --game msx2 /path/to/msx2-roms/
+./build/dsp --game msx2 --disk game.dsk /path/to/nms8250.zip
+```
+
+The host keyboard is the MSX matrix (same layout as MSX1). Joysticks are on the
+AY-3-8910 port A. F6 toggles cassette play when a `.cas`/`.tzx` is loaded.
+
+### Casio PV-2000
+
+Home computer/console hybrid from 1983, ported from `pv2000.pas`. The positional
+argument is the 16 KiB BIOS (`hn613128pc64.bin`, CRC `8f31f297`, MAME set
+`pv2000.zip`). A verified dump is in
+[Abdess/retrobios](https://github.com/Abdess/retrobios) at
+`bios/Casio/PV-2000/`. The cartridge (8 KiB or 16 KiB `.bin` / `.rom`, plain or
+zipped) is attached with `--tape`.
+
+```bash
+./build/dsp --game pv2000 /path/to/pv2000.zip
+./build/dsp --game pv2000 --tape /path/to/game.bin /path/to/pv2000.zip
+```
+
+Hardware: Z80 and SN76489 at 3.579545 MHz, TMS9918A (256×192, NMI on vblank),
+4 KiB RAM at `$7000` and the cartridge window at `$c000`. The BIOS keyboard
+matrix is mapped to the host keys (letters, digits, arrows, Enter, Backspace,
+Shift, Tab for HOME). The arcade stick (arrows + Ctrl/Alt) is the built-in
+joystick / Attack 0 and Attack 1. Cassette I/O is stubbed.
+
 ### Nintendo Entertainment System
 
 NTSC NES, ported from `nes.pas`. Give it an iNES (`.nes`) ROM, plain or inside a zip:
@@ -400,6 +504,35 @@ CHR-RAM carts (header CHR = 0) work. Player 1 uses the arrows plus Ctrl/Alt for
 A/B, `1` for Start and `5` for Select (the arcade coin button). There is no BIOS;
 the CPU starts at the cartridge reset vector. IRQ-heavy boards (VRC, FME-7, …)
 are still rejected at load time.
+
+### Sega Genesis / Mega Drive
+
+The WIP `genesis.pas` driver is completed here: a 7.67 MHz 68000, a 3.58 MHz
+Z80, the 315-5313 VDP (planes A/B, window, sprites, DMA fill/copy/68k, CRAM)
+and a YM2612 plus the VDP's SN76489. Cartridges are raw `.bin` / `.md` /
+`.gen` dumps, interleaved `.smd` (optional 512-byte copier header), or a zip
+holding one of those.
+
+```bash
+./build/dsp --game genesis /path/to/game.md
+./build/dsp --game megadrive /path/to/game.bin
+./build/dsp --game genesis-pal /path/to/game.md
+./build/dsp --game genesis --screenshot title.bmp --frames 180 --mute game.md
+```
+
+`--game genesis` / `megadrive` is NTSC (USA, version register `$A1`).
+`genesis-jp` is NTSC domestic (`$80`). `genesis-pal` is PAL (`$C1`, 313
+lines). `--dip 0:0` / `1` / `2` also selects Japan / USA / Europe on the
+version register (games read it for the SEGA screen and lock-out).
+
+A is Left Ctrl or Space, B is Left Alt or Z, C is X, Start is `1`. The D-pad
+is the arrow keys. Player 2 is R/F/D/G plus A/S/Q.
+
+SRAM at `$200000` is mapped when the cartridge header has an `RA` extra-memory
+block, or for dumps of 2 MiB and under. Super Street Fighter II style 512 KiB
+banks at `$A130F3`–`$A130FF` are used when the image is larger than 4 MiB.
+There is no TMSS lock (bit 7 of the version register is set). Interlace mode
+3, EEPROM mappers and the 6-button pad are not emulated.
 
 ### Commodore 64
 
@@ -420,14 +553,54 @@ F6 starts and stops a `.tap` cassette (the 6510 motor bit still has to enable
 the datasette). Arrows are also a joystick in Control Port 2. There is no 1541:
 a `.d64` image injects its first PRG into RAM.
 
+### Apple II, II+, IIe and IIe Enhanced
+
+There is no Pascal original in dsp-emulator; the driver follows the MAME
+`apple2` / `apple2e` map (6502 at 1.020484 MHz, 262×65 cycles per frame) with a
+Disk II card in slot 6. Four `--game` names pick the firmware:
+
+| `--game` | Aliases | CPU | Firmware |
+| --- | --- | --- | --- |
+| `apple2` | `appleii`, `apple2plus`, `apple2p` | 6502 | II+ Applesoft + Autostart (12 KiB at `$D000`) |
+| `apple2orig` | `apple2integer` | 6502 | original ][ Integer BASIC + Autostart (8 KiB at `$E000`) |
+| `apple2e` | `appleiie` | 6502 | unenhanced IIe (16 KiB `$C000`–`$FFFF`) |
+| `apple2ee` | `apple2eplus`, `apple2e+`, `apple2enhanced` | 65C02 | IIe Enhanced + MouseText |
+
+ROMs are **not** shipped. Point the emulator at a directory or zip from
+[Abdess/retrobios](https://github.com/Abdess/retrobios) (`bios/Apple/Apple II/`):
+
+* II+: MAME `apple2p.zip` (`341-0011.d0` … `341-0020-00.f8` + `341-0036.chr`) or the
+  concatenated `apple2-asoft-auto.rom` (12 KiB)
+* IIe: `apple2e.zip` (`342-0135-b.64` + `342-0134-a.64` + `342-0133-a.chr`)
+* IIe Enhanced: `apple2ee.zip` (`342-0304-a.e10` + `342-0303-a.e8` + `342-0265-a.chr`)
+* Disk II P5 PROM (optional, slot 6): `341-0027-a.p5` / `disk2-16boot.rom` (256 bytes).
+  Without it Autostart drops into BASIC; with it a missing floppy waits on the drive
+  the same way a real Disk II does.
+
+`--disk` accepts 140K DOS 3.3 `.dsk`/`.do`, ProDOS-order `.po`, and `.nib` tracks.
+The host keyboard is the Apple keyboard (high-bit ASCII, Ctrl as Control). On the
+IIe, Z / Left Alt is Open-Apple and X is Closed-Apple. F3 still resets the machine.
+
+```bash
+./build/dsp --game apple2 /path/to/apple2p.zip
+./build/dsp --game apple2e /path/to/apple2e.zip
+./build/dsp --game apple2ee --disk game.dsk /path/to/apple2ee.zip
+```
+
 ### Game Boy / Game Boy Color
 
 `--game gb` loads a `.gb` / `.gbc` cartridge (plain or zipped). The machine is
 chosen from header byte `$0143` the same way `gb.pas` does: bit 7 set (`$80`
 CGB-enhanced or `$C0` CGB-exclusive) runs as Game Boy Color; otherwise it is
 a DMG Game Boy. Optional boot ROMs (`dmg_boot.bin`, `cgb_boot.bin`) may sit
-next to the cartridge; without them the CPU is left in `reset_gb`'s post-boot
-state so games still start at `$0100`.
+next to the cartridge; without them the CPU is left in the documented post-boot
+state so games still start at `$0100` — including `A = $11` on Game Boy Color,
+which is how the cartridges detect the hardware and enable their colour mode.
+
+Colour hardware: banked VRAM and WRAM, the 8+8 CGB palettes, general-purpose
+and HBlank VRAM DMA, and the KEY1 double-speed switch (which does not speed up
+the sound, as on real hardware). All of those registers only answer on Game Boy
+Color; on DMG they read back as `$FF` and are inert.
 
 ```bash
 ./build/dsp --game gb /path/to/game.gbc
@@ -562,6 +735,36 @@ not already next to the game zip:
 
 Steer with the arrows, accelerate with Left Ctrl / Space, brake with Z / Down,
 toggle gear with X, coin with 5. DIP bank 0 is DSWA, bank 1 is DSWB.
+### Sega OutRun, Hang-On, and System 16
+
+Ported from [dsp-emulator](https://github.com/leniad/dsp-emulator)
+(`outrun_hw.pas`, `hangon_hw.pas`, `system16a_hw.pas`, `system16b_hw.pas`).
+`--game` names match the MAME parent sets. Screen is 320×224.
+
+```bash
+./build/dsp --game outrun /path/to/outrun.zip
+./build/dsp --game hangon /path/to/hangon.zip
+./build/dsp --game enduro /path/to/enduror.zip
+./build/dsp --game sharrier /path/to/sharrier.zip
+./build/dsp --game fantzone /path/to/fantzone.zip
+./build/dsp --game shinobi /path/to/shinobi.zip
+./build/dsp --game alexkidd /path/to/alexkidd.zip
+./build/dsp --game aliensyn /path/to/aliensyn.zip
+./build/dsp --game wb3 /path/to/wb3.zip
+./build/dsp --game tetris /path/to/tetris.zip
+./build/dsp --game altbeast /path/to/altbeast.zip
+```
+
+OutRun and Hang-On family games use analog wheel / gas / brake (arrow keys plus
+button 1/2) and a gear toggle on button 3. System 16 games use a two-button
+joystick.
+
+Enduro Racer decrypts the FD1089B program ROMs with `317-0013a.key`. Space
+Harrier runs the i8751 MCU that raises 68000 IRQs. Shinobi, Alex Kidd and Alien
+Syndrome use a full N7751 (MCS-48 + i8243 + DAC). Alien Syndrome and Wonder Boy
+III decrypt FD1089 program ROMs. Altered Beast plays UPD7759 samples in slave
+mode (DRQ pulses the Z80 NMI). Tetris prefers the decrypted/bootleg program
+ROMs and falls back to FD1089 if only the encrypted pair is present.
 
 ## Tests
 
@@ -586,6 +789,10 @@ src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556
 src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, Lynx, WD1793/Beta
 src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556, AVG
 src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, 6532, Lynx, mathbox
+src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805, µPD7801, TMS7000, NEC V30, MCS-51
+src/sound/      AY-3-8910, SN76496, NES APU, SID, µPD1771C, QSound, TMS5220, Sega PCM
+src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556, V9938, AVG, Sega 16
+src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, 6532, Lynx, mathbox, 315-5195, MSX FDC/RTC
 src/drivers/    the machines themselves (memory map, video, inputs)
 src/frontend/   SDL2 front end, driven through the core/machine.h interface
 src/core/       ROM loader (directory or zip) and the Machine interface

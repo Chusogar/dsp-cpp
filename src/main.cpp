@@ -22,6 +22,8 @@
 #include "drivers/m72.h"
 #include "drivers/starwars.h"
 #include "drivers/polepos.h"
+#include "drivers/hangon.h"
+#include "drivers/system16.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -29,7 +31,9 @@
 #include "drivers/spectrum_3.h"
 #include "drivers/amstrad_cpc.h"
 #include "drivers/msx1.h"
+#include "drivers/msx2.h"
 #include "drivers/c64.h"
+#include "drivers/apple2.h"
 #include "drivers/exelv.h"
 #include "drivers/pentagon.h"
 #include "drivers/scorpion.h"
@@ -37,7 +41,9 @@
 // Consoles
 #include "drivers/sms.h"
 #include "drivers/gamegear.h"
+#include "drivers/genesis.h"
 #include "drivers/pv1000.h"
+#include "drivers/pv2000.h"
 #include "drivers/colecovision.h"
 #include "drivers/sg1000.h"
 #include "drivers/gameboy.h"
@@ -69,14 +75,17 @@ void print_supported_emulators() {
         "    knights, sf2ce, dino, punisher, willow, 1941, nemo,\n"
         "    rtype, hharry, rtype2,\n"
         "    polepos, polepos2\n"
+        "    outrun, hangon, enduro, sharrier, fantzone, shinobi,\n"
+        "    alexkidd, aliensyn, wb3, tetris, altbeast\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
-        "    cpc464, cpc664, cpc6128, msx, c64,\n"
-        "    exl100, exeltel\n"
+        "    cpc464, cpc664, cpc6128, msx, msx2, nms8250, c64,\n"
+        "    apple2, apple2plus, apple2e, apple2ee, exl100, exeltel\n"
         "\n"
         "  Consoles:\n"
-        "    sms, gamegear, pv1000, coleco, sg1000, gb, nes, lynx, scv\n"
+        "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp,\n"
+        "    pv1000, pv2000, coleco, sg1000, gb, nes, lynx, scv\n"
         "\n");
 }
 
@@ -89,9 +98,10 @@ void print_usage(const char* program) {
     std::printf(
         "Options:\n"
         "  --game NAME        emulator / game to run (required; see list above)\n"
-        "  --tape FILE        tape/cart: Spectrum/CPC/C64 (.tap/.tzx/.cdt/.prg/.t64),\n"
-        "                     or EXL-100 / EXELTEL cartridge (.bin/.rom)\n"
-        "  --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, Pentagon/Scorpion .trd/.scl\n"
+        "  --tape FILE        tape/cart: Spectrum/CPC/C64/MSX (.tap/.tzx/.cdt/.prg/.t64/.cas),\n"
+        "                     EXL-100 / EXELTEL cartridge, or PV-2000 cart (.bin/.rom)\n"
+        "  --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, MSX2 .dsk, Apple II .dsk/.do/.po/.nib,\n"
+        "                     Pentagon/Scorpion .trd/.scl\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
         "                     bank, mikie has three (0=A, 1=B, 2=C); cpc: 0=colour(1)/\n"
@@ -207,6 +217,32 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "polepos2" || game == "poleposition2") {
 		return std::make_unique<dsp::PolePos>(dsp::PolePos::Game::PolePosition2);
 	}
+    if (game == "outrun") return std::make_unique<dsp::Outrun>();
+    if (game == "hangon" || game == "hang-on") return std::make_unique<dsp::HangOn>();
+    if (game == "enduro" || game == "enduror" || game == "enduro-racer") {
+        return std::make_unique<dsp::HangOn>(dsp::HangOn::Game::Enduro);
+    }
+    if (game == "sharrier" || game == "spaceharrier" || game == "space-harrier") {
+        return std::make_unique<dsp::HangOn>(dsp::HangOn::Game::Sharrier);
+    }
+    if (game == "fantzone" || game == "fantasyzone") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Fantzone);
+    }
+    if (game == "shinobi") return std::make_unique<dsp::System16>(dsp::System16::Game::Shinobi);
+    if (game == "alexkidd" || game == "alexkid") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Alexkidd);
+    }
+    if (game == "aliensyn" || game == "aliensynd" || game == "aliensyndrome") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Aliensyn);
+    }
+    if (game == "wb3" || game == "wonderboy3" || game == "wonderboyiii") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Wb3);
+    }
+    if (game == "tetris") return std::make_unique<dsp::System16>(dsp::System16::Game::Tetris);
+    if (game == "altbeast" || game == "alteredbeast") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Altbeast);
+    }
+    
 
 	// computers
     if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48k>();
@@ -224,8 +260,25 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	    return std::make_unique<dsp::Scorpion256>();
 	}
 	if (game == "msx") return std::make_unique<dsp::Msx1>();
+	if (game == "msx2" || game == "nms8250" || game == "philips-msx2") {
+	    return std::make_unique<dsp::Msx2>();
+	}
 	if (game == "c64" || game == "commodore64" || game == "commodore") {
         return std::make_unique<dsp::C64>();
+    }
+    if (game == "apple2orig" || game == "apple2integer" || game == "appleii-integer") {
+        return std::make_unique<dsp::Apple2>(dsp::Apple2::Model::II);
+    }
+    if (game == "apple2" || game == "appleii" || game == "apple2plus" || game == "apple2p" ||
+        game == "apple2+") {
+        return std::make_unique<dsp::Apple2>(dsp::Apple2::Model::IIPlus);
+    }
+    if (game == "apple2e" || game == "appleiie") {
+        return std::make_unique<dsp::Apple2>(dsp::Apple2::Model::IIe);
+    }
+    if (game == "apple2ee" || game == "apple2eplus" || game == "apple2e+" ||
+        game == "apple2enhanced" || game == "appleiiee") {
+        return std::make_unique<dsp::Apple2>(dsp::Apple2::Model::IIeEnhanced);
     }
 	if (game == "exl100" || game == "exl-100" || game == "exelvision") {
 	    return std::make_unique<dsp::Exelv>(dsp::Exelv::Model::Exl100);
@@ -237,7 +290,20 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	// consoles
 	if (game == "sms") return std::make_unique<dsp::Sms>();
 	if (game == "gamegear") return std::make_unique<dsp::GameGear>();
+	if (game == "genesis" || game == "megadrive" || game == "mega-drive" ||
+	    game == "md" || game == "gen") {
+	    return std::make_unique<dsp::Genesis>();
+	}
+	if (game == "genesis-pal" || game == "megadrive-pal") {
+	    return std::make_unique<dsp::Genesis>(dsp::Genesis::Region::Europe);
+	}
+	if (game == "genesis-jp" || game == "megadrive-jp") {
+	    return std::make_unique<dsp::Genesis>(dsp::Genesis::Region::Japan);
+	}
 	if (game == "pv1000") return std::make_unique<dsp::Pv1000>();
+	if (game == "pv2000" || game == "pv-2000" || game == "casio-pv2000") {
+	    return std::make_unique<dsp::Pv2000>();
+	}
 	if (game == "coleco") return std::make_unique<dsp::ColecoVision>();
 	if (game == "sg1000") return std::make_unique<dsp::Sg1000>();
 	if (game == "gb") return std::make_unique<dsp::GameBoy>();

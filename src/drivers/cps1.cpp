@@ -1198,7 +1198,7 @@ bool Cps1::load_roms(const std::string& rom_path, std::string* error) {
                           cpu, error))
                 return false;
             sound.assign(0x10000, 0);
-            if (!load_raw(loader, {{"sf2_09.12a", 0x10000, 0, 0xa4823a1b}}, sound, error))
+            if (!load_raw(loader, {{"sf2_9.12a", 0x10000, 0, 0xa4823a1b}}, sound, error))
                 return false;
             oki.assign(0x40000, 0);
             if (!load_raw(loader,
