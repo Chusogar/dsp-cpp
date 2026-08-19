@@ -103,6 +103,13 @@ private:
     bool tape_play_ = false;
     bool iec_enabled_ = true;
 
+    // Number of C64 CPU cycles still owed/available at the raster scheduler.
+    // M6502::run() executes complete instructions and may overshoot its
+    // requested budget. Carrying that overshoot into the next raster line is
+    // essential; throwing it away makes CPU/VIC phase drift every line and
+    // produces a visibly unstable/rolling display.
+    int cpu_cycle_debt_ = 0;
+
     int64_t audio_acc_ = 0;
     std::vector<uint32_t> framebuffer_;
     std::vector<int16_t> audio_;
