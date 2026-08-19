@@ -5,6 +5,13 @@ Arcade: **Bagman**, **Mikie**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
 **Double Dragon II**, Taito SJ (**Elevator Action**, **Jungle King**), Irem M62
 (**Kung-Fu Master**, **Spelunker**, **Lode Runner**), SNK (**Ikari Warriors**,
 **Athena**, **TNK III**, **ASO**), Capcom **CPS1**, Irem **M72** (**R-Type**),
+Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Namco
+**Pole Position** / **Pole Position II**.
+Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC, **Commodore 64**, **EXL-100** /
+Midway **MCR** (**Tapper** and family), and Atari **Star Wars**.
+Computers: **ZX Spectrum 48K**, Amstrad CPC, **Commodore 64**, **EXL-100** /
+**EXELTEL**. Consoles: NES, Game Boy / Game Boy Color, **Atari Lynx**,
+**Super Cassette Vision**.
 Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 **OutRun**, **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
 **Altered Beast**).
@@ -89,6 +96,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | MOS 6532 RIOT | new (MAME `mos6532.cpp`) | 128-byte RAM, ports, timer IRQ |
 | Star Wars mathbox | new (MAME `starwars_m.cpp`) | PROM microcode, multiply-accumulate, restoring divider |
 | Star Wars driver | new (MAME `starwars.cpp`) | Dual 6809, AVG, 4×POKEY, TMS5220, analog stick |
+| Z8002 CPU | new (MAME `z8000`) | Unsegmented 16-bit Z8002 used by Pole Position |
+| MB88xx MCU | new (MAME `mb88xx`) | Fujitsu 4-bit MCU used by Namco 51/52/53/54xx |
+| Pole Position driver | new (MAME `namco/polepos.cpp`) | Z80 + dual Z8002, road, sprites, real 51/52/53/54xx, WSG/engine |
 | Sega PCM | `src/snd/sega_pcm.pas` | 16-channel sample player (OutRun, Hang-On) |
 | 315-5195 mapper | `src/arcade/misc/sega_315_5195.pas` | 68000 memory mapper used by OutRun and System 16B |
 | OutRun driver | `src/arcade/outrun_hw.pas` | Dual 68000, Z80, YM2151, Sega PCM, road + sprites |
@@ -146,6 +156,8 @@ holding the individual files:
 ./build/dsp --game apple2 /path/to/apple2p.zip
 ./build/dsp --game apple2e --disk game.dsk /path/to/apple2e.zip
 ./build/dsp --game starwars /path/to/starwars.zip
+./build/dsp --game polepos /path/to/polepos.zip
+./build/dsp --game polepos2 /path/to/polepos2.zip
 ./build/dsp --game outrun /path/to/outrun.zip
 ./build/dsp --game hangon /path/to/hangon.zip
 ./build/dsp --game enduro /path/to/enduror.zip
@@ -702,6 +714,27 @@ committed. The MAME parent set `starwars` is enough:
 `136021-208.1h`, AVG PROM `136021-109.4b`, mathbox `136021-110.7h` …
 `136021-113.7l`.
 
+### Namco Pole Position / Pole Position II
+
+Z80 + two Z8002s at 3.072 MHz, 256×224, ~60.6 Hz. The Namco 06xx talks to
+real MB88 MCUs: 51xx (coins, DIPs, start) and 53xx (steering + DSWA). Audio
+is the Pole Position WSG, engine sample player, and MB88 52xx/54xx DACs. Use
+the MAME 0.221 merged parent sets `polepos` and `polepos2`. The 51xx–54xx
+MCU dumps come from the same archive and are fetched automatically if they are
+not already next to the game zip:
+
+- https://archive.org/download/mame-0.221-roms-merged/namco51.zip
+- https://archive.org/download/mame-0.221-roms-merged/namco52.zip
+- https://archive.org/download/mame-0.221-roms-merged/namco53.zip
+- https://archive.org/download/mame-0.221-roms-merged/namco54.zip
+
+```bash
+./build/dsp --game polepos /path/to/polepos.zip
+./build/dsp --game polepos2 /path/to/polepos2.zip
+```
+
+Steer with the arrows, accelerate with Left Ctrl / Space, brake with Z / Down,
+toggle gear with X, coin with 5. DIP bank 0 is DSWA, bank 1 is DSWB.
 ### Sega OutRun, Hang-On, and System 16
 
 Ported from [dsp-emulator](https://github.com/leniad/dsp-emulator)
@@ -750,6 +783,12 @@ cmake --build build --target dsp_zexdoc
 ## Layout
 
 ```
+src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805, µPD7801, TMS7000, NEC V30, MB88xx
+src/sound/      AY-3-8910, SN76496, NES APU, SID, µPD1771C, QSound, TMS5220, Pole Position WSG/engine
+src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556
+src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, Lynx, WD1793/Beta
+src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556, AVG
+src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, 6532, Lynx, mathbox
 src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805, µPD7801, TMS7000, NEC V30, MCS-51
 src/sound/      AY-3-8910, SN76496, NES APU, SID, µPD1771C, QSound, TMS5220, Sega PCM
 src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556, V9938, AVG, Sega 16

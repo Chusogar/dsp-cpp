@@ -21,6 +21,7 @@
 #include "drivers/cps1.h"
 #include "drivers/m72.h"
 #include "drivers/starwars.h"
+#include "drivers/polepos.h"
 #include "drivers/hangon.h"
 #include "drivers/system16.h"
 
@@ -73,7 +74,8 @@ void print_supported_emulators() {
         "    ghouls, ffight, kod, sf2, strider, 3wonders, captcomm,\n"
         "    knights, sf2ce, dino, punisher, willow, 1941, nemo,\n"
         "    rtype, hharry, rtype2,\n"
-        "    outrun, hangon, enduro, sharrier, fantzone, shinobi,\n"
+        "    polepos, polepos2\n"
+        "    hangon, enduro, sharrier, fantzone, shinobi,\n"
         "    alexkidd, aliensyn, wb3, tetris, altbeast\n"
         "\n"
         "  Computers:\n"
@@ -209,6 +211,12 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "rtype") return std::make_unique<dsp::M72>(dsp::M72::Game::Rtype);
     if (game == "hharry") return std::make_unique<dsp::M72>(dsp::M72::Game::Hharry);
     if (game == "rtype2") return std::make_unique<dsp::M72>(dsp::M72::Game::Rtype2);
+	if (game == "polepos" || game == "poleposition") {
+		return std::make_unique<dsp::PolePos>(dsp::PolePos::Game::PolePosition);
+	}
+	if (game == "polepos2" || game == "poleposition2") {
+		return std::make_unique<dsp::PolePos>(dsp::PolePos::Game::PolePosition2);
+	}
     //if (game == "outrun") return std::make_unique<dsp::Outrun>();
     if (game == "hangon" || game == "hang-on") return std::make_unique<dsp::HangOn>();
     if (game == "enduro" || game == "enduror" || game == "enduro-racer") {
