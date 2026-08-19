@@ -52,11 +52,12 @@ C64::C64()
         update_irq();
     });
     vic_.set_color_ram(color_ram_.data());
-    // VIC 14-bit bus sees RAM with char ROM overlay in the $1000/$9000 holes.
+    // VIC-II sees a 14-bit bus.  The CPU's character-ROM banking is NOT the
+    // same thing as the VIC-II character-ROM overlay: the VIC sees CHARGEN
+    // only in VIC banks where its address lines select $1000-$1FFF.
     vic_.set_mem_read([this](uint16_t a14) -> uint8_t {
         const uint16_t a = a14 & 0x3FFF;
-        // Char ROM at $1000-$1FFF and $9000-$9FFF of VIC space.
-        if ((a & 0x7000) == 0x1000) return char_rom_[a & 0x0FFF];
+        if ((a & 0x3000) == 0x1000) return char_rom_[a & 0x0FFF];
         return ram_[a];
     });
 
@@ -67,25 +68,22 @@ C64::C64()
     cia1_.set_port_b([this]() { return cia1_portb_r(); }, {});
 
     cia2_.set_irq_handler([this](IrqLine s) {
-        // CIA2 IRQ line → NMI on C64
         cia_nmi_ = (s != IrqLine::Clear);
         cpu_.set_nmi(cia_nmi_ ? IrqLine::Assert : IrqLine::Clear);
     });
     cia2_.set_port_a(
         [this]() {
-            // Bits 6/7 = CLK/DATA in from IEC bus
-            uint8_t v = 0x3F;  // low bits from latch via DDR
+            uint8_t v = 0x3F;
             if (drive_.rom_loaded() && iec_enabled_) {
                 if (drive_.bus_clk()) v = uint8_t(v | 0x40);
                 if (drive_.bus_data()) v = uint8_t(v | 0x80);
             } else {
-                v = uint8_t(v | 0xC0);  // idle high
+                v = uint8_t(v | 0xC0);
             }
             return v;
         },
         [this](uint8_t v) {
             vic_.changed_va(uint16_t(~v & 3));
-            // IEC outputs (open-collector: 0 pulls line low)
             if (drive_.rom_loaded() && iec_enabled_) {
                 drive_.set_host_atn((v & 0x08) != 0);
                 drive_.set_host_clk((v & 0x10) != 0);
@@ -121,7 +119,6 @@ bool C64::load_1541_rom(const std::string& path, std::string* error) {
     return true;
 }
 
-
 bool C64::load_media(const std::string& path, std::string* error) {
     auto ends_ci = [](const std::string& s, const char* ext) {
         const size_t n = std::strlen(ext);
@@ -143,9 +140,7 @@ bool C64::load_media(const std::string& path, std::string* error) {
         }
         return drive_.load_g64(path, error);
     }
-
     if (ends_ci(path, ".d64")) {
-        // Prefer cycle-accurate 1541 if DOS ROM is present; otherwise inject PRG.
         if (drive_.rom_loaded()) {
             if (!drive_.load_d64(path, error)) return false;
             return true;
@@ -155,14 +150,11 @@ bool C64::load_media(const std::string& path, std::string* error) {
         if (!disk_.load_first_prg(&prg, error)) return false;
         return inject_prg(prg, error);
     }
-
     if (ends_ci(path, ".tzx") || ends_ci(path, ".tap")) {
         if (!tape_.load_file(path, error)) return false;
         tape_play_ = false;
         return true;
     }
-
-    // .PRG / raw
     std::vector<uint8_t> data;
     if (!read_file(path, &data)) {
         if (error) *error = "cannot open: " + path;
@@ -179,7 +171,6 @@ bool C64::inject_prg(const std::vector<uint8_t>& data, std::string* error) {
     const uint16_t addr = uint16_t(data[0] | (data[1] << 8));
     const size_t n = data.size() - 2;
     for (size_t i = 0; i < n; i++) ram_[uint16_t(addr + i)] = data[i + 2];
-    // Update BASIC pointers (VARTAB etc.) when loading into BASIC area.
     const uint16_t end = uint16_t(addr + n);
     if (addr == 0x0801) {
         ram_[0x2D] = uint8_t(end & 0xFF);
@@ -199,6 +190,7 @@ void C64::update_pla() {
     tape_motor_ = (port_val_ & 0x20) == 0;
     switch (res & 7) {
         case 0:
+        case 4:
             write_ram_ = true;
             read_ram_d_ = 0;
             read_ram_a_ = true;
@@ -221,12 +213,6 @@ void C64::update_pla() {
             read_ram_d_ = 1;
             read_ram_a_ = false;
             read_ram_e_ = false;
-            break;
-        case 4:
-            write_ram_ = true;
-            read_ram_d_ = 0;
-            read_ram_a_ = true;
-            read_ram_e_ = true;
             break;
         case 5:
             write_ram_ = false;
@@ -254,19 +240,30 @@ void C64::update_irq() {
 }
 
 void C64::reset() {
-    cpu_.reset();
+    // IMPORTANT: the CPU reset-vector fetch happens inside cpu_.reset().
+    // Therefore banking must be established BEFORE calling cpu_.reset().
+    // On a real C64 the KERNAL is visible at $E000-$FFFF after reset.
+    port_bits_ = 0x2F;
+    port_val_ = 0x37;
+    update_pla();
+
+    // Reset peripheral state before starting the CPU so no stale IRQ/NMI can
+    // be observed during the first reset-vector fetch.
     vic_.reset();
     sid_.reset();
     cia1_.reset();
     cia2_.reset();
-    port_bits_ = 0x2F;
-    port_val_ = 0x37;
+    cia_irq_ = false;
+    vic_irq_ = false;
+    cia_nmi_ = false;
+    cpu_.set_irq(IrqLine::Clear);
+    cpu_.set_nmi(IrqLine::Clear);
+    cpu_.reset();
+
     tape_control_ = 0x10;
     tape_motor_ = false;
     keyboard_.fill(0xFF);
     color_ram_.fill(0);
-    cia_irq_ = vic_irq_ = cia_nmi_ = false;
-    update_pla();
     audio_.clear();
     audio_acc_ = 0;
     std::fill(framebuffer_.begin(), framebuffer_.end(), Mos6566::kPalette[0]);
@@ -286,7 +283,6 @@ uint8_t C64::read_byte(uint16_t addr) {
     if (addr == 1)
         return uint8_t(tape_control_ | (tape_motor_ ? 0 : 0x20) |
                        (port_val_ & 7));
-
     if (addr >= 0xA000 && addr <= 0xBFFF) {
         return read_ram_a_ ? ram_[addr] : basic_rom_[addr & 0x1FFF];
     }
@@ -320,6 +316,8 @@ uint8_t C64::read_byte(uint16_t addr) {
                     default:
                         return 0xFF;
                 }
+            default:
+                return ram_[addr];
         }
     }
     if (addr >= 0xE000) {
@@ -358,8 +356,7 @@ void C64::write_byte(uint16_t addr, uint8_t value) {
                 sid_.write(addr & 0x1F, value);
                 break;
             case 8:
- 
-			case 9:
+            case 9:
             case 0xA:
             case 0xB:
                 color_ram_[addr & 0x3FF] = value & 0x0F;
@@ -381,19 +378,14 @@ void C64::write_byte(uint16_t addr, uint8_t value) {
 void C64::on_cycles(int cycles) {
     cia1_.tick(cycles);
     cia2_.tick(cycles);
-    if (drive_.rom_loaded()) {
-        // 1541 clock is ~1.0 MHz; C64 PHI2 is 0.985 MHz — run 1:1.
-        drive_.run(cycles);
-    }
+    if (drive_.rom_loaded()) drive_.run(cycles);
 
-    // Tape motor (6510 port bit5 low = motor on) + TZX level → FLAG on CIA1
     if (tape_motor_ && tape_.is_loaded()) {
         if (!tape_play_) {
             tape_.play(true);
             tape_play_ = true;
         }
         tape_.advance(cycles);
-        // FLAG sense: edge via set_flag; level also visible on port
         static uint8_t prev = 0;
         const uint8_t lv = tape_.level();
         if (prev && !lv) cia1_.set_flag(false);
@@ -418,7 +410,6 @@ void C64::on_cycles(int cycles) {
 void C64::run_frame() {
     for (int line = 0; line < kScanlines; line++) {
         int cycles = kCyclesPerLine;
-        // Badlines steal ~40 cycles (VIC does the accounting in update_line).
         const int vis_y = line - 16;
         uint32_t* row = (vis_y >= 0 && vis_y < kScreenHeight)
                             ? framebuffer_.data() + size_t(vis_y) * kScreenWidth
@@ -443,7 +434,6 @@ void C64::set_inputs(const MachineInputs& inputs) {
     auto& k = inputs.keys;
     auto key = [&](Key id) { return k[size_t(id)]; };
 
-    // Partial matrix (matches Pascal eventos_c64 subset).
     if (key(Key::A)) press(1, 0x04);
     if (key(Key::B)) press(3, 0x10);
     if (key(Key::C)) press(2, 0x10);
@@ -476,11 +466,10 @@ void C64::set_inputs(const MachineInputs& inputs) {
     if (key(Key::Num2)) press(7, 0x08);
     if (key(Key::Num3)) press(1, 0x01);
     if (key(Key::Num0)) press(4, 0x08);
-    if (key(Key::Escape)) press(7, 0x80);  // RUN/STOP approx
+    if (key(Key::Escape)) press(7, 0x80);
     if (key(Key::LeftCtrl)) press(7, 0x04);
-    if (key(Key::Backspace)) press(0, 0x01);  // DEL
+    if (key(Key::Backspace)) press(0, 0x01);
 
-    // Joysticks (active low)
     auto joy = [](const InputState& p) {
         uint8_t v = 0xFF;
         if (p.up) v = uint8_t(v & ~0x01);
