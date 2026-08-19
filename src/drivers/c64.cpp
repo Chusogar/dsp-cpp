@@ -52,12 +52,10 @@ C64::C64()
         update_irq();
     });
     vic_.set_color_ram(color_ram_.data());
-    // VIC-II sees a 14-bit bus.  The CPU's character-ROM banking is NOT the
-    // same thing as the VIC-II character-ROM overlay: the VIC sees CHARGEN
-    // only in VIC banks where its address lines select $1000-$1FFF.
+    // VIC 14-bit bus sees RAM with char ROM overlay in the $1000/$9000 holes.
     vic_.set_mem_read([this](uint16_t a14) -> uint8_t {
         const uint16_t a = a14 & 0x3FFF;
-        if ((a & 0x3000) == 0x1000) return char_rom_[a & 0x0FFF];
+        if ((a & 0x7000) == 0x1000) return char_rom_[a & 0x0FFF];
         return ram_[a];
     });
 
@@ -155,6 +153,7 @@ bool C64::load_media(const std::string& path, std::string* error) {
         tape_play_ = false;
         return true;
     }
+
     std::vector<uint8_t> data;
     if (!read_file(path, &data)) {
         if (error) *error = "cannot open: " + path;
@@ -189,49 +188,20 @@ void C64::update_pla() {
     const uint8_t res = uint8_t(port_val_ | uint8_t(~port_bits_));
     tape_motor_ = (port_val_ & 0x20) == 0;
     switch (res & 7) {
-        case 0:
-        case 4:
-            write_ram_ = true;
-            read_ram_d_ = 0;
-            read_ram_a_ = true;
-            read_ram_e_ = true;
-            break;
+        case 0: case 4:
+            write_ram_ = true; read_ram_d_ = 0; read_ram_a_ = true; read_ram_e_ = true; break;
         case 1:
-            write_ram_ = true;
-            read_ram_d_ = 1;
-            read_ram_a_ = true;
-            read_ram_e_ = true;
-            break;
+            write_ram_ = true; read_ram_d_ = 1; read_ram_a_ = true; read_ram_e_ = true; break;
         case 2:
-            write_ram_ = true;
-            read_ram_d_ = 1;
-            read_ram_a_ = true;
-            read_ram_e_ = false;
-            break;
+            write_ram_ = true; read_ram_d_ = 1; read_ram_a_ = true; read_ram_e_ = false; break;
         case 3:
-            write_ram_ = true;
-            read_ram_d_ = 1;
-            read_ram_a_ = false;
-            read_ram_e_ = false;
-            break;
+            write_ram_ = true; read_ram_d_ = 1; read_ram_a_ = false; read_ram_e_ = false; break;
         case 5:
-            write_ram_ = false;
-            read_ram_d_ = 2;
-            read_ram_a_ = true;
-            read_ram_e_ = true;
-            break;
+            write_ram_ = false; read_ram_d_ = 2; read_ram_a_ = true; read_ram_e_ = true; break;
         case 6:
-            write_ram_ = false;
-            read_ram_d_ = 2;
-            read_ram_a_ = true;
-            read_ram_e_ = false;
-            break;
+            write_ram_ = false; read_ram_d_ = 2; read_ram_a_ = true; read_ram_e_ = false; break;
         case 7:
-            write_ram_ = false;
-            read_ram_d_ = 2;
-            read_ram_a_ = false;
-            read_ram_e_ = false;
-            break;
+            write_ram_ = false; read_ram_d_ = 2; read_ram_a_ = false; read_ram_e_ = false; break;
     }
 }
 
@@ -240,15 +210,10 @@ void C64::update_irq() {
 }
 
 void C64::reset() {
-    // IMPORTANT: the CPU reset-vector fetch happens inside cpu_.reset().
-    // Therefore banking must be established BEFORE calling cpu_.reset().
-    // On a real C64 the KERNAL is visible at $E000-$FFFF after reset.
     port_bits_ = 0x2F;
     port_val_ = 0x37;
     update_pla();
 
-    // Reset peripheral state before starting the CPU so no stale IRQ/NMI can
-    // be observed during the first reset-vector fetch.
     vic_.reset();
     sid_.reset();
     cia1_.reset();
@@ -258,6 +223,12 @@ void C64::reset() {
     cia_nmi_ = false;
     cpu_.set_irq(IrqLine::Clear);
     cpu_.set_nmi(IrqLine::Clear);
+
+    // The CPU executes complete instructions. Its run() call may therefore
+    // overshoot the raster budget by a few cycles. Do not throw that time
+    // away: carry it into the next line so the CPU and VIC clocks remain
+    // phase-locked over the whole frame.
+    cpu_cycle_debt_ = 0;
     cpu_.reset();
 
     tape_control_ = 0x10;
@@ -283,92 +254,40 @@ uint8_t C64::read_byte(uint16_t addr) {
     if (addr == 1)
         return uint8_t(tape_control_ | (tape_motor_ ? 0 : 0x20) |
                        (port_val_ & 7));
-    if (addr >= 0xA000 && addr <= 0xBFFF) {
+    if (addr >= 0xA000 && addr <= 0xBFFF)
         return read_ram_a_ ? ram_[addr] : basic_rom_[addr & 0x1FFF];
-    }
     if (addr >= 0xD000 && addr <= 0xDFFF) {
         switch (read_ram_d_) {
-            case 0:
-                return ram_[addr];
-            case 1:
-                return char_rom_[addr & 0x0FFF];
+            case 0: return ram_[addr];
+            case 1: return char_rom_[addr & 0x0FFF];
             case 2:
                 switch ((addr >> 8) & 0x0F) {
-                    case 0:
-                    case 1:
-                    case 2:
-                    case 3:
-                        return vic_.read(addr & 0x3F);
-                    case 4:
-                    case 5:
-                    case 6:
-                    case 7:
-                        return sid_.read(addr & 0x1F);
-                    case 8:
-                    case 9:
-                    case 0xA:
-                    case 0xB:
-                        return uint8_t(color_ram_[addr & 0x3FF] | 0xF0);
-                    case 0xC:
-                        return cia1_.read(addr & 0x0F);
-                    case 0xD:
-                        return cia2_.read(addr & 0x0F);
-                    default:
-                        return 0xFF;
+                    case 0: case 1: case 2: case 3: return vic_.read(addr & 0x3F);
+                    case 4: case 5: case 6: case 7: return sid_.read(addr & 0x1F);
+                    case 8: case 9: case 0xA: case 0xB: return uint8_t(color_ram_[addr & 0x3FF] | 0xF0);
+                    case 0xC: return cia1_.read(addr & 0x0F);
+                    case 0xD: return cia2_.read(addr & 0x0F);
+                    default: return 0xFF;
                 }
-            default:
-                return ram_[addr];
+            default: return ram_[addr];
         }
     }
-    if (addr >= 0xE000) {
-        return read_ram_e_ ? ram_[addr] : kernel_rom_[addr & 0x1FFF];
-    }
+    if (addr >= 0xE000) return read_ram_e_ ? ram_[addr] : kernel_rom_[addr & 0x1FFF];
     return ram_[addr];
 }
 
 void C64::write_byte(uint16_t addr, uint8_t value) {
-    if (addr == 0) {
-        port_bits_ = value;
-        update_pla();
-        return;
-    }
-    if (addr == 1) {
-        port_val_ = value;
-        update_pla();
-        return;
-    }
+    if (addr == 0) { port_bits_ = value; update_pla(); return; }
+    if (addr == 1) { port_val_ = value; update_pla(); return; }
     if (addr >= 0xD000 && addr <= 0xDFFF) {
-        if (write_ram_) {
-            ram_[addr] = value;
-            return;
-        }
+        if (write_ram_) { ram_[addr] = value; return; }
         switch ((addr >> 8) & 0x0F) {
-            case 0:
-            case 1:
-            case 2:
-            case 3:
-                vic_.write(addr & 0x3F, value);
-                break;
-            case 4:
-            case 5:
-            case 6:
-            case 7:
-                sid_.write(addr & 0x1F, value);
-                break;
-            case 8:
-            case 9:
-            case 0xA:
-            case 0xB:
-                color_ram_[addr & 0x3FF] = value & 0x0F;
-                break;
-            case 0xC:
-                cia1_.write(addr & 0x0F, value);
-                break;
-            case 0xD:
-                cia2_.write(addr & 0x0F, value);
-                break;
-            default:
-                break;
+            case 0: case 1: case 2: case 3: vic_.write(addr & 0x3F, value); break;
+            case 4: case 5: case 6: case 7: sid_.write(addr & 0x1F, value); break;
+            case 8: case 9: case 0xA: case 0xB: color_ram_[addr & 0x3FF] = value & 0x0F; break;
+            case 0xC: cia1_.write(addr & 0x0F, value); break;
+            case 0xD: cia2_.write(addr & 0x0F, value); break;
+            default: break;
         }
         return;
     }
@@ -381,10 +300,7 @@ void C64::on_cycles(int cycles) {
     if (drive_.rom_loaded()) drive_.run(cycles);
 
     if (tape_motor_ && tape_.is_loaded()) {
-        if (!tape_play_) {
-            tape_.play(true);
-            tape_play_ = true;
-        }
+        if (!tape_play_) { tape_.play(true); tape_play_ = true; }
         tape_.advance(cycles);
         static uint8_t prev = 0;
         const uint8_t lv = tape_.level();
@@ -417,67 +333,42 @@ void C64::run_frame() {
         const int stolen = vic_.update_line(line, row);
         cycles -= stolen;
         if (cycles < 1) cycles = 1;
-        int left = cycles;
-        while (left > 0) {
-            const int ran = cpu_.run(left);
-            if (ran <= 0) break;
-            left -= ran;
+
+        // Keep a single continuous CPU time budget across raster lines.
+        // M6502::run() may execute the final instruction past the requested
+        // number of cycles; its overshoot becomes negative debt here and is
+        // repaid on following lines instead of being silently accumulated.
+        cpu_cycle_debt_ += cycles;
+        if (cpu_cycle_debt_ > 0) {
+            const int ran = cpu_.run(cpu_cycle_debt_);
+            cpu_cycle_debt_ -= ran;
         }
     }
 }
 
 void C64::set_inputs(const MachineInputs& inputs) {
     keyboard_.fill(0xFF);
-    auto press = [this](int row, uint8_t mask) {
-        keyboard_[row] = uint8_t(keyboard_[row] & ~mask);
-    };
+    auto press = [this](int row, uint8_t mask) { keyboard_[row] = uint8_t(keyboard_[row] & ~mask); };
     auto& k = inputs.keys;
     auto key = [&](Key id) { return k[size_t(id)]; };
-
-    if (key(Key::A)) press(1, 0x04);
-    if (key(Key::B)) press(3, 0x10);
-    if (key(Key::C)) press(2, 0x10);
-    if (key(Key::D)) press(2, 0x04);
-    if (key(Key::E)) press(1, 0x40);
-    if (key(Key::F)) press(2, 0x20);
-    if (key(Key::G)) press(3, 0x04);
-    if (key(Key::H)) press(3, 0x20);
-    if (key(Key::I)) press(4, 0x02);
-    if (key(Key::J)) press(4, 0x04);
-    if (key(Key::K)) press(4, 0x20);
-    if (key(Key::L)) press(5, 0x04);
-    if (key(Key::M)) press(4, 0x10);
-    if (key(Key::N)) press(4, 0x80);
-    if (key(Key::O)) press(4, 0x40);
-    if (key(Key::P)) press(5, 0x02);
-    if (key(Key::Q)) press(7, 0x40);
-    if (key(Key::R)) press(2, 0x02);
-    if (key(Key::S)) press(1, 0x20);
-    if (key(Key::T)) press(2, 0x40);
-    if (key(Key::U)) press(3, 0x40);
-    if (key(Key::V)) press(3, 0x80);
-    if (key(Key::W)) press(1, 0x02);
-    if (key(Key::X)) press(2, 0x80);
-    if (key(Key::Y)) press(3, 0x02);
-    if (key(Key::Z)) press(1, 0x10);
-    if (key(Key::Space)) press(7, 0x10);
-    if (key(Key::Enter)) press(0, 0x02);
-    if (key(Key::Num1)) press(7, 0x01);
-    if (key(Key::Num2)) press(7, 0x08);
-    if (key(Key::Num3)) press(1, 0x01);
-    if (key(Key::Num0)) press(4, 0x08);
-    if (key(Key::Escape)) press(7, 0x80);
-    if (key(Key::LeftCtrl)) press(7, 0x04);
-    if (key(Key::Backspace)) press(0, 0x01);
+    if (key(Key::A)) press(1, 0x04); if (key(Key::B)) press(3, 0x10); if (key(Key::C)) press(2, 0x10);
+    if (key(Key::D)) press(2, 0x04); if (key(Key::E)) press(1, 0x40); if (key(Key::F)) press(2, 0x20);
+    if (key(Key::G)) press(3, 0x04); if (key(Key::H)) press(3, 0x20); if (key(Key::I)) press(4, 0x02);
+    if (key(Key::J)) press(4, 0x04); if (key(Key::K)) press(4, 0x20); if (key(Key::L)) press(5, 0x04);
+    if (key(Key::M)) press(4, 0x10); if (key(Key::N)) press(4, 0x80); if (key(Key::O)) press(4, 0x40);
+    if (key(Key::P)) press(5, 0x02); if (key(Key::Q)) press(7, 0x40); if (key(Key::R)) press(2, 0x02);
+    if (key(Key::S)) press(1, 0x20); if (key(Key::T)) press(2, 0x40); if (key(Key::U)) press(3, 0x40);
+    if (key(Key::V)) press(3, 0x80); if (key(Key::W)) press(1, 0x02); if (key(Key::X)) press(2, 0x80);
+    if (key(Key::Y)) press(3, 0x02); if (key(Key::Z)) press(1, 0x10); if (key(Key::Space)) press(7, 0x10);
+    if (key(Key::Enter)) press(0, 0x02); if (key(Key::Num1)) press(7, 0x01); if (key(Key::Num2)) press(7, 0x08);
+    if (key(Key::Num3)) press(1, 0x01); if (key(Key::Num0)) press(4, 0x08); if (key(Key::Escape)) press(7, 0x80);
+    if (key(Key::LeftCtrl)) press(7, 0x04); if (key(Key::Backspace)) press(0, 0x01);
 
     auto joy = [](const InputState& p) {
         uint8_t v = 0xFF;
-        if (p.up) v = uint8_t(v & ~0x01);
-        if (p.down) v = uint8_t(v & ~0x02);
-        if (p.left) v = uint8_t(v & ~0x04);
-        if (p.right) v = uint8_t(v & ~0x08);
-        if (p.button1) v = uint8_t(v & ~0x10);
-        return v;
+        if (p.up) v = uint8_t(v & ~0x01); if (p.down) v = uint8_t(v & ~0x02);
+        if (p.left) v = uint8_t(v & ~0x04); if (p.right) v = uint8_t(v & ~0x08);
+        if (p.button1) v = uint8_t(v & ~0x10); return v;
     };
     cia1_.joystick1 = joy(inputs.player1);
     cia1_.joystick2 = joy(inputs.player2);
