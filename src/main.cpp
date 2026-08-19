@@ -21,7 +21,6 @@
 #include "drivers/cps1.h"
 #include "drivers/m72.h"
 #include "drivers/starwars.h"
-#include "drivers/outrun.h"
 #include "drivers/hangon.h"
 #include "drivers/system16.h"
 
@@ -210,7 +209,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "rtype") return std::make_unique<dsp::M72>(dsp::M72::Game::Rtype);
     if (game == "hharry") return std::make_unique<dsp::M72>(dsp::M72::Game::Hharry);
     if (game == "rtype2") return std::make_unique<dsp::M72>(dsp::M72::Game::Rtype2);
-    if (game == "outrun") return std::make_unique<dsp::Outrun>();
+    //if (game == "outrun") return std::make_unique<dsp::Outrun>();
     if (game == "hangon" || game == "hang-on") return std::make_unique<dsp::HangOn>();
     if (game == "enduro" || game == "enduror" || game == "enduro-racer") {
         return std::make_unique<dsp::HangOn>(dsp::HangOn::Game::Enduro);

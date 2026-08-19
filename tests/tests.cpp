@@ -38,7 +38,6 @@
 #include "drivers/zx_clone.h"
 #include "drivers/genesis.h"
 #include "drivers/hangon.h"
-#include "drivers/outrun.h"
 #include "drivers/system16.h"
 #include "machine/fd1089.h"
 #include "machine/bagman_pal.h"
@@ -2390,15 +2389,7 @@ void test_sega_pcm_and_mapper() {
 }
 
 void test_sega_system16_missing_roms() {
-    dsp::Outrun outrun;
     std::string error = "unset";
-    check(!outrun.init("/no/such/outrun.zip", &error), "OutRun init fails without the ROM set");
-    check(error.find("not found") != std::string::npos || error.find("missing") != std::string::npos ||
-              error.find("cannot") != std::string::npos || error.find("Unable") != std::string::npos ||
-              error.find("open") != std::string::npos,
-          "OutRun init reports why the set is missing");
-    check(std::strcmp(outrun.title(), "OutRun") == 0, "OutRun title");
-    check(outrun.screen_width() == 320 && outrun.screen_height() == 224, "OutRun screen is 320x224");
 
     dsp::HangOn hangon;
     error = "unset";
@@ -2442,17 +2433,7 @@ void test_sega_roms_if_present() {
         return bool(probe);
     };
 
-    if (exists("/tmp/roms/outrun.zip")) {
-        dsp::Outrun machine;
-        std::string error;
-        check(machine.init("/tmp/roms/outrun.zip", &error), "OutRun MAME set loads");
-        check(machine.debug_pc() == 0x7b1e, "OutRun reset vector is the 315-5195 boot stub");
-        for (int frame = 0; frame < 240; frame++) machine.run_frame();
-        check(machine.debug_pc() != 0x7b1e, "OutRun leaves the mapper boot stub");
-        check(machine.debug_sub_pc() != 0x103a, "OutRun sub CPU leaves the handshake wait");
-        check(machine.debug_palette_used() > 16, "OutRun writes the attract palette after the handshake");
-    }
-
+    
     if (exists("/tmp/roms/fantzone.zip")) {
         dsp::System16 machine(dsp::System16::Game::Fantzone);
         std::string error;

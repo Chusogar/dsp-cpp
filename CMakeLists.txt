@@ -129,7 +129,6 @@ add_executable(dsp
   src/drivers/atari_lynx.cpp
   src/drivers/exelv.cpp
   src/drivers/starwars.cpp
-  src/drivers/outrun.cpp
   src/drivers/hangon.cpp
   src/drivers/system16.cpp
       
@@ -226,7 +225,6 @@ add_executable(dsp_tests
   src/drivers/atari_system1.cpp
   src/drivers/zx_clone.cpp
   src/drivers/genesis.cpp
-  src/drivers/outrun.cpp
   src/drivers/hangon.cpp
   src/drivers/system16.cpp
   src/core/rom_loader.cpp
