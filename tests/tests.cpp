@@ -34,6 +34,9 @@
 #include "drivers/pv2000.h"
 #include "drivers/scv.h"
 #include "drivers/starwars.h"
+#include "drivers/polepos.h"
+#include "cpu/mb88xx.h"
+#include "cpu/z8002.h"
 #include "drivers/spectrum.h"
 #include "drivers/zx_clone.h"
 #include "drivers/genesis.h"
@@ -2281,6 +2284,158 @@ void test_exelv_dummy_bios() {
     check(tel.debug_pc() >= 0xf000, "dummy EXELTEL BIOS idles in TMS7040 ROM");
 }
 
+void test_polepos_driver() {
+    dsp::PolePos missing(dsp::PolePos::Game::PolePosition);
+    check(std::strcmp(missing.title(), "Pole Position") == 0, "Pole Position title");
+    check(missing.screen_width() == 256 && missing.screen_height() == 224,
+          "Pole Position reports 256x224");
+    std::string error = "unset";
+    check(!missing.init("/no/such/polepos.zip", &error), "missing Pole Position ROMs fail init");
+    check(error.find("not found") != std::string::npos || error.find("cannot") != std::string::npos ||
+              error.size() > 3,
+          "init reports why the Pole Position ROM set is missing");
+
+    dsp::PolePos missing2(dsp::PolePos::Game::PolePosition2);
+    check(std::strcmp(missing2.title(), "Pole Position II") == 0, "Pole Position II title");
+
+    std::vector<uint8_t> mb_rom(0x400, 0x00);
+    dsp::Mb88 mcu(dsp::Mb88::Type::Mb8843, 1536000);
+    mcu.set_program_rom(mb_rom.data(), mb_rom.size());
+    mcu.reset();
+    mcu.run(10);
+    check(mcu.pc() == 10, "MB8843 NOP advances PC one byte per cycle");
+
+    // Z8002: LD R9,#0x0002 then HALT-ish (keep running a handful of insns).
+    std::array<uint8_t, 0x100> mem{};
+    mem[2] = 0x40;
+    mem[3] = 0x00;  // FCW
+    mem[4] = 0x00;
+    mem[5] = 0x10;  // PC = 0x0010
+    mem[0x10] = 0x21;
+    mem[0x11] = 0x09;
+    mem[0x12] = 0x00;
+    mem[0x13] = 0x02;  // LD R9, #0002
+    mem[0x14] = 0x7a;
+    mem[0x15] = 0x00;  // HALT
+    dsp::Z8002 cpu(3072000);
+    cpu.set_memory_handlers([&](uint16_t a) { return mem[a & 0xff]; },
+                            [&](uint16_t a, uint8_t v) { mem[a & 0xff] = v; });
+    cpu.reset();
+    cpu.run(40);
+    check(cpu.rw(9) == 0x0002, "Z8002 LD R9,#0002 writes R9");
+    check(cpu.pc() == 0x0016 || cpu.pc() == 0x0014, "Z8002 HALT sits after LD R9");
+
+    // Byte registers must overlay the same word the opcode names (RH0/RL1).
+    std::array<uint8_t, 0x100> bmem{};
+    bmem[2] = 0x40;
+    bmem[3] = 0x00;
+    bmem[4] = 0x00;
+    bmem[5] = 0x10;
+    bmem[0x10] = 0x21;
+    bmem[0x11] = 0x00;
+    bmem[0x12] = 0x12;
+    bmem[0x13] = 0x34;  // LD R0,#1234
+    bmem[0x14] = 0x21;
+    bmem[0x15] = 0x01;
+    bmem[0x16] = 0x00;
+    bmem[0x17] = 0x00;  // LD R1,#0000
+    bmem[0x18] = 0xc9;
+    bmem[0x19] = 0xff;  // LDB RL1,#FF
+    bmem[0x1a] = 0xc0;
+    bmem[0x1b] = 0xab;  // LDB RH0,#AB
+    bmem[0x1c] = 0x7a;
+    bmem[0x1d] = 0x00;  // HALT
+    dsp::Z8002 bcpu(3072000);
+    bcpu.set_memory_handlers([&](uint16_t a) { return bmem[a & 0xff]; },
+                             [&](uint16_t a, uint8_t v) { bmem[a & 0xff] = v; });
+    bcpu.reset();
+    bcpu.run(80);
+    check(bcpu.rw(0) == 0xab34, "Z8002 LDB RH0 overlays R0 high");
+    check(bcpu.rw(1) == 0x00ff, "Z8002 LDB RL1 overlays R1 low");
+
+    // MULT RR0,R3 must use the R0:R1 long, not the neighbouring pair.
+    std::array<uint8_t, 0x100> mmem{};
+    mmem[2] = 0x40;
+    mmem[3] = 0x00;
+    mmem[4] = 0x00;
+    mmem[5] = 0x10;
+    mmem[0x10] = 0x21;
+    mmem[0x11] = 0x01;
+    mmem[0x12] = 0x00;
+    mmem[0x13] = 0x02;  // LD R1,#0002
+    mmem[0x14] = 0x21;
+    mmem[0x15] = 0x03;
+    mmem[0x16] = 0x00;
+    mmem[0x17] = 0x03;  // LD R3,#0003
+    mmem[0x18] = 0x99;
+    mmem[0x19] = 0x30;  // MULT RR0,R3
+    mmem[0x1a] = 0x7a;
+    mmem[0x1b] = 0x00;  // HALT
+    dsp::Z8002 mcpu(3072000);
+    mcpu.set_memory_handlers([&](uint16_t a) { return mmem[a & 0xff]; },
+                            [&](uint16_t a, uint8_t v) { mmem[a & 0xff] = v; });
+    mcpu.reset();
+    mcpu.run(200);
+    check(mcpu.rw(0) == 0x0000 && mcpu.rw(1) == 0x0006, "Z8002 MULT RR0,R3 writes R0:R1");
+
+    const char* rom = "/tmp/roms/polepos.zip";
+    std::FILE* f = std::fopen(rom, "rb");
+    if (f) {
+        std::fclose(f);
+        dsp::PolePos boot(dsp::PolePos::Game::PolePosition);
+        error.clear();
+        check(boot.init(rom, &error), "Pole Position ROM set loads");
+        for (int i = 0; i < 600; i++) boot.run_frame();
+        check(boot.debug_z80_pc() != 0, "Pole Position Z80 is executing");
+        check(boot.debug_n51_pc() != 0, "Pole Position 51xx MCU is executing");
+        check(boot.debug_n53_pc() != 0, "Pole Position 53xx MCU is executing");
+        std::vector<int16_t> audio;
+        boot.drain_audio(audio);
+        bool heard = false;
+        for (int16_t s : audio) {
+            if (s != 0) {
+                heard = true;
+                break;
+            }
+        }
+        check(!audio.empty(), "Pole Position drain_audio yields samples");
+        check(heard, "Pole Position WSG/engine/52xx produce non-silent samples");
+        bool lit = false;
+        const uint32_t* fb = boot.framebuffer();
+        for (int i = 0; i < boot.screen_width() * boot.screen_height(); i++) {
+            if ((fb[i] & 0x00ffffffu) != 0) {
+                lit = true;
+                break;
+            }
+        }
+        check(lit, "Pole Position attract produces non-black pixels");
+    }
+
+    const char* rom2 = "/tmp/roms/polepos2.zip";
+    f = std::fopen(rom2, "rb");
+    if (f) {
+        std::fclose(f);
+        dsp::PolePos boot2(dsp::PolePos::Game::PolePosition2);
+        error.clear();
+        check(boot2.init(rom2, &error), "Pole Position II ROM set loads");
+        for (int i = 0; i < 600; i++) boot2.run_frame();
+        check(boot2.debug_z80_pc() != 0, "Pole Position II Z80 is executing");
+        check(boot2.debug_sub1_pc() != 0x34c8, "Pole Position II sub1 leaves the IC25 fail idle");
+        check(boot2.debug_sprite_low(0x48) == 0, "Pole Position II Z8002 handshake clears mailbox $4048");
+        check(!boot2.debug_sub2_reset(), "Pole Position II releases Z8002 #2 after handshake");
+        check(boot2.debug_n53_pc() != 0, "Pole Position II 53xx MCU is executing");
+        bool lit2 = false;
+        const uint32_t* fb2 = boot2.framebuffer();
+        for (int i = 0; i < boot2.screen_width() * boot2.screen_height(); i++) {
+            if ((fb2[i] & 0x00ffffffu) != 0) {
+                lit2 = true;
+                break;
+            }
+        }
+        check(lit2, "Pole Position II attract produces non-black pixels");
+    }
+}
+
 void test_starwars_missing_roms() {
     dsp::StarWars machine;
     check(std::strcmp(machine.title(), "Star Wars") == 0, "Star Wars title");
@@ -3350,6 +3505,7 @@ int main() {
     test_exelv_dummy_bios();
     test_trdos_scl_and_beta();
     test_starwars_missing_roms();
+    test_polepos_driver();
     test_atari_system1_missing_roms();
     test_sega_pcm_and_mapper();
     test_sega_system16_missing_roms();
