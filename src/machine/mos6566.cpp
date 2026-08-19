@@ -205,6 +205,20 @@ int Mos6566::update_line(int line, uint32_t* fb_row) {
     linea_ = uint16_t(line & 0x1FF);
     if (linea_ == irq_raster_) raster_irq();
 
+    // The VIC-II's video matrix counter is reset at the start of the
+    // 25-row display window.  It must be done on raster 0x30 itself, not
+    // only when raster 0x30 happens to be a badline.  Otherwise the 25
+    // badlines advance VCBASE by 25*40 = 1000 bytes and, because the
+    // matrix is 1024 bytes, the next frame starts 24 bytes earlier.
+    // That manifests as the BASIC screen rolling vertically from frame
+    // to frame.
+    if (line == 0x30) {
+        vc_base_ = 0;
+        vc_ = 0;
+        rc_ = 0;
+        bad_lines_ = false;
+    }
+
     // Visible window roughly lines 16..284 → 270 rows for framebuffer.
     const int vis_y = line - 16;
     const bool den = (ctrl1_ & 0x10) != 0;
@@ -217,7 +231,6 @@ int Mos6566::update_line(int line, uint32_t* fb_row) {
     // Badline: lines 0x30..0xF7 when (line & 7) == yscroll and DEN.
     int stolen = 0;
     if (den && line >= 0x30 && line <= 0xF7 && ((line & 7) == yscroll)) {
-        if (line == 0x30) vc_base_ = 0;
         vc_ = vc_base_;
         rc_ = 0;
         bad_lines_ = true;
@@ -256,7 +269,6 @@ int Mos6566::update_line(int line, uint32_t* fb_row) {
 
         uint8_t pixels = 0;
         if (bmm) {
-            // Hires bitmap: 8 bytes per cell
             const uint16_t addr =
                 uint16_t(bitmap_base + (vc << 3) + pixel_row);
             pixels = vic_read(addr);
@@ -271,29 +283,18 @@ int Mos6566::update_line(int line, uint32_t* fb_row) {
             if (sx < 0 || sx >= kScreenWidth) continue;
             uint8_t color = b0c_;
             if (bmm) {
-                // Standard hires: color from video matrix nybbles
                 if (pixels & (0x80 >> px))
                     color = uint8_t(ch >> 4);
                 else
                     color = uint8_t(ch & 0x0F);
             } else if (mcm && (colc & 8)) {
-                // Multicolor text
                 const int pair = (pixels >> (6 - (px & ~1))) & 3;
                 switch (pair) {
-                    case 0:
-                        color = b0c_;
-                        break;
-                    case 1:
-                        color = b1c_;
-                        break;
-                    case 2:
-                        color = b2c_;
-                        break;
-                    case 3:
-                        color = uint8_t(colc & 7);
-                        break;
+                    case 0: color = b0c_; break;
+                    case 1: color = b1c_; break;
+                    case 2: color = b2c_; break;
+                    case 3: color = uint8_t(colc & 7); break;
                 }
-                // double-width: skip odd px already covered
                 if (px & 1) {
                     fb_row[sx] = kPalette[color & 15];
                     continue;
@@ -305,14 +306,12 @@ int Mos6566::update_line(int line, uint32_t* fb_row) {
         }
     }
 
-    // Sprites with collision tracking (sprite-sprite + sprite-background).
     spr_coll_.fill(0);
-    // Build foreground mask from non-border pixels that differ from background.
     for (int x = 0; x < kScreenWidth; x++) {
         fore_mask_[x] = (fb_row[x] != border && fb_row[x] != kPalette[b0c_ & 15]) ? 1 : 0;
     }
 
-    for (int s = 7; s >= 0; s--) {  // draw low priority first
+    for (int s = 7; s >= 0; s--) {
         if ((me_ & (1 << s)) == 0) continue;
         const int sy = my_[s];
         const int yexp = (mye_ & (1 << s)) ? 2 : 1;
@@ -321,8 +320,6 @@ int Mos6566::update_line(int line, uint32_t* fb_row) {
         const int row = (line - sy) / yexp;
         if (row < 0 || row > 20) continue;
 
-        // Sprite DMA timing: roughly cycles 0-15 of the line fetch data;
-        // we still render on the visible line for correctness of image.
         const uint16_t sp_ptr_base =
             uint16_t((((vbase_ & 0xF0) >> 4) << 10) + 0x3F8);
         const uint8_t block = vic_read(uint16_t(sp_ptr_base + s));
@@ -353,8 +350,6 @@ int Mos6566::update_line(int line, uint32_t* fb_row) {
                     const int bit_i = multi ? (b - 2) : (b - 1);
                     const int sx = mx + (byte * 8 + bit_i) * xexp + px + kVisibleX - 24;
                     if (sx < 0 || sx >= kScreenWidth) continue;
-
-                    // Sprite-sprite collision
                     if (spr_coll_[sx]) {
                         clx_spr_ = uint8_t(clx_spr_ | spr_coll_[sx] | (1 << s));
                         if (irq_mask_ & 0x04) {
@@ -363,8 +358,6 @@ int Mos6566::update_line(int line, uint32_t* fb_row) {
                         }
                     }
                     spr_coll_[sx] = uint8_t(spr_coll_[sx] | (1 << s));
-
-                    // Sprite-data collision
                     if (fore_mask_[sx]) {
                         clx_bgr_ = uint8_t(clx_bgr_ | (1 << s));
                         if (irq_mask_ & 0x02) {
@@ -372,8 +365,7 @@ int Mos6566::update_line(int line, uint32_t* fb_row) {
                             if (irq_) irq_(IrqLine::Assert);
                         }
                     }
-
-                    if (behind && fore_mask_[sx]) continue;  // data priority
+                    if (behind && fore_mask_[sx]) continue;
                     fb_row[sx] = kPalette[color & 15];
                 }
             }
