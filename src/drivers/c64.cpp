@@ -250,7 +250,10 @@ void C64::write_byte(uint16_t addr, uint8_t value) {
 
 void C64::on_cycles(int cycles) {
     if (cycles <= 0) return;
-    cia1_.run(cycles); cia2_.run(cycles);
+    // Mos6526 exposes tick(), not run(). Advance both CIAs for every real
+    // PHI2 cycle, including VIC-II stolen cycles passed through this path.
+    cia1_.tick(cycles);
+    cia2_.tick(cycles);
     if (drive_.rom_loaded()) drive_.run(cycles);
     if (tape_motor_ && tape_.is_loaded()) {
         if (!tape_play_) { tape_.play(true); tape_play_ = true; }
@@ -305,20 +308,52 @@ void C64::set_inputs(const MachineInputs& inputs) {
     auto press = [this](int row, uint8_t mask) { keyboard_[row] = uint8_t(keyboard_[row] & ~mask); };
     auto& k = inputs.keys;
     auto key = [&](Key id) { return k[size_t(id)]; };
-    if (key(Key::A)) press(1, 0x04); if (key(Key::B)) press(3, 0x10); if (key(Key::C)) press(2, 0x10);
-    if (key(Key::D)) press(2, 0x04); if (key(Key::E)) press(1, 0x40); if (key(Key::F)) press(2, 0x20);
-    if (key(Key::G)) press(3, 0x04); if (key(Key::H)) press(3, 0x20); if (key(Key::I)) press(4, 0x02);
-    if (key(Key::J)) press(4, 0x04); if (key(Key::K)) press(4, 0x20); if (key(Key::L)) press(5, 0x04);
-    if (key(Key::M)) press(4, 0x10); if (key(Key::N)) press(4, 0x80); if (key(Key::O)) press(4, 0x40);
-    if (key(Key::P)) press(5, 0x02); if (key(Key::Q)) press(7, 0x40); if (key(Key::R)) press(2, 0x02);
-    if (key(Key::S)) press(1, 0x20); if (key(Key::T)) press(2, 0x40); if (key(Key::U)) press(3, 0x40);
-    if (key(Key::V)) press(3, 0x80); if (key(Key::W)) press(1, 0x02); if (key(Key::X)) press(2, 0x80);
-    if (key(Key::Y)) press(3, 0x02); if (key(Key::Z)) press(1, 0x10); if (key(Key::Space)) press(7, 0x10);
-    if (key(Key::Enter)) press(0, 0x02); if (key(Key::Num1)) press(7, 0x01); if (key(Key::Num2)) press(7, 0x08);
-    if (key(Key::Num3)) press(1, 0x01); if (key(Key::Num0)) press(4, 0x08); if (key(Key::Escape)) press(7, 0x80);
-    if (key(Key::LeftCtrl)) press(7, 0x04); if (key(Key::Backspace)) press(0, 0x01);
-    auto joy = [](const InputState& p) { uint8_t v = 0xFF; if (p.up) v &= ~0x01; if (p.down) v &= ~0x02; if (p.left) v &= ~0x04; if (p.right) v &= ~0x08; if (p.button1) v &= ~0x10; return v; };
-    cia1_.joystick1 = joy(inputs.player1); cia1_.joystick2 = joy(inputs.player2);
+    if (key(Key::A)) press(1, 0x04);
+    if (key(Key::B)) press(3, 0x10);
+    if (key(Key::C)) press(2, 0x10);
+    if (key(Key::D)) press(2, 0x04);
+    if (key(Key::E)) press(1, 0x40);
+    if (key(Key::F)) press(2, 0x20);
+    if (key(Key::G)) press(3, 0x04);
+    if (key(Key::H)) press(3, 0x20);
+    if (key(Key::I)) press(4, 0x02);
+    if (key(Key::J)) press(4, 0x04);
+    if (key(Key::K)) press(4, 0x20);
+    if (key(Key::L)) press(5, 0x04);
+    if (key(Key::M)) press(4, 0x10);
+    if (key(Key::N)) press(4, 0x80);
+    if (key(Key::O)) press(4, 0x40);
+    if (key(Key::P)) press(5, 0x02);
+    if (key(Key::Q)) press(7, 0x40);
+    if (key(Key::R)) press(2, 0x02);
+    if (key(Key::S)) press(1, 0x20);
+    if (key(Key::T)) press(2, 0x40);
+    if (key(Key::U)) press(3, 0x40);
+    if (key(Key::V)) press(3, 0x80);
+    if (key(Key::W)) press(1, 0x02);
+    if (key(Key::X)) press(2, 0x80);
+    if (key(Key::Y)) press(3, 0x02);
+    if (key(Key::Z)) press(1, 0x10);
+    if (key(Key::Space)) press(7, 0x10);
+    if (key(Key::Enter)) press(0, 0x02);
+    if (key(Key::Num1)) press(7, 0x01);
+    if (key(Key::Num2)) press(7, 0x08);
+    if (key(Key::Num3)) press(1, 0x01);
+    if (key(Key::Num0)) press(4, 0x08);
+    if (key(Key::Escape)) press(7, 0x80);
+    if (key(Key::LeftCtrl)) press(7, 0x04);
+    if (key(Key::Backspace)) press(0, 0x01);
+    auto joy = [](const InputState& p) {
+        uint8_t v = 0xFF;
+        if (p.up) v &= ~0x01;
+        if (p.down) v &= ~0x02;
+        if (p.left) v &= ~0x04;
+        if (p.right) v &= ~0x08;
+        if (p.button1) v &= ~0x10;
+        return v;
+    };
+    cia1_.joystick1 = joy(inputs.player1);
+    cia1_.joystick2 = joy(inputs.player2);
 }
 
 void C64::set_dip_switch(int /*bank*/, uint8_t /*value*/) {}
