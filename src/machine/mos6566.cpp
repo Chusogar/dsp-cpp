@@ -226,7 +226,17 @@ int Mos6566::update_line(int line, uint32_t* fb_row) {
             if (sx < 0 || sx >= kScreenWidth) continue;
 
             uint8_t color = b0c_;
-            if (bmm) {
+            if (bmm && mcm) {
+                // Multicolor bitmap: the bit pairs select the background, the
+                // two nibbles of the video matrix byte and the colour RAM.
+                const int pair = (pixels >> (6 - (px & ~1))) & 3;
+                switch (pair) {
+                    case 0: color = b0c_; break;
+                    case 1: color = uint8_t(ch >> 4); break;
+                    case 2: color = uint8_t(ch & 0x0F); break;
+                    default: color = colc; break;
+                }
+            } else if (bmm) {
                 color = (pixels & (0x80 >> px))
                     ? uint8_t(ch >> 4)
                     : uint8_t(ch & 0x0F);
