@@ -33,6 +33,7 @@
 #include "drivers/pv2000.h"
 #include "drivers/scv.h"
 #include "drivers/starwars.h"
+#include "drivers/c64.h"
 #include "drivers/polepos.h"
 #include "cpu/mb88xx.h"
 #include "cpu/z8002.h"
@@ -2031,6 +2032,63 @@ void test_scv_cartridge_window() {
     check(scv->debug_a() == 0xA5, "SCV maps an 8 KiB cart at $8000");
 }
 
+void test_c64_prg_injection() {
+    const std::string dir = "/tmp/dsp-c64-test";
+    std::filesystem::create_directories(dir);
+    auto write_rom = [&](const char* name, const std::vector<uint8_t>& data) {
+        std::ofstream out(dir + "/" + name, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
+    };
+    // Stand-in KERNAL: publish TXTTAB = $0801 (as BASIC's cold start does) and
+    // then spin, so the driver sees the same "prompt is up" state.
+    std::vector<uint8_t> kernal(0x2000, 0x00);
+    const uint8_t boot[] = {0xA9, 0x01, 0x85, 0x2B, 0xA9, 0x08, 0x85, 0x2C, 0x4C, 0x08, 0xE0};
+    std::copy(std::begin(boot), std::end(boot), kernal.begin());
+    kernal[0x1FFC] = 0x00;
+    kernal[0x1FFD] = 0xE0;
+    write_rom("kernal.rom", kernal);
+    write_rom("basic.rom", std::vector<uint8_t>(0x2000, 0x00));
+    write_rom("chargen.rom", std::vector<uint8_t>(0x1000, 0x00));
+
+    dsp::C64 machine;
+    std::string error = "unset";
+    check(machine.init(dir, &error), "C64 loads KERNAL/BASIC/chargen from a directory");
+
+    // 10 PRINT"DSPOK" / 20 GOTO 20, saved from $0801.
+    const std::vector<uint8_t> prg = {0x01, 0x08, 0x0E, 0x08, 0x0A, 0x00, 0x99, 0x22,
+                                      0x44, 0x53, 0x50, 0x4F, 0x4B, 0x22, 0x00, 0x17,
+                                      0x08, 0x14, 0x00, 0x89, 0x20, 0x32, 0x30, 0x00,
+                                      0x00, 0x00};
+    write_rom("hello.prg", prg);
+    error.clear();
+    check(machine.load_media(dir + "/hello.prg", &error), "C64 accepts a .prg");
+    check(machine.prg_pending(), "the PRG waits for the BASIC prompt instead of racing the boot");
+    check(machine.debug_read_ram(0x0801) == 0x00, "nothing is written before BASIC has booted");
+
+    for (int frame = 0; frame < 130; frame++) machine.run_frame();
+    check(!machine.prg_pending(), "the PRG is injected once TXTTAB points at $0801");
+    for (size_t i = 0; i + 2 < prg.size(); i++) {
+        check(machine.debug_read_ram(uint16_t(0x0801 + i)) == prg[i + 2],
+              "the program body lands at $0801");
+    }
+    const uint16_t end = uint16_t(0x0801 + prg.size() - 2);
+    check(machine.debug_read_ram(0x2D) == uint8_t(end & 0xFF) &&
+              machine.debug_read_ram(0x2E) == uint8_t(end >> 8),
+          "VARTAB points past the program");
+    check(machine.debug_read_ram(0x2F) == machine.debug_read_ram(0x2D) &&
+              machine.debug_read_ram(0x31) == machine.debug_read_ram(0x2D),
+          "ARYTAB/STREND follow VARTAB");
+    check(machine.debug_read_ram(0xC6) == 4 && machine.debug_read_ram(0x0277) == 'R' &&
+              machine.debug_read_ram(0x0278) == 'U' && machine.debug_read_ram(0x0279) == 'N' &&
+              machine.debug_read_ram(0x027A) == 0x0D,
+          "RUN + RETURN are queued in the KERNAL keyboard buffer");
+
+    dsp::C64 tiny;
+    error.clear();
+    write_rom("short.prg", std::vector<uint8_t>{0x01, 0x08});
+    check(!tiny.load_media(dir + "/short.prg", &error), "a truncated PRG is rejected");
+}
+
 void test_pv2000_missing_roms_and_dummy_bios() {
     dsp::Pv2000 machine;
     std::string error = "unset";
@@ -3399,6 +3457,7 @@ int main() {
     test_upd1771_tone();
     test_scv_init_and_block_graphics();
     test_scv_cartridge_window();
+    test_c64_prg_injection();
     test_pv2000_missing_roms_and_dummy_bios();
     test_tms7000_mov_add_call();
     test_tms7000_lvdp_and_int1();

@@ -57,14 +57,24 @@ public:
     C1541& drive() { return drive_; }
     bool load_media(const std::string& path, std::string* error) override;
 
+    uint8_t debug_read_ram(uint16_t addr) const { return ram_[addr]; }
+    bool prg_pending() const { return !pending_prg_.empty(); }
+
 private:
+    // PAL frames to wait before dropping a PRG into RAM. BASIC's cold start
+    // clears the program area and rebuilds its pointers, so the file can only
+    // be injected once the READY. prompt is up.
+    static constexpr int kPrgInjectFrames = 120;
+
     uint8_t read_byte(uint16_t addr);
     void write_byte(uint16_t addr, uint8_t value);
     void on_cycles(int cycles);
     void update_pla();
     void update_irq();
     uint8_t cia1_portb_r();
-    bool inject_prg(const std::vector<uint8_t>& data, std::string* error);
+    bool queue_prg(const std::vector<uint8_t>& data, std::string* error);
+    void update_pending_prg();
+    void inject_prg(const std::vector<uint8_t>& data);
 
     M6502 cpu_;
     Mos6566 vic_;
@@ -107,6 +117,8 @@ private:
     D64Image disk_;  // legacy autoload helper
     C1541 drive_;
     bool tape_play_ = false;
+    std::vector<uint8_t> pending_prg_;
+    int boot_frames_ = 0;
     bool iec_enabled_ = true;
 
     // Number of C64 CPU cycles still owed/available at the raster scheduler.
