@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -13,6 +14,19 @@ struct D64File {
     uint8_t track = 0, sector = 0;
     uint16_t blocks = 0;
 };
+
+// A PRG (load address followed by data) to place on a freshly built image.
+struct D64BuildFile {
+    std::string name;
+    std::vector<uint8_t> prg;
+};
+
+// Format a 35 track image holding the given files, so archives without a disk
+// structure of their own (.T64) can still be served by the emulated drive.
+// Returns an empty vector if the files do not fit.
+std::vector<uint8_t> build_d64(const std::vector<D64BuildFile>& files,
+                               const std::string& disk_name,
+                               uint8_t id1 = 0x41, uint8_t id2 = 0x42);
 
 class D64Image {
 public:

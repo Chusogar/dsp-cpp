@@ -1,5 +1,6 @@
 #include "machine/d64_image.h"
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 
@@ -26,6 +27,130 @@ int D64Image::sectors_per_track(int track) {
     if (track <= 30) return 18;
     if (track <= 35) return 17;
     return 0;
+}
+
+namespace {
+
+void petscii_pad(uint8_t* dst, size_t n, const std::string& name) {
+    std::memset(dst, 0xA0, n);
+    for (size_t i = 0; i < n && i < name.size(); i++) {
+        char c = name[i];
+        if (c >= 'a' && c <= 'z') c = char(c - 'a' + 'A');
+        dst[i] = uint8_t(c);
+    }
+}
+
+void bam_allocate(uint8_t* bam, int track, int sector) {
+    uint8_t* entry = bam + 4 + (track - 1) * 4;
+    if (entry[0] > 0) entry[0]--;
+    entry[1 + sector / 8] = uint8_t(entry[1 + sector / 8] & ~(1 << (sector % 8)));
+}
+
+}  // namespace
+
+std::vector<uint8_t> build_d64(const std::vector<D64BuildFile>& files,
+                               const std::string& disk_name,
+                               uint8_t id1, uint8_t id2) {
+    std::vector<uint8_t> img(174848, 0);
+
+    auto sector_at = [&img](int track, int sector) -> uint8_t* {
+        const int off = track_offset(track);
+        if (off < 0) return nullptr;
+        return img.data() + off + sector * 256;
+    };
+
+    uint8_t* bam = sector_at(18, 0);
+    bam[0] = 18;
+    bam[1] = 1;
+    bam[2] = 0x41;  // DOS version 'A'
+    for (int t = 1; t <= 35; t++) {
+        uint8_t* e = bam + 4 + (t - 1) * 4;
+        const int n = D64Image::sectors_per_track(t);
+        e[0] = uint8_t(n);
+        for (int s = 0; s < n; s++) e[1 + s / 8] = uint8_t(e[1 + s / 8] | (1 << (s % 8)));
+    }
+    petscii_pad(bam + 0x90, 16, disk_name);
+    bam[0xA0] = bam[0xA1] = 0xA0;
+    bam[0xA2] = id1;
+    bam[0xA3] = id2;
+    bam[0xA4] = 0xA0;
+    bam[0xA5] = '2';
+    bam[0xA6] = 'A';
+    bam[0xA7] = bam[0xA8] = bam[0xA9] = bam[0xAA] = 0xA0;
+    bam_allocate(bam, 18, 0);
+
+    // Directory sectors live on track 18 from sector 1 on, eight entries each.
+    int dir_sector = 1;
+    int dir_index = 0;
+    uint8_t* dir = sector_at(18, dir_sector);
+    dir[0] = 0;
+    dir[1] = 0xFF;
+    bam_allocate(bam, 18, dir_sector);
+
+    // Files start on track 1 and skip the directory track.
+    int track = 1, sector = 0;
+
+    for (const D64BuildFile& file : files) {
+        if (file.prg.size() < 2) continue;
+
+        if (dir_index == 8) {
+            const int next = dir_sector + 3;
+            if (next >= D64Image::sectors_per_track(18)) return {};
+            dir[0] = 18;
+            dir[1] = uint8_t(next);
+            dir_sector = next;
+            dir_index = 0;
+            dir = sector_at(18, dir_sector);
+            dir[0] = 0;
+            dir[1] = 0xFF;
+            bam_allocate(bam, 18, dir_sector);
+        }
+
+        const int first_track = track, first_sector = sector;
+        size_t written = 0;
+        int blocks = 0;
+
+        while (written < file.prg.size()) {
+            uint8_t* sec = sector_at(track, sector);
+            if (sec == nullptr) return {};
+            bam_allocate(bam, track, sector);
+            blocks++;
+
+            const size_t chunk = std::min<size_t>(254, file.prg.size() - written);
+            std::memcpy(sec + 2, file.prg.data() + written, chunk);
+            written += chunk;
+
+            if (written >= file.prg.size()) {
+                sec[0] = 0;
+                sec[1] = uint8_t(chunk + 1);
+                break;
+            }
+
+            if (++sector >= D64Image::sectors_per_track(track)) {
+                sector = 0;
+                if (++track == 18) track = 19;
+                if (track > 35) return {};
+            }
+            sec[0] = uint8_t(track);
+            sec[1] = uint8_t(sector);
+        }
+
+        if (++sector >= D64Image::sectors_per_track(track)) {
+            sector = 0;
+            if (++track == 18) track = 19;
+        }
+
+        uint8_t* entry = dir + dir_index * 32;
+        entry[2] = 0x82;  // closed PRG
+        entry[3] = uint8_t(first_track);
+        entry[4] = uint8_t(first_sector);
+        petscii_pad(entry + 5, 16, file.name);
+        entry[0x1E] = uint8_t(blocks & 0xFF);
+        entry[0x1F] = uint8_t(blocks >> 8);
+        dir_index++;
+    }
+
+    return img;
 }
 
 bool D64Image::load_file(const std::string& path, std::string* error) {
@@ -144,7 +269,9 @@ bool D64Image::load_prg(int index, std::vector<uint8_t>* out, std::string* error
         }
         const uint8_t next_t = sec[0];
         const uint8_t next_s = sec[1];
-        const int nbytes = (next_t == 0) ? int(next_s) : 254;
+        // On the last sector the link's second byte points at the last used
+        // byte, so the payload is one shorter than that offset.
+        const int nbytes = (next_t == 0) ? std::max(0, int(next_s) - 1) : 254;
         out->insert(out->end(), sec + 2, sec + 2 + nbytes);
         if (next_t == 0) break;
         track = next_t;

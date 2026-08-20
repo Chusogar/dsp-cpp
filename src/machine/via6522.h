@@ -49,6 +49,8 @@ public:
     bool ca2() const { return out_ca2_; }
     bool cb2() const { return out_cb2_; }
 
+    uint8_t ddr_b() const { return ddr_b_; }
+
     uint8_t ifr() const { return ifr_; }
     uint8_t ier() const { return ier_; }
     uint8_t acr() const { return acr_; }

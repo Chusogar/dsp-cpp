@@ -90,6 +90,7 @@ add_executable(dsp
   src/machine/diskii.cpp
   src/machine/c1541.cpp
   src/machine/d64_image.cpp
+  src/machine/t64_image.cpp
   src/machine/g64_image.cpp
   src/machine/gcr.cpp
   
@@ -219,6 +220,7 @@ add_executable(dsp_tests
   src/machine/mos6566.cpp
   src/machine/c1541.cpp
   src/machine/d64_image.cpp
+  src/machine/t64_image.cpp
   src/machine/g64_image.cpp
   src/machine/gcr.cpp
   src/machine/nes_mapper.cpp

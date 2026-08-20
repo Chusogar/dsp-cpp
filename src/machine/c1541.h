@@ -61,6 +61,11 @@ public:
 
     D64Image& disk() { return disk_; }
 
+    // Front panel state.
+    bool motor_on() const { return motor_on_; }
+    bool led_on() const { return led_on_; }
+    int half_track() const { return half_track_; }
+
 private:
     uint8_t read_mem(uint16_t addr);
     void write_mem(uint16_t addr, uint8_t value);
@@ -69,7 +74,8 @@ private:
     void update_via1_inputs();
     void update_via2_inputs();
 
-    void on_via1_pb(uint8_t value);
+    void update_iec_outputs();
+    void on_via2_pb(uint8_t value);
     void tick_disk(int cycles);
     void rebuild_track_gcr();
     void step_head(int delta);
@@ -98,6 +104,10 @@ private:
     int half_track_ = 18 * 2;
     int stepper_prev_ = 0;
 
+    // Cycles owed to the drive CPU: M6502::run() completes instructions and
+    // can overshoot, and dropping that overshoot makes the drive run fast.
+    int cycle_debt_ = 0;
+
     bool motor_on_ = false;
     bool led_on_ = false;
 
@@ -110,11 +120,15 @@ private:
     uint8_t shift_reg_ = 0;
     int shift_count_ = 0;
 
+    // Consecutive one bits seen by the head; a sync mark is ten or more, which
+    // spans several calls to tick_disk() and so cannot be a local count.
+    int ones_ = 0;
+
     bool sync_ = false;
     bool byte_ready_ = false;
     uint8_t last_byte_ = 0;
 
-    // VIA1 CA2: set overflow enable.
+    // VIA2 CA2: set overflow enable.
     bool soe_ = false;
 
     // IEC open-collector outputs from drive.
