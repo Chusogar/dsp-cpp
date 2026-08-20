@@ -88,7 +88,13 @@ private:
     // These values must describe the power-on C64 banking before reset().
     // M6502::reset() reads $FFFC/$FFFD immediately, so KERNAL must already
     // be visible in the $E000-$FFFF window at that moment.
-    bool write_ram_ = false;
+    //
+    // write_ram_ is always true for the 8 LORAM/HIRAM/CHAREN configurations
+    // modeled here: on real hardware a CPU write always reaches the RAM
+    // chip underneath whatever ROM/I-O is currently banked in for reads
+    // (only cartridge-driven Ultimax mode can disconnect RAM, which this
+    // no-cartridge table does not represent). See update_pla().
+    bool write_ram_ = true;
     bool read_ram_a_ = false;
     bool read_ram_e_ = false;
     uint8_t read_ram_d_ = 2;  // 0=RAM 1=CHAR 2=IO

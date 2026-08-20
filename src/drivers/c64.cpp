@@ -174,14 +174,27 @@ bool C64::inject_prg(const std::vector<uint8_t>& data, std::string* error) {
 void C64::update_pla() {
     const uint8_t res = uint8_t(port_val_ | uint8_t(~port_bits_));
     tape_motor_ = (port_val_ & 0x20) == 0;
+    // On real hardware (no cartridge asserting Ultimax mode, which this
+    // 8-entry LORAM/HIRAM/CHAREN table can't represent anyway) a CPU write
+    // to any address always reaches the underlying RAM chip, even where a
+    // ROM or I/O device is currently mapped in for reads: "the PLA insures
+    // that whenever ROM coexists with RAM, reading comes from ROM, but
+    // writing goes to the hidden RAM (or the I/O chips)." write_ram_ must
+    // therefore be true in every one of these configurations; it is not a
+    // real write-inhibit signal. Previously it was false for configs 5-7
+    // (the power-on default, all-ROM, banking value 7, among them), which
+    // silently dropped every RAM write -- including 6502 stack pushes --
+    // and left the CPU executing garbage after the first JSR/RTS, hanging
+    // long before KERNAL ever reached VIC-II/screen setup (black screen).
+    write_ram_ = true;
     switch (res & 7) {
-        case 0: case 4: write_ram_ = true; read_ram_d_ = 0; read_ram_a_ = true; read_ram_e_ = true; break;
-        case 1: write_ram_ = true; read_ram_d_ = 1; read_ram_a_ = true; read_ram_e_ = true; break;
-        case 2: write_ram_ = true; read_ram_d_ = 1; read_ram_a_ = true; read_ram_e_ = false; break;
-        case 3: write_ram_ = true; read_ram_d_ = 1; read_ram_a_ = false; read_ram_e_ = false; break;
-        case 5: write_ram_ = false; read_ram_d_ = 2; read_ram_a_ = true; read_ram_e_ = true; break;
-        case 6: write_ram_ = false; read_ram_d_ = 2; read_ram_a_ = true; read_ram_e_ = false; break;
-        case 7: write_ram_ = false; read_ram_d_ = 2; read_ram_a_ = false; read_ram_e_ = false; break;
+        case 0: case 4: read_ram_d_ = 0; read_ram_a_ = true; read_ram_e_ = true; break;
+        case 1: read_ram_d_ = 1; read_ram_a_ = true; read_ram_e_ = true; break;
+        case 2: read_ram_d_ = 1; read_ram_a_ = true; read_ram_e_ = false; break;
+        case 3: read_ram_d_ = 1; read_ram_a_ = false; read_ram_e_ = false; break;
+        case 5: read_ram_d_ = 2; read_ram_a_ = true; read_ram_e_ = true; break;
+        case 6: read_ram_d_ = 2; read_ram_a_ = true; read_ram_e_ = false; break;
+        case 7: read_ram_d_ = 2; read_ram_a_ = false; read_ram_e_ = false; break;
     }
 }
 
