@@ -154,6 +154,7 @@ bool C64::load_media(const std::string& path, std::string* error) {
 }
 
 bool C64::inject_prg(const std::vector<uint8_t>& data, std::string* error) {
+	printf("Inject PRG\n");
     if (data.size() < 3) {
         if (error) *error = "PRG too small";
         return false;
@@ -318,53 +319,113 @@ void C64::run_frame() {
 
 void C64::set_inputs(const MachineInputs& inputs) {
     keyboard_.fill(0xFF);
-    auto press = [this](int row, uint8_t mask) { keyboard_[row] = uint8_t(keyboard_[row] & ~mask); };
-    auto& k = inputs.keys;
-    auto key = [&](Key id) { return k[size_t(id)]; };
-    if (key(Key::A)) press(1, 0x04);
-    if (key(Key::B)) press(3, 0x10);
-    if (key(Key::C)) press(2, 0x10);
-    if (key(Key::D)) press(2, 0x04);
-    if (key(Key::E)) press(1, 0x40);
-    if (key(Key::F)) press(2, 0x20);
-    if (key(Key::G)) press(3, 0x04);
-    if (key(Key::H)) press(3, 0x20);
-    if (key(Key::I)) press(4, 0x02);
-    if (key(Key::J)) press(4, 0x04);
-    if (key(Key::K)) press(4, 0x20);
-    if (key(Key::L)) press(5, 0x04);
-    if (key(Key::M)) press(4, 0x10);
-    if (key(Key::N)) press(4, 0x80);
-    if (key(Key::O)) press(4, 0x40);
-    if (key(Key::P)) press(5, 0x02);
-    if (key(Key::Q)) press(7, 0x40);
-    if (key(Key::R)) press(2, 0x02);
-    if (key(Key::S)) press(1, 0x20);
-    if (key(Key::T)) press(2, 0x40);
-    if (key(Key::U)) press(3, 0x40);
-    if (key(Key::V)) press(3, 0x80);
-    if (key(Key::W)) press(1, 0x02);
-    if (key(Key::X)) press(2, 0x80);
-    if (key(Key::Y)) press(3, 0x02);
-    if (key(Key::Z)) press(1, 0x10);
-    if (key(Key::Space)) press(7, 0x10);
-    if (key(Key::Enter)) press(0, 0x02);
-    if (key(Key::Num1)) press(7, 0x01);
-    if (key(Key::Num2)) press(7, 0x08);
-    if (key(Key::Num3)) press(1, 0x01);
-    if (key(Key::Num0)) press(4, 0x08);
-    if (key(Key::Escape)) press(7, 0x80);
-    if (key(Key::LeftCtrl)) press(7, 0x04);
-    if (key(Key::Backspace)) press(0, 0x01);
+
+    auto press = [this](int column, uint8_t row_mask) {
+        keyboard_[static_cast<size_t>(column)] =
+            uint8_t(keyboard_[static_cast<size_t>(column)] & ~row_mask);
+    };
+
+    const auto& keys = inputs.keys;
+    auto key = [&keys](Key id) {
+        return keys[static_cast<size_t>(id)];
+    };
+
+    // Matriz de teclado completa del Commodore 64.
+    // keyboard_[columna], mascara de fila, activo a nivel bajo.
+
+    // Columna 0: DEL, RETURN, CRSR L/R, F7, F1, F3, F5, CRSR U/D.
+    if (key(Key::Backspace) /*|| key(Key::Delete)*/) press(0, 0x01);
+    if (key(Key::Enter))                         press(0, 0x02);
+    if (key(Key::Right) || key(Key::Left))       press(0, 0x04);
+    if (key(Key::F7))                            press(0, 0x08);
+    if (key(Key::F1))                            press(0, 0x10);
+    if (key(Key::F3))                            press(0, 0x20);
+    if (key(Key::F5))                            press(0, 0x40);
+    if (key(Key::Down) || key(Key::Up))          press(0, 0x80);
+
+    // En el C64, cursor izquierda y arriba son SHIFT + cursor derecha/abajo.
+    if (key(Key::Left) || key(Key::Up))          press(1, 0x80);
+
+    // Columna 1: 3, W, A, 4, Z, S, E, LEFT SHIFT.
+    if (key(Key::Num3))                          press(1, 0x01);
+    if (key(Key::W))                             press(1, 0x02);
+    if (key(Key::A))                             press(1, 0x04);
+    if (key(Key::Num4))                          press(1, 0x08);
+    if (key(Key::Z))                             press(1, 0x10);
+    if (key(Key::S))                             press(1, 0x20);
+    if (key(Key::E))                             press(1, 0x40);
+    if (key(Key::LeftShift))                     press(1, 0x80);
+
+    // Columna 2: 5, R, D, 6, C, F, T, X.
+    if (key(Key::Num5))                          press(2, 0x01);
+    if (key(Key::R))                             press(2, 0x02);
+    if (key(Key::D))                             press(2, 0x04);
+    if (key(Key::Num6))                          press(2, 0x08);
+    if (key(Key::C))                             press(2, 0x10);
+    if (key(Key::F))                             press(2, 0x20);
+    if (key(Key::T))                             press(2, 0x40);
+    if (key(Key::X))                             press(2, 0x80);
+
+    // Columna 3: 7, Y, G, 8, B, H, U, V.
+    if (key(Key::Num7))                          press(3, 0x01);
+    if (key(Key::Y))                             press(3, 0x02);
+    if (key(Key::G))                             press(3, 0x04);
+    if (key(Key::Num8))                          press(3, 0x08);
+    if (key(Key::B))                             press(3, 0x10);
+    if (key(Key::H))                             press(3, 0x20);
+    if (key(Key::U))                             press(3, 0x40);
+    if (key(Key::V))                             press(3, 0x80);
+
+    // Columna 4: 9, I, J, 0, M, K, O, N.
+    if (key(Key::Num9))                          press(4, 0x01);
+    if (key(Key::I))                             press(4, 0x02);
+    if (key(Key::J))                             press(4, 0x04);
+    if (key(Key::Num0))                          press(4, 0x08);
+    if (key(Key::M))                             press(4, 0x10);
+    if (key(Key::K))                             press(4, 0x20);
+    if (key(Key::O))                             press(4, 0x40);
+    if (key(Key::N))                             press(4, 0x80);
+
+    // Columna 5: +, P, L, -, punto, dos puntos, @, coma.
+    if (key(Key::Equals))                        press(5, 0x01); // tecla + del C64
+    if (key(Key::P))                             press(5, 0x02);
+    if (key(Key::L))                             press(5, 0x04);
+    if (key(Key::Minus))                         press(5, 0x08);
+    if (key(Key::Period))                        press(5, 0x10);
+    //if (key(Key::Apostrophe))                    press(5, 0x20); // tecla : del C64
+    //if (key(Key::LeftBracket))                   press(5, 0x40); // tecla @ del C64
+    if (key(Key::Comma))                         press(5, 0x80);
+
+    // Columna 6: libra, *, ;, HOME/CLR, RIGHT SHIFT, =, flecha arriba, /.
+    //if (key(Key::Backslash))                     press(6, 0x01); // libra del C64
+    if (key(Key::Asterisk))						 press(6, 0x02); // * del C64
+    if (key(Key::Semicolon))                     press(6, 0x04);
+    if (key(Key::Home))                          press(6, 0x08);
+    if (key(Key::RightShift))                    press(6, 0x10);
+    if (key(Key::Equals))                        press(6, 0x20); // = del C64
+    if (key(Key::Tab))                           press(6, 0x40); // flecha arriba del C64
+    if (key(Key::Slash))                         press(6, 0x80);
+
+    // Columna 7: 1, flecha izquierda, CTRL, 2, SPACE, COMMODORE, Q, RUN/STOP.
+    if (key(Key::Num1))                          press(7, 0x01);
+    //if (key(Key::Insert))                        press(7, 0x02); // flecha izquierda del C64
+    if (key(Key::LeftCtrl))                      press(7, 0x04);
+    if (key(Key::Num2))                          press(7, 0x08);
+    if (key(Key::Space))                         press(7, 0x10);
+    //if (key(Key::LeftAlt))                       press(7, 0x20); // COMMODORE
+    if (key(Key::Q))                             press(7, 0x40);
+    if (key(Key::Escape))                        press(7, 0x80); // RUN/STOP
+
     auto joy = [](const InputState& p) {
         uint8_t v = 0xFF;
-        if (p.up) v &= ~0x01;
-        if (p.down) v &= ~0x02;
-        if (p.left) v &= ~0x04;
-        if (p.right) v &= ~0x08;
-        if (p.button1) v &= ~0x10;
+        if (p.up)      v &= uint8_t(~0x01);
+        if (p.down)    v &= uint8_t(~0x02);
+        if (p.left)    v &= uint8_t(~0x04);
+        if (p.right)   v &= uint8_t(~0x08);
+        if (p.button1) v &= uint8_t(~0x10);
         return v;
     };
+
     cia1_.joystick1 = joy(inputs.player1);
     cia1_.joystick2 = joy(inputs.player2);
 }

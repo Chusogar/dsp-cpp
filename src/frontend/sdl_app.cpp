@@ -45,7 +45,7 @@ constexpr struct {
     {Key::Escape, SDL_SCANCODE_ESCAPE}, {Key::Tab, SDL_SCANCODE_TAB},
     {Key::CapsLock, SDL_SCANCODE_CAPSLOCK}, {Key::Home, SDL_SCANCODE_HOME},
     {Key::Cbm, SDL_SCANCODE_LALT}, {Key::Equals, SDL_SCANCODE_EQUALS},
-    {Key::Plus, SDL_SCANCODE_KP_PLUS}, {Key::Asterisk, SDL_SCANCODE_KP_MULTIPLY},
+    {Key::Plus, SDL_SCANCODE_KP_PLUS}, {Key::Asterisk, SDL_SCANCODE_RIGHTBRACKET },
     {Key::At, SDL_SCANCODE_LEFTBRACKET},
 	{Key::F1, SDL_SCANCODE_F1}, {Key::F2, SDL_SCANCODE_F2}, {Key::F3, SDL_SCANCODE_F3}, {Key::F4, SDL_SCANCODE_F4},
 	{Key::F5, SDL_SCANCODE_F5}, {Key::F6, SDL_SCANCODE_F6}, {Key::F7, SDL_SCANCODE_F7}, {Key::F8, SDL_SCANCODE_F8},
@@ -195,6 +195,12 @@ int SdlApp::run(Machine& machine) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) running = false;
             if (event.type == SDL_KEYDOWN) {
+				
+				//printf("KEYDOWN sym=%d scan=%d name=%s\n",
+				//		event.key.keysym.sym,
+				//		event.key.keysym.scancode,
+				//		SDL_GetScancodeName(event.key.keysym.scancode));
+
                 switch (event.key.keysym.sym) {
                     case SDLK_ESCAPE: running = false; break;
                     case SDLK_F3: machine.reset(); break;
