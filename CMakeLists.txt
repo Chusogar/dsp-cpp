@@ -186,6 +186,7 @@ add_executable(dsp_tests
   src/sound/upd1771.cpp
   src/sound/tms5220.cpp
   src/sound/sid.cpp
+  src/sound/sid6581.cpp
   src/sound/gb_apu.cpp
   src/sound/polepos_wsg.cpp
   src/sound/polepos_engine.cpp
@@ -215,6 +216,11 @@ add_executable(dsp_tests
   src/machine/eeprom93c46.cpp
   src/machine/nec765.cpp
   src/machine/mos6526.cpp
+  src/machine/mos6566.cpp
+  src/machine/c1541.cpp
+  src/machine/d64_image.cpp
+  src/machine/g64_image.cpp
+  src/machine/gcr.cpp
   src/machine/nes_mapper.cpp
   src/machine/gb_mapper.cpp
   src/machine/lynx_suzy.cpp

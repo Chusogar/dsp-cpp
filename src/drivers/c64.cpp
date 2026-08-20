@@ -138,7 +138,7 @@ bool C64::load_media(const std::string& path, std::string* error) {
         if (!disk_.load_file(path, error)) return false;
         std::vector<uint8_t> prg;
         if (!disk_.load_first_prg(&prg, error)) return false;
-        return inject_prg(prg, error);
+        return queue_prg(prg, error);
     }
     if (ends_ci(path, ".tzx") || ends_ci(path, ".tap")) {
         if (!tape_.load_file(path, error)) return false;
@@ -150,26 +150,48 @@ bool C64::load_media(const std::string& path, std::string* error) {
         if (error) *error = "cannot open: " + path;
         return false;
     }
-    return inject_prg(data, error);
+    return queue_prg(data, error);
 }
 
-bool C64::inject_prg(const std::vector<uint8_t>& data, std::string* error) {
-	printf("Inject PRG\n");
+bool C64::queue_prg(const std::vector<uint8_t>& data, std::string* error) {
     if (data.size() < 3) {
         if (error) *error = "PRG too small";
         return false;
     }
+    pending_prg_ = data;
+    boot_frames_ = 0;
+    return true;
+}
+
+void C64::update_pending_prg() {
+    if (pending_prg_.empty()) return;
+    if (++boot_frames_ < kPrgInjectFrames) return;
+    // TXTTAB must already point at $0801: BASIC has finished its cold start,
+    // so the program area and the zero page pointers are ours to fill in.
+    if (ram_[0x2B] != 0x01 || ram_[0x2C] != 0x08) return;
+
+    const std::vector<uint8_t> data = std::move(pending_prg_);
+    pending_prg_.clear();
+    inject_prg(data);
+}
+
+void C64::inject_prg(const std::vector<uint8_t>& data) {
     const uint16_t addr = uint16_t(data[0] | (data[1] << 8));
     const size_t n = data.size() - 2;
     for (size_t i = 0; i < n; i++) ram_[uint16_t(addr + i)] = data[i + 2];
     const uint16_t end = uint16_t(addr + n);
-    if (addr == 0x0801) {
-        ram_[0x2D] = uint8_t(end & 0xFF); ram_[0x2E] = uint8_t(end >> 8);
-        ram_[0x2F] = uint8_t(end & 0xFF); ram_[0x30] = uint8_t(end >> 8);
-        ram_[0x31] = uint8_t(end & 0xFF); ram_[0x32] = uint8_t(end >> 8);
-        ram_[0xAE] = uint8_t(end & 0xFF); ram_[0xAF] = uint8_t(end >> 8);
-    }
-    return true;
+    if (addr != 0x0801) return;
+
+    ram_[0x2D] = uint8_t(end & 0xFF); ram_[0x2E] = uint8_t(end >> 8);
+    ram_[0x2F] = uint8_t(end & 0xFF); ram_[0x30] = uint8_t(end >> 8);
+    ram_[0x31] = uint8_t(end & 0xFF); ram_[0x32] = uint8_t(end >> 8);
+    ram_[0xAE] = uint8_t(end & 0xFF); ram_[0xAF] = uint8_t(end >> 8);
+
+    // Autostart through the KERNAL keyboard buffer, exactly as if RUN had been
+    // typed at the prompt.
+    static constexpr uint8_t kRun[] = {'R', 'U', 'N', 0x0D};
+    for (size_t i = 0; i < sizeof(kRun); i++) ram_[0x0277 + i] = kRun[i];
+    ram_[0xC6] = uint8_t(sizeof(kRun));
 }
 
 void C64::update_pla() {
@@ -209,6 +231,7 @@ void C64::reset() {
     cia_irq_ = false; vic_irq_ = false; cia_nmi_ = false;
     cpu_.set_irq(IrqLine::Clear); cpu_.set_nmi(IrqLine::Clear);
     cpu_cycle_debt_ = 0;
+    boot_frames_ = 0;
     cpu_.reset();
     tape_control_ = 0x10; tape_motor_ = false; keyboard_.fill(0xFF);
     color_ram_.fill(0); audio_.clear(); audio_acc_ = 0;
@@ -292,6 +315,7 @@ void C64::on_cycles(int cycles) {
 }
 
 void C64::run_frame() {
+    update_pending_prg();
     // The VIC-II always advances through all 312 PAL raster lines. A badline
     // steals 40 CPU bus cycles, but those 40 cycles are still real C64 time:
     // CIA timers, SID, tape, IEC and the raster clock must advance during them.
