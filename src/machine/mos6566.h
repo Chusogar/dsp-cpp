@@ -21,7 +21,9 @@ public:
     static constexpr int kCharsY = 25;
 
     using IrqHandler = std::function<void(IrqLine)>;
-    using MemRead = std::function<uint8_t(uint16_t)>;  // 14-bit VIC bus
+    // VIC bus fetch: the 14-bit VIC address already merged with the VA14/VA15
+    // bank bits from CIA2, i.e. a full CPU-space address.
+    using MemRead = std::function<uint8_t(uint16_t)>;
 
     explicit Mos6566(uint32_t clock = 985248);
 

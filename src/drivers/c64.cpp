@@ -52,8 +52,11 @@ C64::C64()
         update_irq();
     });
     vic_.set_color_ram(color_ram_.data());
-    vic_.set_mem_read([this](uint16_t a14) -> uint8_t {
-        const uint16_t a = a14 & 0x3FFF;
+    // Mos6566 already merges the CIA2 bank bits into the address it asks for,
+    // so it must be used as-is: masking it back to 14 bits pinned every fetch
+    // to bank 0. The character ROM only shadows RAM in banks 0 and 2, at
+    // $1000-$1FFF and $9000-$9FFF.
+    vic_.set_mem_read([this](uint16_t a) -> uint8_t {
         if ((a & 0x7000) == 0x1000) return char_rom_[a & 0x0FFF];
         return ram_[a];
     });

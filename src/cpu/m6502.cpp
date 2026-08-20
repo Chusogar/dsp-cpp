@@ -370,6 +370,7 @@ int M6502::run(int cycles) {
                 const uint8_t value = read(address_);
                 p.c = (value & 0x80) != 0;
                 const uint8_t result = uint8_t(value << 1);
+                if (!cmos_) write(address_, value);  // 6502 RMW dummy write
                 write(address_, result);
                 set_nz(result);
                 break;
@@ -428,6 +429,7 @@ int M6502::run(int cycles) {
                 const uint8_t value = read(address_);
                 const uint8_t result = uint8_t((value << 1) | (p.c ? 1 : 0));
                 p.c = (value & 0x80) != 0;
+                if (!cmos_) write(address_, value);  // 6502 RMW dummy write
                 write(address_, result);
                 set_nz(result);
                 break;
@@ -468,6 +470,7 @@ int M6502::run(int cycles) {
                 const uint8_t value = read(address_);
                 p.c = (value & 1) != 0;
                 const uint8_t result = uint8_t(value >> 1);
+                if (!cmos_) write(address_, value);  // 6502 RMW dummy write
                 write(address_, result);
                 set_nz(result);
                 break;
@@ -506,6 +509,7 @@ int M6502::run(int cycles) {
                 const uint8_t value = read(address_);
                 const uint8_t result = uint8_t((value >> 1) | (p.c ? 0x80 : 0));
                 p.c = (value & 1) != 0;
+                if (!cmos_) write(address_, value);  // 6502 RMW dummy write
                 write(address_, result);
                 set_nz(result);
                 break;
@@ -621,7 +625,9 @@ int M6502::run(int cycles) {
                 if (cmos_) compare(a, read(address_));
                 break;
             case 0xc6: case 0xce: case 0xd6: case 0xde: {  // dec
-                const uint8_t result = uint8_t(read(address_) - 1);
+                const uint8_t value = read(address_);
+                const uint8_t result = uint8_t(value - 1);
+                if (!cmos_) write(address_, value);  // 6502 RMW dummy write
                 write(address_, result);
                 set_nz(result);
                 break;
@@ -651,7 +657,9 @@ int M6502::run(int cycles) {
                 if (cmos_) sbc(read(address_));
                 break;
             case 0xe6: case 0xee: case 0xf6: case 0xfe: {  // inc
-                const uint8_t result = uint8_t(read(address_) + 1);
+                const uint8_t value = read(address_);
+                const uint8_t result = uint8_t(value + 1);
+                if (!cmos_) write(address_, value);  // 6502 RMW dummy write
                 write(address_, result);
                 set_nz(result);
                 break;

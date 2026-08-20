@@ -34,6 +34,7 @@
 #include "drivers/scv.h"
 #include "drivers/starwars.h"
 #include "drivers/c64.h"
+#include "machine/mos6566.h"
 #include "drivers/polepos.h"
 #include "cpu/mb88xx.h"
 #include "cpu/z8002.h"
@@ -2089,6 +2090,81 @@ void test_c64_prg_injection() {
     check(!tiny.load_media(dir + "/short.prg", &error), "a truncated PRG is rejected");
 }
 
+void test_m6502_rmw_double_write() {
+    static std::vector<std::pair<uint16_t, uint8_t>> writes;
+    writes.clear();
+    m6502_memory.assign(0x10000, 0);
+    dsp::M6502 cpu(985248);
+    cpu.set_memory_handlers(
+        [](uint16_t address) { return m6502_memory[address]; },
+        [](uint16_t address, uint8_t value) {
+            writes.emplace_back(address, value);
+            m6502_memory[address] = value;
+        });
+    m6502_memory[0x3000] = 0x81;
+    // lsr $3000 / jmp *   -- as the C64 IRQ acknowledge "LSR $D019" does
+    load_6502(0x1000, {0x4e, 0x00, 0x30, 0x4c, 0x03, 0x10});
+    cpu.reset();
+    cpu.run(6);
+    check(writes.size() == 2 && writes[0] == std::make_pair(uint16_t(0x3000), uint8_t(0x81)),
+          "an NMOS read-modify-write first writes the unmodified byte back");
+    check(writes.back() == std::make_pair(uint16_t(0x3000), uint8_t(0x40)),
+          "the second write of the read-modify-write stores the result");
+
+    writes.clear();
+    m6502_memory.assign(0x10000, 0);
+    dsp::M6502 cmos(985248);
+    cmos.set_cmos(true);
+    cmos.set_memory_handlers(
+        [](uint16_t address) { return m6502_memory[address]; },
+        [](uint16_t address, uint8_t value) {
+            writes.emplace_back(address, value);
+            m6502_memory[address] = value;
+        });
+    m6502_memory[0x3000] = 0x81;
+    load_6502(0x1000, {0x4e, 0x00, 0x30, 0x4c, 0x03, 0x10});
+    cmos.reset();
+    cmos.run(6);
+    check(writes.size() == 1, "the 65C02 does not do the dummy write");
+}
+
+void test_mos6566_bank_and_multicolor_bitmap() {
+    dsp::Mos6566 vic;
+    vic.reset();
+    std::vector<uint8_t> ram(0x10000, 0);
+    std::vector<uint8_t> color(0x400, 0);
+    vic.set_mem_read([&](uint16_t a) { return ram[a]; });
+    vic.set_color_ram(color.data());
+
+    vic.changed_va(3);           // CIA2 $DD00 = %00 -> VIC bank 3 ($C000)
+    vic.write(0x18, 0x3D);       // video matrix $CC00, bitmap $E000
+    vic.write(0x11, 0x3B);       // DEN + BMM, YSCROLL 3
+    vic.write(0x16, 0x18);       // MCM + CSEL
+    vic.write(0x20, 0x00);
+    vic.write(0x21, 0x06);       // background: blue
+    ram[0xCC00] = 0x17;          // 01 -> white, 10 -> yellow
+    color[0] = 0x05;             // 11 -> green
+    ram[0xE000] = 0x1B;          // pairs: 00 01 10 11
+
+    std::array<uint32_t, dsp::Mos6566::kScreenWidth> row{};
+    vic.update_line(51, row.data());
+    const int x = dsp::Mos6566::kVisibleX;
+    check(row[x + 0] == dsp::Mos6566::kPalette[6] &&
+              row[x + 2] == dsp::Mos6566::kPalette[1] &&
+              row[x + 4] == dsp::Mos6566::kPalette[7] &&
+              row[x + 6] == dsp::Mos6566::kPalette[5],
+          "multicolor bitmap mode decodes the bit pairs");
+    check(row[x + 1] == row[x + 0] && row[x + 3] == row[x + 2],
+          "multicolor pixels are two hires pixels wide");
+
+    // The character generator only shadows RAM inside the VIC bank, so a bank 3
+    // fetch must reach RAM: pin the bank back to 0 and the picture changes.
+    ram[0xE000] = 0x00;
+    vic.update_line(51, row.data());
+    check(row[x + 2] == dsp::Mos6566::kPalette[6],
+          "the bitmap is fetched from the bank selected by CIA2");
+}
+
 void test_pv2000_missing_roms_and_dummy_bios() {
     dsp::Pv2000 machine;
     std::string error = "unset";
@@ -3458,6 +3534,8 @@ int main() {
     test_scv_init_and_block_graphics();
     test_scv_cartridge_window();
     test_c64_prg_injection();
+    test_m6502_rmw_double_write();
+    test_mos6566_bank_and_multicolor_bitmap();
     test_pv2000_missing_roms_and_dummy_bios();
     test_tms7000_mov_add_call();
     test_tms7000_lvdp_and_int1();
