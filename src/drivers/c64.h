@@ -12,6 +12,7 @@
 #include "sound/sid6581.h"
 #include "machine/tape_tzx.h"
 #include "machine/d64_image.h"
+#include "machine/t64_image.h"
 #include "machine/c1541.h"
 
 namespace dsp {
@@ -57,7 +58,10 @@ public:
     C1541& drive() { return drive_; }
     bool load_media(const std::string& path, std::string* error) override;
 
+    // Direct RAM access, used by the tests to type into the keyboard buffer
+    // and read the screen back.
     uint8_t debug_read_ram(uint16_t addr) const { return ram_[addr]; }
+    void debug_write_ram(uint16_t addr, uint8_t value) { ram_[addr] = value; }
     bool prg_pending() const { return !pending_prg_.empty(); }
 
 private:

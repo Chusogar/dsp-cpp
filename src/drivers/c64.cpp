@@ -33,6 +33,12 @@ bool load_named(const std::string& dir, const char* name, uint8_t* dst,
     return true;
 }
 
+std::string join_path(const std::string& dir, const std::string& name) {
+    std::string path = dir;
+    if (!path.empty() && path.back() != '/' && path.back() != '\\') path += '/';
+    return path + name;
+}
+
 }  // namespace
 
 C64::C64()
@@ -85,9 +91,12 @@ C64::C64()
         [this](uint8_t v) {
             vic_.changed_va(uint16_t(~v & 3));
             if (drive_.rom_loaded() && iec_enabled_) {
-                drive_.set_host_atn((v & 0x08) != 0);
-                drive_.set_host_clk((v & 0x10) != 0);
-                drive_.set_host_data((v & 0x20) != 0);
+                // PA3/PA4/PA5 drive ATN/CLK/DATA through inverting buffers:
+                // a set bit pulls the open-collector line low. KERNAL relies on
+                // it, e.g. LISTEN asserts ATN with ORA #$08 at $ED31.
+                drive_.set_host_atn((v & 0x08) == 0);
+                drive_.set_host_clk((v & 0x10) == 0);
+                drive_.set_host_data((v & 0x20) == 0);
             }
         });
 }
@@ -106,6 +115,21 @@ bool C64::load_roms(const std::string& dir, std::string* error) {
     if (!load_named(dir, "901225-01.u5", char_rom_.data(), 0x1000, error) &&
         !load_named(dir, "chargen.rom", char_rom_.data(), 0x1000, error) &&
         !load_named(dir, "chargen.bin", char_rom_.data(), 0x1000, error)) return false;
+
+    // The 1541/1540 DOS ROM is optional: without it the drive cannot answer on
+    // the serial bus and disk images fall back to direct injection.
+    // 1541 first, its DOS also drives a 1540 at the slower VIC-II timing.
+    static const char* kDriveRoms[] = {
+        "dos1541",   "dos1541.bin",   "1541.rom",   "1541",
+        "d1541.rom", "325302-01.uab4",
+        "dos1540",   "dos1540.bin",   "1540.rom",   "1540",
+    };
+    for (const char* name : kDriveRoms) {
+        std::vector<uint8_t> rom;
+        if (!read_file(join_path(dir, name), &rom)) continue;
+        if (drive_.load_rom(rom.data(), rom.size())) break;
+    }
+
     reset();
     return true;
 }
@@ -141,6 +165,28 @@ bool C64::load_media(const std::string& path, std::string* error) {
         if (!disk_.load_file(path, error)) return false;
         std::vector<uint8_t> prg;
         if (!disk_.load_first_prg(&prg, error)) return false;
+        return queue_prg(prg, error);
+    }
+    if (ends_ci(path, ".t64")) {
+        T64Image t64;
+        if (!t64.load_file(path, error)) return false;
+
+        // A .T64 has no disk structure, so serve its files from a disk image
+        // built on the fly: the KERNAL then loads them over the serial bus
+        // like any other disk, LOAD"$",8 included.
+        if (drive_.rom_loaded()) {
+            std::vector<D64BuildFile> files;
+            for (size_t i = 0; i < t64.directory().size(); i++) {
+                D64BuildFile f;
+                f.name = t64.directory()[i].name;
+                if (t64.load_prg(i, &f.prg)) files.push_back(std::move(f));
+            }
+            const std::vector<uint8_t> img = build_d64(files, t64.tape_name());
+            if (!img.empty()) return drive_.load_d64(img.data(), img.size(), error);
+        }
+
+        std::vector<uint8_t> prg;
+        if (!t64.load_first_prg(&prg, error)) return false;
         return queue_prg(prg, error);
     }
     if (ends_ci(path, ".tzx") || ends_ci(path, ".tap")) {
@@ -236,6 +282,7 @@ void C64::reset() {
     cpu_cycle_debt_ = 0;
     boot_frames_ = 0;
     cpu_.reset();
+    if (drive_.rom_loaded()) drive_.reset();
     tape_control_ = 0x10; tape_motor_ = false; keyboard_.fill(0xFF);
     color_ram_.fill(0); audio_.clear(); audio_acc_ = 0;
     std::fill(framebuffer_.begin(), framebuffer_.end(), Mos6566::kPalette[0]);

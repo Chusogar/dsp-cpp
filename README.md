@@ -550,8 +550,24 @@ zip that holds them; common aliases such as `kernal.bin` / `basic.bin` /
 The host keyboard is mapped onto the C64 matrix (Left Shift is C64 left shift,
 Left Ctrl is CTRL, Tab is RUN/STOP). F1/F3/F5/F7 are the C64 function keys.
 F6 starts and stops a `.tap` cassette (the 6510 motor bit still has to enable
-the datasette). Arrows are also a joystick in Control Port 2. There is no 1541:
-a `.d64` image injects its first PRG into RAM.
+the datasette). Arrows are also a joystick in Control Port 2.
+
+Disk access uses a real emulated drive when its DOS ROM sits next to the C64
+ROMs: `dos1541` (aliases `dos1541.bin`, `1541.rom`, `1541`, `d1541.rom`,
+`325302-01.uab4`) is preferred, and `dos1540` (aliases `dos1540.bin`,
+`1540.rom`, `1540`) is used as a fallback. The drive then answers on the serial
+bus as device 8, so `LOAD"$",8`, `LOAD"*",8,1` and `LOAD"NAME",8,1` all work:
+
+```bash
+./build/dsp --game c64 --disk game.d64 /path/to/c64-roms/
+./build/dsp --game c64 --disk game.t64 /path/to/c64-roms/
+```
+
+`.d64` and `.g64` images are mounted directly. A `.t64` archive has no disk
+structure, so its files are placed on a disk image built in memory and served
+through the drive as well. Without a drive ROM there is no device on the bus and
+`.d64`/`.t64` fall back to injecting their first program into RAM
+(`.g64` is rejected).
 
 ### Apple II, II+, IIe and IIe Enhanced
 

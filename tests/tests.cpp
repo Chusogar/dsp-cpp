@@ -2090,6 +2090,163 @@ void test_c64_prg_injection() {
     check(!tiny.load_media(dir + "/short.prg", &error), "a truncated PRG is rejected");
 }
 
+// Minimal .T64 archive holding one PRG, as written by the common tools.
+std::vector<uint8_t> make_t64(const std::vector<uint8_t>& prg,
+                              const char* name, uint16_t used_entries) {
+    std::vector<uint8_t> img(0x40 + 2 * 32, 0x00);
+    const std::string sig = "C64 tape image file";
+    std::copy(sig.begin(), sig.end(), img.begin());
+    img[0x20] = 0x00; img[0x21] = 0x01;   // version $0100
+    img[0x22] = 0x02; img[0x23] = 0x00;   // two slots
+    img[0x24] = uint8_t(used_entries & 0xFF);
+    img[0x25] = uint8_t(used_entries >> 8);
+    const std::string tape = "DSPTAPE";
+    std::fill(img.begin() + 0x28, img.begin() + 0x40, ' ');
+    std::copy(tape.begin(), tape.end(), img.begin() + 0x28);
+
+    const uint16_t start = uint16_t(prg[0] | (prg[1] << 8));
+    const uint16_t end = uint16_t(start + prg.size() - 2);
+    const uint32_t offset = uint32_t(img.size());
+    uint8_t* e = img.data() + 0x40;
+    e[0] = 1;      // normal tape file
+    e[1] = 0x82;   // PRG
+    e[2] = uint8_t(start & 0xFF); e[3] = uint8_t(start >> 8);
+    e[4] = uint8_t(end & 0xFF);   e[5] = uint8_t(end >> 8);
+    e[8] = uint8_t(offset & 0xFF);
+    e[9] = uint8_t((offset >> 8) & 0xFF);
+    e[10] = uint8_t((offset >> 16) & 0xFF);
+    e[11] = uint8_t(offset >> 24);
+    std::memset(e + 0x10, ' ', 16);
+    std::memcpy(e + 0x10, name, std::strlen(name));
+
+    img.insert(img.end(), prg.begin() + 2, prg.end());
+    return img;
+}
+
+void test_c64_t64_and_built_disk() {
+    // 10 PRINT"DSPOK" / 20 GOTO 20, saved from $0801.
+    const std::vector<uint8_t> prg = {0x01, 0x08, 0x0E, 0x08, 0x0A, 0x00, 0x99, 0x22,
+                                      0x44, 0x53, 0x50, 0x4F, 0x4B, 0x22, 0x00, 0x17,
+                                      0x08, 0x14, 0x00, 0x89, 0x20, 0x32, 0x30, 0x00,
+                                      0x00, 0x00};
+
+    dsp::T64Image t64;
+    std::string error = "unset";
+    const std::vector<uint8_t> img = make_t64(prg, "TAPEPROG", 1);
+    check(t64.load_memory(img.data(), img.size(), &error), "a .T64 archive is parsed");
+    check(t64.tape_name() == "DSPTAPE", "the tape name comes from the header");
+    check(t64.directory().size() == 1, "the used-entry count drives the directory");
+    check(t64.directory()[0].name == "TAPEPROG", "the entry name is unpadded");
+    check(t64.directory()[0].start == 0x0801, "the load address is read from the entry");
+
+    std::vector<uint8_t> out;
+    check(t64.load_prg(0, &out, &error) && out == prg,
+          "a .T64 entry yields the original PRG");
+
+    // Writers that leave the used count at zero must still be readable.
+    const std::vector<uint8_t> zero_used = make_t64(prg, "TAPEPROG", 0);
+    dsp::T64Image lax;
+    check(lax.load_memory(zero_used.data(), zero_used.size(), &error) &&
+              lax.directory().size() == 1,
+          "a zero used-entry count falls back to the slot table");
+
+    dsp::T64Image bad;
+    const std::vector<uint8_t> junk(0x80, 0x00);
+    check(!bad.load_memory(junk.data(), junk.size(), &error),
+          "a file without the T64 signature is rejected");
+
+    // The built image must be a disk the 1541 DOS can walk: BAM, directory and
+    // sector chains all have to line up.
+    std::vector<dsp::D64BuildFile> files;
+    files.push_back({"TAPEPROG", prg});
+    std::vector<uint8_t> big(0x08, 0x01);
+    big.resize(2 + 700, 0xAB);  // spans several sectors
+    files.push_back({"BIG", big});
+    const std::vector<uint8_t> disk = dsp::build_d64(files, "DSPTAPE");
+    check(disk.size() == 174848, "the built image has the standard 35 track size");
+
+    dsp::D64Image d64;
+    check(d64.load_memory(disk.data(), disk.size(), &error), "the built image parses");
+    check(d64.directory().size() == 2, "both files are listed");
+    check(d64.directory()[0].name == "tapeprog" && d64.directory()[1].name == "big",
+          "the directory keeps the file names");
+    check((d64.directory()[0].type & 0x0F) == 0x02, "the files are typed PRG");
+    check(d64.directory()[1].blocks == 3, "the block count matches the sector chain");
+
+    out.clear();
+    check(d64.load_first_prg(&out, &error) && out == prg,
+          "the first PRG reads back byte for byte");
+    out.clear();
+    check(d64.load_prg(1, &out, &error) && out == big,
+          "a multi-sector PRG reads back byte for byte");
+
+    uint8_t bam[256] = {0};
+    check(d64.read_sector(18, 0, bam), "the BAM sector is present");
+    check(bam[0] == 18 && bam[1] == 1, "the BAM points at the first directory sector");
+    check(bam[0xA5] == '2' && bam[0xA6] == 'A', "the BAM carries the DOS type 2A");
+    check(bam[4 + 17 * 4] < 19, "track 18 has the directory sectors allocated");
+}
+
+void test_c64_drive_rom_and_media() {
+    const std::string dir = "/tmp/dsp-c64-drive-test";
+    // Start from an empty directory: the drive ROM is looked up by name, so a
+    // leftover copy from an earlier run would hide the no-ROM path.
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    auto write_file = [&](const std::string& name, const std::vector<uint8_t>& data) {
+        std::ofstream out(dir + "/" + name, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
+    };
+
+    std::vector<uint8_t> kernal(0x2000, 0x00);
+    const uint8_t boot[] = {0xA9, 0x01, 0x85, 0x2B, 0xA9, 0x08, 0x85, 0x2C, 0x4C, 0x08, 0xE0};
+    std::copy(std::begin(boot), std::end(boot), kernal.begin());
+    kernal[0x1FFC] = 0x00;
+    kernal[0x1FFD] = 0xE0;
+    write_file("kernal.rom", kernal);
+    write_file("basic.rom", std::vector<uint8_t>(0x2000, 0x00));
+    write_file("chargen.rom", std::vector<uint8_t>(0x1000, 0x00));
+
+    const std::vector<uint8_t> prg = {0x01, 0x08, 0x0B, 0x08, 0x0A, 0x00,
+                                      0x99, 0x22, 0x41, 0x22, 0x00, 0x00, 0x00};
+    std::vector<dsp::D64BuildFile> files;
+    files.push_back({"HELLO", prg});
+    const std::vector<uint8_t> disk = dsp::build_d64(files, "DSP");
+    write_file("test.d64", disk);
+    const std::vector<uint8_t> t64 = make_t64(prg, "TAPEPROG", 1);
+    write_file("test.t64", t64);
+
+    {
+        // Without a drive ROM there is no device on the serial bus, so disk and
+        // tape images fall back to injecting their first program.
+        dsp::C64 machine;
+        std::string error = "unset";
+        check(machine.init(dir, &error), "the C64 boots without a drive ROM");
+        check(!machine.drive().rom_loaded(), "no drive ROM was found");
+        check(machine.load_media(dir + "/test.t64", &error) && machine.prg_pending(),
+              "a .T64 without a drive ROM queues its first program");
+        check(!machine.drive().disk_loaded(), "nothing is mounted without a drive ROM");
+    }
+
+    // A 16 KiB image named like the VICE/MAME dumps is picked up automatically.
+    write_file("dos1541", std::vector<uint8_t>(0x4000, 0x60));
+    {
+        dsp::C64 machine;
+        std::string error = "unset";
+        check(machine.init(dir, &error), "the C64 boots with a drive ROM present");
+        check(machine.drive().rom_loaded(), "the 1541/1540 DOS ROM is loaded automatically");
+        check(machine.load_media(dir + "/test.d64", &error) && machine.drive().disk_loaded(),
+              "a .D64 is mounted in the drive instead of being injected");
+        check(!machine.prg_pending(), "a mounted .D64 is not injected");
+        check(machine.load_media(dir + "/test.t64", &error) && machine.drive().disk_loaded(),
+              "a .T64 is served as a disk when the drive can answer");
+        check(!machine.prg_pending(), "a .T64 served by the drive is not injected");
+        check(machine.drive().disk().directory().size() == 1 &&
+                  machine.drive().disk().directory()[0].name == "tapeprog",
+              "the mounted image exposes the archive contents");
+    }
+}
+
 void test_m6502_rmw_double_write() {
     static std::vector<std::pair<uint16_t, uint8_t>> writes;
     writes.clear();
@@ -3534,6 +3691,8 @@ int main() {
     test_scv_init_and_block_graphics();
     test_scv_cartridge_window();
     test_c64_prg_injection();
+    test_c64_t64_and_built_disk();
+    test_c64_drive_rom_and_media();
     test_m6502_rmw_double_write();
     test_mos6566_bank_and_multicolor_bitmap();
     test_pv2000_missing_roms_and_dummy_bios();

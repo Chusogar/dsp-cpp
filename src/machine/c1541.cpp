@@ -42,44 +42,34 @@ C1541::C1541()
         [this](uint16_t a, uint8_t v) { write_mem(a, v); });
 
     /*
-        VIA1:
-        PA  = byte GCR leído desde la mecánica.
-        PB0 = stepper bit 0.
-        PB1 = stepper bit 1.
-        PB2 = motor.
-        PB3 = LED.
-        PB4 = write protect.
-        PB5/PB6 = device select.
-        PB7 = SYNC.
-        CA1 = byte ready.
-        CA2 = SOE / set overflow enable.
-    */
-    via1_.set_ca2_handler([this](bool level) { soe_ = level; });
+        VIA1 at $1800 -- IEC serial bus.
+        PB0 = DATA IN     (1 = line high)
+        PB1 = DATA OUT    (1 = pull line low, inverting driver)
+        PB2 = CLK IN
+        PB3 = CLK OUT     (1 = pull line low)
+        PB4 = ATNA        (ATN acknowledge)
+        PB5/PB6 = device number jumpers (both open = #8)
+        PB7 = ATN IN
+        CA1 = ATN IN, the DOS acknowledges ATN from its interrupt handler.
 
+        The drive pulls DATA low in hardware whenever ATNA disagrees with the
+        ATN line, which is how every drive answers an ATN sequence before its
+        CPU has even looked at the bus.
+    */
     via1_.set_port_b(
         [this]() -> uint8_t {
-            uint8_t v = 0xFF;
+            uint8_t v = 0x00;
 
-            // PB4 write protect (active low on the 1541).
-            if (write_protect_) {
-                v = uint8_t(v & ~0x10);
-            } else {
-                v = uint8_t(v | 0x10);
-            }
+            if (!bus_data()) v = uint8_t(v | 0x01);
+            if (!bus_clk()) v = uint8_t(v | 0x04);
+            if (!bus_atn()) v = uint8_t(v | 0x80);
 
-            // Device #8 fixed: PB5/PB6 read as 0 when inputs.
-            v = uint8_t(v & ~0x60);
-
-            // PB7 SYNC (active low when sync detected).
-            if (sync_) {
-                v = uint8_t(v & ~0x80);
-            } else {
-                v = uint8_t(v | 0x80);
-            }
+            // PB5/PB6 select the device number: the DOS reads them at $EB3A
+            // and adds them to 8, so both low is device #8.
 
             return v;
         },
-        [this](uint8_t value) { on_via1_pb(value); });
+        [](uint8_t) {});
 
     via1_.set_irq_callback([this](IrqLine state) {
         via1_irq_ = (state != IrqLine::Clear);
@@ -87,48 +77,36 @@ C1541::C1541()
     });
 
     /*
-        VIA2:
-        PB0 = DATA IN.
-        PB1 = DATA OUT.
-        PB2 = CLK IN.
-        PB3 = CLK OUT.
-        PB4 = ATNA.
-
-        IEC is open-collector:
-        true  = line released / high.
-        false = line pulled low.
+        VIA2 at $1C00 -- disk controller.
+        PA  = GCR byte from/to the read-write head.
+        PB0/PB1 = stepper phases.
+        PB2 = motor.
+        PB3 = drive LED.
+        PB4 = write protect sense (0 = protected).
+        PB5/PB6 = bit rate (density) for the current speed zone.
+        PB7 = SYNC (0 while a sync mark is under the head).
+        CA1 = BYTE READY, CA2 = SOE (byte ready also drives the 6502 SO pin).
     */
+    via2_.set_ca2_handler([this](bool level) { soe_ = level; });
+
     via2_.set_port_b(
         [this]() -> uint8_t {
-            uint8_t v = 0xFF;
+            // Only PB4 and PB7 are inputs; the rest are driven by the VIA and
+            // read back through Via6522::input_pb(). Reporting them high would
+            // make the DOS believe the stepper sits in a phase it never set.
+            uint8_t v = 0x00;
 
-            if (!bus_data()) {
-                v = uint8_t(v & ~0x01);
-            } else {
-                v = uint8_t(v | 0x01);
+            if (!write_protect_) {
+                v = uint8_t(v | 0x10);
             }
 
-            if (!bus_clk()) {
-                v = uint8_t(v & ~0x04);
-            } else {
-                v = uint8_t(v | 0x04);
+            if (!sync_) {
+                v = uint8_t(v | 0x80);
             }
 
             return v;
         },
-        [this](uint8_t value) {
-            // PB1 DATA OUT, PB3 CLK OUT, PB4 ATNA.
-            // IEC open-collector: bit 0 = pull low, bit 1 = release.
-            const bool data_pull = (value & 0x02) == 0;
-            const bool clk_pull = (value & 0x08) == 0;
-
-            // host_atn_ true = ATN released/high; atn_in true = ATN active (low).
-            const bool atn_in = !host_atn_;
-            const bool atna_pull = ((value & 0x10) != 0) != atn_in;
-
-            drv_data_ = !(data_pull || atna_pull);
-            drv_clk_ = !clk_pull;
-        });
+        [this](uint8_t value) { on_via2_pb(value); });
 
     via2_.set_irq_callback([this](IrqLine state) {
         via2_irq_ = (state != IrqLine::Clear);
@@ -148,6 +126,7 @@ void C1541::reset() {
 
     half_track_ = 18 * 2;
     stepper_prev_ = 0;
+    cycle_debt_ = 0;
 
     bit_pos_ = 0;
     bit_timer_ = 0;
@@ -155,6 +134,7 @@ void C1541::reset() {
 
     shift_reg_ = 0;
     shift_count_ = 0;
+    ones_ = 0;
 
     sync_ = false;
     byte_ready_ = false;
@@ -270,6 +250,9 @@ void C1541::set_host_atn(bool high) {
     host_atn_ = high;
 
     if (old != host_atn_) {
+        // The ATN acknowledge hardware reacts to the line, not to the DOS,
+        // and CA1 raises the interrupt the ATN handler waits for.
+        via1_.write_ca1(!host_atn_);
         update_iec();
     }
 }
@@ -324,6 +307,7 @@ void C1541::write_mem(uint16_t addr, uint8_t value) {
 
     if (addr >= 0x1800 && addr <= 0x180F) {
         via1_.write(uint8_t(addr & 0x0F), value);
+        update_iec_outputs();
         return;
     }
 
@@ -334,7 +318,8 @@ void C1541::write_mem(uint16_t addr, uint8_t value) {
 }
 
 void C1541::update_iec() {
-    // IEC is evaluated live via bus_clk() / bus_data() from VIA2 read callbacks.
+    // Drive outputs depend on the ATN line as well as on VIA1 port B.
+    update_iec_outputs();
 }
 
 void C1541::update_via1_inputs() {
@@ -345,28 +330,42 @@ void C1541::update_via2_inputs() {
     // VIA2 PB comes from the port read callback.
 }
 
-void C1541::on_via1_pb(uint8_t value) {
-    const bool old_motor = motor_on_;
+void C1541::update_iec_outputs() {
+    // Only pins programmed as outputs drive the open-collector bus.
+    const uint8_t pb = uint8_t(via1_.out_b() & via1_.ddr_b());
 
+    // A set output bit pulls the line low (inverting 7406 drivers).
+    const bool data_pull = (pb & 0x02) != 0;
+    const bool clk_pull = (pb & 0x08) != 0;
+
+    // ATN acknowledge: DATA is pulled low while ATNA disagrees with ATN.
+    const bool atn_low = !host_atn_;
+    const bool atna_pull = ((pb & 0x10) != 0) != atn_low;
+
+    drv_data_ = !(data_pull || atna_pull);
+    drv_clk_ = !clk_pull;
+}
+
+void C1541::on_via2_pb(uint8_t value) {
     motor_on_ = (value & 0x04) != 0;
     led_on_ = (value & 0x08) != 0;
 
-    // PB0/PB1 stepper phases.
+    // PB0/PB1 stepper phases. The DOS keeps the head position in its own RAM,
+    // so the first value it writes only defines the phase the mechanics are
+    // already in: acting on it would offset every later seek by a half track.
     const int phase = value & 0x03;
 
-    if (motor_on_ && phase != stepper_prev_) {
-        const int diff = (phase - stepper_prev_) & 0x03;
+    if (phase == stepper_prev_) return;
 
-        if (diff == 1) {
-            step_head(+1);
-        } else if (diff == 3) {
-            step_head(-1);
-        }
+    const int diff = (phase - stepper_prev_) & 0x03;
 
-        stepper_prev_ = phase;
-    } else if (!old_motor && motor_on_) {
-        stepper_prev_ = phase;
+    if (diff == 1) {
+        step_head(+1);
+    } else if (diff == 3) {
+        step_head(-1);
     }
+
+    stepper_prev_ = phase;
 }
 
 void C1541::step_head(int delta) {
@@ -374,8 +373,11 @@ void C1541::step_head(int delta) {
 
     half_track_ += delta;
 
-    if (half_track_ < 1) {
-        half_track_ = 1;
+    // Track 1 is where the head stop sits: the DOS bumps into it at power up
+    // and then counts tracks from there, so the limit has to keep the parity
+    // of the half-track position or every later seek lands between tracks.
+    if (half_track_ < 2) {
+        half_track_ = 2;
     }
 
     if (half_track_ > 84) {
@@ -517,19 +519,17 @@ void C1541::tick_disk(int cycles) {
     if (!motor_on_ || track_bits_.empty()) {
         sync_ = false;
         byte_ready_ = false;
+        ones_ = 0;
         return;
     }
 
-    int ones = sync_ ? 10 : 0;
+    // cycles_per_bit_ counts quarter cycles: the slowest zone runs one bit
+    // every four cycles and the fastest one every 3.25, so a whole-cycle
+    // counter would make the drive read four times too slowly.
+    bit_timer_ += cycles * 4;
 
-    for (int c = 0; c < cycles; ++c) {
-        ++bit_timer_;
-
-        if (bit_timer_ < cycles_per_bit_) {
-            continue;
-        }
-
-        bit_timer_ = 0;
+    while (bit_timer_ >= cycles_per_bit_) {
+        bit_timer_ -= cycles_per_bit_;
 
         bool bit = track_bits_[static_cast<size_t>(bit_pos_)];
 
@@ -553,12 +553,12 @@ void C1541::tick_disk(int cycles) {
 
         // SYNC = 10 consecutive ones.
         if (bit) {
-            ++ones;
-            if (ones >= 10) {
+            ++ones_;
+            if (ones_ >= 10) {
                 sync_ = true;
             }
         } else {
-            ones = 0;
+            ones_ = 0;
             sync_ = false;
         }
 
@@ -578,9 +578,9 @@ void C1541::tick_disk(int cycles) {
             byte_ready_ = true;
 
             // PA gets the GCR byte; CA1 gets a pulse.
-            via1_.write_pa(last_byte_);
-            via1_.write_ca1(false);
-            via1_.write_ca1(true);
+            via2_.write_pa(last_byte_);
+            via2_.write_ca1(false);
+            via2_.write_ca1(true);
 
             // SOE enables 6502 overflow flag.
             if (soe_) {
@@ -599,23 +599,22 @@ void C1541::run(int cycles) {
 
     update_iec();
 
-    int left = cycles;
+    // One instruction at a time, ticking the VIAs and the head with the cycles
+    // it really took: the serial bus protocol is pure software handshaking on
+    // both sides, so a drive that gains or loses cycles never completes a
+    // transfer. Overshoot is carried over instead of being dropped.
+    cycle_debt_ += cycles;
 
-    while (left > 0) {
-        const int slice = (left > 64) ? 64 : left;
+    while (cycle_debt_ > 0) {
+        const int ran = cpu_.run(1);
+        const int used = (ran > 0) ? ran : 1;
 
-        tick_disk(slice);
+        tick_disk(used);
 
-        via1_.tick(slice);
-        via2_.tick(slice);
+        via1_.tick(used);
+        via2_.tick(used);
 
-        const int ran = cpu_.run(slice);
-
-        if (ran > 0) {
-            left -= ran;
-        } else {
-            left -= slice;
-        }
+        cycle_debt_ -= used;
     }
 }
 
