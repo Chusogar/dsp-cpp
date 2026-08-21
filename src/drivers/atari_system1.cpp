@@ -289,7 +289,10 @@ AtariSystem1::AtariSystem1(Game game)
     ym_.set_irq_handler([this](bool on) { sound_cpu_.set_irq(on ? IrqLine::Hold : IrqLine::Clear); });
 
     via_.set_port_a([this]() { return tms_.status(); },
-                    [this](uint8_t value) { tms_.set_data_latch(value); });
+                    [this](uint8_t value) {
+                        tms_.set_data_latch(value);
+                        tms_.write_data(value);
+                    });
     via_.set_port_b(
         [this]() {
             uint8_t value = 0;

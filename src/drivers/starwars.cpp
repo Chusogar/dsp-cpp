@@ -85,7 +85,11 @@ StarWars::StarWars()
             tms_.strobe_ws_rs(uint8_t(value & 0x03));
         });
     riot_.set_pb([this]() { return tms_.status(); },
-                 [this](uint8_t value) { tms_.set_data_latch(value); });
+                 [this](uint8_t value) {
+                     tms_.set_data_latch(value);
+                     // Commit on bus write (MAME data_w); /WS via PA still works.
+                     tms_.write_data(value);
+                 });
 
     avg_.set_memory([this](uint16_t address) { return avg_read(address); });
 }

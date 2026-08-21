@@ -6,7 +6,7 @@
 
 namespace dsp {
 
-// TMS5220 with full LPC-10 lattice (tables + interpolation + chirp).
+// TMS5220 with LPC-10 lattice; sample timing matches MAME (IP/PC/subcycle).
 class Tms5220 {
 public:
     using IrqCallback = std::function<void(bool)>;
@@ -27,12 +27,11 @@ public:
     // status read. Gauntlet and Atari System 1 share this pin protocol.
     void set_wsq(bool level);
     void set_rsq(bool level);
-    // EXL-100 I/O CPU: bit0=WS, bit1=RS, both active-low. RS is a status
-    // read strobe (not a reset). Either edge makes /RDY busy for a few cycles.
+    // EXL-100 / Star Wars: bit0=WS, bit1=RS, both active-low.
     void strobe_ws_rs(uint8_t ws_rs);
-    bool readyq() const;        // /READY pin low (true = not ready / busy)
-    bool intq() const { return !irq_asserted_; }  // /INT pin high = no IRQ
-    void set_data_latch(uint8_t value) { data_latch_ = value; }
+    bool readyq() const;        // true = busy (/READY high)
+    bool intq() const { return !irq_asserted_; }
+    void set_data_latch(uint8_t value) { data_latch_ = value; data_pending_ = true; }
     void set_volume(float v) { volume_ = v; }
     void set_clock(uint32_t clock) { clock_ = clock ? clock : 1; }
     uint32_t clock() const { return clock_; }
@@ -46,7 +45,6 @@ public:
 private:
     void process_command(uint8_t cmd);
     bool parse_frame();
-    void interpolate();
     int16_t lattice(int16_t excitation);
     uint32_t extract_bits(int n);
     void raise_irq(bool on);
@@ -72,12 +70,21 @@ private:
     std::array<int, kNumK> new_k_idx_{};
 
     int current_energy_ = 0;
+    int previous_energy_ = 0;
     int current_pitch_ = 0;
     std::array<int, kNumK> current_k_{};
 
-    int interp_step_ = 0;
-    int sample_in_subframe_ = 0;
+    // MAME process() timing: IP 0-7, PC 0-12, subcycle 0-3
+    int ip_ = 0;
+    int pc_ = 0;
+    int subcycle_ = 0;
     int pitch_count_ = 0;
+    bool inhibit_ = false;
+    bool old_unvoiced_ = true;   // OLDP
+    bool old_silence_ = true;    // OLDE
+    bool zpar_ = false;
+    bool uv_zpar_ = false;
+
     int32_t rng_ = 1;
     std::array<int32_t, kNumK + 1> u_{};
     std::array<int32_t, kNumK + 1> x_{};
@@ -86,6 +93,7 @@ private:
     int64_t cycle_acc_ = 0;
     int internal_rate_ = 8000;
     uint8_t data_latch_ = 0;
+    bool data_pending_ = false;
     bool wsq_ = true;
     bool rsq_ = true;
     bool rs_read_ = true;

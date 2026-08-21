@@ -63,14 +63,14 @@ const int8_t kChirp[52] = {
 const int kInterpShift[8] = {0, 3, 3, 3, 2, 2, 1, 1};
 
 int k_value(int which, int idx) {
+    const int16_t* table = kKTables[which];
     const int max = (1 << kKBits[which]) - 1;
-    idx = std::clamp(idx, 0, max);
-    return kKTables[which][idx];
+    return table[std::clamp(idx, 0, max)];
 }
 
 }  // namespace
 
-Tms5220::Tms5220(uint32_t clock) : clock_(clock) { reset(); }
+Tms5220::Tms5220(uint32_t clock) : clock_(clock ? clock : 640000) { reset(); }
 
 void Tms5220::raise_irq(bool on) {
     irq_asserted_ = on;
@@ -88,17 +88,24 @@ void Tms5220::chip_reset() {
     old_pitch_idx_ = new_pitch_idx_ = 0;
     old_k_idx_.fill(0);
     new_k_idx_.fill(0);
-    current_energy_ = current_pitch_ = 0;
+    current_energy_ = current_pitch_ = previous_energy_ = 0;
     current_k_.fill(0);
-    interp_step_ = 0;
-    sample_in_subframe_ = 0;
+    ip_ = 0;
+    pc_ = 0;
+    subcycle_ = 0;
     pitch_count_ = 0;
+    inhibit_ = false;
+    old_unvoiced_ = true;
+    old_silence_ = true;
+    zpar_ = false;
+    uv_zpar_ = false;
     rng_ = 1;
     u_.fill(0);
     x_.fill(0);
     out_sample_ = 0;
     cycle_acc_ = 0;
     data_latch_ = 0;
+    data_pending_ = false;
     ready_delay_ = 0;
     raise_irq(false);
 }
@@ -127,32 +134,42 @@ uint8_t Tms5220::fifo_pop() {
 uint8_t Tms5220::status() const {
     uint8_t s = 0;
     if (talk_status_) s |= 0x80;                 // TS
-    if (fifo_count_ < 8) s |= 0x40;              // BL
-    if (fifo_count_ == 0) s |= 0x20;             // BE
+    if (fifo_count_ < 8) s |= 0x40;              // BL (buffer low)
+    if (fifo_count_ == 0) s |= 0x20;             // BE (buffer empty)
     return s;
 }
 
 void Tms5220::process_command(uint8_t cmd) {
+    // Command field is bits 6-4 (MAME tms5220.cpp / TI TMS5220).
     switch (cmd & 0x70) {
-        case 0x00:  // NOP
+        case 0x00:
+        case 0x20:  // NOP / set rate (5220C)
             break;
-        case 0x10:  // READ BYTE / SPEAK (VSM)
-            talk_status_ = true;
+        case 0x10:  // READ BYTE (VSM)
             break;
-        case 0x30:  // READ AND BRANCH
+        case 0x30:  // READ AND BRANCH (VSM)
             break;
-        case 0x40:  // SPEAK EXTERNAL
+        case 0x40:  // LOAD ADDRESS (VSM)
+            break;
+        case 0x50:  // SPEAK (VSM)
+            break;
+        case 0x60:  // SPEAK EXTERNAL
             speak_external_ = true;
-            talk_status_ = true;
+            talk_status_ = false;
             bit_buffer_ = 0;
             bits_left_ = 0;
-            interp_step_ = 0;
-            sample_in_subframe_ = 0;
+            ip_ = 0;
+            pc_ = 0;
+            subcycle_ = 0;
+            pitch_count_ = 0;
+            // Keep any bytes already in the FIFO; start if ≥ 9 (datasheet).
+            if (fifo_count_ >= 9) {
+                talk_status_ = true;
+            }
+            raise_irq(false);
             break;
-        case 0x50:  // RESET
+        case 0x70:  // RESET
             chip_reset();
-            break;
-        case 0x60:  // LOAD ADDRESS
             break;
         default:
             break;
@@ -160,47 +177,46 @@ void Tms5220::process_command(uint8_t cmd) {
 }
 
 void Tms5220::apply_rs_ws(bool new_wsq, bool new_rsq) {
-    const uint8_t old_val = uint8_t((wsq_ ? 1 : 0) | (rsq_ ? 2 : 0));
-    const uint8_t new_val = uint8_t((new_wsq ? 1 : 0) | (new_rsq ? 2 : 0));
     const bool old_wsq = wsq_;
     const bool old_rsq = rsq_;
+    if (old_wsq == new_wsq && old_rsq == new_rsq) return;
     wsq_ = new_wsq;
     rsq_ = new_rsq;
-    if (old_val == new_val) return;
-    if (new_val == 0) {
-        // TMS5220C: /WS and /RS both low is a reset.
+
+    // TMS5220C: both /WS and /RS low → reset
+    if (!new_wsq && !new_rsq) {
         chip_reset();
         return;
     }
+    // Falling /WS with /RS high → commit latched byte if not already written
     if (old_wsq && !new_wsq && new_rsq) {
-        write_data(data_latch_);
-        ready_delay_ = 80;
+        if (data_pending_) {
+            data_pending_ = false;
+            write_data(data_latch_);
+        }
+        ready_delay_ = 16;  // ~16 ROM clocks (MAME)
     }
+    // Falling /RS with /WS high → status read strobe
     if (old_rsq && !new_rsq && new_wsq) {
-        ready_delay_ = 80;
+        ready_delay_ = 16;
     }
 }
 
 void Tms5220::set_wsq(bool level) { apply_rs_ws(level, rsq_); }
 
-void Tms5220::strobe_ws_rs(uint8_t ws_rs) {
-    const bool ws = (ws_rs & 0x01) != 0;
-    const bool rs = (ws_rs & 0x02) != 0;
-    if (wsq_ && !ws) {
-        write_data(data_latch_);
-        ready_delay_ = 80;
-    }
-    if (rs_read_ && !rs) {
-        ready_delay_ = 80;
-    }
-    wsq_ = ws;
-    rs_read_ = rs;
-}
-
 void Tms5220::set_rsq(bool level) { apply_rs_ws(wsq_, level); }
 
+void Tms5220::strobe_ws_rs(uint8_t ws_rs) {
+    // Star Wars / EXL: bit0=/WS, bit1=/RS (active low as 0)
+    const bool ws = (ws_rs & 0x01) != 0;
+    const bool rs = (ws_rs & 0x02) != 0;
+    apply_rs_ws(ws, rs);
+}
+
 bool Tms5220::readyq() const {
-    // Matches MAME readyq_r(): 1 when /READY is inactive (busy / not ready).
+    // Active-low /READY semantics as MAME readyq_r():
+    //   true  → pin high → NOT ready (busy)
+    //   false → pin low  → ready
     if (!wsq_ && !rsq_) return true;
     if (ready_delay_ > 0) return true;
     if (fifo_count_ >= 14) return true;
@@ -208,37 +224,70 @@ bool Tms5220::readyq() const {
 }
 
 void Tms5220::write_data(uint8_t value) {
-    if (!speak_external_ && fifo_count_ == 0 && (value & 0x80) == 0) {
-        process_command(value);
+    data_pending_ = false;
+    // SPEAK EXTERNAL: every write feeds the FIFO.
+    // Otherwise the byte is a command (bits 6-4).
+    if (speak_external_) {
+        fifo_push(value);
+        // Datasheet: Talk Status after nine bytes following SPEAK EXTERNAL
+        if (!talk_status_ && fifo_count_ >= 9) {
+            talk_status_ = true;
+            ip_ = 0;
+            pc_ = 0;
+            subcycle_ = 0;
+            bit_buffer_ = 0;
+            bits_left_ = 0;
+            raise_irq(false);
+        }
+        // Buffer low while talking → /INT
+        if (talk_status_ && fifo_count_ < 8) {
+            raise_irq(true);
+        }
         return;
     }
-    fifo_push(value);
-    if (speak_external_ && !talk_status_ && fifo_count_ >= 8) {
-        talk_status_ = true;
-    }
+    process_command(value);
 }
 
 uint32_t Tms5220::extract_bits(int n) {
-    while (bits_left_ < n) {
-        if (fifo_count_ == 0) return 0;
-        bit_buffer_ |= uint32_t(fifo_pop()) << bits_left_;
-        bits_left_ += 8;
+    // MAME order: serial bits are taken LSB-first from each FIFO byte, but
+    // shifted into the result MSB-first (val = (val<<1)|bit).
+    uint32_t val = 0;
+    while (n-- > 0) {
+        if (bits_left_ <= 0) {
+            if (fifo_count_ == 0) {
+                // Starve: inject zeros (silence) rather than freezing
+                bits_left_ = 0;
+                bit_buffer_ = 0;
+                return val << (n + 1);  // remaining bits stay 0
+            }
+            bit_buffer_ = fifo_pop();
+            bits_left_ = 8;
+        }
+        val = (val << 1) | (bit_buffer_ & 1u);
+        bit_buffer_ >>= 1;
+        --bits_left_;
     }
-    const uint32_t v = bit_buffer_ & ((1u << n) - 1);
-    bit_buffer_ >>= n;
-    bits_left_ -= n;
-    return v;
+    return val;
 }
 
 bool Tms5220::parse_frame() {
-    // Save previous targets
     old_energy_idx_ = new_energy_idx_;
     old_pitch_idx_ = new_pitch_idx_;
     old_k_idx_ = new_k_idx_;
 
+    // Speak-external: empty FIFO ends talk (BE clears TS).
+    if (speak_external_ && fifo_count_ == 0 && bits_left_ == 0) {
+        talk_status_ = false;
+        speak_external_ = false;
+        raise_irq(true);
+        return false;
+    }
+
+    // TMS5220 frame (MAME parse_frame):
+    //   energy 4b; 0=silence, 15=stop
+    //   else: repeat 1b, pitch 6b; if !repeat: K1-4, and K5-10 if pitched
     new_energy_idx_ = int(extract_bits(kEnergyBits));
     if (new_energy_idx_ == 15) {
-        // Stop frame
         talk_status_ = false;
         speak_external_ = false;
         raise_irq(true);
@@ -246,54 +295,52 @@ bool Tms5220::parse_frame() {
         return false;
     }
     if (new_energy_idx_ == 0) {
-        // Silence: no pitch/K
         new_pitch_idx_ = 0;
         new_k_idx_.fill(0);
         return true;
     }
 
+    const int rep_flag = int(extract_bits(1));
     new_pitch_idx_ = int(extract_bits(kPitchBits));
+    if (rep_flag) {
+        new_k_idx_ = old_k_idx_;  // reuse previous coefficients
+        return true;
+    }
+
+    for (int i = 0; i < 4; ++i) new_k_idx_[i] = int(extract_bits(kKBits[i]));
     if (new_pitch_idx_ == 0) {
-        // Unvoiced: only K1–K4
-        for (int i = 0; i < 4; ++i) new_k_idx_[i] = int(extract_bits(kKBits[i]));
-        for (int i = 4; i < kNumK; ++i) new_k_idx_[i] = 0x0f;  // midpoint-ish
+        for (int i = 4; i < kNumK; ++i) new_k_idx_[i] = 0x0f;
     } else {
-        for (int i = 0; i < kNumK; ++i) new_k_idx_[i] = int(extract_bits(kKBits[i]));
+        for (int i = 4; i < kNumK; ++i) new_k_idx_[i] = int(extract_bits(kKBits[i]));
     }
     return true;
 }
 
-void Tms5220::interpolate() {
-    const int shift = kInterpShift[interp_step_ & 7];
-    auto lerp = [&](int cur, int target) -> int {
-        if (shift == 0) return target;
-        return cur + ((target - cur) >> shift);
-    };
 
-    const int tgt_e = kEnergyTable[new_energy_idx_ & 15];
-    const int tgt_p = kPitchTable[new_pitch_idx_ & 63];
-    current_energy_ = lerp(current_energy_, tgt_e);
-    current_pitch_ = lerp(current_pitch_, tgt_p);
-    for (int i = 0; i < kNumK; ++i) {
-        const int tgt = k_value(i, new_k_idx_[i]);
-        current_k_[i] = lerp(current_k_[i], tgt);
-    }
-}
 
 int16_t Tms5220::lattice(int16_t excitation) {
-    // Reflection coefficient lattice (Q10-ish tables, scale by 512)
-    u_[kNumK] = excitation;
-    for (int i = kNumK - 1; i >= 0; --i) {
-        const int32_t k = current_k_[i];
-        u_[i] = u_[i + 1] - ((k * x_[i]) >> 9);
-    }
-    for (int i = kNumK - 1; i >= 1; --i) {
-        const int32_t k = current_k_[i];
-        x_[i] = x_[i - 1] + ((k * u_[i - 1]) >> 9);
-    }
+    // MAME lattice_filter:
+    //   u[10] = matrix_multiply(previous_energy, excitation<<6)
+    //   10 reflection stages; return u[0]; then previous_energy = current_energy
+    auto mul = [](int32_t a, int32_t b) -> int32_t {
+        while (a > 511) a -= 1024;
+        while (a < -512) a += 1024;
+        while (b > 16383) b -= 32768;
+        while (b < -16384) b += 32768;
+        return (a * b) >> 9;
+    };
+    u_[10] = mul(previous_energy_, int32_t(excitation) << 6);
+    for (int i = 9; i >= 0; --i)
+        u_[i] = u_[i + 1] - mul(current_k_[i], x_[i]);
+    for (int i = 9; i >= 1; --i)
+        x_[i] = x_[i - 1] + mul(current_k_[i], u_[i]);
     x_[0] = u_[0];
-    // Energy scale
-    int32_t out = (u_[0] * current_energy_) >> 4;
+    previous_energy_ = current_energy_;
+
+    int32_t out = u_[0];
+    while (out > 16383) out -= 32768;
+    while (out < -16384) out += 32768;
+    out = (out << 1) | ((out >> 9) & 1);
     return int16_t(std::clamp(out, int32_t(-32768), int32_t(32767)));
 }
 
@@ -303,8 +350,7 @@ void Tms5220::tick(int cycles) {
         ready_delay_ -= cycles;
         if (ready_delay_ < 0) ready_delay_ = 0;
     }
-    // Generate internal 8 kHz samples based on clock ratio
-    // TMS5220 ROMCLK ~ 640 kHz, sample period ~ 80 clocks → 8 kHz
+    // One LPC sample every (clock_/8000) ROM clocks (MAME stream = clock/80 ≈ 8 kHz).
     cycle_acc_ += cycles;
     const int clocks_per_sample = std::max(1, int(clock_ / internal_rate_));
     while (cycle_acc_ >= clocks_per_sample) {
@@ -314,49 +360,107 @@ void Tms5220::tick(int cycles) {
             continue;
         }
 
-        // 25 samples per interpolation sub-frame × 8 = 200 samples/frame
-        if (sample_in_subframe_ == 0) {
-            if (interp_step_ == 0) {
-                if (!parse_frame()) {
-                    out_sample_ = 0;
-                    continue;
-                }
-                // snap energy on new frame start for stop/silence handling
+        // --- Frame boundary: IP=0, PC=12, subcycle=1 (MAME) ---
+        if (ip_ == 0 && pc_ == 12 && subcycle_ == 1) {
+            const bool prev_unvoiced = (new_pitch_idx_ == 0);
+            const bool prev_silence = (new_energy_idx_ == 0);
+            if (!parse_frame()) {
+                out_sample_ = 0;
+                // still advance counters below
+            } else {
+                // Inhibit interpolation on voiced↔unvoiced / silence→active transitions
+                const bool now_unvoiced = (new_pitch_idx_ == 0);
+                const bool now_silence = (new_energy_idx_ == 0);
+                inhibit_ = (old_unvoiced_ != now_unvoiced) ||
+                           (old_silence_ && !now_silence);
+                zpar_ = now_silence;
+                uv_zpar_ = now_unvoiced;
             }
-            interpolate();
         }
 
-        // Excitation
+        // --- Parameter interpolation on subcycle==2, PC 0..11 ---
+        // INTERP_SHIFT = >> interp_coeff[IP]
+        if (subcycle_ == 2 && pc_ <= 11) {
+            const int shift = kInterpShift[ip_ & 7];
+            const int inhib = (inhibit_ && ip_ != 0) ? 0 : 1;
+            auto step = [&](int cur, int target) -> int {
+                if (!inhib) return cur;
+                if (shift == 0) return target;
+                return cur + ((target - cur) >> shift);
+            };
+            switch (pc_) {
+                case 0:
+                    current_energy_ = zpar_ ? 0
+                        : step(current_energy_, kEnergyTable[new_energy_idx_ & 15]);
+                    break;
+                case 1:
+                    current_pitch_ = zpar_ ? 0
+                        : step(current_pitch_, kPitchTable[new_pitch_idx_ & 63]);
+                    break;
+                default: {
+                    // PC 2..11 → K0..K9
+                    const int ki = pc_ - 2;
+                    if (ki >= 0 && ki < kNumK) {
+                        const int tgt = k_value(ki, new_k_idx_[ki]);
+                        const bool kill = (ki < 4) ? zpar_ : uv_zpar_;
+                        current_k_[ki] = kill ? 0 : step(current_k_[ki], tgt);
+                    }
+                    break;
+                }
+            }
+        }
+
+        // --- Excitation (OLDP = old_unvoiced_) ---
         int16_t excitation = 0;
-        if (current_pitch_ == 0) {
-            // Unvoiced: noise
-            rng_ = rng_ * 0x10dcd + 1;
-            excitation = int16_t((rng_ >> 16) & 1 ? 0x40 : -0x40);
+        if (old_unvoiced_) {
+            for (int n = 0; n < 20; ++n) {
+                const int bitout =
+                    ((rng_ >> 12) ^ (rng_ >> 3) ^ (rng_ >> 2) ^ (rng_ >> 0)) & 1;
+                rng_ = int32_t((uint32_t(rng_) << 1) | uint32_t(bitout));
+            }
+            excitation = int16_t((rng_ & 1) ? (~0x3F) : 0x40);
         } else {
-            // Voiced: chirp table
-            if (pitch_count_ < 52)
-                excitation = int16_t(int8_t(kChirp[pitch_count_]));
-            else
-                excitation = 0;
-            if (++pitch_count_ >= current_pitch_) pitch_count_ = 0;
+            const int pc = pitch_count_ >= 51 ? 51 : pitch_count_;
+            excitation = int16_t(int8_t(kChirp[pc]));
         }
 
         out_sample_ = lattice(excitation);
 
-        if (++sample_in_subframe_ >= 25) {
-            sample_in_subframe_ = 0;
-            if (++interp_step_ >= 8) interp_step_ = 0;
+        // --- Advance pitch counter ---
+        if (current_pitch_ > 0) {
+            if (++pitch_count_ >= current_pitch_) pitch_count_ = 0;
+        } else {
+            pitch_count_ = 0;
+        }
+
+        // --- Advance IP / PC / subcycle (MAME) ---
+        // subc_reload = 0 for standard 5220
+        ++subcycle_;
+        if (subcycle_ == 2 && pc_ == 12) {
+            // RESETF3 / end of IP period
+            if (ip_ == 7) {
+                // Latch OLDE / OLDP at end of IP=7
+                old_silence_ = (new_energy_idx_ == 0);
+                old_unvoiced_ = (new_pitch_idx_ == 0);
+                old_pitch_idx_ = new_pitch_idx_;
+                old_energy_idx_ = new_energy_idx_;
+            }
+            subcycle_ = 0;
+            pc_ = 0;
+            ip_ = (ip_ + 1) & 7;
+        } else if (subcycle_ == 3) {
+            subcycle_ = 0;
+            ++pc_;
         }
     }
 }
 
 int16_t Tms5220::last_sample() const {
-    const int32_t s = int32_t(float(out_sample_ * 64) * volume_);
+    const int32_t s = int32_t(float(out_sample_) * volume_);
     return int16_t(std::clamp(s, int32_t(-32768), int32_t(32767)));
 }
 
 int16_t Tms5220::update() {
-    // Advance synthesis by the number of chip clocks corresponding to one host sample.
     const int clocks = std::max(1, int(clock_ / kSampleRate));
     tick(clocks);
     return last_sample();

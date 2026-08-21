@@ -378,9 +378,9 @@ uint8_t Gauntlet::sound_read(uint16_t address) {
         uint8_t value = 0x30;
         if (main_to_sound_ready_) value ^= 0x80;
         if (sound_to_main_ready_) value ^= 0x40;
-        if (tms_.readyq()) value ^= 0x20;  // not ready ? bit clear after xor from base? MAME: if (!readyq) xor 0x20
-        // readyq() true means pin low (busy). MAME xors when !readyq_r() i.e. when NOT ready.
-        // Our readyq() returns true when busy ? matches.
+        // MAME switch_6502_r: if (!m_tms5220->readyq_r()) temp ^= 0x20;
+        // readyq_r() true = busy (/READY high). XOR when READY (not busy).
+        if (!tms_.readyq()) value ^= 0x20;
         if (dsw_a_ == 8) value ^= 0x10;
         return value;
     }
@@ -440,8 +440,10 @@ void Gauntlet::sound_write(uint16_t address, uint8_t value) {
         return;
     }
     if (address >= 0x1820 && address <= 0x182f) {
-        // TMS5220 data latch (strobe via WSQ)
+        // MAME maps this to tms5220 data_w: latch + accept when not in pure pin-timing mode.
+        // Also keep latch for /WS-strobe path used by soundctl Q1.
         tms_.set_data_latch(value);
+        tms_.write_data(value);
         return;
     }
     if (address >= 0x1830 && address <= 0x183f) sound_cpu_.set_irq(IrqLine::Clear);
