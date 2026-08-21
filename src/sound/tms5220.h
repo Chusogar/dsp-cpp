@@ -3,17 +3,20 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <utility>
 
 namespace dsp {
 
-// TMS5220 with LPC-10 lattice; sample timing matches MAME (IP/PC/subcycle).
+// TMS5220/TMS5220C speech synthesizer with the 16-byte external FIFO.
+// The synthesis core runs at the chip's native 8 kHz rate; tick() is driven
+// from the emulated TMS clock and last_sample() is held by the audio mixer.
 class Tms5220 {
 public:
     using IrqCallback = std::function<void(bool)>;
 
     static constexpr int kSampleRate = 44100;
+    static constexpr int kInternalRate = 8000;
     static constexpr int kNumK = 10;
-    static constexpr int kInterpSteps = 8;
 
     explicit Tms5220(uint32_t clock = 640000);
 
@@ -22,16 +25,20 @@ public:
     void reset();
     void write_data(uint8_t value);
     uint8_t status() const;
-    // Active-low /WS and /RS (TMS5220C). Both low resets the chip; a falling
-    // /WS with /RS high commits data_latch_; a falling /RS with /WS high is a
-    // status read. Gauntlet and Atari System 1 share this pin protocol.
+
+    // Active-low /WS and /RS. Both low reset the chip; a falling /WS with /RS
+    // high commits the latched data byte.
     void set_wsq(bool level);
     void set_rsq(bool level);
-    // EXL-100 / Star Wars: bit0=WS, bit1=RS, both active-low.
     void strobe_ws_rs(uint8_t ws_rs);
-    bool readyq() const;        // true = busy (/READY high)
+
+    bool readyq() const; // true = /READY high (busy)
     bool intq() const { return !irq_asserted_; }
-    void set_data_latch(uint8_t value) { data_latch_ = value; data_pending_ = true; }
+
+    void set_data_latch(uint8_t value) {
+        data_latch_ = value;
+        data_pending_ = true;
+    }
     void set_volume(float v) { volume_ = v; }
     void set_clock(uint32_t clock) { clock_ = clock ? clock : 1; }
     uint32_t clock() const { return clock_; }
@@ -46,26 +53,32 @@ private:
     void process_command(uint8_t cmd);
     bool parse_frame();
     int16_t lattice(int16_t excitation);
-    uint32_t extract_bits(int n);
+    uint32_t extract_bits(int count);
     void raise_irq(bool on);
     void chip_reset();
     void apply_rs_ws(bool new_wsq, bool new_rsq);
-    void fifo_push(uint8_t v);
+    void fifo_push(uint8_t value);
     uint8_t fifo_pop();
+    void update_fifo_flags(bool edge_irq = true);
+    void generate_sample();
 
     uint32_t clock_;
     IrqCallback irq_cb_;
 
     std::array<uint8_t, 16> fifo_{};
-    int fifo_head_ = 0, fifo_tail_ = 0, fifo_count_ = 0;
-    uint32_t bit_buffer_ = 0;
+    int fifo_head_ = 0;
+    int fifo_tail_ = 0;
+    int fifo_count_ = 0;
+    uint8_t bit_buffer_ = 0;
     int bits_left_ = 0;
 
     bool speak_external_ = false;
     bool talk_status_ = false;
 
-    int old_energy_idx_ = 0, new_energy_idx_ = 0;
-    int old_pitch_idx_ = 0, new_pitch_idx_ = 0;
+    int old_energy_idx_ = 0;
+    int new_energy_idx_ = 0;
+    int old_pitch_idx_ = 0;
+    int new_pitch_idx_ = 0;
     std::array<int, kNumK> old_k_idx_{};
     std::array<int, kNumK> new_k_idx_{};
 
@@ -74,24 +87,25 @@ private:
     int current_pitch_ = 0;
     std::array<int, kNumK> current_k_{};
 
-    // MAME process() timing: IP 0-7, PC 0-12, subcycle 0-3
     int ip_ = 0;
     int pc_ = 0;
     int subcycle_ = 0;
     int pitch_count_ = 0;
     bool inhibit_ = false;
-    bool old_unvoiced_ = true;   // OLDP
-    bool old_silence_ = true;    // OLDE
-    bool zpar_ = false;
-    bool uv_zpar_ = false;
+    bool old_unvoiced_ = true;
+    bool old_silence_ = true;
+    bool zpar_ = true;
+    bool uv_zpar_ = true;
+    bool frame_just_parsed_ = false;
 
-    int32_t rng_ = 1;
+    uint16_t rng_ = 1;
     std::array<int32_t, kNumK + 1> u_{};
     std::array<int32_t, kNumK + 1> x_{};
 
     int32_t out_sample_ = 0;
     int64_t cycle_acc_ = 0;
-    int internal_rate_ = 8000;
+    uint32_t update_cycle_acc_ = 0;
+
     uint8_t data_latch_ = 0;
     bool data_pending_ = false;
     bool wsq_ = true;
@@ -100,6 +114,9 @@ private:
     bool irq_asserted_ = false;
     int ready_delay_ = 0;
     float volume_ = 1.0f;
+
+    bool buffer_low_ = true;
+    bool buffer_empty_ = true;
 };
 
-}  // namespace dsp
+} // namespace dsp
