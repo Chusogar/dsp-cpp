@@ -24,6 +24,7 @@
 #include "drivers/polepos.h"
 #include "drivers/hangon.h"
 #include "drivers/system16.h"
+#include "drivers/sega_system1.h"
 //#include "drivers/outrun.h"
 
 // Computers
@@ -77,8 +78,9 @@ void print_supported_emulators() {
         "    rtype, hharry, rtype2,\n"
         "    polepos, polepos2\n"
         "    hangon, enduro, sharrier, fantzone, shinobi,\n"
-
-        "    alexkidd, aliensyn, wb3, tetris, altbeast\n"
+        "    alexkidd, aliensyn, wb3, tetris, altbeast,\n"
+        "    pitfall2, teddyboy, wboy, mrviking, seganinja, upndown,\n"
+        "    flicky, gardia\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
@@ -245,7 +247,28 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "altbeast" || game == "alteredbeast") {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Altbeast);
     }
-    
+
+	if (game == "pitfall2" || game == "pitfall2a") {
+        return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::Pitfall2);
+    }
+    if (game == "teddyboy" || game == "teddybb") {
+        return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::TeddyBoy);
+    }
+    if (game == "wboy" || game == "wonderboy") {
+        return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::WonderBoy);
+    }
+    if (game == "mrviking" || game == "viking") {
+        return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::MrViking);
+    }
+    if (game == "seganinja" || game == "sninja") {
+        return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::SegaNinja);
+    }
+    if (game == "upndown" || game == "upndown1") {
+        return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::UpNDown);
+    }
+    if (game == "flicky") return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::Flicky);
+    if (game == "gardia") return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::Gardia);
+
 
 	// computers
     if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48k>();

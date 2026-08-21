@@ -69,6 +69,8 @@ add_executable(dsp
   src/machine/spectrum_tape.cpp
   src/machine/tape_tzx.cpp
   src/machine/i8255.cpp
+  src/machine/z80pio.cpp
+  src/machine/sega_decrypt.cpp
   src/machine/nec765.cpp
   src/machine/disk_image.cpp
   src/machine/lynx_suzy.cpp
@@ -112,6 +114,7 @@ add_executable(dsp
   src/drivers/polepos.cpp
   src/drivers/hangon.cpp
   src/drivers/system16.cpp
+  src/drivers/sega_system1.cpp
         
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
