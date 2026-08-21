@@ -10,7 +10,7 @@
 #include "machine/mos6526.h"
 #include "machine/mos6566.h"
 #include "sound/sid6581.h"
-#include "machine/tape_tzx.h"
+#include "machine/c64_tape.h"
 #include "machine/d64_image.h"
 #include "machine/t64_image.h"
 #include "machine/c1541.h"
@@ -57,12 +57,17 @@ public:
     bool load_1541_rom(const std::string& path, std::string* error);
     C1541& drive() { return drive_; }
     bool load_media(const std::string& path, std::string* error) override;
+    void tape_toggle_play() override;
+    bool tape_loaded() const override { return tape_.is_loaded(); }
 
     // Direct RAM access, used by the tests to type into the keyboard buffer
     // and read the screen back.
     uint8_t debug_read_ram(uint16_t addr) const { return ram_[addr]; }
     void debug_write_ram(uint16_t addr, uint8_t value) { ram_[addr] = value; }
     bool prg_pending() const { return !pending_prg_.empty(); }
+    size_t debug_tape_pos() const { return tape_.current_pulse(); }
+    bool debug_tape_playing() const { return tape_.is_playing(); }
+    bool debug_motor() const { return tape_motor_; }
 
 private:
     // PAL frames to wait before dropping a PRG into RAM. BASIC's cold start
@@ -117,7 +122,7 @@ private:
 
     std::array<uint8_t, 8> keyboard_{};
 
-    TapeTzx tape_;
+    C64Tape tape_;
     D64Image disk_;  // legacy autoload helper
     C1541 drive_;
     bool tape_play_ = false;

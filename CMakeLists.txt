@@ -93,7 +93,7 @@ add_executable(dsp
   src/machine/t64_image.cpp
   src/machine/g64_image.cpp
   src/machine/gcr.cpp
-  
+  src/machine/c64_tape.cpp
     
   src/drivers/bagman.cpp
   src/drivers/mikie.cpp
@@ -242,6 +242,7 @@ add_executable(dsp_tests
   src/machine/fd1089.cpp
   src/machine/i8243.cpp
   src/machine/diskii.cpp
+  src/machine/c64_tape.cpp  
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
   src/drivers/msx2.cpp

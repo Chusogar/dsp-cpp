@@ -189,9 +189,13 @@ bool C64::load_media(const std::string& path, std::string* error) {
         if (!t64.load_first_prg(&prg, error)) return false;
         return queue_prg(prg, error);
     }
-    if (ends_ci(path, ".tzx") || ends_ci(path, ".tap")) {
+    if (ends_ci(path, ".tap")) {
         if (!tape_.load_file(path, error)) return false;
-        tape_play_ = false;
+        // Press PLAY (sense low) so LOAD leaves "PRESS PLAY ON TAPE".
+        // The tape only advances while the motor bit is on, so the interlock
+        // cannot consume the image during boot.
+        tape_play_ = true;
+        tape_.play(true);
         return true;
     }
     std::vector<uint8_t> data;
@@ -297,7 +301,15 @@ uint8_t C64::cia1_portb_r() {
 
 uint8_t C64::read_byte(uint16_t addr) {
     if (addr == 0) return port_bits_;
-    if (addr == 1) return uint8_t(tape_control_ | (tape_motor_ ? 0 : 0x20) | (port_val_ & 7));
+    if (addr == 1) {
+        // 6510 port read = (latch & DDR) | (external & ~DDR).
+        // External: bit4 = cassette SENSE (0 = PLAY pressed when tape armed).
+        uint8_t ext = 0xFF;
+        if (tape_.is_loaded() && tape_play_)
+            ext = uint8_t(ext & ~0x10);  // sense low
+        // Bits 0-3,5 are driven as outputs in normal use; still apply the formula.
+        return uint8_t((port_val_ & port_bits_) | (ext & uint8_t(~port_bits_)));
+    }
     if (addr >= 0xA000 && addr <= 0xBFFF) return read_ram_a_ ? ram_[addr] : basic_rom_[addr & 0x1FFF];
     if (addr >= 0xD000 && addr <= 0xDFFF) {
         switch (read_ram_d_) {
@@ -337,23 +349,25 @@ void C64::write_byte(uint16_t addr, uint8_t value) {
 
 void C64::on_cycles(int cycles) {
     if (cycles <= 0) return;
-    // Mos6526 exposes tick(), not run(). Advance both CIAs for every real
-    // PHI2 cycle, including VIC-II stolen cycles passed through this path.
+    // Tape first so FLAG edges land before CIA timers are clocked for this
+    // slice — the KERNAL measures pulse width with Timer B between FLAGs.
+    if (tape_motor_ && tape_.is_loaded()) {
+        if (!tape_play_) {
+            tape_play_ = true;
+            tape_.play(true);
+        } else if (!tape_.is_playing()) {
+            tape_.play(false);
+        }
+        tape_.advance(cycles, [this]() {
+            cia1_.set_flag(true);
+            cia1_.set_flag(false);
+        });
+    }
+    // When motor is off we simply don't advance — position is preserved.
+
     cia1_.tick(cycles);
     cia2_.tick(cycles);
     if (drive_.rom_loaded()) drive_.run(cycles);
-    if (tape_motor_ && tape_.is_loaded()) {
-        if (!tape_play_) { tape_.play(true); tape_play_ = true; }
-        tape_.advance(cycles);
-        static uint8_t prev = 0;
-        const uint8_t lv = tape_.level();
-        if (prev && !lv) cia1_.set_flag(false);
-        if (!prev && lv) cia1_.set_flag(true);
-        prev = lv;
-        tape_control_ = lv ? 0x10 : 0x00;
-    } else if (tape_play_ && !tape_motor_) {
-        tape_.stop(); tape_play_ = false;
-    }
     audio_acc_ += int64_t(cycles) * kSampleRate;
     while (audio_acc_ >= int64_t(kCpuClock)) {
         audio_acc_ -= int64_t(kCpuClock);
@@ -505,6 +519,17 @@ void C64::set_inputs(const MachineInputs& inputs) {
 }
 
 void C64::set_dip_switch(int /*bank*/, uint8_t /*value*/) {}
+
+void C64::tape_toggle_play() {
+    if (!tape_.is_loaded()) return;
+    if (tape_play_) {
+        tape_.stop();
+        tape_play_ = false;  // releases sense → "STOP"
+    } else {
+        tape_play_ = true;   // presses sense → leaves PRESS PLAY wait
+        tape_.play(false);
+    }
+}
 void C64::drain_audio(std::vector<int16_t>& out) { out.insert(out.end(), audio_.begin(), audio_.end()); audio_.clear(); }
 
 }  // namespace dsp
