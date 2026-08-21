@@ -343,6 +343,16 @@ private:
         else if (a >= 0x9000 && a < 0x9800) bank_[2] = v;
         else if (a >= 0xb000 && a < 0xb800) bank_[3] = v;
     }
+    void generic8_write(uint16_t a, uint8_t v) {
+        if (a >= 0x4000 && a < 0x6000) bank_[0] = v;
+        else if (a >= 0x6000 && a < 0x8000) bank_[1] = v;
+        else if (a >= 0x8000 && a < 0xa000) bank_[2] = v;
+        else if (a >= 0xa000 && a < 0xc000) bank_[3] = v;
+    }
+    void generic16_write(uint16_t a, uint8_t v) {
+        if (a >= 0x4000 && a < 0x8000) bank_[0] = v;
+        else if (a >= 0x8000 && a < 0xc000) bank_[1] = v;
+    }
 
     std::vector<uint8_t> data_;
     std::vector<uint8_t> sram_;
