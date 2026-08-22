@@ -56,6 +56,11 @@ public:
     int debug_ram_pages() const { return ram_pages_; }
     uint8_t debug_ram3() const { return ram3_; }
     uint8_t debug_rom_page() const { return rom_page_; }
+    bool debug_gluk() const { return gluk_present_; }
+    uint8_t debug_rom_byte(int page, uint16_t offset) const {
+        if (page < 0 || page > 3) return 0;
+        return rom_[size_t(page)][offset];
+    }
     void debug_m1(uint16_t pc) { on_m1(pc); }
 
     uint8_t io_in(uint16_t port);

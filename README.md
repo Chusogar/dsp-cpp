@@ -445,15 +445,31 @@ TR-DOS. Both run at 3.5 MHz with 224 T-states per line and 320 lines per frame
 (no ULA contention). Disks are `.trd` (raw geometry) or `.scl` (catalogue +
 files, expanded to a DS/80 TR-DOS volume).
 
-Pentagon 1024 wants a 32 KB 128K ROM (`128p-0.rom`+`128p-1.rom`/`zx128_1.rom` or
-`pentagon.rom`) plus TR-DOS (`trd503.rom` / `trdos.rom`). Optional `gluk63r.rom`
-is the 1024SL boot monitor. RAM at `$C000` is
-`(7FFD & 7) | ((7FFD & 0xC0) >> 3) | ((DFFD & 1) << 5)`.
+The usual ROM trees are [zxtiny](https://github.com/Chusogar/zxtiny) (`zxm/`)
+and [jMESYS](https://github.com/Chusogar/jMESYS)
+(`src/bios/Sinclair/Spectrum/`). Point `dsp` at either repo, at a parent that
+contains both, or at `zxtiny/zxm`: it walks nested `.rom` files and the sibling
+tree. Pentagon prefers jMESYS `Pentagon.rom` (32 KB) plus zxtiny `trdos.rom`.
+Scorpion uses zxtiny `scorp0.rom`…`scorp3.rom`. `scorp2.rom` is never treated
+as Pentagon GLUK.
 
-Scorpion ZS-256 wants a 64 KB ROM (`scorpion.rom` / `scorp294.rom`, or
-`scorp0.rom`…`scorp3.rom`): 128 editor, 48 BASIC, service, TR-DOS. Port `$1FFD`
-bit 0 maps RAM page 0 at `$0000`, bit 1 selects the service ROM, bit 4 is the
-256 KB RAM bit. F5 is the Magic button (NMI).
+```bash
+git clone https://github.com/Chusogar/zxtiny
+git clone https://github.com/Chusogar/jMESYS
+./build/dsp --game pentagon --disk elite.trd /path/to/parent-of-both/
+./build/dsp --game pentagon --disk elite.trd /path/to/zxtiny/zxm/
+./build/dsp --game scorpion --disk game.scl /path/to/zxtiny/zxm/
+```
+
+Pentagon 1024 also accepts a 32 KB 128K ROM (`128p-0.rom`+`128p-1.rom` /
+`zx128.rom` / `128tr.rom`+`zx128_1.rom`) plus TR-DOS (`trd503.rom` /
+`trdos.rom`). Optional `gluk63r.rom` is the 1024SL boot monitor. RAM at `$C000`
+is `(7FFD & 7) | ((7FFD & 0xC0) >> 3) | ((DFFD & 1) << 5)`.
+
+Scorpion ZS-256 also accepts a 64 KB ROM (`scorpion.rom` / `scorp294.rom`):
+128 editor, 48 BASIC, service, TR-DOS. Port `$1FFD` bit 0 maps RAM page 0 at
+`$0000`, bit 1 selects the service ROM, bit 4 is the 256 KB RAM bit. F5 is the
+Magic button (NMI).
 
 MAME 0.221 names (merged parent is `spec128.zip`; clones live in subfolders
 `pentagon/`, `pent1024/`, `scorpio/`; TR-DOS is the `spectrum_beta128` device).
