@@ -19,7 +19,7 @@ const std::vector<RomEntry> kExl100Sub = {
     {"exl100_7041.bin|exl100io.bin", 0x1000, 0x0000, 0x38f6fc7a},
 };
 const std::vector<RomEntry> kExeltelMain = {
-    {"exeltel_7040.bin|exeltel.bin", 0x1000, 0x0000, 0x2792f02f},
+    {"exeltel_7040.rom", 0x1000, 0x0000, 0x2792f02f},
 };
 const std::vector<RomEntry> kExeltelSub = {
     {"exeltel_7042.bin", 0x1000, 0x0000, 0xa0163507},

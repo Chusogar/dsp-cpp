@@ -25,6 +25,7 @@
 #include "drivers/hangon.h"
 #include "drivers/system16.h"
 #include "drivers/sega_system1.h"
+#include "drivers/galaxian.h"
 //#include "drivers/outrun.h"
 
 // Computers
@@ -80,7 +81,8 @@ void print_supported_emulators() {
         "    hangon, enduro, sharrier, fantzone, shinobi,\n"
         "    alexkidd, aliensyn, wb3, tetris, altbeast,\n"
         "    pitfall2, teddyboy, wboy, mrviking, seganinja, upndown,\n"
-        "    flicky, gardia\n"
+        "    flicky, gardia,\n"
+		"    galaxian,\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
@@ -269,6 +271,8 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "flicky") return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::Flicky);
     if (game == "gardia") return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::Gardia);
 
+	if (game == "galaxian") return std::make_unique<dsp::Galaxian>();
+    
 
 	// computers
     if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48k>();

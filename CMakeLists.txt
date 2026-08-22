@@ -115,6 +115,7 @@ add_executable(dsp
   src/drivers/hangon.cpp
   src/drivers/system16.cpp
   src/drivers/sega_system1.cpp
+  src/drivers/galaxian.cpp
         
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
