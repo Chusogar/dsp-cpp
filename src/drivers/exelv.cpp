@@ -1,4 +1,5 @@
 #include "drivers/exelv.h"
+#include <cstdio>
 
 #include <algorithm>
 #include <cctype>
@@ -271,8 +272,7 @@ void Exelv::reset() {
     cass_bit_ = 1;
     vdp_.reset();
     speech_.reset();
-    // TMS5220 /INT is idle-low after reset; the 7041 BIOS spins on PA.3 until it
-    // sees that (BTJOP %$08, P4) before it can send the mailbox init byte.
+    speech_.strobe_ws_rs(0x03);
     speech_irq_ = true;
     maincpu_.reset();
     if (sub_present_) {
@@ -342,7 +342,9 @@ void Exelv::tms7020_portb_w(uint8_t data) {
 uint8_t Exelv::tms7041_porta_r() {
     uint8_t data = 0;
     data |= speech_irq_ ? 0x00 : 0x08;
-    data |= speech_.readyq() ? 0x00 : 0x80;
+    // PA.7 = /READY inverted sense used by 7041 (spin while bit7 set = not ready).
+    // readyq() true = busy → expose as 1; ready → 0 so the BTJO loop exits.
+    data |= speech_.readyq() ? 0x80 : 0x00;
     data |= (tms7020_portb_ & 0x01) ? 0x04 : 0x00;
     data |= (tms7020_portb_ & 0x02) ? 0x10 : 0x00;
     return data;
