@@ -29,7 +29,8 @@ void Beta128::param_w(uint8_t value) {
     if (!active_) return;
     control_ = value;
     fdc_.set_drive(value & 3);
-    fdc_.set_side((value >> 4) & 1);
+    // Bit 4 selects the head with inverted polarity: 0 picks side 1.
+    fdc_.set_side((value & 0x10) ? 0 : 1);
     if ((value & 0x04) == 0) fdc_.reset();
 }
 
