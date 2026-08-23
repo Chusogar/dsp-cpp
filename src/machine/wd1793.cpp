@@ -108,16 +108,11 @@ void Wd1793::start_write_sector() {
 void Wd1793::start_read_address() {
     type1_ = false;
     writing_ = false;
-    // Read address reports the next header on the current track, so it only
-    // needs a disk: the sector register is an output here, not an input.
-    if (disk_ == nullptr || !disk_->present() || drive_ != 0 ||
-        disk_->sector(track_, side_, 1) == nullptr) {
+    if (current_sector() == nullptr) {
         complete_io(true);
         return;
     }
-    buf_ = {track_, uint8_t(side_), uint8_t(1), 1, 0, 0};
-    // The controller copies the track address into the sector register.
-    sector_ = track_;
+    buf_ = {track_, uint8_t(side_), sector_, 1, 0, 0};
     buf_pos_ = 0;
     busy_ = true;
     drq_ = true;

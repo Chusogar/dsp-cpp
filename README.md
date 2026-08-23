@@ -13,10 +13,8 @@ Computers: **ZX Spectrum 48K**, Amstrad CPC, **Commodore 64**, **EXL-100** /
 **EXELTEL**. Consoles: NES, Game Boy / Game Boy Color, **Atari Lynx**,
 **Super Cassette Vision**.
 Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
-**OutRun**, **Hang-On**, System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
-**Altered Beast**), and Sega **System 1** (**Pitfall II**,
-**Teddy Boy Blues**, **Wonder Boy**, **Mr. Viking**, **Sega Ninja**,
-**Up'n Down**, **Flicky**, **Gardia**).
+**OutRun**, **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
+**Altered Beast**).
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
 **MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**,
 **EXL-100** / **EXELTEL**. Consoles: NES, Game Boy / Game Boy
@@ -370,52 +368,6 @@ and TNK III.
 
 The Ikari set accepts both the old `1.rom` / `7.rom` / `7122er.prm` names and the
 MAME 0.221 `1.4p` / `p7.3b` / `a6002-1.1k` names.
-
-### Sega System 1 (Pitfall II, Teddy Boy Blues, Wonder Boy, Mr. Viking, Sega Ninja, Up'n Down, Flicky, Gardia)
-
-Ported from `system1_hw.pas` / `system1_hw_misc.pas`. Two Z80s at 4 MHz: the main
-CPU runs an opcode stream that Sega scrambled in hardware (a classic bitswap
-table for Pitfall II / Teddy Boy Blues / Mr. Viking / Sega Ninja / Up'n Down /
-Flicky, and the newer 315-5177/317-000x scheme for Wonder Boy and Gardia); the
-sound CPU drives two SN76496 PSGs (2 MHz and 4 MHz) and talks to the main CPU
-through a Z80 PIO (most games) or an 8255 PPI (Mr. Viking, Up'n Down). Video is
-a fixed 32x32 character layer plus an independently scrolling 32x32 background,
-both 8x8/3bpp, composited with 32 streamed, bank switched sprites through a
-priority PROM that also drives the hardware collision registers. Gardia adds a
-banked ROM window and a direct RGB palette PROM instead of the resistor
-network the other seven games use.
-
-```bash
-./build/dsp --game pitfall2 /path/to/pitfall2.zip
-./build/dsp --game teddyboy /path/to/teddybb.zip
-./build/dsp --game wboy /path/to/wboy.zip
-./build/dsp --game mrviking /path/to/mrviking.zip
-./build/dsp --game seganinja /path/to/seganinj.zip
-./build/dsp --game upndown /path/to/upndown.zip
-./build/dsp --game flicky /path/to/flicky.zip
-./build/dsp --game gardia /path/to/gardia.zip
-```
-
-DIP banks: 0 = A (coinage, always defaults to `0xff`), 1 = B (lives / bonus /
-difficulty, a per-game default matching the original driver). Mr. Viking,
-Up'n Down and Gardia run in a rotated cabinet and show a 240x224 window
-instead of the usual 256x224.
-
-ROM sets (filenames only, no game data): Pitfall II needs `epr6456a.116`,
-`epr6457a.109`, `epr6458a.96` (main), `epr6474a.62` through `epr6469a.65`
-(chars), `epr6454a.117` / `epr-6455.05` (sprites), `epr-6462.120` (sound) and
-`pr-5317.76` (mix PROM); the other six System 1 sets follow the same shape
-with their own EPR numbers, and Gardia additionally needs `pr-7345.3` /
-`pr-7344.2` / `pr-7343.1` (RGB PROMs). See `src/drivers/sega_system1.cpp` for
-the exact per-game list.
-
-None of these sets has been run here with real ROMs -- Sega's are still under
-copyright and no legally free replacement exists the way it does for the C64.
-The driver has been validated with correctly sized placeholder ROM data
-(decrypt tables transcribed and cross-checked by hand, all four code paths --
-classic decrypt, 315-5177/317-000x decrypt, PIO I/O, PPI I/O -- run 100+
-frames without crashing and produce a stable tilemap/palette), but has not
-been confirmed against actual game behaviour.
 
 ### ZX Spectrum 48K
 

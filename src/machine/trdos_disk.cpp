@@ -67,38 +67,26 @@ bool TrdosDisk::load_bytes(const uint8_t* data, size_t size, std::string* error)
 }
 
 bool TrdosDisk::load_trd(const uint8_t* data, size_t size, std::string* error) {
-    // The disk info sector (track 0, side 0, sector 9) holds the geometry in the
-    // type byte at +$E3, which is the only reliable source: 320 KiB images are
-    // ambiguous between 40 tracks double sided and 80 tracks single sided, and
-    // many images in the wild are truncated after the last used sector.
-    constexpr size_t kInfoSector = 8ull * kSectorSize;
-    constexpr size_t kTypeOffset = kInfoSector + 0xe3;
-    if (size <= kTypeOffset) {
+    int tracks = 80;
+    int heads = 2;
+    const size_t full = 80ull * 2 * 16 * 256;
+    const size_t half = 80ull * 1 * 16 * 256;
+    const size_t forty = 40ull * 2 * 16 * 256;
+    if (size >= full) {
+        tracks = 80;
+        heads = 2;
+    } else if (size >= forty && size < half) {
+        tracks = 40;
+        heads = 2;
+    } else if (size >= half) {
+        tracks = 80;
+        heads = 1;
+    } else if (size >= 40ull * 16 * 256) {
+        tracks = 40;
+        heads = 1;
+    } else {
         if (error) *error = "TRD image is too small";
         return false;
-    }
-
-    int tracks = 0;
-    int heads = 0;
-    switch (data[kTypeOffset]) {
-        case 0x16: tracks = 80; heads = 2; break;
-        case 0x17: tracks = 40; heads = 2; break;
-        case 0x18: tracks = 80; heads = 1; break;
-        case 0x19: tracks = 40; heads = 1; break;
-        default: break;
-    }
-    if (tracks == 0) {
-        const size_t track_bytes = size_t(kSectorsPerTrack) * kSectorSize;
-        if (size > 80 * track_bytes) {
-            tracks = 80;
-            heads = 2;
-        } else if (size > 40 * track_bytes) {
-            tracks = 40;
-            heads = 2;
-        } else {
-            tracks = 40;
-            heads = 1;
-        }
     }
     format(tracks, heads);
     const size_t copy = std::min(size, image_.size());
