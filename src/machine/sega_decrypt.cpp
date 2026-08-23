@@ -1,5 +1,7 @@
 #include "machine/sega_decrypt.h"
 
+#include <cstddef>
+
 namespace dsp {
 namespace {
 
