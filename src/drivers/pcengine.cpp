@@ -1,267 +1,265 @@
 #include "drivers/pcengine.h"
 
 #include <algorithm>
-#include <cstring>
+#include <filesystem>
 #include <fstream>
+
+#include "core/rom_loader.h"
 
 namespace dsp {
 namespace {
 
-bool ends_ci(const std::string& s, const char* ext) {
-    const size_t n = std::strlen(ext);
-    if (s.size() < n) return false;
-    for (size_t i = 0; i < n; ++i) {
-        char a = s[s.size() - n + i], b = ext[i];
-        if (a >= 'A' && a <= 'Z') a = char(a - 'A' + 'a');
-        if (b >= 'A' && b <= 'Z') b = char(b - 'A' + 'a');
-        if (a != b) return false;
+bool read_plain_or_zip_file(const std::string& path, std::vector<uint8_t>& data, size_t max_size,
+                            std::string* error) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (fs::is_regular_file(path, ec)) {
+        std::ifstream probe(path, std::ios::binary);
+        char magic[4] = {};
+        probe.read(magic, 4);
+        const bool is_zip = probe.gcount() == 4 && magic[0] == 'P' && magic[1] == 'K' &&
+                            magic[2] == 0x03 && magic[3] == 0x04;
+        if (!is_zip) {
+            probe.clear();
+            probe.seekg(0, std::ios::end);
+            const std::streamoff size = probe.tellg();
+            probe.seekg(0, std::ios::beg);
+            if (size <= 0) return false;
+            data.resize(size_t(size));
+            probe.read(reinterpret_cast<char*>(data.data()), size);
+            return bool(probe);
+        }
     }
-    return true;
+    RomLoader loader;
+    if (!loader.open(path, error)) return false;
+    data.reserve(max_size);
+    return loader.load_first_file(data, error);
 }
 
-std::vector<uint8_t> read_file(const std::string& path, std::string* error) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) {
-        if (error) *error = "cannot open " + path;
-        return {};
+// A few dumps are bit reversed inside every byte; they always start with the
+// mirrored version of the standard "boot" pattern.
+bool needs_bit_swap(const std::vector<uint8_t>& data) {
+    return data.size() >= 4 && data[0] == 0xaa && data[1] == 0xbb && data[2] == 0x02;
+}
+
+uint8_t bit_swap(uint8_t value) {
+    uint8_t out = 0;
+    for (int bit = 0; bit < 8; bit++) {
+        if ((value & (1 << bit)) != 0) out = uint8_t(out | (1 << (7 - bit)));
     }
-    f.seekg(0, std::ios::end);
-    const auto n = f.tellg();
-    f.seekg(0, std::ios::beg);
-    if (n <= 0) {
-        if (error) *error = "empty " + path;
-        return {};
-    }
-    std::vector<uint8_t> data(static_cast<size_t>(n));
-    f.read(reinterpret_cast<char*>(data.data()), n);
-    return data;
+    return out;
 }
 
 }  // namespace
 
-PcEngine::PcEngine(bool supergrafx)
-    : supergrafx_(supergrafx),
-      cpu_(kCpuClock),
-      psg_(kCpuClock),
-      cycles_per_line_(int(double(kCpuClock) / kFramesPerSecond / kLinesPerFrame)) {
-    cpu_.set_memory_handlers(
-        [this](uint32_t a) { return read_physical(a); },
-        [this](uint32_t a, uint8_t v) { write_physical(a, v); });
-    cpu_.set_cycle_handler([this](int c) { on_cycles(c); });
-
-    // HuC6280: line 0 → $FFF8 (IRQ1), line 1 → $FFF6 (IRQ2), line 2 → timer.
-    // Commercial HuCards (incl. Ninja Warriors) put the VDC service routine at
-    // $FFF8; wire the VDC there so VBlank/RCR actually run game code.
-    vdc0_.set_irq_handler([this](bool assert) {
-        vdc0_irq_ = assert;
-        update_vdc_irq();
+PcEngine::PcEngine() {
+    cpu_.set_memory_handlers([this](uint32_t address) { return read_byte(address); },
+                            [this](uint32_t address, uint8_t value) { write_byte(address, value); });
+    cpu_.set_cycle_handler([this](int cycles) { on_cpu_cycles(cycles); });
+    vdc_.set_irq_handler([this](bool state) {
+        cpu_.set_irq_line(0, state ? IrqLine::Assert : IrqLine::Clear);
     });
-    vdc1_.set_irq_handler([this](bool assert) {
-        vdc1_irq_ = assert;
-        update_vdc_irq();
-    });
-}
-
-void PcEngine::update_vdc_irq() {
-    // OR both VDCs into IRQ1 ($FFF8) — matches HuCard service routines.
-    const bool any = vdc0_irq_ || (supergrafx_ && vdc1_irq_);
-    cpu_.set_irq_line(0, any ? IrqLine::Assert : IrqLine::Clear);
 }
 
 bool PcEngine::init(const std::string& rom_path, std::string* error) {
-    if (ends_ci(rom_path, ".sgx")) supergrafx_ = true;
-    return load_media(rom_path, error);
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!rom_path.empty() && fs::is_regular_file(rom_path, ec)) {
+        std::string cart_error;
+        if (!load_media(rom_path, &cart_error)) {
+            if (error != nullptr) *error = cart_error;
+            return false;
+        }
+        return true;
+    }
+    if (!rom_path.empty()) {
+        std::string cart_error;
+        if (load_media(rom_path, &cart_error)) return true;
+        warnings_.push_back(cart_error);
+    }
+    reset();
+    return true;
 }
 
 bool PcEngine::load_media(const std::string& path, std::string* error) {
-    if (ends_ci(path, ".sgx")) supergrafx_ = true;
-    auto data = read_file(path, error);
-    if (data.empty()) return false;
+    std::vector<uint8_t> data;
+    if (!read_plain_or_zip_file(path, data, kMaxCartridge + 0x200, error)) {
+        if (error != nullptr && error->empty()) *error = "cannot read " + path;
+        return false;
+    }
     return load_hucard(data, error);
 }
 
 bool PcEngine::load_hucard(const std::vector<uint8_t>& data, std::string* error) {
-    size_t offset = 0;
-    // Only strip 512-byte header when size is 512 past a bank multiple
-    if (data.size() > 0x200 && (data.size() % 0x2000) == 0x200) offset = 0x200;
-    const size_t cart = data.size() - offset;
-    if (cart < 0x2000) {
-        if (error) *error = "HuCard too small";
+    std::vector<uint8_t> rom = data;
+    // Some dumps carry a 512 byte copier header in front of the image.
+    if ((rom.size() % 0x2000) == 0x200) rom.erase(rom.begin(), rom.begin() + 0x200);
+    if (rom.size() < 0x2000) {
+        if (error != nullptr) *error = "HuCard image too small";
         return false;
     }
-    if (cart > kMaxRom) {
-        if (error) *error = "HuCard too large";
-        return false;
+    if (rom.size() > size_t(kMaxCartridge)) rom.resize(size_t(kMaxCartridge));
+    if (needs_bit_swap(rom)) {
+        for (uint8_t& value : rom) value = bit_swap(value);
     }
-    rom_.assign(kMaxRom, 0xFF);
-    for (size_t i = 0; i < kMaxRom; ++i) rom_[i] = data[offset + (i % cart)];
+    rom_ = std::move(rom);
     reset();
     return true;
 }
 
 void PcEngine::reset() {
     ram_.fill(0);
-    vdc0_.reset();
-    vdc1_.reset();
-    vpc_.reset();
+    cpu_.mpr.fill(0);
+    sf2_bank_ = 0;
+    pad_select_ = false;
+    pad_clear_ = false;
+    pad_ = 0xff;
+    audio_accumulator_ = 0;
+    audio_.clear();
+    framebuffer_.fill(0xff000000u);
+    vdc_.reset();
     vce_.reset();
     psg_.reset();
-    joy_data_ = 0xFF;
-    joy_sel_ = joy_clr_ = 0;
-    vdc0_irq_ = vdc1_irq_ = false;
-    width_ = 256;
-    audio_.clear();
-    framebuffer_.fill(0xFF000000u);
     cpu_.reset();
 }
 
-uint8_t PcEngine::read_physical(uint32_t address) {
-    const uint8_t page = uint8_t(address >> 13);
-    const uint16_t offset = uint16_t(address & 0x1FFF);
-
-    if (page < 0x80) {
-        return rom_[(size_t(page) << 13 | offset) & (kMaxRom - 1)];
-    }
-    // RAM: $F8-$FB (8KB) or SuperGrafx $F8-$FF partial
-    if (page >= 0xF8 && page <= 0xFB) {
-        return ram_[offset & 0x1FFF];
-    }
-    if (supergrafx_ && page >= 0xF8 && page <= 0xFF) {
-        // Extra RAM on SuperGrafx in some maps — keep simple 32KB window
-        const size_t idx = (size_t(page - 0xF8) << 13) | offset;
-        if (idx < kRamSize) return ram_[idx];
-    }
-
-    if (page == 0xFF) {
-        if (offset < 0x0400) return vdc0_.read(uint8_t(offset & 3));
-        if (offset < 0x0800) return vce_.read(uint8_t(offset & 3));
-        if (offset < 0x0C00) return 0x00;  // PSG write-only
-        if (offset < 0x1000) return cpu_.timer_r(uint8_t(offset & 1));
-        if (offset < 0x1400) {
-            if (joy_clr_ & 2) return 0xFF;
-            if (joy_sel_ & 1) return uint8_t(0xF0 | ((joy_data_ >> 4) & 0x0F));
-            return uint8_t(0xF0 | (joy_data_ & 0x0F));
-        }
-        if (offset < 0x1800) return cpu_.irq_status_r(uint8_t(offset & 3));
-        // SuperGrafx: VDC1 at $0000 mirror via VPC map — $1FE100 area
-        if (supergrafx_) {
-            if (offset >= 0x0100 && offset < 0x0140)
-                return vdc1_.read(uint8_t(offset & 3));
-            if (offset >= 0x0800 && offset < 0x0810)
-                return vpc_.read(uint8_t(offset & 7));
-        }
-    }
-    return 0xFF;
-}
-
-void PcEngine::write_physical(uint32_t address, uint8_t value) {
-    const uint8_t page = uint8_t(address >> 13);
-    const uint16_t offset = uint16_t(address & 0x1FFF);
-
-    if (page >= 0xF8 && page <= 0xFB) {
-        ram_[offset & 0x1FFF] = value;
-        return;
-    }
-    if (supergrafx_ && page >= 0xF8) {
-        const size_t idx = (size_t(page - 0xF8) << 13) | offset;
-        if (idx < kRamSize) {
-            ram_[idx] = value;
-            return;
-        }
-    }
-
-    if (page == 0xFF) {
-        if (offset < 0x0400) {
-            vdc0_.write(uint8_t(offset & 3), value);
-            return;
-        }
-        if (offset < 0x0800) {
-            vce_.write(uint8_t(offset & 3), value);
-            width_ = vce_.display_width_for_mode();
-            // Prefer VDC HDR width when smaller
-            width_ = std::min(width_, vdc0_.display_width());
-            if (width_ < 256) width_ = 256;
-            return;
-        }
-        if (offset < 0x0C00) {
-            psg_.write(uint8_t(offset & 0x0F), value);
-            return;
-        }
-        if (offset < 0x1000) {
-            cpu_.timer_w(uint8_t(offset & 1), value);
-            return;
-        }
-        if (offset < 0x1400) {
-            joy_sel_ = value & 1;
-            joy_clr_ = value & 2;
-            return;
-        }
-        if (offset < 0x1800) {
-            cpu_.irq_status_w(uint8_t(offset & 3), value);
-            return;
-        }
-        if (supergrafx_) {
-            if (offset >= 0x0100 && offset < 0x0140) {
-                vdc1_.write(uint8_t(offset & 3), value);
-                return;
-            }
-            if (offset >= 0x0800 && offset < 0x0810) {
-                vpc_.write(uint8_t(offset & 7), value);
-                return;
-            }
-        }
-    }
-}
-
-void PcEngine::on_cycles(int cycles) {
-    if (cycles > 0) psg_.update(cycles, audio_);
-}
-
-void PcEngine::run_frame() {
-    width_ = std::max(256, std::min(kMaxWidth, vce_.display_width_for_mode()));
-    width_ = std::min(width_, std::max(256, vdc0_.display_width()));
-
-    for (int line = 0; line < kLinesPerFrame; ++line) {
-        const int active_start = 14;
-        uint16_t* out0 = nullptr;
-        uint16_t* out1 = nullptr;
-        if (line >= active_start && line < active_start + kMaxHeight) {
-            out0 = line0_.data();
-            out1 = line1_.data();
-        }
-        vdc0_.run_line(line, out0, width_);
-        if (supergrafx_) vdc1_.run_line(line, out1, width_);
-
-        if (out0) {
-            const int row = line - active_start;
-            uint32_t* dst = framebuffer_.data() + size_t(row) * kMaxWidth;
-            for (int x = 0; x < width_; ++x) {
-                uint16_t pix = line0_[x];
-                if (supergrafx_) pix = vpc_.mix(line0_[x], line1_[x], x);
-                dst[x] = vce_.color(pix);
-            }
-            for (int x = width_; x < kMaxWidth; ++x) dst[x] = 0xFF000000u;
-        }
-        cpu_.run(cycles_per_line_);
-    }
+void PcEngine::set_dip_switch(int bank, uint8_t value) {
+    (void)bank;
+    (void)value;
 }
 
 void PcEngine::set_inputs(const MachineInputs& inputs) {
-    uint8_t d = 0xFF;
-    auto clear = [&](int bit) { d = uint8_t(d & ~(1 << bit)); };
-    const auto& p = inputs.player1;
-    if (p.up) clear(0);
-    if (p.down) clear(1);
-    if (p.left) clear(2);
-    if (p.right) clear(3);
-    if (p.button1) clear(4);
-    if (p.button2) clear(5);
-    if (p.button3) clear(6);
-    if (p.start) clear(7);
-    joy_data_ = d;
+    const InputState& pad = inputs.player1;
+    uint8_t value = 0;
+    // Active low: bits 0-3 are the buttons, bits 4-7 the directions.
+    if (!pad.button1) value |= 0x01;  // I
+    if (!pad.button2) value |= 0x02;  // II
+    if (!pad.button3) value |= 0x04;  // SELECT
+    if (!pad.start) value |= 0x08;    // RUN
+    if (!pad.up) value |= 0x10;
+    if (!pad.right) value |= 0x20;
+    if (!pad.down) value |= 0x40;
+    if (!pad.left) value |= 0x80;
+    pad_ = value;
 }
 
-void PcEngine::set_dip_switch(int, uint8_t) {}
+uint32_t PcEngine::rom_offset(uint32_t bank) const {
+    const size_t size = rom_.size();
+    if (size == 0) return 0;
+    if (size == 0x60000) {
+        // 384 KiB HuCards: 256 KiB linear, then the last 128 KiB mirrored twice.
+        const uint32_t low = bank & 0x3f;
+        if (low < 0x20) return low * 0x2000;
+        return 0x40000 + (low & 0x0f) * 0x2000;
+    }
+    if (size > 0x100000) {
+        // Street Fighter II style mapper: the upper half is bank switched.
+        if (bank < 0x40) return bank * 0x2000;
+        return 0x80000 + uint32_t(sf2_bank_) * 0x80000 + (bank & 0x3f) * 0x2000;
+    }
+    return uint32_t((size_t(bank) * 0x2000) % size);
+}
+
+uint8_t PcEngine::read_byte(uint32_t address) {
+    const uint32_t bank = (address >> 13) & 0xff;
+    if (bank <= 0x7f) {
+        if (rom_.empty()) return 0xff;
+        const size_t offset = rom_offset(bank) + (address & 0x1fff);
+        return offset < rom_.size() ? rom_[offset] : 0xff;
+    }
+    if (bank == 0xf7) return backup_ram_[address & 0x7ff];
+    if (bank >= 0xf8 && bank <= 0xfb) return ram_[address & 0x1fff];
+    if (bank == 0xff) return io_read(uint16_t(address & 0x1fff));
+    return 0xff;
+}
+
+void PcEngine::write_byte(uint32_t address, uint8_t value) {
+    const uint32_t bank = (address >> 13) & 0xff;
+    if (bank <= 0x7f) {
+        // Street Fighter II selects its ROM bank through $1ff0-$1ff3.
+        if (rom_.size() > 0x100000 && (address & 0x1ffc) == 0x1ff0) sf2_bank_ = uint8_t(address & 3);
+        return;
+    }
+    if (bank == 0xf7) {
+        backup_ram_[address & 0x7ff] = value;
+        return;
+    }
+    if (bank >= 0xf8 && bank <= 0xfb) {
+        ram_[address & 0x1fff] = value;
+        return;
+    }
+    if (bank == 0xff) io_write(uint16_t(address & 0x1fff), value);
+}
+
+uint8_t PcEngine::io_read(uint16_t offset) {
+    switch (offset & 0x1c00) {
+        case 0x0000: return vdc_.read(uint8_t(offset & 3));
+        case 0x0400: return vce_.read(uint8_t(offset & 7));
+        case 0x0800: return 0xff;  // the PSG is write only
+        case 0x0c00: return cpu_.timer_r();
+        case 0x1000: return joypad_read();
+        case 0x1400: return cpu_.irq_status_r(uint8_t(offset & 3));
+        default: return 0xff;  // CD-ROM and expansion port are not present
+    }
+}
+
+void PcEngine::io_write(uint16_t offset, uint8_t value) {
+    switch (offset & 0x1c00) {
+        case 0x0000: vdc_.write(uint8_t(offset & 3), value); break;
+        case 0x0400: vce_.write(uint8_t(offset & 7), value); break;
+        case 0x0800: psg_.write(uint8_t(offset & 0x0f), value); break;
+        case 0x0c00: cpu_.timer_w(uint8_t(offset & 1), value); break;
+        case 0x1000: joypad_write(value); break;
+        case 0x1400: cpu_.irq_status_w(uint8_t(offset & 3), value); break;
+        default: break;
+    }
+}
+
+uint8_t PcEngine::joypad_read() const {
+    // CLR high holds the pad outputs low, SEL picks directions over buttons.
+    const uint8_t pad = pad_clear_ ? 0x00 : pad_;
+    const uint8_t data = uint8_t((pad_select_ ? pad >> 4 : pad) & 0x0f);
+    // Bits 4 and 5 are pulled high; bit 6 low marks a Japanese console.
+    return uint8_t(data | 0x30);
+}
+
+void PcEngine::joypad_write(uint8_t value) {
+    pad_select_ = (value & 0x01) != 0;
+    pad_clear_ = (value & 0x02) != 0;
+}
+
+void PcEngine::on_cpu_cycles(int cycles) {
+    audio_accumulator_ += uint64_t(cycles) * uint64_t(HuC6280Psg::kSampleRate);
+    while (audio_accumulator_ >= kClock) {
+        audio_accumulator_ -= kClock;
+        audio_.push_back(psg_.update());
+    }
+}
+
+void PcEngine::blit_line(int display_line, int width) {
+    const int row = display_line * 2;
+    if (row < 0 || row + 1 >= kScreenHeight) return;
+    uint32_t* top = framebuffer_.data() + size_t(row) * kScreenWidth;
+    uint32_t* bottom = top + kScreenWidth;
+    for (int x = 0; x < kScreenWidth; x++) {
+        const int source = width == kScreenWidth ? x : x * width / kScreenWidth;
+        const uint16_t index = line_[size_t(source)];
+        const uint32_t colour = index != 0 ? vce_.colour(index) : vce_.backdrop();
+        top[x] = colour;
+        bottom[x] = colour;
+    }
+}
+
+void PcEngine::run_frame() {
+    for (int line = 0; line < kScanlines; line++) {
+        // The VCE dot clock caps how many of the VDC's visible pixels fit on a line.
+        const int width =
+            std::min(std::min(vdc_.display_width(), vce_.active_width()), HuC6270::kMaxWidth);
+        if (vdc_.scanline(line, line_.data(), width)) blit_line(vdc_.display_line(), width);
+        cpu_.run(kCyclesPerLine);
+    }
+    vdc_.end_frame();
+}
 
 void PcEngine::drain_audio(std::vector<int16_t>& out) {
     out.insert(out.end(), audio_.begin(), audio_.end());

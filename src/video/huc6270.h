@@ -1,110 +1,93 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <utility>
 
 namespace dsp {
 
-// Hudson HuC6270 Video Display Controller.
-// BG + sprites with priority, 16/line limit, RCR/VBlank IRQs, SATB DMA,
-// display widths driven by HDR (256/320/512 via VCE dot clock).
+// Hudson HuC6270 VDC: the PC Engine's video display controller. It owns the
+// 64 KiB (32K word) VRAM, one scrolling tilemap, 64 sprites and the raster
+// compare / vblank / sprite interrupts. Rendering is per scanline into a
+// buffer of HuC6260 palette indices, so the VCE owns the colours.
 class HuC6270 {
 public:
-    static constexpr int kVramWords = 0x8000;  // 64 KiB
-    static constexpr int kSatWords = 256;
-    static constexpr int kMaxWidth = 512;
-    static constexpr int kMaxHeight = 256;
-    static constexpr int kLinesPerFrame = 263;
+    static constexpr int kVramWords = 0x8000;
+    static constexpr int kSprites = 64;
     static constexpr int kSpritesPerLine = 16;
+    static constexpr int kMaxWidth = 512;
 
-    using IrqHandler = std::function<void(bool assert)>;
-
-    void set_irq_handler(IrqHandler h) { irq_ = std::move(h); }
-    void set_sprite_limit(bool enabled) { sprite_limit_ = enabled; }
+    // Status register bits, as read from port 0.
+    static constexpr uint8_t kStatusCollision = 0x01;
+    static constexpr uint8_t kStatusOverflow = 0x02;
+    static constexpr uint8_t kStatusRaster = 0x04;
+    static constexpr uint8_t kStatusSatbDone = 0x08;
+    static constexpr uint8_t kStatusDmaDone = 0x10;
+    static constexpr uint8_t kStatusVblank = 0x20;
 
     void reset();
 
-    void write(uint8_t port, uint8_t value);
-    uint8_t read(uint8_t port);
+    // IRQ1 towards the HuC6280.
+    void set_irq_handler(std::function<void(bool)> handler) { irq_handler_ = std::move(handler); }
 
-    // Render one scanline into line_out[width]. Palette via vce_color(index).
-    void run_line(int line, uint16_t* pixel_out, int width);
+    // $0000-$0003 in the hardware page.
+    uint8_t read(uint8_t offset);
+    void write(uint8_t offset, uint8_t value);
 
-    bool vblank() const { return vblank_; }
-    int display_width() const;
-    int display_height() const;
-    uint16_t status() const { return status_; }
+    // Frame loop. `line` counts from the start of the frame; the driver calls
+    // this once per scanline and blits `out` (palette indices) when it returns
+    // true, meaning the line belongs to the active display.
+    bool scanline(int line, uint16_t* out, int width);
+    void end_frame();
 
-    // SuperGrafx / debug
-    uint16_t vram_read(uint16_t addr) const { return vram_[addr & (kVramWords - 1)]; }
-    void vram_write(uint16_t addr, uint16_t value) { vram_[addr & (kVramWords - 1)] = value; }
+    int display_start() const { return (vpr_ & 0x1f) + 1 + ((vpr_ >> 8) & 0xff) + 2; }
+    int display_height() const { return (vdw_ & 0x1ff) + 1; }
+    // Visible pixels per line, from the HDW field of HDR.
+    int display_width() const { return ((hdr_ & 0x7f) + 1) * 8; }
+    // Line of the active display drawn by the last scanline() that returned true.
+    int display_line() const { return display_line_; }
+
+    uint16_t vram(int address) const { return vram_[size_t(address) & (kVramWords - 1)]; }
+    void set_vram(int address, uint16_t value) {
+        vram_[size_t(address) & (kVramWords - 1)] = value;
+    }
+    uint16_t sat(int index) const { return sat_[size_t(index) & 0xff]; }
+    uint8_t status() const { return status_; }
+    uint16_t reg(int index) const { return regs_[size_t(index) & 0x1f]; }
 
 private:
-    enum R : int {
-        MAWR = 0, MARR = 1, VWR = 2, VRR = 2,
-        CR = 5, RCR = 6, BXR = 7, BYR = 8,
-        MWR = 9, HSR = 10, HDR = 11, VPR = 12,
-        VDW = 13, VCR = 14, DCR = 15, SOUR = 16,
-        DESR = 17, LENR = 18, DVSSR = 19
-    };
-
-    void select_reg(uint8_t index);
-    void write_data(uint16_t value);
-    uint16_t read_data();
+    void register_w(int index, uint16_t value, bool high_byte);
+    void raise_irq(uint8_t flag);
     void update_irq();
-    void do_satb_dma();
-    void fetch_sprites(int display_y);
-    void render_line(int display_y, uint16_t* out, int width);
-
-    uint16_t bg_pixel(int x, int y) const;
-    uint16_t sprite_pixel(int x, int line_local, int& out_pri) const;
+    void vram_dma();
+    void satb_dma();
+    void render_background(uint16_t* out, int width);
+    void render_sprites(int display_line, uint16_t* out, int width);
+    uint16_t increment() const;
 
     std::array<uint16_t, kVramWords> vram_{};
-    std::array<uint16_t, kSatWords> sat_{};
-    std::array<uint16_t, 20> reg_{};
+    std::array<uint16_t, 0x100> sat_{};  // 64 sprites x 4 words
+    std::array<uint16_t, 0x20> regs_{};
 
-    uint8_t addr_reg_ = 0;
-    uint16_t status_ = 0;
-    uint16_t vram_read_buf_ = 0;
-    bool have_low_ = false;
-    uint8_t low_byte_ = 0;
+    uint8_t reg_index_ = 0;
+    uint8_t write_latch_ = 0;
+    uint8_t status_ = 0;
+    bool irq_asserted_ = false;
 
-    int bg_y_ = 0;
-    bool vblank_ = false;
-    bool sprite_limit_ = true;
+    uint16_t mawr_ = 0, marr_ = 0, cr_ = 0, rcr_ = 0, bxr_ = 0, byr_ = 0, mwr_ = 0;
+    uint16_t vpr_ = 0, vdw_ = 0, vcr_ = 0, dcr_ = 0;
+    uint16_t hsr_ = 0, hdr_ = 0;
+    uint16_t sour_ = 0, desr_ = 0, lenr_ = 0, dvssr_ = 0;
+    uint16_t bg_y_ = 0;
+    int display_line_ = 0;
+    bool satb_pending_ = false;
 
-    // Per-line sprite cache (up to 16)
-    struct LineSprite {
-        int x = 0;
-        int width = 16;
-        int height = 16;
-        int pattern = 0;
-        int palette = 0;
-        int row = 0;  // row within sprite for this line
-        bool priority = false;
-        bool hflip = false;
-    };
-    std::array<LineSprite, kSpritesPerLine> line_spr_{};
-    int line_spr_count_ = 0;
+    std::array<uint16_t, kMaxWidth> sprite_line_{};
+    std::array<uint8_t, kMaxWidth> sprite_front_{};
 
-    IrqHandler irq_;
-};
-
-// SuperGrafx HuC6202 VPC — mixes two VDC pixel streams.
-class HuC6202 {
-public:
-    void reset();
-    void write(uint8_t port, uint8_t value);
-    uint8_t read(uint8_t port);
-
-    // Combine VDC1 + VDC2 9-bit palette indices into one index (0x200 = transparent).
-    uint16_t mix(uint16_t p0, uint16_t p1, int x) const;
-
-private:
-    uint8_t priority_[2]{};
-    uint16_t window_[2]{};
-    uint8_t st_mode_ = 0;
+    std::function<void(bool)> irq_handler_;
 };
 
 }  // namespace dsp

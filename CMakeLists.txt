@@ -207,6 +207,8 @@ add_executable(dsp_tests
   src/sound/ym2203.cpp
   src/sound/sega_pcm.cpp
   src/sound/upd7759.cpp
+  src/video/huc6270.cpp
+  src/video/huc6260.cpp
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/nes_ppu.cpp
@@ -274,6 +276,7 @@ add_executable(dsp_tests
   src/drivers/outrun.cpp
   src/drivers/hangon.cpp
   src/drivers/system16.cpp
+  src/drivers/pcengine.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

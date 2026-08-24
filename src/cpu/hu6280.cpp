@@ -166,6 +166,27 @@ void HuC6280::irq_status_w(uint8_t offset, uint8_t value) {
     }
 }
 
+uint8_t HuC6280::irq_status_r(uint8_t offset) const {
+    switch (offset & 3) {
+        case 2:
+            return uint8_t(irq_mask_ | (io_buffer_ & 0xf8));
+        case 3: {
+            uint8_t status = 0;
+            if (irq_state_[1] != IrqLine::Clear) status |= 0x01;  // IRQ2
+            if (irq_state_[0] != IrqLine::Clear) status |= 0x02;  // IRQ1
+            if (irq_state_[2] != IrqLine::Clear) status |= 0x04;  // timer
+            return uint8_t(status | (io_buffer_ & 0xf8));
+        }
+        default:
+            return io_buffer_;
+    }
+}
+
+uint8_t HuC6280::timer_r() const {
+    // Only the countdown is readable; the top bit floats with the I/O buffer.
+    return uint8_t(((timer_value_ >> 10) & 0x7f) | (io_buffer_ & 0x80));
+}
+
 void HuC6280::timer_w(uint8_t offset, uint8_t value) {
     io_buffer_ = value;
     if ((offset & 1) == 0) {
@@ -175,39 +196,6 @@ void HuC6280::timer_w(uint8_t offset, uint8_t value) {
         if ((value & 1) != 0 && timer_status_ == 0) timer_value_ = timer_load_;
         timer_status_ = value & 1;
     }
-}
-
-
-uint8_t HuC6280::irq_status_r(uint8_t offset) {
-    switch (offset & 3) {
-        case 0:
-        case 1:
-            // Disable register is write-only; return open bus buffer
-            return io_buffer_;
-        case 2: {
-            // IRQ state: bit0=IRQ2, bit1=IRQ1, bit2=timer
-            uint8_t v = 0;
-            if (irq_state_[1] != IrqLine::Clear) v |= 1;  // IRQ2
-            if (irq_state_[0] != IrqLine::Clear) v |= 2;  // IRQ1
-            if (irq_state_[2] != IrqLine::Clear) v |= 4;  // timer
-            return v;
-        }
-        case 3:
-            return irq_mask_ & 7;
-        default:
-            return io_buffer_;
-    }
-}
-
-uint8_t HuC6280::timer_r(uint8_t offset) {
-    if ((offset & 1) == 0) {
-        // Counter (7 bits): approximate remaining / 1024
-        int v = timer_value_ / 1024;
-        if (v < 0) v = 0;
-        if (v > 127) v = 127;
-        return uint8_t(v);
-    }
-    return timer_status_ & 1;
 }
 
 uint8_t HuC6280::get_flags() const {
@@ -703,17 +691,17 @@ int HuC6280::run(int cycles) {
                 pc_ |= uint16_t(pull() << 8);
                 if (irq_pending_ == 0) irq_pending_ = 2;
                 break;
-            case 0x03:  // ST0 #imm → VDC address/status port
+            case 0x03:  // st0, VDC register select
                 p.t = false;
-                write(0x1FE000, operand_);
+                write(0x1fe000, operand_);
                 break;
-            case 0x13:  // ST1 #imm → VDC data low
+            case 0x13:  // st1, VDC data low
                 p.t = false;
-                write(0x1FE002, operand_);
+                write(0x1fe002, operand_);
                 break;
-            case 0x23:  // ST2 #imm → VDC data high
+            case 0x23:  // st2, VDC data high
                 p.t = false;
-                write(0x1FE003, operand_);
+                write(0x1fe003, operand_);
                 break;
             case 0x42: {  // say
                 p.t = false;

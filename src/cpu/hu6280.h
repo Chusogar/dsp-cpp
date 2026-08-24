@@ -37,10 +37,10 @@ public:
     void set_irq_line(int irqline, IrqLine state);
     // $1ff400-$1ff403 control block.
     void irq_status_w(uint8_t offset, uint8_t value);
-    uint8_t irq_status_r(uint8_t offset);
-    // $1ff800-$1ff801 timer block.
+    uint8_t irq_status_r(uint8_t offset) const;
+    // $1fec00-$1fec01 timer block.
     void timer_w(uint8_t offset, uint8_t value);
-    uint8_t timer_r(uint8_t offset);
+    uint8_t timer_r() const;
 
     uint32_t clock() const { return clock_; }
     uint16_t pc() const { return pc_; }

@@ -404,10 +404,8 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "scv") return std::make_unique<dsp::Scv>();
 	
 	if (game == "pce" || game == "pcengine" || game == "tg16")
-	    return std::make_unique<dsp::PcEngine>(false);
-	if (game == "sgx" || game == "supergrafx")
-	    return std::make_unique<dsp::PcEngine>(true);
-
+	    return std::make_unique<dsp::PcEngine>();
+	
     return nullptr;
 }
 

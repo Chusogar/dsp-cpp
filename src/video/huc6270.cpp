@@ -1,366 +1,322 @@
 #include "video/huc6270.h"
 
 #include <algorithm>
-#include <cstring>
 
 namespace dsp {
 namespace {
 
-constexpr uint16_t ST_CR = 0x01;
-constexpr uint16_t ST_OR = 0x02;
-constexpr uint16_t ST_RR = 0x04;
-constexpr uint16_t ST_DS = 0x08;
-constexpr uint16_t ST_DV = 0x10;
-constexpr uint16_t ST_VD = 0x20;
-constexpr uint16_t ST_BSY = 0x40;
+constexpr uint16_t kVramMask = HuC6270::kVramWords - 1;
 
-int bat_width(uint16_t mwr) {
-    switch ((mwr >> 4) & 3) {
-        case 0: return 32;
-        case 1: return 64;
-        default: return 128;
+// Sprite geometry from the CGX/CGY fields of the attribute word.
+int sprite_width(uint16_t attr) { return ((attr >> 8) & 1) != 0 ? 32 : 16; }
+
+int sprite_height(uint16_t attr) {
+    switch ((attr >> 12) & 3) {
+        case 0: return 16;
+        case 1: return 32;
+        default: return 64;
     }
 }
-int bat_height(uint16_t mwr) { return (mwr & 0x40) ? 64 : 32; }
 
 }  // namespace
 
 void HuC6270::reset() {
     vram_.fill(0);
     sat_.fill(0);
-    reg_.fill(0);
-    reg_[HSR] = 0x0202;
-    reg_[HDR] = 0x041F;  // 32 tiles → 256px
-    reg_[VPR] = 0x0F02;
-    reg_[VDW] = 0x00EF;
-    reg_[VCR] = 0x0003;
-    addr_reg_ = 0;
+    regs_.fill(0);
+    reg_index_ = 0;
+    write_latch_ = 0;
     status_ = 0;
-    vram_read_buf_ = 0;
-    have_low_ = false;
-    low_byte_ = 0;
+    irq_asserted_ = false;
+    mawr_ = marr_ = cr_ = rcr_ = bxr_ = byr_ = mwr_ = 0;
+    vpr_ = 0x0f02;
+    vdw_ = 0x00ef;
+    vcr_ = 0x0003;
+    dcr_ = 0;
+    hsr_ = 0x0202;
+    hdr_ = 0x031f;
+    sour_ = desr_ = lenr_ = dvssr_ = 0;
     bg_y_ = 0;
-    vblank_ = false;
-    line_spr_count_ = 0;
-    if (irq_) irq_(false);
+    display_line_ = 0;
+    satb_pending_ = false;
+    if (irq_handler_) irq_handler_(false);
 }
 
-int HuC6270::display_width() const {
-    return std::min(kMaxWidth, ((reg_[HDR] & 0x7F) + 1) * 8);
-}
-
-int HuC6270::display_height() const {
-    return std::min(kMaxHeight, int(reg_[VDW] & 0x1FF) + 1);
-}
-
-void HuC6270::select_reg(uint8_t index) {
-    addr_reg_ = index & 0x1F;
-    have_low_ = false;
-}
-
-void HuC6270::write_data(uint16_t value) {
-    const int r = addr_reg_;
-    if (r >= 20) return;
-    reg_[r] = value;
-    if (r == VWR) {
-        vram_[reg_[MAWR] & (kVramWords - 1)] = value;
-        static const int kInc[4] = {1, 32, 64, 128};
-        reg_[MAWR] = uint16_t(reg_[MAWR] + kInc[(reg_[CR] >> 11) & 3]);
-    } else if (r == MARR) {
-        vram_read_buf_ = vram_[reg_[MARR] & (kVramWords - 1)];
-        static const int kInc[4] = {1, 32, 64, 128};
-        reg_[MARR] = uint16_t(reg_[MARR] + kInc[(reg_[CR] >> 11) & 3]);
+uint16_t HuC6270::increment() const {
+    switch ((cr_ >> 11) & 3) {
+        case 0: return 1;
+        case 1: return 32;
+        case 2: return 64;
+        default: return 128;
     }
 }
 
-uint16_t HuC6270::read_data() {
-    if (addr_reg_ == VRR || addr_reg_ == 2) {
-        const uint16_t data = vram_read_buf_;
-        vram_read_buf_ = vram_[reg_[MARR] & (kVramWords - 1)];
-        static const int kInc[4] = {1, 32, 64, 128};
-        reg_[MARR] = uint16_t(reg_[MARR] + kInc[(reg_[CR] >> 11) & 3]);
-        return data;
-    }
-    return (addr_reg_ < 20) ? reg_[addr_reg_] : 0;
+void HuC6270::raise_irq(uint8_t flag) {
+    status_ |= flag;
+    update_irq();
 }
 
-void HuC6270::write(uint8_t port, uint8_t value) {
-    switch (port & 3) {
-        case 0:
-            select_reg(value);
-            break;
-        case 2:
-            low_byte_ = value;
-            have_low_ = true;
-            break;
-        case 3:
-            if (have_low_) {
-                write_data(uint16_t(low_byte_ | (uint16_t(value) << 8)));
-                have_low_ = false;
-            } else {
-                write_data(uint16_t(value) << 8);
-            }
-            break;
-        default:
-            break;
-    }
+void HuC6270::update_irq() {
+    uint8_t enabled = 0;
+    if ((cr_ & 0x01) != 0) enabled |= kStatusCollision;
+    if ((cr_ & 0x02) != 0) enabled |= kStatusOverflow;
+    if ((cr_ & 0x04) != 0) enabled |= kStatusRaster;
+    if ((cr_ & 0x08) != 0) enabled |= kStatusVblank;
+    if ((dcr_ & 0x01) != 0) enabled |= kStatusSatbDone;
+    if ((dcr_ & 0x02) != 0) enabled |= kStatusDmaDone;
+    const bool assert = (status_ & enabled) != 0;
+    if (assert == irq_asserted_) return;
+    irq_asserted_ = assert;
+    if (irq_handler_) irq_handler_(assert);
 }
 
-uint8_t HuC6270::read(uint8_t port) {
-    switch (port & 3) {
+uint8_t HuC6270::read(uint8_t offset) {
+    switch (offset & 3) {
         case 0: {
-            const uint8_t s = uint8_t(status_ & 0x7F);
-            status_ = uint16_t(status_ & ST_BSY);
+            const uint8_t value = status_;
+            status_ = 0;
             update_irq();
-            return s;
+            return value;
         }
-        case 2: {
-            const uint16_t v = read_data();
-            low_byte_ = uint8_t(v & 0xFF);
-            return low_byte_;
+        case 2:
+            return uint8_t(vram_[marr_ & kVramMask] & 0xff);
+        case 3: {
+            const uint8_t value = uint8_t(vram_[marr_ & kVramMask] >> 8);
+            marr_ = uint16_t(marr_ + increment());
+            return value;
         }
-        case 3:
-            return uint8_t((read_data() >> 8) & 0xFF);  // rare
         default:
             return 0;
     }
 }
 
-void HuC6270::update_irq() {
-    if (!irq_) return;
-    const bool want =
-        ((status_ & ST_VD) && (reg_[CR] & 0x08)) ||
-        ((status_ & ST_RR) && (reg_[CR] & 0x04)) ||
-        ((status_ & ST_OR) && (reg_[CR] & 0x01)) ||
-        ((status_ & ST_CR) && (reg_[CR] & 0x02));
-    irq_(want);
+void HuC6270::write(uint8_t offset, uint8_t value) {
+    switch (offset & 3) {
+        case 0:
+            reg_index_ = value & 0x1f;
+            break;
+        case 2:
+            write_latch_ = value;
+            register_w(reg_index_, uint16_t((regs_[reg_index_] & 0xff00) | value), false);
+            break;
+        case 3:
+            register_w(reg_index_, uint16_t((uint16_t(value) << 8) | write_latch_), true);
+            break;
+        default:
+            break;
+    }
 }
 
-void HuC6270::do_satb_dma() {
-    const uint16_t src = reg_[DVSSR];
-    for (int i = 0; i < kSatWords; ++i)
-        sat_[i] = vram_[(src + i) & (kVramWords - 1)];
-    status_ = uint16_t(status_ | ST_DS);
+void HuC6270::register_w(int index, uint16_t value, bool high_byte) {
+    regs_[size_t(index)] = value;
+    switch (index) {
+        case 0x00:
+            mawr_ = value;
+            break;
+        case 0x01:
+            marr_ = value;
+            break;
+        case 0x02:
+            // VWR only commits once the high byte arrives.
+            if (high_byte) {
+                vram_[mawr_ & kVramMask] = value;
+                mawr_ = uint16_t(mawr_ + increment());
+            }
+            break;
+        case 0x05:
+            cr_ = value;
+            update_irq();
+            break;
+        case 0x06:
+            rcr_ = value & 0x3ff;
+            break;
+        case 0x07:
+            bxr_ = value & 0x3ff;
+            break;
+        case 0x08:
+            byr_ = value & 0x1ff;
+            bg_y_ = byr_;
+            break;
+        case 0x09:
+            mwr_ = value;
+            break;
+        case 0x0a:
+            hsr_ = value;
+            break;
+        case 0x0b:
+            hdr_ = value;
+            break;
+        case 0x0c:
+            vpr_ = value;
+            break;
+        case 0x0d:
+            vdw_ = value;
+            break;
+        case 0x0e:
+            vcr_ = value;
+            break;
+        case 0x0f:
+            dcr_ = value;
+            update_irq();
+            break;
+        case 0x10:
+            sour_ = value;
+            break;
+        case 0x11:
+            desr_ = value;
+            break;
+        case 0x12:
+            lenr_ = value;
+            if (high_byte) vram_dma();
+            break;
+        case 0x13:
+            dvssr_ = value;
+            satb_pending_ = true;
+            break;
+        default:
+            break;
+    }
 }
 
-void HuC6270::fetch_sprites(int display_y) {
-    line_spr_count_ = 0;
-    if (!(reg_[CR] & 0x40)) return;
+void HuC6270::vram_dma() {
+    const int source_step = (dcr_ & 0x04) != 0 ? -1 : 1;
+    const int dest_step = (dcr_ & 0x08) != 0 ? -1 : 1;
+    int length = int(lenr_) + 1;
+    while (length-- > 0) {
+        vram_[desr_ & kVramMask] = vram_[sour_ & kVramMask];
+        sour_ = uint16_t(sour_ + source_step);
+        desr_ = uint16_t(desr_ + dest_step);
+    }
+    lenr_ = 0xffff;
+    raise_irq(kStatusDmaDone);
+}
 
-    int overflow = 0;
-    for (int i = 0; i < 64; ++i) {
-        const uint16_t sy = sat_[i * 4 + 0] & 0x3FF;
-        const uint16_t sx = sat_[i * 4 + 1] & 0x3FF;
-        const uint16_t pattern = sat_[i * 4 + 2];
-        const uint16_t attr = sat_[i * 4 + 3];
+void HuC6270::satb_dma() {
+    for (int i = 0; i < int(sat_.size()); i++) {
+        sat_[size_t(i)] = vram_[(dvssr_ + i) & kVramMask];
+    }
+    satb_pending_ = (dcr_ & 0x10) != 0;
+    raise_irq(kStatusSatbDone);
+}
 
-        const int spr_y = int(sy) - 64;
-        const int hbits = (attr >> 12) & 3;
-        const int height = (hbits == 0) ? 16 : (hbits == 1) ? 32 : 64;
-        if (display_y < spr_y || display_y >= spr_y + height) continue;
-
-        if (line_spr_count_ >= kSpritesPerLine) {
-            overflow = 1;
-            if (sprite_limit_) break;
-            continue;
+bool HuC6270::scanline(int line, uint16_t* out, int width) {
+    const int start = display_start();
+    const int height = display_height();
+    if (line == start) bg_y_ = byr_;
+    if (line < start || line >= start + height) {
+        if (line == start + height) {
+            raise_irq(kStatusVblank);
+            if (satb_pending_) satb_dma();
         }
+        return false;
+    }
+    display_line_ = line - start;
+    if (int(rcr_ & 0x3ff) - 64 == display_line_) raise_irq(kStatusRaster);
+    width = std::min(width, kMaxWidth);
+    render_background(out, width);
+    render_sprites(display_line_, out, width);
+    bg_y_ = uint16_t(bg_y_ + 1);
+    return true;
+}
 
-        LineSprite& ls = line_spr_[line_spr_count_++];
-        ls.x = int(sx) - 32;
-        ls.width = (attr & 0x100) ? 32 : 16;
-        ls.height = height;
-        ls.pattern = pattern & 0x7FF;
-        // CGY: for tall sprites, pattern bits select which 16-row block
-        ls.palette = attr & 0x0F;
-        ls.priority = (attr & 0x80) != 0;
-        ls.hflip = (attr & 0x800) != 0;
-        int row = display_y - spr_y;
-        if (attr & 0x8000) row = height - 1 - row;  // CGY vflip uses bit 15? PCE uses bit 15 of attr for y flip = 0x8000
-        // Correct: vertical flip is bit 15 of attribute word... actually bit 15 is unused; V flip is bit 11 (0x800) is H, bit 15?
-        // Standard: bit 11 = H-flip (0x800), bit 15 = V-flip (0x8000) — some docs say bit 14-15 for CGY
-        // MAME: yflip = BIT(attr, 15)
-        if (attr & 0x8000) {
-            // already applied if we used 0x8000 above incorrectly with height
+void HuC6270::end_frame() {
+    if (satb_pending_) satb_dma();
+}
+
+void HuC6270::render_background(uint16_t* out, int width) {
+    if ((cr_ & 0x80) == 0) {
+        std::fill(out, out + width, uint16_t(0));
+        return;
+    }
+    int map_width = 32;
+    switch ((mwr_ >> 4) & 3) {
+        case 0: map_width = 32; break;
+        case 1: map_width = 64; break;
+        default: map_width = 128; break;
+    }
+    const int map_height = ((mwr_ >> 6) & 1) != 0 ? 64 : 32;
+    const int y = bg_y_ & (map_height * 8 - 1);
+    const int row = y & 7;
+    const int tile_row = (y >> 3) * map_width;
+    for (int px = 0; px < width; px++) {
+        const int x = (bxr_ + px) & (map_width * 8 - 1);
+        const uint16_t entry = vram_[uint16_t(tile_row + (x >> 3)) & kVramMask];
+        const int address = ((entry & 0xfff) * 16 + row) & kVramMask;
+        const uint16_t plane01 = vram_[size_t(address)];
+        const uint16_t plane23 = vram_[size_t((address + 8) & kVramMask)];
+        const int bit = 7 - (x & 7);
+        const int index = ((plane01 >> bit) & 1) | (((plane01 >> (bit + 8)) & 1) << 1) |
+                          (((plane23 >> bit) & 1) << 2) | (((plane23 >> (bit + 8)) & 1) << 3);
+        out[px] = index != 0 ? uint16_t(((entry >> 12) << 4) | index) : uint16_t(0);
+    }
+}
+
+void HuC6270::render_sprites(int display_line, uint16_t* out, int width) {
+    if ((cr_ & 0x40) == 0) return;
+    std::fill(sprite_line_.begin(), sprite_line_.begin() + width, uint16_t(0));
+    std::fill(sprite_front_.begin(), sprite_front_.begin() + width, uint8_t(0));
+
+    // Lower numbered sprites win, so the list is drawn back to front.
+    std::array<int, kSpritesPerLine> visible{};
+    int count = 0;
+    for (int i = 0; i < kSprites; i++) {
+        const int sy = int(sat_[size_t(i * 4)] & 0x3ff) - 64;
+        const int height = sprite_height(sat_[size_t(i * 4 + 3)]);
+        if (display_line < sy || display_line >= sy + height) continue;
+        if (count == kSpritesPerLine) {
+            raise_irq(kStatusOverflow);
+            break;
         }
-        // Re-read: HuC6270 attr: bit11=Hflip, bit15=Vflip
-        ls.row = (attr & 0x8000) ? (height - 1 - (display_y - spr_y)) : (display_y - spr_y);
-        // Wide sprite pattern alignment
-        if (ls.width == 32) ls.pattern &= ~1;
-        if (height >= 32) ls.pattern &= ~2;
-        if (height >= 64) ls.pattern &= ~4;
-    }
-    if (overflow) {
-        status_ = uint16_t(status_ | ST_OR);
-    }
-}
-
-uint16_t HuC6270::bg_pixel(int x, int y) const {
-    if (!(reg_[CR] & 0x80)) return 0;
-
-    const int bw = bat_width(reg_[MWR]);
-    const int bh = bat_height(reg_[MWR]);
-    const int scroll_x = (reg_[BXR] + x) & 0x3FF;
-    const int scroll_y = (reg_[BYR] + y) & 0x3FF;
-    const int tx = (scroll_x >> 3) & (bw - 1);
-    const int ty = (scroll_y >> 3) & (bh - 1);
-    const uint16_t bat = vram_[(ty * bw + tx) & (kVramWords - 1)];
-    const int code = bat & 0x0FFF;
-    const int pal = (bat >> 12) & 0x0F;
-    const int cx = scroll_x & 7;
-    const int cy = scroll_y & 7;
-    // 4bpp: each tile = 16 words (8 rows × 2 words of bitplanes)
-    const int addr = (code << 4) + cy;
-    const uint16_t w0 = vram_[addr & (kVramWords - 1)];
-    const uint16_t w1 = vram_[(addr + 8) & (kVramWords - 1)];
-    const int bit = 7 - cx;
-    const int c =
-        ((w0 >> bit) & 1) |
-        (((w0 >> (bit + 8)) & 1) << 1) |
-        (((w1 >> bit) & 1) << 2) |
-        (((w1 >> (bit + 8)) & 1) << 3);
-    if (c == 0) return 0;
-    return uint16_t((pal << 4) | c);
-}
-
-uint16_t HuC6270::sprite_pixel(int x, int /*line*/, int& out_pri) const {
-    out_pri = 0;
-    uint16_t color = 0;
-    for (int i = 0; i < line_spr_count_; ++i) {
-        const LineSprite& ls = line_spr_[i];
-        const int dx = x - ls.x;
-        if (dx < 0 || dx >= ls.width) continue;
-
-        int col = ls.hflip ? (ls.width - 1 - dx) : dx;
-        const int half = (col >= 16) ? 1 : 0;
-        col &= 15;
-        const int row = ls.row & 15;
-        const int block = (ls.row >> 4);  // which 16-line block for 32/64
-
-        // Sprite pattern: 64 words per 16×16 cell
-        int code = ls.pattern;
-        if (ls.width == 32) code += half;
-        if (ls.height >= 32) code += block * 2;
-        // 64-tall: block 0..3
-        const int base = (code & 0x7FF) * 64;
-        const int row_addr = base + row;
-        const uint16_t p0 = vram_[(row_addr + 0) & (kVramWords - 1)];
-        const uint16_t p1 = vram_[(row_addr + 16) & (kVramWords - 1)];
-        const uint16_t p2 = vram_[(row_addr + 32) & (kVramWords - 1)];
-        const uint16_t p3 = vram_[(row_addr + 48) & (kVramWords - 1)];
-        const int bit = 15 - col;
-        const int c =
-            ((p0 >> bit) & 1) |
-            (((p1 >> bit) & 1) << 1) |
-            (((p2 >> bit) & 1) << 2) |
-            (((p3 >> bit) & 1) << 3);
-        if (c == 0) continue;
-        color = uint16_t(0x100 | (ls.palette << 4) | c);
-        out_pri = ls.priority ? 1 : 0;
-        break;  // first (lowest index = highest priority among sprites)
-    }
-    return color;
-}
-
-void HuC6270::render_line(int display_y, uint16_t* out, int width) {
-    fetch_sprites(display_y);
-    for (int x = 0; x < width; ++x) {
-        const uint16_t bg = bg_pixel(x, display_y);
-        int spri = 0;
-        const uint16_t sp = sprite_pixel(x, display_y, spri);
-        // Priority: sprite over BG when spri=1 or BG transparent
-        if (sp && (spri || bg == 0))
-            out[x] = sp;
-        else
-            out[x] = bg;
-    }
-}
-
-void HuC6270::run_line(int line, uint16_t* pixel_out, int width) {
-    const int disp_h = display_height();
-    const int active_start = 14;
-    const int active_end = active_start + disp_h;
-
-    status_ = uint16_t(status_ & ~ST_RR);
-
-    if (line == active_start) {
-        bg_y_ = 0;
-        vblank_ = false;
-        status_ = uint16_t(status_ & ~ST_VD);
+        visible[size_t(count++)] = i;
     }
 
-    if (line >= active_start && line < active_end) {
-        if (pixel_out) {
-            const int w = std::min(width, display_width());
-            render_line(line - active_start, pixel_out, w);
-            for (int x = w; x < width; ++x) pixel_out[x] = 0;
+    bool collision = false;
+    for (int slot = count - 1; slot >= 0; slot--) {
+        const int i = visible[size_t(slot)];
+        const uint16_t attr = sat_[size_t(i * 4 + 3)];
+        const int sy = int(sat_[size_t(i * 4)] & 0x3ff) - 64;
+        const int sx = int(sat_[size_t(i * 4 + 1)] & 0x3ff) - 32;
+        const int height = sprite_height(attr);
+        const int cell_width = sprite_width(attr);
+        int pattern = (sat_[size_t(i * 4 + 2)] >> 1) & 0x3ff;
+        if (cell_width == 32) pattern &= ~1;
+        if (height == 32) pattern &= ~2;
+        if (height == 64) pattern &= ~6;
+        const int palette = attr & 0x0f;
+        const bool front = (attr & 0x80) != 0;
+        int sprite_row = display_line - sy;
+        if ((attr & 0x8000) != 0) sprite_row = height - 1 - sprite_row;
+        const int cell_y = sprite_row >> 4;
+        const int row = sprite_row & 15;
+        for (int cell_x = 0; cell_x < cell_width / 16; cell_x++) {
+            const int cell = pattern + cell_y * 2 + cell_x;
+            const int address = (cell * 64 + row) & kVramMask;
+            const uint16_t plane0 = vram_[size_t(address)];
+            const uint16_t plane1 = vram_[size_t((address + 16) & kVramMask)];
+            const uint16_t plane2 = vram_[size_t((address + 32) & kVramMask)];
+            const uint16_t plane3 = vram_[size_t((address + 48) & kVramMask)];
+            for (int px = 0; px < 16; px++) {
+                int column = cell_x * 16 + px;
+                if ((attr & 0x0800) != 0) column = cell_width - 1 - column;
+                const int screen_x = sx + column;
+                if (screen_x < 0 || screen_x >= width) continue;
+                const int bit = 15 - px;
+                const int index = ((plane0 >> bit) & 1) | (((plane1 >> bit) & 1) << 1) |
+                                  (((plane2 >> bit) & 1) << 2) | (((plane3 >> bit) & 1) << 3);
+                if (index == 0) continue;
+                // Sprite 0 is drawn last, so anything already here overlaps it.
+                if (i == 0 && sprite_line_[size_t(screen_x)] != 0) collision = true;
+                sprite_line_[size_t(screen_x)] = uint16_t(0x100 | (palette << 4) | index);
+                sprite_front_[size_t(screen_x)] = front ? 1 : 0;
+            }
         }
-        ++bg_y_;
     }
+    if (collision) raise_irq(kStatusCollision);
 
-    // RCR: compare against line + $40 bias used by hardware
-    if ((reg_[RCR] & 0x3FF) != 0 &&
-        (reg_[RCR] & 0x3FF) == uint16_t(line + 0x40)) {
-        status_ = uint16_t(status_ | ST_RR);
-    }
-
-    if (line == active_end) {
-        vblank_ = true;
-        status_ = uint16_t(status_ | ST_VD);
-        do_satb_dma();
-    }
-
-    update_irq();
-}
-
-// ---- HuC6202 VPC (SuperGrafx) ----
-
-void HuC6202::reset() {
-    priority_[0] = priority_[1] = 0x11;
-    window_[0] = window_[1] = 0;
-    st_mode_ = 0;
-}
-
-void HuC6202::write(uint8_t port, uint8_t value) {
-    switch (port & 7) {
-        case 0: priority_[0] = value; break;
-        case 1: priority_[1] = value; break;
-        case 2: window_[0] = uint16_t((window_[0] & 0xFF00) | value); break;
-        case 3: window_[0] = uint16_t((window_[0] & 0x00FF) | (value << 8)); break;
-        case 4: window_[1] = uint16_t((window_[1] & 0xFF00) | value); break;
-        case 5: window_[1] = uint16_t((window_[1] & 0x00FF) | (value << 8)); break;
-        case 6: st_mode_ = value; break;
-        default: break;
-    }
-}
-
-uint8_t HuC6202::read(uint8_t port) {
-    switch (port & 7) {
-        case 0: return priority_[0];
-        case 1: return priority_[1];
-        case 2: return uint8_t(window_[0] & 0xFF);
-        case 3: return uint8_t(window_[0] >> 8);
-        case 4: return uint8_t(window_[1] & 0xFF);
-        case 5: return uint8_t(window_[1] >> 8);
-        case 6: return st_mode_;
-        default: return 0xFF;
-    }
-}
-
-uint16_t HuC6202::mix(uint16_t p0, uint16_t p1, int x) const {
-    // Simplified VPC: choose VDC based on windows / priority settings.
-    const int w0 = window_[0] & 0x3FF;
-    const int w1 = window_[1] & 0x3FF;
-    int region = 0;
-    if (x >= w1) region = 2;
-    else if (x >= w0) region = 1;
-    const uint8_t pri = priority_[region > 1 ? 1 : 0];
-    // Bits select source: lower nibble = BG/sprite source rules (simplified)
-    const int mode = (pri >> (region == 1 ? 0 : 4)) & 0x0F;
-    switch (mode & 3) {
-        case 0: return p0 ? p0 : p1;
-        case 1: return p1 ? p1 : p0;
-        case 2: return p0;
-        default: return p1;
+    for (int px = 0; px < width; px++) {
+        const uint16_t sprite = sprite_line_[size_t(px)];
+        if (sprite == 0) continue;
+        if (sprite_front_[size_t(px)] != 0 || out[px] == 0) out[px] = sprite;
     }
 }
 
