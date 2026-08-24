@@ -166,6 +166,27 @@ void HuC6280::irq_status_w(uint8_t offset, uint8_t value) {
     }
 }
 
+uint8_t HuC6280::irq_status_r(uint8_t offset) const {
+    switch (offset & 3) {
+        case 2:
+            return uint8_t(irq_mask_ | (io_buffer_ & 0xf8));
+        case 3: {
+            uint8_t status = 0;
+            if (irq_state_[1] != IrqLine::Clear) status |= 0x01;  // IRQ2
+            if (irq_state_[0] != IrqLine::Clear) status |= 0x02;  // IRQ1
+            if (irq_state_[2] != IrqLine::Clear) status |= 0x04;  // timer
+            return uint8_t(status | (io_buffer_ & 0xf8));
+        }
+        default:
+            return io_buffer_;
+    }
+}
+
+uint8_t HuC6280::timer_r() const {
+    // Only the countdown is readable; the top bit floats with the I/O buffer.
+    return uint8_t(((timer_value_ >> 10) & 0x7f) | (io_buffer_ & 0x80));
+}
+
 void HuC6280::timer_w(uint8_t offset, uint8_t value) {
     io_buffer_ = value;
     if ((offset & 1) == 0) {
@@ -670,10 +691,17 @@ int HuC6280::run(int cycles) {
                 pc_ |= uint16_t(pull() << 8);
                 if (irq_pending_ == 0) irq_pending_ = 2;
                 break;
-            case 0x03:
-            case 0x13:
-            case 0x23:  // st0/st1/st2, VDC ports not present on this board
+            case 0x03:  // st0, VDC register select
                 p.t = false;
+                write(0x1fe000, operand_);
+                break;
+            case 0x13:  // st1, VDC data low
+                p.t = false;
+                write(0x1fe002, operand_);
+                break;
+            case 0x23:  // st2, VDC data high
+                p.t = false;
+                write(0x1fe003, operand_);
                 break;
             case 0x42: {  // say
                 p.t = false;

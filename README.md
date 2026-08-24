@@ -20,7 +20,8 @@ Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
 **MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**,
 **EXL-100** / **EXELTEL**. Consoles: NES, Game Boy / Game Boy
-Color, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
+Color, **NEC PC Engine / TurboGrafx-16**, **Atari Lynx**,
+**Super Cassette Vision**, Sega Master System / Game Gear,
 **Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
@@ -69,6 +70,10 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | NES APU | `src/cpu/n2a03.pas` | 2A03 squares/triangle/noise/DPCM, resampled to 44100 Hz |
 | NES mappers | `src/consolas/nes_mappers.pas` | 0, 1 (MMC1), 2, 3, 4 (MMC3/MMC6), 7, 9–11, 13, 15, 34, 66, 68, 70, 71, 76, 79/146, 87, 88, 93–95, 113, 180, 184, 185, 206 |
 | NES driver | `src/consolas/nes.pas` | NTSC 256×240, iNES carts (plain or zipped), two controllers |
+| HuC6270 VDC | new (PC Engine hardware notes) | 64 KiB VRAM, scrolling BAT, 64 sprites, VRAM/SATB DMA, raster / vblank / collision IRQs |
+| HuC6260 VCE | new | 512 entry GRB palette, 256/341/512 pixel dot clocks |
+| HuC6280 PSG | new | Six channels: 32 step waveform RAM, DDA, noise, per channel balance, 44100 Hz |
+| PC Engine driver | new (`hu6280.pas` CPU core) | MPR banking, HuCards up to 4 MiB (SF2 mapper), work / backup RAM, timer and IRQ block, pad port |
 | C64 driver | `ordenadores/commodore64.pas` | PLA, 6510 port, keyboard matrix, TAP/PRG/T64/D64 loaders |
 | Apple Disk II | new (AppleWin 6-and-2 / MAME `a2diskiing`) | Slot 6 analog card, DOS 3.3 `.dsk`/`.do`, ProDOS `.po`, `.nib` |
 | Apple II video | new | 40/80-col text, lo-res, hi-res, double hi-res, 560×384 |
@@ -552,6 +557,30 @@ CHR-RAM carts (header CHR = 0) work. Player 1 uses the arrows plus Ctrl/Alt for
 A/B, `1` for Start and `5` for Select (the arcade coin button). There is no BIOS;
 the CPU starts at the cartridge reset vector. IRQ-heavy boards (VRC, FME-7, …)
 are still rejected at load time.
+
+### NEC PC Engine / TurboGrafx-16
+
+The HuC6280 core already ported for the Data East boards drives a new HuC6270
+VDC, HuC6260 VCE and the CPU's internal six channel PSG. HuCards are raw `.pce`
+/ `.bin` dumps (an optional 512 byte copier header is skipped, bit-swapped
+dumps are corrected) or a zip holding one:
+
+```bash
+./build/dsp --game pce /path/to/game.pce
+./build/dsp --game pcengine /path/to/game.zip
+./build/dsp --game pce --screenshot title.bmp --frames 180 --mute game.pce
+```
+
+`pce`, `pcengine`, `turbografx` and `tg16` all select the same machine. The
+frame is 262 lines of 1365 master clocks (59.9 Hz); the output is a fixed
+512x484 window, so the 256 and 341 pixel modes are stretched and every active
+line is doubled. Cards up to 1 MiB are mirrored to fill the 64 banks visible
+through the MPR registers, 384 KiB cards use the usual split mapping, and
+larger images use the Street Fighter II mapper (`$1ff0-$1ff3`). The 2 KiB of
+battery backup RAM lives in bank `$f7`; it is not saved to disk yet. The pad
+follows the SEL/CLR protocol on `$1ff000` with one controller: arrows plus
+Ctrl/Space for I, Alt/Z for II, `X` for SELECT and `1` for RUN. There is no
+system card, so CD-ROM titles and the multitap are out of scope.
 
 ### Sega Genesis / Mega Drive
 

@@ -146,6 +146,10 @@ add_executable(dsp
   src/video/gb_ppu.cpp
   src/machine/nes_mapper.cpp
   src/drivers/nes.cpp
+  src/drivers/pcengine.cpp
+  src/video/huc6270.cpp
+  src/video/huc6260.cpp
+  src/sound/huc6280_psg.cpp
   src/drivers/scv.cpp
   src/machine/mos6526.cpp
   src/machine/mos6566.cpp
@@ -169,6 +173,7 @@ add_executable(dsp_tests
   src/cpu/z80ctc.cpp
   src/cpu/m6809.cpp
   src/cpu/m6502.cpp
+  src/cpu/hu6280.cpp
   src/cpu/m68000.cpp
   src/cpu/hd63701.cpp
   src/cpu/m6805.cpp
@@ -187,6 +192,7 @@ add_executable(dsp_tests
   src/sound/msm5205.cpp
   src/sound/okim6295.cpp
   src/sound/nes_apu.cpp
+  src/sound/huc6280_psg.cpp
   src/sound/qsound.cpp
   src/sound/upd1771.cpp
   src/sound/tms5220.cpp
@@ -203,6 +209,8 @@ add_executable(dsp_tests
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/nes_ppu.cpp
+  src/video/huc6270.cpp
+  src/video/huc6260.cpp
   src/video/tms3556.cpp
   src/video/tms9918.cpp
   src/video/v9938.cpp
@@ -251,6 +259,7 @@ add_executable(dsp_tests
   src/drivers/amstrad_cpc.cpp
   src/drivers/msx2.cpp
   src/drivers/nes.cpp
+  src/drivers/pcengine.cpp
   src/drivers/c64.cpp
   src/drivers/apple2.cpp
   src/drivers/gameboy.cpp

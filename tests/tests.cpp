@@ -30,6 +30,7 @@
 #include "drivers/mcr.h"
 #include "drivers/msx2.h"
 #include "drivers/nes.h"
+#include "drivers/pcengine.h"
 #include "drivers/pv2000.h"
 #include "drivers/scv.h"
 #include "drivers/starwars.h"
@@ -56,6 +57,7 @@
 #include "machine/rp5c01.h"
 #include "machine/slapstic.h"
 #include "machine/spectrum_tape.h"
+#include "sound/huc6280_psg.h"
 #include "machine/trdos_disk.h"
 #include "machine/wd1793.h"
 #include "machine/starwars_math.h"
@@ -1452,6 +1454,181 @@ void test_nes_ines_and_memory() {
     nes.run_frame();
     const uint32_t pixel = nes.framebuffer()[0];
     check((pixel & 0xff000000) == 0xff000000, "the PPU writes opaque backdrop pixels");
+}
+
+// -------------------------- PC Engine ---------------------------------------
+
+std::vector<uint8_t> make_hucard(size_t size = 0x8000) {
+    std::vector<uint8_t> rom(size, 0xff);
+    // Entry point at physical $0400 (logical $e400 with MPR7 = 0): bra *
+    rom[0x0400] = 0x80;
+    rom[0x0401] = 0xfe;
+    rom[0x1ffe] = 0x00;
+    rom[0x1fff] = 0xe4;
+    return rom;
+}
+
+void test_pcengine_hucard_and_memory() {
+    dsp::PcEngine pce;
+    std::string error;
+    auto rom = make_hucard();
+    rom[0x2000] = 0x5a;  // first byte of HuCard bank 1
+    check(pce.load_hucard(rom, &error), "a 32 KiB HuCard image loads");
+    check(pce.debug_pc() == 0xe400, "reset fetches the HuCard vector through MPR7 = 0");
+    check(pce.debug_read(0x002000) == 0x5a, "HuCard bank 1 maps at physical $2000");
+    check(pce.debug_read(0x00a000) == 0x5a, "a 32 KiB card mirrors every 32 KiB");
+
+    pce.debug_write(0x1f0000, 0xa5);
+    check(pce.debug_read(0x1f0000) == 0xa5, "the work RAM bank $f8 is writable");
+    check(pce.debug_read(0x1f2000) == 0xa5, "bank $f9 mirrors the 8 KiB of work RAM");
+    pce.debug_write(0x1ee000, 0x3c);
+    check(pce.debug_read(0x1ee000) == 0x3c, "the backup RAM lives in bank $f7");
+    pce.debug_write(0x000100, 0x11);
+    check(pce.debug_read(0x000100) != 0x11, "HuCard space ignores writes");
+
+    // A 512 byte copier header in front of the image is dropped.
+    std::vector<uint8_t> headered(0x200, 0x00);
+    headered.insert(headered.end(), rom.begin(), rom.end());
+    dsp::PcEngine headed;
+    check(headed.load_hucard(headered, &error), "a headered HuCard loads");
+    check(headed.debug_pc() == 0xe400, "the 512 byte header is skipped");
+}
+
+void test_pcengine_joypad_and_timer() {
+    dsp::PcEngine pce;
+    std::string error;
+    check(pce.load_hucard(make_hucard(), &error), "the pad test HuCard loads");
+
+    dsp::MachineInputs inputs;
+    inputs.player1.button1 = true;
+    inputs.player1.left = true;
+    pce.set_inputs(inputs);
+
+    pce.debug_write(0x1ff000, 0x00);  // SEL low: buttons
+    check((pce.debug_read(0x1ff000) & 0x0f) == 0x0e, "button I pulls its pad line low");
+    pce.debug_write(0x1ff000, 0x01);  // SEL high: directions
+    check((pce.debug_read(0x1ff000) & 0x0f) == 0x07, "left pulls bit 3 of the direction nibble");
+    pce.debug_write(0x1ff000, 0x03);  // CLR high
+    check((pce.debug_read(0x1ff000) & 0x0f) == 0x00, "CLR clears the pad outputs");
+
+    pce.debug_write(0x1ff000, 0x00);
+    inputs.player1 = dsp::InputState{};
+    pce.set_inputs(inputs);
+    check((pce.debug_read(0x1ff000) & 0x0f) == 0x0f, "an idle pad reads all ones");
+
+    pce.debug_write(0x1fec00, 0x01);  // reload value 1 -> 2048 cycles
+    pce.debug_write(0x1fec01, 0x01);  // run
+    check((pce.debug_read(0x1fec00) & 0x7f) == 0x02, "the timer counts down from the reload value");
+}
+
+void test_pcengine_vdc_and_vce() {
+    dsp::PcEngine pce;
+    std::string error;
+    check(pce.load_hucard(make_hucard(), &error), "the video test HuCard loads");
+
+    dsp::HuC6270& vdc = pce.debug_vdc();
+    // One tile of solid colour index 1 at pattern $1000, BAT entry palette 1.
+    for (int row = 0; row < 8; row++) vdc.set_vram(0x1000 + row, 0x00ff);
+    vdc.set_vram(0x0000, uint16_t((1 << 12) | 0x100));
+    // The rest of the BAT points at the blank tile 2, whose pattern is zeroed.
+    for (int column = 1; column < 32; column++) vdc.set_vram(column, 0x0002);
+
+    // Palette entry 17 (palette 1, colour 1) is pure red, the backdrop is blue.
+    pce.debug_write(0x1fe402, 0x11);
+    pce.debug_write(0x1fe403, 0x00);
+    pce.debug_write(0x1fe404, 0x38);  // R = 7
+    pce.debug_write(0x1fe405, 0x00);
+    pce.debug_write(0x1fe402, 0x00);
+    pce.debug_write(0x1fe403, 0x00);
+    pce.debug_write(0x1fe404, 0x07);  // B = 7
+    pce.debug_write(0x1fe405, 0x00);
+
+    pce.debug_write(0x1fe000, 0x05);  // CR
+    pce.debug_write(0x1fe002, 0x80);  // background on
+    pce.debug_write(0x1fe003, 0x00);
+
+    pce.run_frame();
+    const uint32_t* frame = pce.framebuffer();
+    check(frame[0] == 0xffff0000u, "the tile pixel takes palette 1 colour 1");
+    check(frame[pce.screen_width() - 1] == 0xff0000ffu, "empty tiles show the VCE backdrop");
+    check(frame[pce.screen_width()] == frame[0], "active lines are doubled vertically");
+
+    // HDW selects the visible width, so a 128 pixel display stretches each tile.
+    pce.debug_write(0x1fe000, 0x0b);  // HDR
+    pce.debug_write(0x1fe002, 0x0f);
+    pce.debug_write(0x1fe003, 0x03);
+    pce.run_frame();
+    check(frame[31] == 0xffff0000u && frame[32] == 0xff0000ffu,
+          "a narrow HDW stretches the visible pixels across the screen");
+    pce.debug_write(0x1fe000, 0x0b);
+    pce.debug_write(0x1fe002, 0x1f);
+    pce.debug_write(0x1fe003, 0x03);
+
+    // VRAM DMA copies the tile to $2000 and reports through the status port.
+    pce.debug_write(0x1fe000, 0x10);  // SOUR
+    pce.debug_write(0x1fe002, 0x00);
+    pce.debug_write(0x1fe003, 0x10);
+    pce.debug_write(0x1fe000, 0x11);  // DESR
+    pce.debug_write(0x1fe002, 0x00);
+    pce.debug_write(0x1fe003, 0x20);
+    pce.debug_write(0x1fe000, 0x12);  // LENR
+    pce.debug_write(0x1fe002, 0x07);
+    pce.debug_write(0x1fe003, 0x00);
+    check(vdc.vram(0x2000) == 0x00ff && vdc.vram(0x2007) == 0x00ff,
+          "the VRAM DMA copies the requested block");
+    check((pce.debug_read(0x1fe000) & dsp::HuC6270::kStatusDmaDone) != 0,
+          "the VDC status port flags the finished DMA");
+    check((pce.debug_read(0x1fe000) & dsp::HuC6270::kStatusDmaDone) == 0,
+          "reading the status port clears the flags");
+}
+
+void test_pcengine_st_instructions_and_vblank() {
+    dsp::PcEngine pce;
+    std::string error;
+    auto rom = make_hucard();
+    // st0 #$05 / st1 #$08 / st2 #$00 -> CR = $0008, enabling the vblank IRQ,
+    // then wait for the interrupt with the raster IRQ masked off.
+    const uint8_t program[] = {
+        0x78,                    // sei
+        0x03, 0x05,              // st0 #$05
+        0x13, 0x08,              // st1 #$08
+        0x23, 0x00,              // st2 #$00
+        0x80, 0xfe,              // bra *
+    };
+    std::copy(std::begin(program), std::end(program), rom.begin() + 0x0400);
+    check(pce.load_hucard(rom, &error), "the ST test HuCard loads");
+
+    pce.run_frame();
+    check(pce.debug_vdc().reg(0x05) == 0x0008, "st0/st1/st2 reach the VDC register file");
+    check((pce.debug_read(0x1ff403) & 0x02) != 0, "the vblank interrupt asserts IRQ1");
+}
+
+void test_huc6280_psg() {
+    dsp::HuC6280Psg psg;
+    psg.reset();
+    check(psg.update() == 0, "a silent PSG outputs no sample");
+
+    psg.write(0x00, 0x00);  // select channel 0
+    psg.write(0x04, 0x40);  // waveform write mode
+    for (int i = 0; i < 32; i++) psg.write(0x06, uint8_t(i < 16 ? 0x00 : 0x1f));
+    psg.write(0x02, 0x10);  // period
+    psg.write(0x03, 0x00);
+    psg.write(0x05, 0xff);  // full balance
+    psg.write(0x01, 0xff);
+    psg.write(0x04, 0x9f);  // enable at full volume
+
+    bool positive = false;
+    bool negative = false;
+    for (int i = 0; i < 4096; i++) {
+        const int16_t sample = psg.update();
+        if (sample > 1000) positive = true;
+        if (sample < -1000) negative = true;
+    }
+    check(positive && negative, "the waveform channel swings both ways");
+
+    psg.write(0x04, 0xc0 | 0x1f);  // DDA mode, mid level
+    psg.write(0x06, 0x1f);
+    check(psg.update() > 0, "DDA writes drive the output directly");
 }
 
 void test_nes_unsupported_mapper() {
@@ -3747,6 +3924,11 @@ int main() {
     test_spectrum_ula();
     test_nes_apu_status();
     test_nes_ines_and_memory();
+    test_pcengine_hucard_and_memory();
+    test_pcengine_joypad_and_timer();
+    test_pcengine_vdc_and_vce();
+    test_pcengine_st_instructions_and_vblank();
+    test_huc6280_psg();
     test_nes_unsupported_mapper();
     test_nes_simple_mappers();
     test_nes_nestest_if_present();
