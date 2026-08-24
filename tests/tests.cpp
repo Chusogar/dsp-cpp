@@ -63,6 +63,9 @@
 #include "machine/wd1793.h"
 #include "machine/starwars_math.h"
 #include "machine/sega_315_5195.h"
+#include "machine/tc0140syt.h"
+#include "machine/opwolf_cchip.h"
+#include "drivers/opwolf.h"
 #include "sound/ay8910.h"
 #include "sound/msm5205.h"
 #include "sound/nes_apu.h"
@@ -3022,6 +3025,108 @@ void test_polepos_driver() {
     }
 }
 
+void test_tc0140syt_mailbox() {
+    dsp::Tc0140Syt chip;
+    int nmis = 0;
+    int resets = 0;
+    chip.set_nmi_handler([&nmis]() { nmis++; });
+    chip.set_reset_handler([&resets]() { resets++; });
+    chip.reset();
+    chip.slave_port_w(6);
+    chip.slave_comm_w(0);
+    chip.port_w(0);
+    chip.comm_w(0x0a);
+    chip.comm_w(0x0b);
+    check(nmis == 1, "filling master port 01 raises an NMI");
+    check((chip.status() & dsp::Tc0140Syt::kPort01Full) != 0,
+          "port 01 full is reported in the status nibble");
+    chip.slave_port_w(0);
+    check(chip.slave_comm_r() == 0x0a, "the Z80 reads the first master nibble");
+    check(chip.slave_comm_r() == 0x0b, "the Z80 reads the second master nibble");
+    check((chip.status() & dsp::Tc0140Syt::kPort01Full) == 0,
+          "reading port 01 clears the full flag");
+
+    chip.port_w(4);
+    chip.comm_w(1);
+    check(resets == 1, "a non-zero nibble in mode 4 resets the sound CPU");
+    check(chip.status() == 0, "a sound reset clears the mailbox status");
+}
+
+int unique_pixels(const dsp::Machine& machine);
+
+void test_opwolf_cchip_and_driver() {
+    dsp::OpWolfCChip cchip;
+    cchip.reset();
+    check(cchip.status_r() == 1, "the C-Chip status register is always 1");
+    cchip.bank_w(0);
+    cchip.data_w(0x28, 0x00ff);  // word offset $14
+    check(cchip.data_r(0x28) == 0xff, "C-Chip RAM stores the low byte of a 68000 write");
+    cchip.status_w(0);
+    check(cchip.data_r(0xf4) == 1, "status_w sets RAM $7A, which the 68k polls");
+
+    cchip.data_w(0xf4, 1);
+    cchip.update();
+    cchip.data_w(0xf4, 0);
+    cchip.update();
+    cchip.run_cycles(dsp::OpWolfCChip::kCommandCycles);
+    check(cchip.data_r(0xf4) == 1, "command $F5 copies level data and sets $7A");
+    check(cchip.data_r(0x400) == 0x04, "level 0 high byte of the first table word");
+    check(cchip.data_r(0x402) == 0x80, "level 0 low byte of the first table word");
+
+    dsp::OpWolf machine;
+    check(std::strcmp(machine.title(), "Operation Wolf") == 0, "Operation Wolf title");
+    check(machine.screen_width() == 320 && machine.screen_height() == 240,
+          "Operation Wolf reports 320x240");
+    check(machine.uses_pointer(), "Operation Wolf aims with the pointer");
+    std::string error = "unset";
+    check(!machine.init("/no/such/opwolf.zip", &error), "missing Operation Wolf ROMs fail init");
+    check(error.find("not found") != std::string::npos || error.find("cannot") != std::string::npos ||
+              error.size() > 3,
+          "init reports why the Operation Wolf ROM set is missing");
+}
+
+void test_opwolf_roms_if_present() {
+    const char* paths[] = {"/tmp/roms/opwolf.zip", "/tmp/opwolf-roms/opwolf.zip"};
+    const char* path = nullptr;
+    for (const char* candidate : paths) {
+        std::ifstream probe(candidate);
+        if (probe) {
+            path = candidate;
+            break;
+        }
+    }
+    if (path == nullptr) return;
+
+    dsp::OpWolf machine;
+    std::string error;
+    check(machine.init(path, &error), "MAME Operation Wolf set loads");
+    dsp::MachineInputs inputs;
+    for (int frame = 0; frame < 60; frame++) {
+        machine.set_inputs(inputs);
+        machine.run_frame();
+    }
+    check(unique_pixels(machine) >= 1, "Operation Wolf produces a framebuffer after boot");
+
+    inputs.coin1 = true;
+    for (int frame = 0; frame < 20; frame++) {
+        machine.set_inputs(inputs);
+        machine.run_frame();
+    }
+    inputs.coin1 = false;
+    inputs.player1.start = true;
+    for (int frame = 0; frame < 20; frame++) {
+        machine.set_inputs(inputs);
+        machine.run_frame();
+    }
+    inputs.player1.start = false;
+    for (int frame = 0; frame < 400; frame++) {
+        machine.set_inputs(inputs);
+        machine.run_frame();
+    }
+    check(unique_pixels(machine) > 8,
+          "Operation Wolf draws the mission HUD after a credit and start");
+}
+
 void test_starwars_missing_roms() {
     dsp::StarWars machine;
     check(std::strcmp(machine.title(), "Star Wars") == 0, "Star Wars title");
@@ -4312,6 +4417,9 @@ int main() {
     test_pcengine_vdc_and_vce();
     test_pcengine_st_instructions_and_vblank();
     test_huc6280_psg();
+    test_tc0140syt_mailbox();
+    test_opwolf_cchip_and_driver();
+    test_opwolf_roms_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

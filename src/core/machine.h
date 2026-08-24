@@ -42,6 +42,14 @@ struct MachineInputs {
     bool coin2 = false;
     std::array<bool, size_t(Key::Count)> keys{};
 
+    // Light gun / mouse, in screen pixels. `has_pointer` is set when the
+    // front end has a real pointing device this frame.
+    bool has_pointer = false;
+    int pointer_x = 0;
+    int pointer_y = 0;
+    bool pointer_button1 = false;
+    bool pointer_button2 = false;
+
     bool key(Key value) const { return keys[size_t(value)]; }
 };
 
@@ -77,6 +85,9 @@ public:
     // True when the driver reads MachineInputs::keys, so the front end does not
     // steal letters for its own shortcuts.
     virtual bool uses_keyboard() const { return false; }
+
+    // True when the driver aims with MachineInputs::pointer_*.
+    virtual bool uses_pointer() const { return false; }
 
     // Attaches a tape, disk or cartridge image. Machines without removable
     // media reject it.

@@ -28,6 +28,7 @@
 #include "drivers/outrun.h"
 #include "drivers/galaxian.h"
 #include "drivers/vicdual.h"
+#include "drivers/opwolf.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -86,14 +87,15 @@ void print_supported_emulators() {
         
 		"    alexkidd, aliensyn, wb3, tetris, altbeast\n"
         
-		"    pitfall2, teddyboy, wboy, mrviking, seganinj, upndown,\n"
+        "    pitfall2, teddyboy, wboy, mrviking, seganinj, upndown,\n"
 		"    flicky, gardia,\n"
 		"    galaxian, mooncrst, scramble,\n"
 		"    depthch, safari, frogs, sspaceat, sspacaho, headon, headon2,\n"
 		"    headon2s, invho2, nsub, samurai, invinco, invds, tranqgun,\n"
 		"    spacetrk, carnival, brdrline, digger, pulsar, heiankyo, alphaho,\n"
         "    neogeo, nam1975, maglord, mslug, kof94, kof95, kof97, kof98,\n"
-        "    fatfury, samsho, aof, lastblad, bstars, whp\n"
+        "    fatfury, samsho, aof, lastblad, bstars, whp,\n"
+        "    opwolf\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
@@ -121,7 +123,8 @@ void print_usage(const char* program) {
         "                     Pentagon/Scorpion .trd/.scl\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
-        "                     bank, mikie has three (0=A, 1=B, 2=C); cpc: 0=colour(1)/\n"
+        "                     bank, mikie has three (0=A, 1=B, 2=C); opwolf: 0=A coinage,\n"
+        "                     1=B difficulty/language; cpc: 0=colour(1)/\n"
         "                     green(0) monitor, 1=joysticks on the keyboard matrix\n"
         "                     (off by default, see README)\n"
         "  --mute             disable audio\n"
@@ -133,6 +136,8 @@ void print_usage(const char* program) {
         "Controls: arrows move, Left Ctrl/Space button 1, Left Alt/Z button 2,\n"
         "          X button 3, C button 4 (NeoGeo D), 3/4 select (NeoGeo),\n"
         "          1/2 start, 5/6 insert coin, P pause, F3 reset, Esc quit.\n"
+        "Operation Wolf: mouse aims the gun, Left Ctrl/Space fire, Left Alt/Z grenade;\n"
+        "          arrows also move the sight if there is no mouse.\n"
         "On the Spectrum the host keyboard is the Spectrum keyboard (Left Shift is\n"
         "caps shift, Left Ctrl symbol shift, cursor keys the caps shift arrows) and\n"
         "pause moves to F2.\n");
@@ -291,6 +296,10 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "galaxian") return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::Galaxian);
 	if (game == "mooncrst" || game == "mooncresta") return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::MoonCresta);
 	if (game == "scramble") return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::Scramble);
+
+	if (game == "opwolf" || game == "operationwolf" || game == "operation-wolf") {
+		return std::make_unique<dsp::OpWolf>();
+	}
 
 	// Sega / Gremlin VIC Dual
 	if (game == "depthch" || game == "depthcharge") {
