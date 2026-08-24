@@ -161,6 +161,7 @@ void NeoGeoVideo::build_zoom_table() {
 }
 
 void NeoGeoVideo::ack_irq(uint8_t mask) {
+    // REG_IRQACK: bit 0 = IRQ3 (reset), bit 1 = IRQ2 (timer), bit 2 = IRQ1 (vblank).
     if (mask & 0x04) irq_vblank_ = false;
     if (mask & 0x02) irq_timer_ = false;
     if (mask & 0x01) irq_reset_ = false;

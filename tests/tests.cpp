@@ -3922,6 +3922,70 @@ void test_neogeo_boot() {
     check(bright, "NeoGeo test ROM fills the fix layer with a bright tile");
 }
 
+void test_neogeo_calendar_chip() {
+    dsp::NeoGeo machine;
+    std::vector<uint8_t> program(0x200, 0);
+    program[0] = 0x00;
+    program[1] = 0x10;
+    program[2] = 0xf3;
+    program[3] = 0x00;
+    program[4] = 0x00;
+    program[5] = 0x00;
+    program[6] = 0x02;
+    program[7] = 0x00;
+    std::string error;
+    check(machine.load_synthetic(program, {}, {}, program, {}, {}, {}, {}, &error),
+          "NeoGeo calendar test loads a dummy program");
+    auto pulse = [&](uint8_t data) {
+        machine.debug_write_byte(0x280051, data);
+        machine.debug_write_byte(0x280051, uint8_t(data | 0x02));
+        machine.debug_write_byte(0x280051, data);
+    };
+    auto send_command = [&](uint8_t command) {
+        for (int i = 0; i < 4; i++) pulse(uint8_t((command >> i) & 1));
+        machine.debug_write_byte(0x280051, 0x04);
+        machine.debug_write_byte(0x280051, 0x00);
+    };
+    send_command(0x03);
+    send_command(0x01);
+    auto read_bcd = [&]() {
+        uint8_t value = 0;
+        for (int i = 0; i < 8; i++) {
+            const uint8_t status = uint8_t(machine.debug_read_word(0x320000));
+            value = uint8_t((value >> 1) | (status & 0x80));
+            pulse(0);
+        }
+        return value;
+    };
+    check(read_bcd() == 0x00, "uPD4990A seconds BCD is 0 after a time-read");
+    check(read_bcd() == 0x00, "uPD4990A minutes BCD is 0 after a time-read");
+    check(read_bcd() == 0x12, "uPD4990A hours BCD is 0x12 after a time-read");
+    check(read_bcd() == 0x09, "uPD4990A day BCD is 0x09 after a time-read");
+    check(machine.debug_rtc_writes() > 0, "calendar control writes reach the uPD4990A");
+    check((machine.debug_read_word(0x220000) & 0xff) == (machine.debug_read_word(0x320000) & 0xff),
+          "status port is mirrored at $220000");
+
+    send_command(0x08);
+    int first_rise = -1;
+    int second_rise = -1;
+    uint8_t prev_tp = uint8_t(machine.debug_read_word(0x320000) & 0x40);
+    for (int frame = 0; frame < 200; frame++) {
+        machine.run_frame();
+        const uint8_t tp = uint8_t(machine.debug_read_word(0x320000) & 0x40);
+        if (prev_tp == 0 && tp != 0) {
+            if (first_rise < 0) first_rise = frame;
+            else {
+                second_rise = frame;
+                break;
+            }
+        }
+        prev_tp = tp;
+    }
+    check(first_rise >= 0 && second_rise > first_rise, "uPD4990A command 8 produces TP rising edges");
+    const int period = second_rise - first_rise;
+    check(period >= 57 && period <= 63, "uPD4990A 1-second TP is 57-63 vblanks (SP-S2 calendar test)");
+}
+
 void test_neogeo_missing_roms() {
     dsp::NeoGeo machine;
     std::string error;
@@ -3949,7 +4013,7 @@ void test_neogeo_roms_if_present() {
         std::string error;
         check(machine.init(bios, &error), "MAME neogeo.zip BIOS set loads");
         check(machine.debug_pc() == 0xc00402, "SP-S2 BIOS reset vector is $C00402");
-        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        for (int frame = 0; frame < 400; frame++) machine.run_frame();
         check(unique_pixels(machine) > 8, "NeoGeo BIOS draws more than a two-colour stripe field");
     }
 
@@ -3960,7 +4024,7 @@ void test_neogeo_roms_if_present() {
         check(machine.debug_read_word(0x100) == 0x4e45, "Metal Slug P-ROM has NEO-GEO at $100");
         check(machine.debug_read_word(0x102) == 0x4f2d, "Metal Slug P-ROM continues NEO-GEO");
         dsp::MachineInputs inputs;
-        for (int frame = 0; frame < 180; frame++) {
+        for (int frame = 0; frame < 400; frame++) {
             machine.set_inputs(inputs);
             machine.run_frame();
         }
@@ -4460,6 +4524,7 @@ int main() {
     test_ym2610();
     test_neogeo_video();
     test_neogeo_boot();
+    test_neogeo_calendar_chip();
     test_neogeo_missing_roms();
     test_neogeo_roms_if_present();
     test_v9938_status_and_hmmv();

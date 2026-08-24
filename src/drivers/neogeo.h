@@ -52,6 +52,9 @@ public:
     uint32_t debug_pc() const { return m68k_.pc(); }
     uint16_t debug_read_word(uint32_t address) { return read_word(address); }
     void debug_write_word(uint32_t address, uint16_t value) { write_word(address, value); }
+    void debug_write_byte(uint32_t address, uint8_t value) { write_byte(address, value); }
+    int debug_rtc_writes() const { return rtc_writes_; }
+    bool debug_rtc_data_bit() const { return rtc_data_bit_; }
     NeoGeoVideo& video() { return video_; }
     YM2610& ym() { return ym_; }
 
@@ -120,11 +123,19 @@ private:
     MachineInputs inputs_{};
     bool service_ = false;
 
-    uint64_t rtc_shift_ = 0;
+    uint32_t rtc_shiftlo_ = 0;
     uint8_t rtc_command_ = 0;
-    int rtc_bits_ = 0;
+    int rtc_bitno_ = 0;
     uint8_t rtc_ctrl_ = 0;
     bool rtc_pulse_ = false;
+    bool rtc_clock_ = false;
+    bool rtc_strobe_ = false;
+    bool rtc_reading_ = false;
+    bool rtc_data_bit_ = false;
+    int rtc_writes_ = 0;
+    // SP-S2 measures vblanks between uPD4990A TP rising edges; 57-63 is a pass.
+    int rtc_tp_interval_ = 0;
+    int rtc_tp_counter_ = 0;
 
     std::vector<uint32_t> framebuffer_;
     std::vector<int16_t> audio_;
