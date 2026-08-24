@@ -50,6 +50,17 @@ public:
     uint32_t debug_sub_pc() const { return sub_cpu_.pc(); }
     bool debug_screen_enabled() const { return video_.screen_enabled; }
     uint16_t debug_shared(uint32_t address) const { return ram_[(address & 0x7fff) >> 1]; }
+    uint16_t debug_cpu1ram(uint32_t address) const { return cpu1ram_[(address & 0x7fff) >> 1]; }
+    int debug_road_ram_nonzero() const {
+        int c = 0;
+        for (auto v : road_ram_) if (v) c++;
+        return c;
+    }
+    int debug_road_buffer_nonzero() const {
+        int c = 0;
+        for (auto v : road_buffer_) if (v) c++;
+        return c;
+    }
     int debug_palette_used() const {
         int n = 0;
         for (uint16_t v : video_.pal_ram) {
@@ -87,10 +98,17 @@ private:
 
     std::vector<uint16_t> rom_;
     std::vector<uint16_t> rom2_;
-    // Shared main/sub work RAM at $60000 (MAME share1). Pascal kept two copies
-    // and the slave handshake at $60070 never completed.
+    // Main CPU's own private work RAM, exposed at region 0 offset $60000
+    // (mapper "workram" in MAME). NOT shared with the sub CPU.
     std::array<uint16_t, 0x4000> ram_{};
-    std::array<uint16_t, 0x4000> ram2_{};
+    // Sub CPU's own private work RAM at $60000 in its own address space
+    // (mapper "cpu1ram" in MAME); the main CPU reaches the SAME array
+    // through its region 5 window. This used to be aliased onto `ram_`
+    // (mirroring a since-fixed Pascal bug where they were two disconnected
+    // copies), which merged two hardware-distinct RAM chips into one and
+    // left the real cross-CPU handshake RAM (region 0 $60000) looking
+    // "answered" to the sub CPU without the main CPU ever writing it.
+    std::array<uint16_t, 0x4000> cpu1ram_{};
     std::array<uint16_t, 0x800> road_ram_{};
     std::array<uint16_t, 0x800> road_buffer_{};
     std::vector<uint32_t> sprite_rom_;

@@ -17,6 +17,10 @@ public:
     using ReadByteHandler = std::function<uint8_t(uint32_t)>;
     using WriteByteHandler = std::function<void(uint32_t, uint8_t)>;
     using CycleHandler = std::function<void(int)>;
+    // Fired when the CPU executes the RESET instruction. Real 68000 hardware
+    // pulses an external reset line to peripherals when this runs; it does
+    // NOT reset the executing CPU itself.
+    using ResetInstructionHandler = std::function<void()>;
 
     enum class Type { M68000, M68010 };
 
@@ -48,6 +52,9 @@ public:
         write_byte_ = std::move(write);
     }
     void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
+    void set_reset_instruction_handler(ResetInstructionHandler handler) {
+        reset_instruction_handler_ = std::move(handler);
+    }
 
     void reset();
     // Runs until at least `cycles` cycles have elapsed, returns the amount executed.
@@ -138,6 +145,7 @@ private:
     ReadByteHandler read_byte_;
     WriteByteHandler write_byte_;
     CycleHandler cycle_handler_;
+    ResetInstructionHandler reset_instruction_handler_;
 };
 
 }  // namespace dsp

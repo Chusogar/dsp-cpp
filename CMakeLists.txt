@@ -94,6 +94,9 @@ add_executable(dsp
   src/machine/g64_image.cpp
   src/machine/gcr.cpp
   src/machine/c64_tape.cpp
+  src/machine/z80pio.cpp
+  src/machine/sega_decrypt.cpp
+
     
   src/drivers/bagman.cpp
   src/drivers/mikie.cpp
@@ -112,7 +115,12 @@ add_executable(dsp
   src/drivers/polepos.cpp
   src/drivers/hangon.cpp
   src/drivers/system16.cpp
-        
+  src/drivers/outrun.cpp
+  src/drivers/galaxian.cpp
+  src/drivers/vicdual.cpp
+  src/drivers/sega_system1.cpp
+
+	
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
   src/drivers/spectrum_3.cpp

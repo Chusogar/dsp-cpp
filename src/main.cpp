@@ -24,7 +24,10 @@
 #include "drivers/polepos.h"
 #include "drivers/hangon.h"
 #include "drivers/system16.h"
-//#include "drivers/outrun.h"
+#include "drivers/sega_system1.h"
+#include "drivers/outrun.h"
+#include "drivers/galaxian.h"
+#include "drivers/vicdual.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -76,9 +79,17 @@ void print_supported_emulators() {
         "    knights, sf2ce, dino, punisher, willow, 1941, nemo,\n"
         "    rtype, hharry, rtype2,\n"
         "    polepos, polepos2\n"
-        "    hangon, enduro, sharrier, fantzone, shinobi,\n"
-
-        "    alexkidd, aliensyn, wb3, tetris, altbeast\n"
+        "    outrun, hangon, enduro, sharrier, fantzone, shinobi,\n"
+		"    alexkidd, aliensyn, wb3, tetris, altbeast,\n"
+        
+		"    alexkidd, aliensyn, wb3, tetris, altbeast\n"
+        
+		"    pitfall2, teddyboy, wboy, mrviking, seganinj, upndown,\n"
+		"    flicky, gardia,\n"
+		"    galaxian, mooncrst, scramble,\n"
+		"    depthch, safari, frogs, sspaceat, sspacaho, headon, headon2,\n"
+		"    headon2s, invho2, nsub, samurai, invinco, invds, tranqgun,\n"
+		"    spacetrk, carnival, brdrline, digger, pulsar, heiankyo, alphaho\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
@@ -219,7 +230,8 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "polepos2" || game == "poleposition2") {
 		return std::make_unique<dsp::PolePos>(dsp::PolePos::Game::PolePosition2);
 	}
-    //if (game == "outrun") return std::make_unique<dsp::Outrun>();
+    
+	if (game == "outrun") return std::make_unique<dsp::Outrun>();
 
     if (game == "hangon" || game == "hang-on") return std::make_unique<dsp::HangOn>();
     if (game == "enduro" || game == "enduror" || game == "enduro-racer") {
@@ -245,7 +257,83 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "altbeast" || game == "alteredbeast") {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Altbeast);
     }
-    
+	
+	// Sega System 1
+	if (game == "pitfall2" || game == "pitfallii" || game == "pitfall") {
+		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::Pitfall2);
+	}
+	if (game == "teddyboy" || game == "teddy" || game == "tdboy") {
+		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::TeddyBoy);
+	}
+	if (game == "wboy" || game == "wonderboy") {
+		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::WonderBoy);
+	}
+	if (game == "mrviking" || game == "viking") {
+		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::MrViking);
+	}
+	if (game == "seganinj" || game == "seganinja" || game == "ninja") {
+		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::SegaNinja);
+	}
+	if (game == "upndown" || game == "up-n-down" || game == "upanddown") {
+		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::UpNDown);
+	}
+	if (game == "flicky") {
+		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::Flicky);
+	}
+	if (game == "gardia") {
+		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::Gardia);
+	}
+
+	if (game == "galaxian") return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::Galaxian);
+	if (game == "mooncrst" || game == "mooncresta") return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::MoonCresta);
+	if (game == "scramble") return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::Scramble);
+
+	// Sega / Gremlin VIC Dual
+	if (game == "depthch" || game == "depthcharge") {
+		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::DepthCharge);
+	}
+	if (game == "safari") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Safari);
+	if (game == "frogs") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Frogs);
+	if (game == "sspaceat" || game == "spaceattack") {
+		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::SpaceAttack);
+	}
+	if (game == "sspacaho" || game == "spaceattackheadon") {
+		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::SpaceAttackHeadOn);
+	}
+	if (game == "headon") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::HeadOn);
+	if (game == "headon2") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::HeadOn2);
+	if (game == "headon2s" || game == "headon2slim") {
+		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::HeadOn2Slim);
+	}
+	if (game == "invho2" || game == "invincoheadon2") {
+		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::InvincoHeadOn2);
+	}
+	if (game == "nsub" || game == "n-sub") {
+		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::NSub);
+	}
+	if (game == "samurai") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Samurai);
+	if (game == "invinco") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Invinco);
+	if (game == "invds" || game == "invincodeepscan") {
+		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::InvincoDeepScan);
+	}
+	if (game == "tranqgun" || game == "tranquillizergun") {
+		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::TranqGun);
+	}
+	if (game == "spacetrk" || game == "spacetrek") {
+		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::SpaceTrek);
+	}
+	if (game == "carnival") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Carnival);
+	if (game == "brdrline" || game == "borderline") {
+		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Borderline);
+	}
+	if (game == "digger") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Digger);
+	if (game == "pulsar") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Pulsar);
+	if (game == "heiankyo" || game == "heiankyoalien") {
+		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Heiankyo);
+	}
+	if (game == "alphaho" || game == "alphafighter") {
+		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::AlphaFighter);
+	}
 
 	// computers
     if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48k>();

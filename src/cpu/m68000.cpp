@@ -2423,7 +2423,10 @@ void M68000::group_4(uint16_t instruction) {
             } else {
                 switch (dir) {
                     case 0x30:  // reset
-                        if (check_supervisor()) cycles_ += 40;
+                        if (check_supervisor()) {
+                            cycles_ += 40;
+                            if (reset_instruction_handler_) reset_instruction_handler_();
+                        }
                         break;
                     case 0x31:  // nop
                         cycles_ += 4;

@@ -51,6 +51,7 @@ const std::vector<RomEntry> kPcmRom = {
 
 }  // namespace
 
+
 Outrun::Outrun()
     : main_cpu_(kMainClock),
       sub_cpu_(kMainClock),
@@ -85,6 +86,10 @@ Outrun::Outrun()
         if (state == IrqLine::Assert) sub_cpu_.set_reset_line(IrqLine::Pulse);
     });
     mapper_.set_irq_handler([this](int level, IrqLine state) { main_cpu_.set_irq(level, state); });
+    // Real hardware: the main CPU's RESET instruction pulses an external
+    // reset line that the sub CPU is wired to (Pascal outrun_reset_cpu2).
+    // It does not reset the main CPU itself.
+    main_cpu_.set_reset_instruction_handler([this]() { sub_cpu_.set_reset_line(IrqLine::Pulse); });
     ppi_.set_port_handlers(nullptr, nullptr, nullptr, nullptr, nullptr, [this](uint8_t value) {
         video_.screen_enabled = (value & 0x20) != 0;
         adc_select_ = (value >> 2) & 7;
@@ -137,7 +142,7 @@ void Outrun::reset() {
     video_.reset();
     video_.screen_enabled = false;
     ram_.fill(0);
-    ram2_.fill(0);
+    cpu1ram_.fill(0);
     road_ram_.fill(0);
     road_buffer_.fill(0);
     in0_ = 0x00ef;
@@ -257,11 +262,18 @@ uint16_t Outrun::main_read(uint32_t address) {
                 result = rom2_[(address & 0x3ffff) >> 1];
                 break;
             case 0x60000 ... 0x7ffff:
-                // Shared 68k work RAM ($60000), same as MAME share("share1").
-                result = ram_[(address & 0x7fff) >> 1];
+                // Sub CPU's own work RAM ("cpu1ram" in MAME), reached here
+                // through the main CPU's region 5 window.
+                result = cpu1ram_[(address & 0x7fff) >> 1];
                 break;
             case 0x80000 ... 0x8ffff:
                 result = road_ram_[(address & 0xfff) >> 1];
+                break;
+            case 0x90000 ... 0x9ffff:
+                // Matches sub_read(): Pascal's outrun_getword also exposes
+                // the road buffer swap trigger through this window.
+                swap_road();
+                result = 0xffff;
                 break;
             default:
                 result = 0xffff;
@@ -318,7 +330,7 @@ void Outrun::main_write(uint32_t address, uint16_t value) {
     if (mapper_.contains(5, address)) {
         switch (address & 0xfffff) {
             case 0x60000 ... 0x7ffff:
-                ram_[(address & 0x7fff) >> 1] = value;
+                cpu1ram_[(address & 0x7fff) >> 1] = value;
                 break;
             case 0x80000 ... 0x8ffff:
                 road_ram_[(address & 0xfff) >> 1] = value;
@@ -343,14 +355,24 @@ void Outrun::main_write(uint32_t address, uint16_t value) {
 uint16_t Outrun::sub_read(uint32_t address) {
     address &= 0xfffff;
     if (address <= 0x5ffff) return rom2_[(address & 0x3ffff) >> 1];
-    if (address >= 0x60000 && address <= 0x7ffff) return ram_[(address & 0x7fff) >> 1];
+    if (address >= 0x60000 && address <= 0x7ffff) return cpu1ram_[(address & 0x7fff) >> 1];
     if (address >= 0x80000 && address <= 0x8ffff) return road_ram_[(address & 0xfff) >> 1];
+    if (address >= 0x90000 && address <= 0x9ffff) {
+        // Pascal's outrun_sub_getword triggers the road double-buffer swap
+        // here (gated on the CPU's "reading the high byte" bus direction,
+        // which a plain word read always satisfies). Our core dispatches
+        // byte-sized CPU reads through a separate handler (sub_read_byte),
+        // so this word-level path needs its own copy of the same trigger
+        // or a word-sized trigger read is silently missed.
+        swap_road();
+        return 0xffff;
+    }
     return 0xffff;
 }
 
 void Outrun::sub_write(uint32_t address, uint16_t value) {
     address &= 0xfffff;
-    if (address >= 0x60000 && address <= 0x67fff) ram_[(address & 0x7fff) >> 1] = value;
+    if (address >= 0x60000 && address <= 0x67fff) cpu1ram_[(address & 0x7fff) >> 1] = value;
     else if (address >= 0x80000 && address <= 0x8ffff) road_ram_[(address & 0xfff) >> 1] = value;
     else if (address >= 0x90000 && address <= 0x9ffff) road_control_ = uint8_t(value & 3);
 }
