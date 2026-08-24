@@ -80,6 +80,7 @@ private:
 
     bool load_roms(const std::string& rom_path, std::string* error);
     void finish_load(bool byteswap_program);
+    void normalize_program_rom();
     const uint8_t* z80_rom() const;
 
     std::string game_name_;
@@ -119,7 +120,7 @@ private:
     MachineInputs inputs_{};
     bool service_ = false;
 
-    uint8_t rtc_shift_ = 0;
+    uint64_t rtc_shift_ = 0;
     uint8_t rtc_command_ = 0;
     int rtc_bits_ = 0;
     uint8_t rtc_ctrl_ = 0;

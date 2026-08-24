@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <map>
@@ -191,6 +192,25 @@ std::vector<uint8_t> read_named(RomLoader& loader, const std::string& name) {
     return data;
 }
 
+uint64_t packed_rtc_time() {
+    // uPD4990A 52-bit BCD stream, LSB first: sec, min, hour, day, weekday, month, year.
+    const uint64_t sec = 0x00;
+    const uint64_t min = 0x00;
+    const uint64_t hour = 0x21;
+    const uint64_t day = 0x24;
+    const uint64_t weekday = 0x01;
+    const uint64_t month = 0x08;
+    const uint64_t year = 0x26;
+    return sec | (min << 8) | (hour << 16) | (day << 24) | (weekday << 32) | (month << 36) |
+           (year << 40);
+}
+
+bool neo_geo_header_at(const std::vector<uint8_t>& rom, size_t offset) {
+    static const uint8_t kMark[] = {'N', 'E', 'O', '-', 'G', 'E', 'O'};
+    if (offset + sizeof(kMark) > rom.size()) return false;
+    return std::memcmp(rom.data() + offset, kMark, sizeof(kMark)) == 0;
+}
+
 }  // namespace
 
 bool NeoGeo::is_game_name(const std::string& name) {
@@ -248,6 +268,7 @@ void NeoGeo::finish_load(bool byteswap_program) {
     }
     if (bios_.size() & 1) bios_.push_back(0);
     if (p_rom_.size() & 1) p_rom_.push_back(0);
+    normalize_program_rom();
     if (p_rom_.size() > 0x100000) cart_bank_ = 0x100000;
     else cart_bank_ = 0;
 
@@ -258,6 +279,21 @@ void NeoGeo::finish_load(bool byteswap_program) {
 
     ym_.set_adpcm_a_rom(v_rom_);
     ym_.set_adpcm_b_rom(v_rom_);
+}
+
+void NeoGeo::normalize_program_rom() {
+    // Several 2 MiB P1 dumps (Metal Slug, KOF 94, ...) store the fixed 1 MiB
+    // bank in the second half of the file. MAME loads that with ROM_CONTINUE.
+    if (p_rom_.size() < 0x200000) return;
+    if (neo_geo_header_at(p_rom_, 0x100)) return;
+    if (!neo_geo_header_at(p_rom_, 0x100100)) return;
+    std::vector<uint8_t> rotated(p_rom_.size());
+    std::copy(p_rom_.begin() + 0x100000, p_rom_.begin() + 0x200000, rotated.begin());
+    std::copy(p_rom_.begin(), p_rom_.begin() + 0x100000, rotated.begin() + 0x100000);
+    if (p_rom_.size() > 0x200000) {
+        std::copy(p_rom_.begin() + 0x200000, p_rom_.end(), rotated.begin() + 0x200000);
+    }
+    p_rom_ = std::move(rotated);
 }
 
 bool NeoGeo::load_roms(const std::string& rom_path, std::string* error) {
@@ -374,6 +410,9 @@ bool NeoGeo::load_roms(const std::string& rom_path, std::string* error) {
     if (m_rom_.empty()) m_rom_ = sm1_;
 
     finish_load(true);
+    if (!p_files.empty() && !neo_geo_header_at(p_rom_, 0x100)) {
+        warnings_.emplace_back("cartridge has no NEO-GEO header at $100; P-ROM layout may be wrong");
+    }
     for (const auto& warning : game.warnings()) warnings_.push_back(warning);
     return true;
 }
@@ -424,18 +463,19 @@ uint8_t NeoGeo::status_b() const {
 void NeoGeo::rtc_write(uint8_t value) {
     const uint8_t prev = rtc_ctrl_;
     rtc_ctrl_ = value;
-    // Rising clock edge shifts DIN into the command nibble.
-    if ((value & 0x02) != 0 && (prev & 0x02) == 0) {
+    const bool clk = (value & 0x02) != 0;
+    const bool stb = (value & 0x04) != 0;
+    if (clk && (prev & 0x02) == 0) {
         rtc_command_ = uint8_t((rtc_command_ >> 1) | ((value & 1) << 3));
         rtc_bits_++;
         rtc_shift_ >>= 1;
-        if (rtc_bits_ == 4) {
-            rtc_bits_ = 0;
-            // Command 3 = time read: load a dummy BCD date (24-01-01 12:00:00).
-            if ((rtc_command_ & 0x0f) == 0x03) {
-                rtc_shift_ = 0xff;
-            }
+    }
+    if (stb && (prev & 0x04) == 0) {
+        // Rising strobe latches the 4-bit command. 3 = time read.
+        if ((rtc_command_ & 0x0f) == 0x03 || rtc_bits_ >= 4) {
+            if ((rtc_command_ & 0x0f) == 0x03) rtc_shift_ = packed_rtc_time();
         }
+        rtc_bits_ = 0;
     }
 }
 
@@ -555,7 +595,8 @@ void NeoGeo::write_byte(uint32_t address, uint8_t value) {
                     sram_unlocked_ = bit;
                     break;
                 case 7:
-                    video_.set_palette_bank(bit ? 1 : 0);
+                    // $3A000F selects bank 1, $3A001F selects bank 0.
+                    video_.set_palette_bank(bit ? 0 : 1);
                     break;
                 default:
                     break;
@@ -612,7 +653,7 @@ uint16_t NeoGeo::read_word(uint32_t address) {
         return video_.read_palette(address);
     }
     if (address >= 0x800000 && address < 0x801000) {
-        return uint16_t(memcard_[(address >> 1) & 0x7ff]);
+        return uint16_t(0xff00 | memcard_[(address >> 1) & 0x7ff]);
     }
     if (address >= 0xc00000 && address < 0xc20000) {
         if (bios_.empty()) return 0xffff;
@@ -699,7 +740,9 @@ void NeoGeo::on_m68k_cycles(int cycles) {
 
 void NeoGeo::run_frame() {
     watchdog_++;
-    if (watchdog_ > 8) {
+    // Real NEO-B1 watchdog is about eight frames. Give the BIOS a little extra
+    // room for the first SRAM / calendar pass after a cold start.
+    if (watchdog_ > 16) {
         reset();
         watchdog_ = 0;
     }

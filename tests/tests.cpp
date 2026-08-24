@@ -3800,7 +3800,7 @@ void test_neogeo_video() {
     dsp::NeoGeoVideo video;
     video.reset();
     std::vector<uint8_t> srom(64, 0);
-    for (int y = 0; y < 8; y++) srom[32 + 16 + y] = 0xff;  // tile 1, plane 0 = pen 1
+    for (int i = 0; i < 32; i++) srom[32 + i] = 0x11;  // tile 1, packed pen 1
     video.set_fix_roms(srom.data(), srom.size(), nullptr, 0);
     video.set_use_bios_fix(false);
     video.decode_graphics();
@@ -3822,7 +3822,7 @@ void test_neogeo_video() {
     check(bright, "NeoGeo fix layer draws a solid colour-1 tile");
     check(dsp::NeoGeoVideo::colour(0x7fff) == 0xffffffffu ||
               ((dsp::NeoGeoVideo::colour(0x7fff) >> 16) & 0xff) > 200,
-          "NeoGeo palette 555 converts to a bright colour");
+          "NeoGeo palette converts 0x7fff to a bright colour");
 }
 
 std::vector<uint8_t> make_neogeo_test_rom() {
@@ -3885,7 +3885,7 @@ void test_neogeo_boot() {
     std::vector<uint8_t> bios = program;
     bios.resize(0x80);
     std::vector<uint8_t> srom(64, 0);
-    for (int y = 0; y < 8; y++) srom[32 + 16 + y] = 0xff;
+    for (int i = 0; i < 32; i++) srom[32 + i] = 0x11;
 
     dsp::NeoGeo machine("nam1975");
     std::string error;
@@ -3928,6 +3928,62 @@ void test_neogeo_missing_roms() {
     check(!machine.init("/tmp/dsp-cpp-missing-neogeo-romset", &error),
           "NeoGeo rejects a missing ROM path");
     check(!error.empty(), "NeoGeo reports why the ROM path failed");
+}
+
+void test_neogeo_roms_if_present() {
+    const char* bios_paths[] = {"/tmp/neogeo-roms/neogeo.zip", "/tmp/roms/neogeo.zip"};
+    const char* mslug_paths[] = {"/tmp/neogeo-roms/mslug.zip", "/tmp/roms/mslug.zip"};
+    auto first_existing = [](const char* const* paths, int count) -> const char* {
+        for (int i = 0; i < count; i++) {
+            std::ifstream probe(paths[i]);
+            if (probe) return paths[i];
+        }
+        return nullptr;
+    };
+    const char* bios = first_existing(bios_paths, 2);
+    const char* mslug = first_existing(mslug_paths, 2);
+    if (mslug == nullptr && bios == nullptr) return;
+
+    if (bios != nullptr) {
+        dsp::NeoGeo machine("neogeo");
+        std::string error;
+        check(machine.init(bios, &error), "MAME neogeo.zip BIOS set loads");
+        check(machine.debug_pc() == 0xc00402, "SP-S2 BIOS reset vector is $C00402");
+        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        check(unique_pixels(machine) > 8, "NeoGeo BIOS draws more than a two-colour stripe field");
+    }
+
+    if (mslug != nullptr) {
+        dsp::NeoGeo machine("mslug");
+        std::string error;
+        check(machine.init(mslug, &error), "MAME mslug.zip loads");
+        check(machine.debug_read_word(0x100) == 0x4e45, "Metal Slug P-ROM has NEO-GEO at $100");
+        check(machine.debug_read_word(0x102) == 0x4f2d, "Metal Slug P-ROM continues NEO-GEO");
+        dsp::MachineInputs inputs;
+        for (int frame = 0; frame < 180; frame++) {
+            machine.set_inputs(inputs);
+            machine.run_frame();
+        }
+        check(unique_pixels(machine) > 16, "Metal Slug BIOS/cart boot draws a colour picture");
+
+        inputs.coin1 = true;
+        for (int frame = 0; frame < 20; frame++) {
+            machine.set_inputs(inputs);
+            machine.run_frame();
+        }
+        inputs.coin1 = false;
+        inputs.player1.start = true;
+        for (int frame = 0; frame < 20; frame++) {
+            machine.set_inputs(inputs);
+            machine.run_frame();
+        }
+        inputs.player1.start = false;
+        for (int frame = 0; frame < 240; frame++) {
+            machine.set_inputs(inputs);
+            machine.run_frame();
+        }
+        check(unique_pixels(machine) > 16, "Metal Slug still draws after coin and start");
+    }
 }
 
 void write_msx2_dummy_roms(const std::string& dir, bool with_disk) {
@@ -4405,6 +4461,7 @@ int main() {
     test_neogeo_video();
     test_neogeo_boot();
     test_neogeo_missing_roms();
+    test_neogeo_roms_if_present();
     test_v9938_status_and_hmmv();
     test_msx_disk_and_fdc();
     test_rp5c01_fixed_clock();

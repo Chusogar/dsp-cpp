@@ -12,24 +12,21 @@ constexpr int kSprWidth = 16;
 constexpr int kSprHeight = 16;
 
 void decode_fix(const uint8_t* src, size_t size, std::vector<uint8_t>& dest, int* tiles_out) {
+    // Hardware stores each 8x8 tile as 32 bytes of packed 4bpp. Each row is four
+    // bytes at +$10, +$18, +$00 and +$08; low nibble is the left pixel.
     const int tiles = int(size / 32);
     dest.assign(size_t(tiles) * kFixWidth * kFixHeight, 0);
+    static constexpr int kRowByte[4] = {0x10, 0x18, 0x00, 0x08};
     for (int t = 0; t < tiles; t++) {
         const uint8_t* tile = src + size_t(t) * 32;
         uint8_t* out = dest.data() + size_t(t) * kFixWidth * kFixHeight;
         for (int y = 0; y < 8; y++) {
-            const uint8_t p0 = tile[16 + y];
-            const uint8_t p1 = tile[24 + y];
-            const uint8_t p2 = tile[0 + y];
-            const uint8_t p3 = tile[8 + y];
-            for (int x = 0; x < 8; x++) {
-                const uint8_t bit = uint8_t(0x80 >> x);
-                uint8_t pixel = 0;
-                if (p0 & bit) pixel |= 1;
-                if (p1 & bit) pixel |= 2;
-                if (p2 & bit) pixel |= 4;
-                if (p3 & bit) pixel |= 8;
-                out[y * 8 + x] = pixel;
+            int x = 0;
+            for (int block : kRowByte) {
+                const uint8_t data = tile[block + y];
+                out[y * 8 + x] = uint8_t(data & 0x0f);
+                out[y * 8 + x + 1] = uint8_t(data >> 4);
+                x += 2;
             }
         }
     }
@@ -78,6 +75,7 @@ void NeoGeoVideo::reset() {
     palette_rgb_[1].fill(0xff000000u);
     vram_addr_ = 0;
     vram_mod_ = 1;
+    vram_read_buffer_ = 0;
     lspc_mode_ = 0;
     timer_reload_ = 0;
     timer_counter_ = 0;
@@ -95,17 +93,17 @@ void NeoGeoVideo::reset() {
 }
 
 uint32_t NeoGeoVideo::colour(uint16_t packed) {
-    const int dark = (packed >> 15) & 1;
-    int r = (packed >> 10) & 0x1f;
-    int g = (packed >> 5) & 0x1f;
-    int b = packed & 0x1f;
+    // Dark bit in 15, then R0 G0 B0 in 14-12, then R4-1 G4-1 B4-1 in 11-0.
+    int r = ((packed >> 7) & 0x1e) | ((packed >> 14) & 1);
+    int g = ((packed >> 3) & 0x1e) | ((packed >> 13) & 1);
+    int b = ((packed << 1) & 0x1e) | ((packed >> 12) & 1);
     r = (r << 3) | (r >> 2);
     g = (g << 3) | (g >> 2);
     b = (b << 3) | (b >> 2);
-    if (dark) {
-        r = (r * 5) / 8;
-        g = (g * 5) / 8;
-        b = (b * 5) / 8;
+    if (packed & 0x8000) {
+        r = (r * 192) / 256;
+        g = (g * 192) / 256;
+        b = (b * 192) / 256;
     }
     return 0xff000000u | (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b);
 }
@@ -159,21 +157,7 @@ void NeoGeoVideo::build_zoom_table() {
             row.pixels = 1;
         }
     }
-    if (lo_rom_.size() >= 0x10000) {
-        for (int z = 0; z < 256; z++) {
-            ZoomRow& row = zoom_[size_t(z)];
-            row.draw.fill(0);
-            int pixels = 0;
-            for (int i = 0; i < 16; i++) {
-                const uint8_t v = lo_rom_[size_t(z) * 256 + size_t(i)];
-                if (v != 0) {
-                    row.draw[size_t(i)] = 1;
-                    pixels++;
-                }
-            }
-            row.pixels = pixels;
-        }
-    }
+    (void)lo_rom_;
 }
 
 void NeoGeoVideo::ack_irq(uint8_t mask) {
@@ -182,11 +166,22 @@ void NeoGeoVideo::ack_irq(uint8_t mask) {
     if (mask & 0x01) irq_reset_ = false;
 }
 
-uint16_t NeoGeoVideo::read_vram() const { return vram_[vram_addr_ & 0xffff]; }
+uint16_t NeoGeoVideo::vram_offset() const {
+    // Bit 15 selects the 2 KiB sprite-control window at $8000; increment never
+    // carries into that bit.
+    return (vram_addr_ & 0x8000) ? uint16_t(vram_addr_ & 0x87ff) : uint16_t(vram_addr_ & 0x7fff);
+}
+
+void NeoGeoVideo::step_vram_address() {
+    vram_addr_ = uint16_t((vram_addr_ & 0x8000) | ((vram_addr_ + vram_mod_) & 0x7fff));
+    vram_read_buffer_ = vram_[vram_offset()];
+}
+
+uint16_t NeoGeoVideo::read_vram() const { return vram_read_buffer_; }
 
 void NeoGeoVideo::write_vram(uint16_t value) {
-    vram_[vram_addr_ & 0xffff] = value;
-    vram_addr_ = uint16_t(vram_addr_ + vram_mod_);
+    vram_[vram_offset()] = value;
+    step_vram_address();
 }
 
 uint16_t NeoGeoVideo::read_register(uint32_t address) const {
@@ -215,6 +210,7 @@ void NeoGeoVideo::write_register(uint32_t address, uint16_t value) {
     switch (address & 0x0e) {
         case 0x00:
             vram_addr_ = value;
+            vram_read_buffer_ = vram_[vram_offset()];
             break;
         case 0x02:
             write_vram(value);

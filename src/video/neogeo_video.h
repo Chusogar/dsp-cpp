@@ -7,7 +7,8 @@
 namespace dsp {
 
 // LSPC2-A2 video: 381 chained sprites, an 8x8 fix layer, two palette banks
-// and the raster / watchdog timer. Palette words are NeoGeo xRGB 555 + dark bit.
+// and the raster / watchdog timer. Palette words are the NeoGeo dark+RGB555
+// packing (R0/G0/B0 in bits 14-12, not linear xRGB).
 class NeoGeoVideo {
 public:
     static constexpr int kScreenWidth = 320;
@@ -67,6 +68,8 @@ private:
 
     void write_vram(uint16_t value);
     uint16_t read_vram() const;
+    uint16_t vram_offset() const;
+    void step_vram_address();
     void rebuild_palette_entry(int bank, int index);
     const uint8_t* fix_tile(int code) const;
     const uint8_t* sprite_tile(int code) const;
@@ -84,6 +87,7 @@ private:
 
     uint16_t vram_addr_ = 0;
     uint16_t vram_mod_ = 1;
+    uint16_t vram_read_buffer_ = 0;
     uint16_t lspc_mode_ = 0;
     uint32_t timer_reload_ = 0;
     uint32_t timer_counter_ = 0;
