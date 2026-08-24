@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <map>
@@ -191,6 +192,36 @@ std::vector<uint8_t> read_named(RomLoader& loader, const std::string& name) {
     return data;
 }
 
+uint8_t rtc_time_bit(int bit) {
+    // 52-bit uPD4990A stream: sec, min, hour, day, weekday, month, year.
+    static constexpr uint8_t kSec = 0x00, kMin = 0x00, kHour = 0x12, kDay = 0x09;
+    static constexpr uint8_t kWeek = 0x01, kMonth = 0x09, kYear = 0x73;
+    switch (bit) {
+        case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7:
+            return uint8_t((kSec >> bit) & 1);
+        case 8: case 9: case 10: case 11: case 12: case 13: case 14: case 15:
+            return uint8_t((kMin >> (bit - 8)) & 1);
+        case 16: case 17: case 18: case 19: case 20: case 21: case 22: case 23:
+            return uint8_t((kHour >> (bit - 16)) & 1);
+        case 24: case 25: case 26: case 27: case 28: case 29: case 30: case 31:
+            return uint8_t((kDay >> (bit - 24)) & 1);
+        case 32: case 33: case 34: case 35:
+            return uint8_t((kWeek >> (bit - 32)) & 1);
+        case 36: case 37: case 38: case 39:
+            return uint8_t((kMonth >> (bit - 36)) & 1);
+        case 40: case 41: case 42: case 43: case 44: case 45: case 46: case 47:
+            return uint8_t((kYear >> (bit - 40)) & 1);
+        default:
+            return 0;
+    }
+}
+
+bool neo_geo_header_at(const std::vector<uint8_t>& rom, size_t offset) {
+    static const uint8_t kMark[] = {'N', 'E', 'O', '-', 'G', 'E', 'O'};
+    if (offset + sizeof(kMark) > rom.size()) return false;
+    return std::memcmp(rom.data() + offset, kMark, sizeof(kMark)) == 0;
+}
+
 }  // namespace
 
 bool NeoGeo::is_game_name(const std::string& name) {
@@ -248,6 +279,7 @@ void NeoGeo::finish_load(bool byteswap_program) {
     }
     if (bios_.size() & 1) bios_.push_back(0);
     if (p_rom_.size() & 1) p_rom_.push_back(0);
+    normalize_program_rom();
     if (p_rom_.size() > 0x100000) cart_bank_ = 0x100000;
     else cart_bank_ = 0;
 
@@ -258,6 +290,21 @@ void NeoGeo::finish_load(bool byteswap_program) {
 
     ym_.set_adpcm_a_rom(v_rom_);
     ym_.set_adpcm_b_rom(v_rom_);
+}
+
+void NeoGeo::normalize_program_rom() {
+    // Several 2 MiB P1 dumps (Metal Slug, KOF 94, ...) store the fixed 1 MiB
+    // bank in the second half of the file. MAME loads that with ROM_CONTINUE.
+    if (p_rom_.size() < 0x200000) return;
+    if (neo_geo_header_at(p_rom_, 0x100)) return;
+    if (!neo_geo_header_at(p_rom_, 0x100100)) return;
+    std::vector<uint8_t> rotated(p_rom_.size());
+    std::copy(p_rom_.begin() + 0x100000, p_rom_.begin() + 0x200000, rotated.begin());
+    std::copy(p_rom_.begin(), p_rom_.begin() + 0x100000, rotated.begin() + 0x100000);
+    if (p_rom_.size() > 0x200000) {
+        std::copy(p_rom_.begin() + 0x200000, p_rom_.end(), rotated.begin() + 0x200000);
+    }
+    p_rom_ = std::move(rotated);
 }
 
 bool NeoGeo::load_roms(const std::string& rom_path, std::string* error) {
@@ -374,6 +421,9 @@ bool NeoGeo::load_roms(const std::string& rom_path, std::string* error) {
     if (m_rom_.empty()) m_rom_ = sm1_;
 
     finish_load(true);
+    if (!p_files.empty() && !neo_geo_header_at(p_rom_, 0x100)) {
+        warnings_.emplace_back("cartridge has no NEO-GEO header at $100; P-ROM layout may be wrong");
+    }
     for (const auto& warning : game.warnings()) warnings_.push_back(warning);
     return true;
 }
@@ -388,6 +438,12 @@ void NeoGeo::reset() {
     watchdog_ = 0;
     sram_unlocked_ = false;
     bios_vectors_ = bios_present_;
+    // The uPD4990A is battery-backed: watchdog/CPU reset must not stop TP.
+    rtc_bitno_ = 0;
+    rtc_shiftlo_ = 0;
+    rtc_ctrl_ = 0;
+    rtc_clock_ = false;
+    rtc_strobe_ = false;
     video_.reset();
     video_.set_use_bios_fix(true);
     ym_.reset();
@@ -406,8 +462,9 @@ uint8_t NeoGeo::status_a() const {
     if (inputs_.coin1) value &= ~0x01;
     if (inputs_.coin2) value &= ~0x02;
     if (service_) value &= ~0x04;
-    if (rtc_pulse_) value &= ~0x40;
-    if ((rtc_shift_ & 1) == 0) value &= ~0x80;
+    // Bit 6 is uPD4990A TP (active high). Bit 7 is serial DATA.
+    if (!rtc_pulse_) value &= ~0x40;
+    if (!rtc_data_bit_) value &= ~0x80;
     return value;
 }
 
@@ -422,21 +479,44 @@ uint8_t NeoGeo::status_b() const {
 }
 
 void NeoGeo::rtc_write(uint8_t value) {
-    const uint8_t prev = rtc_ctrl_;
-    rtc_ctrl_ = value;
-    // Rising clock edge shifts DIN into the command nibble.
-    if ((value & 0x02) != 0 && (prev & 0x02) == 0) {
-        rtc_command_ = uint8_t((rtc_command_ >> 1) | ((value & 1) << 3));
-        rtc_bits_++;
-        rtc_shift_ >>= 1;
-        if (rtc_bits_ == 4) {
-            rtc_bits_ = 0;
-            // Command 3 = time read: load a dummy BCD date (24-01-01 12:00:00).
-            if ((rtc_command_ & 0x0f) == 0x03) {
-                rtc_shift_ = 0xff;
+    const uint8_t data = uint8_t(value & 0x07);
+    const bool clock = (data & 0x02) != 0;
+    const bool strobe = (data & 0x04) != 0;
+    rtc_writes_++;
+
+    if (rtc_strobe_ && !strobe) {
+        const uint8_t command = rtc_cmd_shift_;
+        rtc_command_ = command;
+        rtc_shiftlo_ = 0;
+        rtc_bitno_ = 0;
+        if (command == 0x03) rtc_reading_ = true;
+        // Command 8 selects the 1-second TP used by the SP-S2 self-test.
+        // Commands 4-7 are 64Hz-4096Hz; 9-11 are 10/30/60 second intervals.
+        static constexpr int kTpInterval[] = {1, 1, 1, 1, 60, 600, 1800, 3600};
+        if (command >= 0x04 && command <= 0x0b) {
+            rtc_tp_interval_ = kTpInterval[command - 0x04];
+            rtc_tp_counter_ = 0;
+            rtc_pulse_ = false;
+        }
+        rtc_data_bit_ = rtc_time_bit(0) != 0;
+    }
+    rtc_strobe_ = strobe;
+
+    if (rtc_clock_ && !clock) {
+        rtc_cmd_shift_ = uint8_t(((rtc_cmd_shift_ >> 1) | uint8_t((data & 1) << 3)) & 0x0f);
+        if (rtc_bitno_ < 32) rtc_shiftlo_ |= uint32_t(data & 1) << rtc_bitno_;
+        rtc_bitno_++;
+        if (rtc_reading_) {
+            rtc_data_bit_ = rtc_time_bit(rtc_bitno_) != 0;
+            if (rtc_bitno_ >= 0x34) {
+                rtc_reading_ = false;
+                rtc_bitno_ = 0;
+                rtc_shiftlo_ = 0;
             }
         }
     }
+    rtc_clock_ = clock;
+    rtc_ctrl_ = data;
 }
 
 void NeoGeo::set_inputs(const MachineInputs& inputs) { inputs_ = inputs; }
@@ -527,7 +607,16 @@ uint8_t NeoGeo::read_byte(uint32_t address) {
 
 void NeoGeo::write_byte(uint32_t address, uint8_t value) {
     address &= 0xffffff;
-    if (address >= 0x300000 && address < 0x3c0000) {
+    if (address >= 0x200000 && address < 0x3c0000) {
+        if ((address & 0xfe0000) == 0x220000 && (address & 1) == 0) {
+            sound_latch_ = value;
+            if (sound_nmi_enabled_) z80_.set_nmi(IrqLine::Pulse);
+            return;
+        }
+        if ((address & 0xfe0000) == 0x280000 && (address & 1) != 0 && (address & 0x70) == 0x50) {
+            rtc_write(value);
+            return;
+        }
         if ((address & 0xfe0000) == 0x300000 && (address & 1) != 0) {
             kick_watchdog();
             return;
@@ -555,7 +644,8 @@ void NeoGeo::write_byte(uint32_t address, uint8_t value) {
                     sram_unlocked_ = bit;
                     break;
                 case 7:
-                    video_.set_palette_bank(bit ? 1 : 0);
+                    // $3A000F selects bank 1, $3A001F selects bank 0.
+                    video_.set_palette_bank(bit ? 0 : 1);
                     break;
                 default:
                     break;
@@ -587,6 +677,9 @@ uint16_t NeoGeo::read_word(uint32_t address) {
         return uint16_t((ram_[offset] << 8) | ram_[offset + 1]);
     }
     if (address < 0x300000) {
+        if (address == 0x220000) {
+            return uint16_t((uint16_t(sound_reply_) << 8) | status_a());
+        }
         if (address >= 0x2ffff0) return 0xffff;
         if (p_rom_.empty()) return 0xffff;
         uint32_t offset = cart_bank_ + (address - 0x200000);
@@ -612,7 +705,7 @@ uint16_t NeoGeo::read_word(uint32_t address) {
         return video_.read_palette(address);
     }
     if (address >= 0x800000 && address < 0x801000) {
-        return uint16_t(memcard_[(address >> 1) & 0x7ff]);
+        return uint16_t(0xff00 | memcard_[(address >> 1) & 0x7ff]);
     }
     if (address >= 0xc00000 && address < 0xc20000) {
         if (bios_.empty()) return 0xffff;
@@ -681,9 +774,10 @@ void NeoGeo::write_word(uint32_t address, uint16_t value) {
 }
 
 void NeoGeo::update_irqs() {
+    // MVS 68000 levels: 1 = vblank, 2 = raster timer, 3 = cold reset.
     m68k_.set_irq(3, video_.irq_reset() ? IrqLine::Assert : IrqLine::Clear);
-    m68k_.set_irq(2, video_.irq_vblank() ? IrqLine::Assert : IrqLine::Clear);
-    m68k_.set_irq(1, video_.irq_timer() ? IrqLine::Assert : IrqLine::Clear);
+    m68k_.set_irq(2, video_.irq_timer() ? IrqLine::Assert : IrqLine::Clear);
+    m68k_.set_irq(1, video_.irq_vblank() ? IrqLine::Assert : IrqLine::Clear);
 }
 
 void NeoGeo::on_m68k_cycles(int cycles) {
@@ -703,7 +797,13 @@ void NeoGeo::run_frame() {
         reset();
         watchdog_ = 0;
     }
-    rtc_pulse_ = !rtc_pulse_;
+    if (rtc_tp_interval_ > 0) {
+        rtc_tp_counter_++;
+        if (rtc_tp_counter_ >= rtc_tp_interval_) rtc_tp_counter_ = 0;
+        rtc_pulse_ = rtc_tp_counter_ == 0;
+    } else {
+        rtc_pulse_ = false;
+    }
 
     const int m68k_per_line = std::max(1, int(double(kMainClock) / kFramesPerSecond / kScanlines));
     const int z80_per_line = std::max(1, int(double(kZ80Clock) / kFramesPerSecond / kScanlines));
