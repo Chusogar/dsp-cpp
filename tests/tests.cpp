@@ -3444,6 +3444,44 @@ void test_trdos_scl_and_beta() {
     check(pent64->init(dir64.string(), &error), "64 KB PENTAGON.ROM boots without a separate TR-DOS file");
     auto scor64 = std::make_unique<dsp::Scorpion256>();
     check(scor64->init(dir64.string(), &error), "64 KB scorpion.rom boots from the ZXMak layout");
+
+    const fs::path trees = dir / "zxtiny-jmesys";
+    const fs::path zxm = trees / "zxtiny" / "zxm";
+    const fs::path spectrum = trees / "jMESYS" / "src" / "bios" / "Sinclair" / "Spectrum";
+    fs::create_directories(zxm);
+    fs::create_directories(spectrum);
+    auto write_marked = [&](const fs::path& file, size_t size, uint8_t mark) {
+        std::vector<uint8_t> blob(size, 0x00);
+        blob[0] = 0x18;
+        blob[1] = 0xfe;
+        blob[2] = mark;
+        std::ofstream out(file.string(), std::ios::binary);
+        out.write(reinterpret_cast<const char*>(blob.data()), std::streamsize(blob.size()));
+    };
+    write_marked(zxm / "zx128.rom", 0x8000, 0x12);
+    write_marked(zxm / "trdos.rom", 0x4000, 0x1d);
+    write_marked(zxm / "scorp0.rom", 0x4000, 0xc0);
+    write_marked(zxm / "scorp1.rom", 0x4000, 0xc1);
+    write_marked(zxm / "scorp2.rom", 0x4000, 0xc2);
+    write_marked(zxm / "scorp3.rom", 0x4000, 0xc3);
+    write_marked(spectrum / "Pentagon.rom", 0x8000, 0xaa);
+
+    auto pent_trees = std::make_unique<dsp::Pentagon1024>();
+    check(pent_trees->init(trees.string(), &error),
+          "Pentagon finds nested jMESYS Pentagon.rom and zxtiny trdos.rom");
+    check(pent_trees->debug_rom_byte(0, 2) == 0xaa,
+          "Pentagon prefers jMESYS Pentagon.rom over zxtiny zx128.rom");
+    check(!pent_trees->debug_gluk(), "zxtiny scorp2.rom is not treated as Pentagon GLUK");
+    check(pent_trees->debug_rom_byte(2, 2) != 0xc2, "Pentagon page 2 is not the Scorpion service ROM");
+
+    auto pent_zxm = std::make_unique<dsp::Pentagon1024>();
+    check(pent_zxm->init(zxm.string(), &error),
+          "Pentagon from zxtiny/zxm still picks the sibling jMESYS Pentagon.rom");
+    check(pent_zxm->debug_rom_byte(0, 2) == 0xaa, "companion jMESYS ROM is visible from zxtiny/zxm");
+
+    auto scor_trees = std::make_unique<dsp::Scorpion256>();
+    check(scor_trees->init(zxm.string(), &error), "Scorpion boots from nested zxtiny scorp0..scorp3");
+    check(scor_trees->debug_rom_byte(2, 2) == 0xc2, "Scorpion page 2 is zxtiny scorp2.rom");
 }
 
 void test_ym2612() {
