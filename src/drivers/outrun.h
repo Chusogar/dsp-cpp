@@ -118,6 +118,8 @@ private:
 
     std::vector<uint32_t> framebuffer_;
     std::vector<uint32_t> bg_low_, bg_high_, fg_low_, fg_high_, text_low_, text_high_;
+    // Pascal screen 8: foreground road is drawn here, then colour-keyed onto 7.
+    std::vector<uint32_t> road_fg_;
 
     uint8_t adc_select_ = 0;
     uint8_t sound_latch_ = 0;

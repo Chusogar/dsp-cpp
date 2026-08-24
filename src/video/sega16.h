@@ -34,7 +34,11 @@ struct Sega16Video {
 
     void reset();
     void init_palette_luts();
-    void set_palette_entry(int index, uint16_t value, bool split_shadow);
+    // split_shadow: bit 15 of the colour word chooses shadow vs hilight.
+    // shadow_at_800: also store that shadow/hilight copy at index+0x800
+    // (System 16B). OutRun's change_pal only writes index and index+$1000.
+    void set_palette_entry(int index, uint16_t value, bool split_shadow,
+                           bool shadow_at_800 = true);
     void mark_tile(uint16_t word_offset);
     void apply_screen_select_16b(uint16_t char_offset);   // $740 / $741, 4-bit
     void apply_screen_select_16a(uint16_t char_offset);   // $74e / $74f, 3-bit
@@ -48,6 +52,9 @@ struct Sega16Video {
 
     void blit_scrolled(uint32_t* dest, const std::vector<uint32_t>& source, int scroll_x,
                        int scroll_y, int src_width, int src_height) const;
+    // System 16B / OutRun row scroll: one X value per 8-pixel map row in char RAM.
+    void blit_rowscroll(uint32_t* dest, const std::vector<uint32_t>& source, int scroll_y,
+                        uint16_t table_base) const;
     void blit_text(uint32_t* dest, const std::vector<uint32_t>& source) const;
 
     GfxSet tiles;

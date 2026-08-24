@@ -58,7 +58,8 @@ Outrun::Outrun()
       sound_cpu_(kSoundClock),
       ym_(4000000),
       pcm_(4000000, 1.0f),
-      framebuffer_(kScreenWidth * kScreenHeight, 0) {
+      framebuffer_(kScreenWidth * kScreenHeight, 0),
+      road_fg_(kScreenWidth * kScreenHeight, 0) {
     main_cpu_.set_memory_handlers([this](uint32_t a) { return main_read(a); },
                                   [this](uint32_t a, uint16_t v) { main_write(a, v); });
     sub_cpu_.set_memory_handlers([this](uint32_t a) { return sub_read(a); },
@@ -159,6 +160,7 @@ void Outrun::reset() {
     pcm_acc_ = 0;
     audio_.clear();
     std::fill(framebuffer_.begin(), framebuffer_.end(), 0);
+    std::fill(road_fg_.begin(), road_fg_.end(), 0);
 }
 
 void Outrun::set_inputs(const MachineInputs& inputs) {
@@ -316,7 +318,7 @@ void Outrun::main_write(uint32_t address, uint16_t value) {
     }
     if (mapper_.contains(2, address)) {
         const int index = int((address & 0x1fff) >> 1);
-        video_.set_palette_entry(index, value, true);
+        video_.set_palette_entry(index, value, true, false);
         mapped = true;
     }
     if (mapper_.contains(3, address)) {
@@ -379,8 +381,11 @@ void Outrun::sub_write(uint32_t address, uint16_t value) {
 
 uint8_t Outrun::sub_read_byte(uint32_t address) {
     address &= 0xfffff;
-    if (address >= 0x90000 && address <= 0x9ffff && (address & 1) == 0) {
-        swap_road();
+    if (address >= 0x90000 && address <= 0x9ffff) {
+        // Pascal only swaps on the high-byte (even) half of the access
+        // (m68000_1.read_8bits_hi_dir). A word read uses the word handler
+        // (sub_read) and swaps once; an odd-byte read must not swap again.
+        if ((address & 1) == 0) swap_road();
         return 0xff;
     }
     const uint16_t word = sub_read(address);
@@ -389,6 +394,10 @@ uint8_t Outrun::sub_read_byte(uint32_t address) {
 
 void Outrun::sub_write_byte(uint32_t address, uint8_t value) {
     address &= 0xfffff;
+    if (address >= 0x90000 && address <= 0x9ffff) {
+        road_control_ = uint8_t(value & 3);
+        return;
+    }
     uint16_t old = sub_read(address);
     if (address & 1) old = uint16_t((old & 0xff00) | value);
     else old = uint16_t((old & 0x00ff) | (uint16_t(value) << 8));
@@ -442,37 +451,49 @@ void Outrun::on_sound_cycles(int cycles) {
 }
 
 void Outrun::update_video() {
-    // Attract writes CRAM before PPI port C bit 5. If the palette is live, draw
-    // even while the screen-enable bit is still clear.
-    bool pal_live = false;
-    for (uint16_t v : video_.pal_ram) {
-        if (v) {
-            pal_live = true;
-            break;
-        }
-    }
-    if (!video_.screen_enabled && !pal_live) {
+    // Pascal update_video_outrun: blank to paleta[$2000] when the PPI has not
+    // enabled the screen. Attract sets that bit before it writes a live picture.
+    if (!video_.screen_enabled) {
         std::fill(framebuffer_.begin(), framebuffer_.end(), video_.palette[0x2000]);
         return;
     }
     video_.render_tile_pages(bg_low_, bg_high_, 0, true, 6, 0x1fff, 0x8000, false, false);
     video_.render_tile_pages(fg_low_, fg_high_, 4, true, 6, 0x1fff, 0x8000, false, false);
     video_.render_text(text_low_, text_high_, 9, 0x1ff, 0x8000, false);
-    const int scroll_x1 = (704 - (video_.char_ram[0x74d] & 0x3ff)) & 0x3ff;
     const int scroll_y1 = video_.char_ram[0x749] & 0x1ff;
-    const int scroll_x2 = (704 - (video_.char_ram[0x74c] & 0x3ff)) & 0x3ff;
     const int scroll_y2 = video_.char_ram[0x748] & 0x1ff;
+    const bool row_back = (video_.char_ram[0x74d] & 0x8000) != 0;
+    const bool row_fore = (video_.char_ram[0x74c] & 0x8000) != 0;
+    const int scroll_x1 = row_back ? 0 : (704 - (video_.char_ram[0x74d] & 0x3ff)) & 0x3ff;
+    const int scroll_x2 = row_fore ? 0 : (704 - (video_.char_ram[0x74c] & 0x3ff)) & 0x3ff;
+    auto blit_layer = [&](const std::vector<uint32_t>& src, bool row, int sx, int sy,
+                          uint16_t table_base) {
+        if (row) video_.blit_rowscroll(framebuffer_.data(), src, sy, table_base);
+        else video_.blit_scrolled(framebuffer_.data(), src, sx, sy, 1024, 512);
+    };
+
     draw_outrun_road(framebuffer_.data(), video_.palette.data(), road_buffer_.data(),
                      road_gfx_.data(), road_control_, 0x400, 0x420, 0x780, 0, 0);
-    video_.blit_scrolled(framebuffer_.data(), bg_low_, scroll_x1, scroll_y1, 1024, 512);
+    blit_layer(bg_low_, row_back, scroll_x1, scroll_y1, 0x7e0);
     draw_sprites_outrun(video_, framebuffer_.data(), sprite_rom_, sprite_banks_, 0, 0x1000);
-    video_.blit_scrolled(framebuffer_.data(), bg_high_, scroll_x1, scroll_y1, 1024, 512);
+    blit_layer(bg_high_, row_back, scroll_x1, scroll_y1, 0x7e0);
     draw_sprites_outrun(video_, framebuffer_.data(), sprite_rom_, sprite_banks_, 1, 0x1000);
-    video_.blit_scrolled(framebuffer_.data(), fg_low_, scroll_x2, scroll_y2, 1024, 512);
+    blit_layer(fg_low_, row_fore, scroll_x2, scroll_y2, 0x7c0);
     draw_sprites_outrun(video_, framebuffer_.data(), sprite_rom_, sprite_banks_, 2, 0x1000);
-    video_.blit_scrolled(framebuffer_.data(), fg_high_, scroll_x2, scroll_y2, 1024, 512);
-    draw_outrun_road(framebuffer_.data(), video_.palette.data(), road_buffer_.data(),
+    blit_layer(fg_high_, row_fore, scroll_x2, scroll_y2, 0x7c0);
+
+    // Pascal draw_road(1) paints screen 8 with paleta[MAX_COLORES] (colour key),
+    // then actualiza_trozo composites it onto screen 7. Direct drawing onto the
+    // framebuffer overwrites tile/sprite pixels that should show through skipped
+    // road lines (both data words have bit $800).
+    constexpr uint32_t kRoadKey = 0x01000000u;
+    std::fill(road_fg_.begin(), road_fg_.end(), kRoadKey);
+    draw_outrun_road(road_fg_.data(), video_.palette.data(), road_buffer_.data(),
                      road_gfx_.data(), road_control_, 0x400, 0x420, 0x780, 0, 1);
+    for (size_t i = 0; i < road_fg_.size(); i++) {
+        if (road_fg_[i] != kRoadKey) framebuffer_[i] = road_fg_[i];
+    }
+
     video_.blit_text(framebuffer_.data(), text_low_);
     draw_sprites_outrun(video_, framebuffer_.data(), sprite_rom_, sprite_banks_, 3, 0x1000);
     video_.blit_text(framebuffer_.data(), text_high_);
