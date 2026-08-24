@@ -117,6 +117,7 @@ private:
     int sprite_tiles_ = 0;
 
     std::array<ZoomRow, 256> zoom_{};
+    std::array<ZoomRow, 16> xzoom_{};
 };
 
 }  // namespace dsp

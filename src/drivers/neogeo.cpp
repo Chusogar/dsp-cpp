@@ -485,12 +485,10 @@ void NeoGeo::rtc_write(uint8_t value) {
     rtc_writes_++;
 
     if (rtc_strobe_ && !strobe) {
-        uint8_t command = 0;
-        if (rtc_bitno_ >= 4) command = uint8_t((rtc_shiftlo_ >> (rtc_bitno_ - 4)) & 0x0f);
-        else command = uint8_t(rtc_shiftlo_ & 0x0f);
+        const uint8_t command = rtc_cmd_shift_;
+        rtc_command_ = command;
         rtc_shiftlo_ = 0;
         rtc_bitno_ = 0;
-        rtc_command_ = command;
         if (command == 0x03) rtc_reading_ = true;
         // Command 8 selects the 1-second TP used by the SP-S2 self-test.
         // Commands 4-7 are 64Hz-4096Hz; 9-11 are 10/30/60 second intervals.
@@ -505,6 +503,7 @@ void NeoGeo::rtc_write(uint8_t value) {
     rtc_strobe_ = strobe;
 
     if (rtc_clock_ && !clock) {
+        rtc_cmd_shift_ = uint8_t(((rtc_cmd_shift_ >> 1) | uint8_t((data & 1) << 3)) & 0x0f);
         if (rtc_bitno_ < 32) rtc_shiftlo_ |= uint32_t(data & 1) << rtc_bitno_;
         rtc_bitno_++;
         if (rtc_reading_) {

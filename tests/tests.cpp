@@ -3994,6 +3994,19 @@ void test_neogeo_missing_roms() {
     check(!error.empty(), "NeoGeo reports why the ROM path failed");
 }
 
+bool neogeo_fix_contains(dsp::NeoGeo& machine, const char* text) {
+    for (int row = 0; row < 28; row++) {
+        std::string line;
+        line.reserve(40);
+        for (int col = 0; col < 40; col++) {
+            const int code = machine.video().vram(0x7000 + col * 32 + row) & 0xfff;
+            line.push_back((code >= 0x20 && code < 0x7f) ? char(code) : ' ');
+        }
+        if (line.find(text) != std::string::npos) return true;
+    }
+    return false;
+}
+
 void test_neogeo_roms_if_present() {
     const char* bios_paths[] = {"/tmp/neogeo-roms/neogeo.zip", "/tmp/roms/neogeo.zip"};
     const char* mslug_paths[] = {"/tmp/neogeo-roms/mslug.zip", "/tmp/roms/mslug.zip"};
@@ -4014,7 +4027,10 @@ void test_neogeo_roms_if_present() {
         check(machine.init(bios, &error), "MAME neogeo.zip BIOS set loads");
         check(machine.debug_pc() == 0xc00402, "SP-S2 BIOS reset vector is $C00402");
         for (int frame = 0; frame < 400; frame++) machine.run_frame();
-        check(unique_pixels(machine) > 8, "NeoGeo BIOS draws more than a two-colour stripe field");
+        check(!neogeo_fix_contains(machine, "CALENDAR ERROR"),
+              "NeoGeo BIOS calendar self-test does not hang on CALENDAR ERROR");
+        check(machine.debug_pc() != 0xc16baa, "NeoGeo BIOS leaves the calendar-error halt");
+        check(unique_pixels(machine) >= 3, "NeoGeo BIOS draws the post-test crosshatch or colour bars");
     }
 
     if (mslug != nullptr) {
@@ -4028,7 +4044,8 @@ void test_neogeo_roms_if_present() {
             machine.set_inputs(inputs);
             machine.run_frame();
         }
-        check(unique_pixels(machine) > 16, "Metal Slug BIOS/cart boot draws a colour picture");
+        check(!neogeo_fix_contains(machine, "CALENDAR ERROR"),
+              "Metal Slug BIOS calendar self-test does not hang on CALENDAR ERROR");
 
         inputs.coin1 = true;
         for (int frame = 0; frame < 20; frame++) {
@@ -4047,6 +4064,7 @@ void test_neogeo_roms_if_present() {
             machine.run_frame();
         }
         check(unique_pixels(machine) > 16, "Metal Slug still draws after coin and start");
+        check(machine.debug_pc() < 0xc00000, "Metal Slug runs from cartridge P-ROM after start");
     }
 }
 

@@ -133,6 +133,7 @@ private:
     bool rtc_reading_ = false;
     bool rtc_data_bit_ = false;
     int rtc_writes_ = 0;
+    uint8_t rtc_cmd_shift_ = 0;
     // SP-S2 measures vblanks between uPD4990A TP rising edges; 57-63 is a pass.
     int rtc_tp_interval_ = 0;
     int rtc_tp_counter_ = 0;

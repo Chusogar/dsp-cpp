@@ -157,6 +157,23 @@ void NeoGeoVideo::build_zoom_table() {
             row.pixels = 1;
         }
     }
+    // Horizontal shrink is 4-bit: $0 draws 1 pixel, $F draws the full 16.
+    for (int z = 0; z < 16; z++) {
+        ZoomRow& row = xzoom_[size_t(z)];
+        row.draw.fill(0);
+        const int pixels = z + 1;
+        row.pixels = pixels;
+        int acc = 0;
+        int drawn = 0;
+        for (int i = 0; i < 16 && drawn < pixels; i++) {
+            acc += pixels;
+            if (acc >= 16) {
+                acc -= 16;
+                row.draw[size_t(i)] = 1;
+                drawn++;
+            }
+        }
+    }
     (void)lo_rom_;
 }
 
@@ -339,7 +356,7 @@ void NeoGeoVideo::draw_sprite_line(uint32_t* framebuffer, int /*sprite*/, int /*
     if (src_y < 0 || src_y > 15) return;
     if (dest_y < 0 || dest_y >= kScreenHeight) return;
     const auto& pal = palette_rgb_[size_t(palette_bank_)];
-    const ZoomRow& zoom = zoom_[size_t(xzoom & 0xff)];
+    const ZoomRow& zoom = xzoom_[size_t(xzoom & 0x0f)];
     uint32_t* line = framebuffer + dest_y * kScreenWidth;
     int x = dest_x;
     for (int px = 0; px < 16; px++) {
@@ -355,14 +372,14 @@ void NeoGeoVideo::draw_sprite_line(uint32_t* framebuffer, int /*sprite*/, int /*
 
 void NeoGeoVideo::draw_sprites(uint32_t* framebuffer) {
     int chain_x = 0;
-    int chain_xzoom = 0xff;
+    int chain_xzoom = 0x0f;
     for (int sprite = 1; sprite < kSpriteCount; sprite++) {
         const uint16_t scb3 = vram_[0x8200 + sprite];
         const int size = scb3 & 0x3f;
         const bool sticky = (scb3 & 0x40) != 0;
         const uint16_t scb2 = vram_[0x8000 + sprite];
         const int yzoom = scb2 & 0xff;
-        int xzoom = (scb2 >> 8) & 0xff;
+        int xzoom = (scb2 >> 8) & 0x0f;
         int sx;
         if (sticky) {
             sx = chain_x;
@@ -375,7 +392,7 @@ void NeoGeoVideo::draw_sprites(uint32_t* framebuffer) {
         }
         if (size == 0) continue;
 
-        int sy = 0x200 - ((scb3 >> 7) & 0x1ff);
+        int sy = 496 - ((scb3 >> 7) & 0x1ff);
         const int lines_per_tile = std::max(1, zoom_[size_t(yzoom)].pixels);
         const uint16_t* scb1 = &vram_[sprite * 64];
 
@@ -407,7 +424,7 @@ void NeoGeoVideo::draw_sprites(uint32_t* framebuffer) {
             }
             (void)lines_per_tile;
         }
-        chain_x += zoom_[size_t(xzoom)].pixels;
+        chain_x += xzoom_[size_t(xzoom & 0x0f)].pixels;
     }
 }
 
