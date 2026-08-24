@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -2457,6 +2458,213 @@ void test_tms3556_background() {
     check(fb[10] == white, "tms3556 off-mode fills the border with CM4 background");
 }
 
+// Builds an LPC bitstream the way the TMS5220 reads it: bits go out starting
+// with the least significant bit of each byte.
+class LpcStream {
+public:
+    void bits(int value, int count) {
+        for (int i = count - 1; i >= 0; --i) {
+            if (bit_ == 0) bytes_.push_back(0);
+            if ((value >> i) & 1) bytes_.back() |= uint8_t(1u << bit_);
+            bit_ = (bit_ + 1) & 7;
+        }
+    }
+
+    // Voiced frame with mid range coefficients; pitch and energy are indices.
+    void voiced_frame(int energy_idx, int pitch_idx) {
+        static const int k[10] = {20, 20, 8, 8, 8, 8, 8, 4, 4, 4};
+        static const int kbits[10] = {5, 5, 4, 4, 4, 4, 4, 3, 3, 3};
+        bits(energy_idx, 4);
+        bits(0, 1);  // no repeat
+        bits(pitch_idx, 6);
+        for (int i = 0; i < 10; ++i) bits(k[i], kbits[i]);
+    }
+
+    // Unvoiced frames have a zero pitch index and only carry K1-K4.
+    void unvoiced_frame(int energy_idx) {
+        static const int k[4] = {20, 20, 8, 8};
+        static const int kbits[4] = {5, 5, 4, 4};
+        bits(energy_idx, 4);
+        bits(0, 1);
+        bits(0, 6);
+        for (int i = 0; i < 4; ++i) bits(k[i], kbits[i]);
+    }
+
+    void stop_frame() { bits(0x0f, 4); }
+
+    const std::vector<uint8_t>& bytes() const { return bytes_; }
+
+private:
+    std::vector<uint8_t> bytes_;
+    int bit_ = 0;
+};
+
+// Runs the chip for `samples` synthesis samples, topping the FIFO up whenever
+// buffer low is set, and returns the generated waveform.
+std::vector<int> run_speech(dsp::Tms5220& tms, const std::vector<uint8_t>& stream, int samples) {
+    std::vector<int> out;
+    size_t next = 0;
+    for (int i = 0; i < samples; ++i) {
+        while (next < stream.size() && (tms.status() & 0x40) != 0) tms.write_data(stream[next++]);
+        tms.tick(dsp::Tms5220::kClocksPerSample);
+        out.push_back(tms.last_sample());
+    }
+    return out;
+}
+
+int waveform_peak(const std::vector<int>& wave) {
+    int peak = 0;
+    for (int sample : wave) peak = std::max(peak, std::abs(sample));
+    return peak;
+}
+
+// Normalised autocorrelation at `lag`, measured once the filter has settled.
+double waveform_periodicity(const std::vector<int>& wave, size_t lag) {
+    double numerator = 0.0;
+    double energy = 0.0;
+    for (size_t i = 400; i + lag < wave.size(); ++i) {
+        numerator += double(wave[i]) * double(wave[i + lag]);
+        energy += double(wave[i]) * double(wave[i]);
+    }
+    return energy > 0.0 ? numerator / energy : 0.0;
+}
+
+void test_tms5220_fifo_and_status() {
+    dsp::Tms5220 tms(640000);
+    bool irq = false;
+    tms.set_irq_callback([&irq](bool state) { irq = state; });
+    tms.reset();
+
+    check(tms.status() == 0x60, "tms5220 idles with buffer low and buffer empty set");
+
+    tms.write_data(0x60);  // SPEAK EXTERNAL
+    for (int i = 0; i < 8; ++i) tms.write_data(0x00);
+    check((tms.status() & 0x40) != 0, "tms5220 keeps buffer low with eight bytes queued");
+    check(!tms.talking(), "tms5220 stays quiet until the FIFO passes half full");
+
+    tms.write_data(0x00);  // ninth byte clears buffer low and sets SPEN
+    check((tms.status() & 0x40) == 0, "tms5220 clears buffer low on the ninth byte");
+    check((tms.status() & 0x80) != 0, "tms5220 reports talk status once SPEN is set");
+
+    // Nine bytes of zeroes are nine silence frames' worth of bits; draining
+    // them asserts /INT and stops speech. A /RS status read clears /INT.
+    irq = false;
+    tms.tick(dsp::Tms5220::kClocksPerSample * 4200);
+    check(irq, "tms5220 asserts /INT when the FIFO runs dry");
+    check((tms.status() & 0x20) != 0, "tms5220 reports buffer empty once drained");
+    check(!tms.talking(), "tms5220 stops talking after buffer empty");
+    check(!tms.intq(), "tms5220 holds /INT low until it is acknowledged");
+    tms.strobe_ws_rs(0x01);  // /RS low, /WS high
+    check(tms.readyq(), "tms5220 drops /READY while servicing a read");
+    check(tms.intq(), "tms5220 releases /INT on a status read");
+    tms.tick(dsp::Tms5220::kIoReadyClocks);
+    check(!tms.readyq(), "tms5220 raises /READY again after the read delay");
+}
+
+// The EXL-100 drives the chip through the pins only: the byte is latched and
+// then committed on the falling edge of /WS, once per edge.
+void test_tms5220_latched_writes() {
+    dsp::Tms5220 tms(640000);
+    auto latched_write = [&tms](uint8_t value) {
+        tms.set_data_latch(value);
+        tms.strobe_ws_rs(0x02);  // /WS low
+        tms.tick(dsp::Tms5220::kIoReadyClocks);
+        tms.strobe_ws_rs(0x03);
+    };
+
+    latched_write(0x60);  // SPEAK EXTERNAL
+    for (int i = 0; i < 8; ++i) latched_write(0x00);
+    check((tms.status() & 0x40) != 0, "tms5220 counts one FIFO byte per /WS edge");
+    check(!tms.talking(), "tms5220 does not start speaking on eight latched bytes");
+
+    latched_write(0x00);
+    check((tms.status() & 0x40) == 0, "tms5220 fills the FIFO through the /WS pin");
+    check(tms.talking(), "tms5220 starts speaking once the latched FIFO passes half full");
+}
+
+void test_tms5220_chirp_rom() {
+    int sum = 0;
+    bool negative = false;
+    for (int i = 0; i < 52; ++i) {
+        const int value = dsp::Tms5220::voiced_excitation(i);
+        sum += value;
+        if (value < 0) negative = true;
+    }
+    // The TMS5220 excitation ROM is unipolar and its entries add up to 0x3da;
+    // the bipolar table of the TMS5100 era fails both checks.
+    check(!negative, "tms5220 voiced excitation is unipolar");
+    check(sum == 0x3da, "tms5220 voiced excitation matches the TMS5220 chirp ROM");
+    check(dsp::Tms5220::voiced_excitation(6) == 0x71,
+          "tms5220 voiced excitation peaks at entry 6");
+    check(dsp::Tms5220::voiced_excitation(51) == 0,
+          "tms5220 voiced excitation is silent at the end of a pitch period");
+}
+
+void test_tms5220_synthesis() {
+    LpcStream soft;
+    LpcStream strong;
+    for (int i = 0; i < 20; ++i) {
+        soft.voiced_frame(4, 40);
+        strong.voiced_frame(8, 40);
+    }
+    soft.stop_frame();
+    strong.stop_frame();
+
+    dsp::Tms5220 quiet(640000);
+    dsp::Tms5220 loud(640000);
+    quiet.write_data(0x60);
+    loud.write_data(0x60);
+    const std::vector<int> soft_wave = run_speech(quiet, soft.bytes(), 2000);
+    const std::vector<int> loud_wave = run_speech(loud, strong.bytes(), 2000);
+
+    check(waveform_peak(soft_wave) > 0, "tms5220 synthesizes a voiced frame");
+    // Energy indices 4 and 8 are 4 and 16, so the amplitude quadruples.
+    check(waveform_peak(loud_wave) > waveform_peak(soft_wave) * 3,
+          "tms5220 scales the excitation with the frame energy");
+
+    // A voiced frame repeats the chirp once per pitch period (index 40 is 68
+    // samples), while an unvoiced frame is driven by the noise generator.
+    LpcStream hiss;
+    for (int i = 0; i < 20; ++i) hiss.unvoiced_frame(8);
+    hiss.stop_frame();
+    dsp::Tms5220 noise(640000);
+    noise.write_data(0x60);
+    const std::vector<int> noise_wave = run_speech(noise, hiss.bytes(), 2000);
+
+    check(waveform_periodicity(loud_wave, 68) > 0.75,
+          "tms5220 voiced frames repeat at the frame pitch period");
+    check(waveform_periodicity(noise_wave, 68) < 0.25,
+          "tms5220 unvoiced frames are aperiodic noise");
+}
+
+void test_tms5220_stop_frame_ramp() {
+    dsp::Tms5220 tms(640000);
+    LpcStream stream;
+    for (int i = 0; i < 4; ++i) stream.voiced_frame(13, 40);
+    stream.stop_frame();
+    // Keep the FIFO fed so that only the stop frame can end speech.
+    for (int i = 0; i < 4; ++i) stream.voiced_frame(13, 40);
+
+    tms.write_data(0x60);
+    size_t next = 0;
+    int samples_while_talking = 0;
+    bool saw_stop = false;
+    for (int i = 0; i < 4000 && !saw_stop; ++i) {
+        while (next < stream.bytes().size() && (tms.status() & 0x40) != 0)
+            tms.write_data(stream.bytes()[next++]);
+        tms.tick(dsp::Tms5220::kClocksPerSample);
+        if (tms.talking())
+            ++samples_while_talking;
+        else if (samples_while_talking > 0)
+            saw_stop = true;
+    }
+    check(saw_stop, "tms5220 stops speaking on a stop frame");
+    // Four frames of 8 interpolation periods, 25 samples each, plus the frame
+    // TALKD keeps running while the energy ramps down.
+    check(samples_while_talking > 4 * 200,
+          "tms5220 keeps TALKD active for a full frame after the stop code");
+}
+
 void test_exelv_dummy_bios() {
     dsp::Exelv missing(dsp::Exelv::Model::Exl100);
     std::string error;
@@ -3699,6 +3907,11 @@ int main() {
     test_tms7000_mov_add_call();
     test_tms7000_lvdp_and_int1();
     test_tms3556_background();
+    test_tms5220_fifo_and_status();
+    test_tms5220_latched_writes();
+    test_tms5220_chirp_rom();
+    test_tms5220_synthesis();
+    test_tms5220_stop_frame_ramp();
     test_exelv_dummy_bios();
     test_trdos_scl_and_beta();
     test_starwars_missing_roms();
