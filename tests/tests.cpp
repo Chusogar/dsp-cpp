@@ -24,6 +24,7 @@
 #include "cpu/z80ctc.h"
 #include "drivers/pcengine.h"
 #include "drivers/amstrad_cpc.h"
+#include "drivers/neogeo.h"
 #include "drivers/atari_lynx.h"
 #include "drivers/atari_system1.h"
 #include "drivers/apple2.h"
@@ -73,6 +74,7 @@
 #include "sound/upd1771.h"
 #include "sound/ym2151.h"
 #include "sound/ym2612.h"
+#include "sound/ym2610.h"
 #include "sound/sega_pcm.h"
 #include "sound/upd7759.h"
 #include "sound/huc6280_psg.h"
@@ -83,6 +85,7 @@
 #include "video/tms3556.h"
 #include "video/sega_315_5313.h"
 #include "video/sega16.h"
+#include "video/neogeo_video.h"
 
 namespace {
 
@@ -3631,6 +3634,197 @@ void test_genesis_boot() {
     check((th_low & 0x1000) == 0, "Genesis pad A is visible with TH low");
 }
 
+void test_ym2610() {
+    dsp::YM2610 ym(8000000);
+    ym.reset();
+    bool silent = true;
+    for (int i = 0; i < 128; i++) {
+        if (ym.update() != 0) silent = false;
+    }
+    check(silent, "the YM2610 is silent after reset");
+
+    ym.write(0, 0xb0);
+    ym.write(1, 0x07);
+    ym.write(0, 0xb4);
+    ym.write(1, 0xc0);
+    ym.write(0, 0xa4);
+    ym.write(1, 0x22);
+    ym.write(0, 0xa0);
+    ym.write(1, 0x69);
+    for (int op = 0; op < 4; op++) {
+        ym.write(0, uint8_t(0x40 + (op << 2)));
+        ym.write(1, 0x00);
+        ym.write(0, uint8_t(0x50 + (op << 2)));
+        ym.write(1, 0x1f);
+        ym.write(0, uint8_t(0x80 + (op << 2)));
+        ym.write(1, 0x0f);
+    }
+    ym.write(0, 0x28);
+    ym.write(1, 0xf0);
+    bool audible = false;
+    for (int i = 0; i < 4410; i++) {
+        if (ym.update() != 0) audible = true;
+    }
+    check(audible, "the YM2610 produces FM after a key on");
+
+    dsp::YM2610 adpcm(8000000);
+    std::vector<uint8_t> rom(0x200, 0x77);
+    adpcm.set_adpcm_a_rom(rom);
+    adpcm.write(2, 0x01);
+    adpcm.write(3, 0x00);
+    adpcm.write(2, 0x08);
+    adpcm.write(3, 0xdf);
+    adpcm.write(2, 0x10);
+    adpcm.write(3, 0x00);
+    adpcm.write(2, 0x18);
+    adpcm.write(3, 0x00);
+    adpcm.write(2, 0x20);
+    adpcm.write(3, 0x00);
+    adpcm.write(2, 0x28);
+    adpcm.write(3, 0x01);
+    adpcm.write(2, 0x00);
+    adpcm.write(3, 0x01);
+    bool adpcm_audible = false;
+    for (int i = 0; i < 4410; i++) {
+        if (adpcm.update() != 0) adpcm_audible = true;
+    }
+    check(adpcm_audible, "the YM2610 ADPCM-A channel plays a sample");
+}
+
+void test_neogeo_video() {
+    dsp::NeoGeoVideo video;
+    video.reset();
+    std::vector<uint8_t> srom(64, 0);
+    for (int y = 0; y < 8; y++) srom[32 + 16 + y] = 0xff;  // tile 1, plane 0 = pen 1
+    video.set_fix_roms(srom.data(), srom.size(), nullptr, 0);
+    video.set_use_bios_fix(false);
+    video.decode_graphics();
+    video.write_palette(0, 0x0000);
+    video.write_palette(2, 0x7fff);
+    video.write_register(0x3c0000, 0x7000);
+    video.write_register(0x3c0004, 0x0001);
+    for (int i = 0; i < 40 * 32; i++) video.write_register(0x3c0002, 0x0001);
+    std::vector<uint32_t> fb(size_t(dsp::NeoGeoVideo::kScreenWidth) * dsp::NeoGeoVideo::kScreenHeight,
+                             0);
+    video.render_frame(fb.data());
+    bool bright = false;
+    for (int i = 0; i < dsp::NeoGeoVideo::kScreenWidth * 16; i++) {
+        if (((fb[size_t(i)] >> 16) & 0xff) > 180) {
+            bright = true;
+            break;
+        }
+    }
+    check(bright, "NeoGeo fix layer draws a solid colour-1 tile");
+    check(dsp::NeoGeoVideo::colour(0x7fff) == 0xffffffffu ||
+              ((dsp::NeoGeoVideo::colour(0x7fff) >> 16) & 0xff) > 200,
+          "NeoGeo palette 555 converts to a bright colour");
+}
+
+std::vector<uint8_t> make_neogeo_test_rom() {
+    std::vector<uint8_t> rom(0x800, 0);
+    auto put32 = [&](size_t offset, uint32_t value) {
+        rom[offset] = uint8_t(value >> 24);
+        rom[offset + 1] = uint8_t(value >> 16);
+        rom[offset + 2] = uint8_t(value >> 8);
+        rom[offset + 3] = uint8_t(value);
+    };
+    auto put16 = [&](size_t offset, uint16_t value) {
+        rom[offset] = uint8_t(value >> 8);
+        rom[offset + 1] = uint8_t(value);
+    };
+    put32(0, 0x0010f300);
+    put32(4, 0x00000200);
+    for (int vec = 2; vec < 64; vec++) put32(size_t(vec * 4), 0x000003e0);
+    put16(0x3e0, 0x4e73);  // rte
+
+    size_t pc = 0x200;
+    auto emit16 = [&](uint16_t value) {
+        put16(pc, value);
+        pc += 2;
+    };
+    auto emit32 = [&](uint32_t value) {
+        put32(pc, value);
+        pc += 4;
+    };
+    emit16(0x33fc);
+    emit16(0x0007);
+    emit32(0x003c000c);  // move.w #$0007, $3c000c
+    emit16(0x41f9);
+    emit32(0x00400000);  // lea $400000, a0
+    emit16(0x30fc);
+    emit16(0x0000);
+    emit16(0x30fc);
+    emit16(0x7fff);
+    emit16(0x33fc);
+    emit16(0x7000);
+    emit32(0x003c0000);  // move.w #$7000, $3c0000
+    emit16(0x33fc);
+    emit16(0x0001);
+    emit32(0x003c0004);  // modulo 1
+    emit16(0x303c);
+    emit16(0x04ff);  // move.w #1279, d0
+    const size_t loop = pc;
+    emit16(0x33fc);
+    emit16(0x0001);
+    emit32(0x003c0002);
+    emit16(0x51c8);
+    emit16(uint16_t(int16_t(int(loop) - int(pc + 2))));  // dbra d0, loop
+    emit16(0x13c0);
+    emit32(0x00300001);  // move.b d0, $300001
+    emit16(0x60f8);      // bra.s kick
+    return rom;
+}
+
+void test_neogeo_boot() {
+    std::vector<uint8_t> program = make_neogeo_test_rom();
+    std::vector<uint8_t> bios = program;
+    bios.resize(0x80);
+    std::vector<uint8_t> srom(64, 0);
+    for (int y = 0; y < 8; y++) srom[32 + 16 + y] = 0xff;
+
+    dsp::NeoGeo machine("nam1975");
+    std::string error;
+    check(machine.load_synthetic(bios, {}, {}, program, srom, {}, {}, {}, &error),
+          "NeoGeo loads a synthetic cartridge");
+    check(machine.debug_pc() == 0x200, "NeoGeo reset vector is $200");
+    check(machine.debug_read_word(0x300000) == 0xff00 ||
+              (machine.debug_read_word(0x300000) & 0xff00) == 0xff00,
+          "NeoGeo player 1 port is idle high");
+
+    dsp::MachineInputs inputs;
+    inputs.player1.right = true;
+    inputs.player1.button1 = true;
+    inputs.coin1 = true;
+    inputs.player1.start = true;
+    machine.set_inputs(inputs);
+    const uint16_t p1 = machine.debug_read_word(0x300000);
+    check((p1 & 0x0800) == 0, "NeoGeo player 1 right is active low");
+    check((p1 & 0x1000) == 0, "NeoGeo player 1 A is active low");
+
+    for (int frame = 0; frame < 8; frame++) machine.run_frame();
+    check(machine.debug_pc() >= 0x200 && machine.debug_pc() < 0x400,
+          "NeoGeo 68k stays in the test program");
+    check((machine.video().palette(1) & 0x7fff) == 0x7fff, "NeoGeo test ROM writes palette colour 1");
+    check(machine.video().vram(0x7000) == 0x0001, "NeoGeo test ROM fills the fix map");
+    const uint32_t* fb = machine.framebuffer();
+    bool bright = false;
+    for (int i = 0; i < 320 * 16; i++) {
+        if (((fb[i] >> 16) & 0xff) > 180) {
+            bright = true;
+            break;
+        }
+    }
+    check(bright, "NeoGeo test ROM fills the fix layer with a bright tile");
+}
+
+void test_neogeo_missing_roms() {
+    dsp::NeoGeo machine;
+    std::string error;
+    check(!machine.init("/tmp/dsp-cpp-missing-neogeo-romset", &error),
+          "NeoGeo rejects a missing ROM path");
+    check(!error.empty(), "NeoGeo reports why the ROM path failed");
+}
+
 void write_msx2_dummy_roms(const std::string& dir, bool with_disk) {
     std::filesystem::create_directories(dir);
     std::vector<uint8_t> bios(0x8000, 0x00);
@@ -4102,6 +4296,10 @@ int main() {
     test_ym2612();
     test_genesis_vdp();
     test_genesis_boot();
+    test_ym2610();
+    test_neogeo_video();
+    test_neogeo_boot();
+    test_neogeo_missing_roms();
     test_v9938_status_and_hmmv();
     test_msx_disk_and_fdc();
     test_rp5c01_fixed_clock();

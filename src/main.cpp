@@ -55,6 +55,7 @@
 #include "drivers/atari_lynx.h"
 #include "drivers/scv.h"
 #include "drivers/pcengine.h"
+#include "drivers/neogeo.h"
 
 #include "frontend/sdl_app.h"
 
@@ -90,7 +91,9 @@ void print_supported_emulators() {
 		"    galaxian, mooncrst, scramble,\n"
 		"    depthch, safari, frogs, sspaceat, sspacaho, headon, headon2,\n"
 		"    headon2s, invho2, nsub, samurai, invinco, invds, tranqgun,\n"
-		"    spacetrk, carnival, brdrline, digger, pulsar, heiankyo, alphaho\n"
+		"    spacetrk, carnival, brdrline, digger, pulsar, heiankyo, alphaho,\n"
+        "    neogeo, nam1975, maglord, mslug, kof94, kof95, kof97, kof98,\n"
+        "    fatfury, samsho, aof, lastblad, bstars, whp\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
@@ -128,7 +131,7 @@ void print_usage(const char* program) {
         "  --help             show this help\n"
         "\n"
         "Controls: arrows move, Left Ctrl/Space button 1, Left Alt/Z button 2,\n"
-        "          X button 3 (Double Dragon jump),\n"
+        "          X button 3, C button 4 (NeoGeo D), 3/4 select (NeoGeo),\n"
         "          1/2 start, 5/6 insert coin, P pause, F3 reset, Esc quit.\n"
         "On the Spectrum the host keyboard is the Spectrum keyboard (Left Shift is\n"
         "caps shift, Left Ctrl symbol shift, cursor keys the caps shift arrows) and\n"
@@ -334,6 +337,10 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	}
 	if (game == "alphaho" || game == "alphafighter") {
 		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::AlphaFighter);
+	}
+
+	if (dsp::NeoGeo::is_game_name(game)) {
+		return std::make_unique<dsp::NeoGeo>(game);
 	}
 
 	// computers

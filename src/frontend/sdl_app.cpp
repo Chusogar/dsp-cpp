@@ -62,7 +62,9 @@ void collect_inputs(Machine& machine) {
     inputs.player1.button1 = keys[SDL_SCANCODE_LCTRL] || keys[SDL_SCANCODE_SPACE];
     inputs.player1.button2 = keys[SDL_SCANCODE_LALT] || keys[SDL_SCANCODE_Z];
     inputs.player1.button3 = keys[SDL_SCANCODE_X];
+    inputs.player1.button4 = keys[SDL_SCANCODE_C];
     inputs.player1.start = keys[SDL_SCANCODE_1];
+    inputs.player1.select = keys[SDL_SCANCODE_3];
 
     inputs.player2.up = keys[SDL_SCANCODE_R];
     inputs.player2.down = keys[SDL_SCANCODE_F];
@@ -71,7 +73,9 @@ void collect_inputs(Machine& machine) {
     inputs.player2.button1 = keys[SDL_SCANCODE_A];
     inputs.player2.button2 = keys[SDL_SCANCODE_S];
     inputs.player2.button3 = keys[SDL_SCANCODE_Q];
+    inputs.player2.button4 = keys[SDL_SCANCODE_W];
     inputs.player2.start = keys[SDL_SCANCODE_2];
+    inputs.player2.select = keys[SDL_SCANCODE_4];
 
     inputs.coin1 = keys[SDL_SCANCODE_5];
     inputs.coin2 = keys[SDL_SCANCODE_6];

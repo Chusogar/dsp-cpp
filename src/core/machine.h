@@ -30,7 +30,9 @@ struct InputState {
     bool button1 = false;
     bool button2 = false;
     bool button3 = false;
+    bool button4 = false;
     bool start = false;
+    bool select = false;
 };
 
 struct MachineInputs {

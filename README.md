@@ -4,7 +4,7 @@ C++17 + SDL2 port of [dsp-emulator](https://github.com/leniad/dsp-emulator) (Fre
 Arcade: **Bagman**, **Mikie**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
 **Double Dragon II**, Taito SJ (**Elevator Action**, **Jungle King**), Irem M62
 (**Kung-Fu Master**, **Spelunker**, **Lode Runner**), SNK (**Ikari Warriors**,
-**Athena**, **TNK III**, **ASO**), Capcom **CPS1**, Irem **M72** (**R-Type**),
+**Athena**, **TNK III**, **ASO**), SNK **NeoGeo MVS**, Capcom **CPS1**, Irem **M72** (**R-Type**),
 Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Namco
 **Pole Position** / **Pole Position II**.
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC, **Commodore 64**, **EXL-100** /
@@ -57,6 +57,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | M6803 MCU | `src/cpu/m680x.pas` (`TCPU_M6803`) | Irem M62 sound CPU: 128 bytes of internal RAM, ports 1-4, no internal ROM |
 | Irem M62 driver | `src/arcade/m62_hw.pas` | Kung-Fu Master, Spelunker, Spelunker II, Lode Runner and Lode Runner II: Z80, M6803, two AY-3-8910, two MSM5205, tiles and multi-height sprites |
 | SNK driver | `src/arcade/snk_hw.pas` | Three Z80s, YM3526, Ikari/Athena/TNK III/ASO video (chars, tiles, 16x16 and 32x32 sprites, hardflags) |
+| NeoGeo MVS | new (MAME `neogeo.cpp` / NeoGeoDev) | 68000 + Z80, YM2610 (FM+SSG+ADPCM), LSPC2-A2 sprites and fix layer, MVS BIOS |
 | CPS1 driver | `src/arcade/cps1_hw.pas` | 68000 + Z80, CPS-A/B, three scroll layers, sprites, YM2151+OKI or QSound, Kabuki, 93C46 |
 | NEC V20/V30 CPU | `src/cpu/nec_v20_v30.pas` | R-Type main CPU, 20-bit segmented addressing |
 | M72 driver | `src/arcade/m72_hw.pas` | R-Type, Hammerin' Harry and R-Type II: V30 + Z80, YM2151, tiled FG/BG with priority, sprites |
@@ -141,6 +142,7 @@ holding the individual files:
 ./build/dsp --game elevator /path/to/elevator.zip
 ./build/dsp --game kungfum /path/to/kungfum.zip
 ./build/dsp --game ikari /path/to/ikari.zip
+./build/dsp --game mslug /path/to/mslug.zip
 ./build/dsp --game ffight /path/to/ffight.zip
 ./build/dsp --game rtype /path/to/rtype.zip
 ./build/dsp --game tapper /path/to/tapper.zip
@@ -372,6 +374,31 @@ and TNK III.
 
 The Ikari set accepts both the old `1.rom` / `7.rom` / `7122er.prm` names and the
 MAME 0.221 `1.4p` / `p7.3b` / `a6002-1.1k` names.
+
+### NeoGeo MVS
+
+SNK's 1990 arcade board: a 12 MHz 68000, a 4 MHz Z80, a YM2610 (four FM
+channels, AY-3-8910 SSG, six ADPCM-A voices and one ADPCM-B channel) and the
+LSPC2-A2 video chip (381 chained sprites plus an 8×8 fix layer). The visible
+area is 320×224 at ~59.19 Hz.
+
+ROMs are **not** included. Point `--game` at a MAME split cart zip and put
+`neogeo.zip` next to it (BIOS `sp-s2.sp1`, `sfix.sfix`, `sm1.sm1`, `000-lo.lo`).
+`--game neogeo` loads whatever cart zip you pass; names such as `mslug`,
+`nam1975`, `kof98` and `fatfury` only change the window title. Unencrypted
+cartridges work; SMA / CMC / PVC protected sets (Metal Slug 3+, later KOF) need
+those chips and will not boot yet.
+
+```bash
+./build/dsp --game mslug /path/to/mslug.zip
+./build/dsp --game nam1975 /path/to/nam1975.zip
+./build/dsp --game kof98 /path/to/kof98.zip
+./build/dsp --game neogeo /path/to/neogeo.zip   # BIOS only
+```
+
+A/B/C/D are Left Ctrl, Left Alt, X and C. Select is `3`/`4`. Coins are `5`/`6`.
+DIP bank 0 is the MVS hardware switches (active low; default `0xff`). Bit 0 is
+the settings / test menu.
 
 ### ZX Spectrum 48K
 
@@ -711,7 +738,9 @@ as `super_cassette_vision.pas`. The host keyboard supplies 0–9, Q, W and P
 | Arrows | Player 1 movement |
 | Left Ctrl / Space | Player 1 button 1 |
 | Left Alt / Z | Player 1 button 2 |
-| X | Player 1 button 3 (Double Dragon jump) |
+| X | Player 1 button 3 (Double Dragon jump, NeoGeo C) |
+| C | Player 1 button 4 (NeoGeo D) |
+| 3 / 4 | Player 1 / 2 select (NeoGeo) |
 | D / G / R / F | Player 2 movement |
 | A / S | Player 2 buttons |
 | Q | Player 2 button 3 |

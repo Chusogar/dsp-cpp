@@ -107,6 +107,26 @@ bool RomLoader::load_zip_index(std::string* error) {
     return true;
 }
 
+std::vector<std::string> RomLoader::filenames() const {
+    std::vector<std::string> names;
+    auto basename = [](const std::string& path) {
+        const size_t slash = path.find_last_of("/\\");
+        return slash == std::string::npos ? path : path.substr(slash + 1);
+    };
+    if (!is_zip_) {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        for (const auto& item : fs::directory_iterator(path_, ec)) {
+            if (!item.is_regular_file(ec)) continue;
+            names.push_back(to_lower(item.path().filename().string()));
+        }
+        return names;
+    }
+    names.reserve(zip_index_.size());
+    for (const auto& kv : zip_index_) names.push_back(basename(kv.first));
+    return names;
+}
+
 bool RomLoader::load_first_file(std::vector<uint8_t>& dest, std::string* error) const {
     if (!is_zip_) {
         namespace fs = std::filesystem;
