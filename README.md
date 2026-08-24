@@ -2,7 +2,8 @@
 
 C++17 + SDL2 port of [dsp-emulator](https://github.com/leniad/dsp-emulator) (Free Pascal).
 Arcade: **Bagman**, **Mikie**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
-**Double Dragon II**, Taito SJ (**Elevator Action**, **Jungle King**), Irem M62
+**Double Dragon II**, Taito SJ (**Elevator Action**, **Jungle King**), Taito
+**Operation Wolf**, Irem M62
 (**Kung-Fu Master**, **Spelunker**, **Lode Runner**), SNK (**Ikari Warriors**,
 **Athena**, **TNK III**, **ASO**), SNK **NeoGeo MVS**, Capcom **CPS1**, Irem **M72** (**R-Type**),
 Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Namco
@@ -54,6 +55,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Double Dragon driver | `src/arcade/doubledragon_hw.pas` | Both variants: banked ROM, shared RAM, scroll, sprites, sound CPUs |
 | M6805/M68705 MCU | `src/cpu/m6805.pas` | MC68705P3 protection MCU of Elevator Action |
 | Taito SJ driver | `src/arcade/taitosj_hw.pas` | Main and sound Z80, four AY-3-8910, DAC, MCU handshake, three tile layers with per column scroll, sprites and PROM priorities |
+| TC0140SYT | `src/arcade/misc/taito_sound.pas` | Taito 68000↔Z80 nibble mailbox used by Operation Wolf |
+| Operation Wolf C-Chip | `src/arcade/misc/opwolf_cchip.pas` | Software protection MCU: coins, difficulty, level tables |
+| Operation Wolf driver | `src/arcade/operationwolf_hw.pas` | 68000, Z80, YM2151, two MSM5205, 320×240 light gun |
 | M6803 MCU | `src/cpu/m680x.pas` (`TCPU_M6803`) | Irem M62 sound CPU: 128 bytes of internal RAM, ports 1-4, no internal ROM |
 | Irem M62 driver | `src/arcade/m62_hw.pas` | Kung-Fu Master, Spelunker, Spelunker II, Lode Runner and Lode Runner II: Z80, M6803, two AY-3-8910, two MSM5205, tiles and multi-height sprites |
 | SNK driver | `src/arcade/snk_hw.pas` | Three Z80s, YM3526, Ikari/Athena/TNK III/ASO video (chars, tiles, 16x16 and 32x32 sprites, hardflags) |
@@ -140,6 +144,7 @@ holding the individual files:
 ./build/dsp --game mrdo /path/to/mrdo.zip
 ./build/dsp --game ddragon /path/to/ddragon.zip
 ./build/dsp --game elevator /path/to/elevator.zip
+./build/dsp --game opwolf /path/to/opwolf.zip
 ./build/dsp --game kungfum /path/to/kungfum.zip
 ./build/dsp --game ikari /path/to/ikari.zip
 ./build/dsp --game mslug /path/to/mslug.zip
@@ -192,7 +197,8 @@ Options:
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
                    mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
                    gauntlet: service switch;
-                   double dragon: 0=A coinage/cabinet, 1=B gameplay)
+                   double dragon: 0=A coinage/cabinet, 1=B gameplay;
+                   opwolf: 0=A coinage/continue, 1=B difficulty/language)
 --mute             disable audio
 --fullscreen       start in full screen
 --screenshot FILE  headless mode: render frames and write FILE (BMP)
@@ -304,6 +310,25 @@ Jungle King ROM set: `kn21-1.bin`, `kn22-1.bin`, `kn43.bin`, `kn24.bin`, `kn25.b
 
 Neither set has been run here with real ROMs yet: the driver is only checked against a
 synthetic set, so this hardware is still unverified.
+
+### Operation Wolf
+
+Taito's 1987 light-gun cabinet: an 8 MHz 68000, a software C-Chip for coins and
+level data, two 64×64 8×8 tilemaps plus 16×16 sprites, and a 4 MHz Z80 talking
+to a YM2151 and two MSM5205 ADPCM chips through the TC0140SYT mailbox. The
+visible area is 320×240. Aim with the mouse (or the arrows if there is no
+pointer); Left Ctrl / Space fires, Left Alt / Z throws a grenade.
+
+```bash
+./build/dsp --game opwolf /path/to/opwolf.zip
+```
+
+DIP banks: 0 = A (continue, demo sounds, coin A/B; default `$FF`), 1 = B
+(difficulty, starting magazines, continue discount, language; default `$7F`).
+
+ROM set: `b20-05-02.40`, `b20-03-02.30`, `b20-04.39`, `b20-20.29`, `b20-07.10`,
+`b20-13.13`, `b20-14.72`, `b20-08.21`, and `b20-09.22` (second ADPCM; if it is
+missing the first ROM is reused).
 
 ### Irem M72 (R-Type, Hammerin' Harry, R-Type II)
 
@@ -736,8 +761,9 @@ as `super_cassette_vision.pas`. The host keyboard supplies 0–9, Q, W and P
 | Key | Action |
 | --- | --- |
 | Arrows | Player 1 movement |
-| Left Ctrl / Space | Player 1 button 1 |
-| Left Alt / Z | Player 1 button 2 |
+| Left Ctrl / Space | Player 1 button 1 (Operation Wolf fire) |
+| Left Alt / Z | Player 1 button 2 (Operation Wolf grenade) |
+| Mouse | Operation Wolf gun (shown when `--game opwolf`) |
 | X | Player 1 button 3 (Double Dragon jump, NeoGeo C) |
 | C | Player 1 button 4 (NeoGeo D) |
 | 3 / 4 | Player 1 / 2 select (NeoGeo) |

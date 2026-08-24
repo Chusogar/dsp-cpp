@@ -101,6 +101,8 @@ add_executable(dsp
   src/machine/c64_tape.cpp
   src/machine/z80pio.cpp
   src/machine/sega_decrypt.cpp
+  src/machine/tc0140syt.cpp
+  src/machine/opwolf_cchip.cpp
 
     
   src/drivers/bagman.cpp
@@ -125,8 +127,8 @@ add_executable(dsp
   src/drivers/vicdual.cpp
   src/drivers/sega_system1.cpp
   src/drivers/neogeo.cpp
+  src/drivers/opwolf.cpp
 
-	
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
   src/drivers/spectrum_3.cpp
@@ -213,6 +215,7 @@ add_executable(dsp_tests
   src/sound/ym2203.cpp
   src/sound/sega_pcm.cpp
   src/sound/upd7759.cpp
+  src/sound/huc6280_psg.cpp
   src/video/huc6270.cpp
   src/video/huc6260.cpp
   src/video/gfx.cpp
@@ -262,7 +265,9 @@ add_executable(dsp_tests
   src/machine/fd1089.cpp
   src/machine/i8243.cpp
   src/machine/diskii.cpp
-  src/machine/c64_tape.cpp  
+  src/machine/c64_tape.cpp
+  src/machine/tc0140syt.cpp
+  src/machine/opwolf_cchip.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
   src/drivers/msx2.cpp
@@ -285,6 +290,7 @@ add_executable(dsp_tests
   src/drivers/system16.cpp
   src/drivers/pcengine.cpp
   src/drivers/neogeo.cpp
+  src/drivers/opwolf.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)
