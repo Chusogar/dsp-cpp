@@ -429,13 +429,14 @@ void OpWolf::run_frame() {
     const int main_cycles = int(double(kMainClock) / kFramesPerSecond / kScanlines + 0.5);
     const int sound_cycles = int(double(kSoundClock) / kFramesPerSecond / kScanlines + 0.5);
 
-    cchip_.set_inputs(in0_, in1_);
-    cchip_.update();
-
     for (int line = 0; line < kScanlines; line++) {
         if (line == 248) {
             update_video();
             main_cpu_.set_irq(5, IrqLine::Hold);
+            // Match dsp-emulator: the C-Chip 60 Hz timer is tied to the 68000
+            // and fires around vblank, after the 68k has already run the frame.
+            cchip_.set_inputs(in0_, in1_);
+            cchip_.update();
         }
         main_cpu_.run(main_cycles);
         cchip_.run_cycles(main_cycles);

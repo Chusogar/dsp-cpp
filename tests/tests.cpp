@@ -3052,6 +3052,8 @@ void test_tc0140syt_mailbox() {
     check(chip.status() == 0, "a sound reset clears the mailbox status");
 }
 
+int unique_pixels(const dsp::Machine& machine);
+
 void test_opwolf_cchip_and_driver() {
     dsp::OpWolfCChip cchip;
     cchip.reset();
@@ -3081,6 +3083,48 @@ void test_opwolf_cchip_and_driver() {
     check(error.find("not found") != std::string::npos || error.find("cannot") != std::string::npos ||
               error.size() > 3,
           "init reports why the Operation Wolf ROM set is missing");
+}
+
+void test_opwolf_roms_if_present() {
+    const char* paths[] = {"/tmp/roms/opwolf.zip", "/tmp/opwolf-roms/opwolf.zip"};
+    const char* path = nullptr;
+    for (const char* candidate : paths) {
+        std::ifstream probe(candidate);
+        if (probe) {
+            path = candidate;
+            break;
+        }
+    }
+    if (path == nullptr) return;
+
+    dsp::OpWolf machine;
+    std::string error;
+    check(machine.init(path, &error), "MAME Operation Wolf set loads");
+    dsp::MachineInputs inputs;
+    for (int frame = 0; frame < 60; frame++) {
+        machine.set_inputs(inputs);
+        machine.run_frame();
+    }
+    check(unique_pixels(machine) >= 1, "Operation Wolf produces a framebuffer after boot");
+
+    inputs.coin1 = true;
+    for (int frame = 0; frame < 20; frame++) {
+        machine.set_inputs(inputs);
+        machine.run_frame();
+    }
+    inputs.coin1 = false;
+    inputs.player1.start = true;
+    for (int frame = 0; frame < 20; frame++) {
+        machine.set_inputs(inputs);
+        machine.run_frame();
+    }
+    inputs.player1.start = false;
+    for (int frame = 0; frame < 400; frame++) {
+        machine.set_inputs(inputs);
+        machine.run_frame();
+    }
+    check(unique_pixels(machine) > 8,
+          "Operation Wolf draws the mission HUD after a credit and start");
 }
 
 void test_starwars_missing_roms() {
@@ -4375,6 +4419,7 @@ int main() {
     test_huc6280_psg();
     test_tc0140syt_mailbox();
     test_opwolf_cchip_and_driver();
+    test_opwolf_roms_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
