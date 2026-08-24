@@ -43,6 +43,7 @@ add_executable(dsp
   src/sound/upd1771.cpp
   src/sound/fmopn.cpp
   src/sound/ym2203.cpp
+  src/sound/ym2610.cpp
   src/sound/ym3812.cpp
   src/sound/nes_apu.cpp
   src/sound/polepos_wsg.cpp
@@ -63,6 +64,7 @@ add_executable(dsp
   src/video/apple2_video.cpp
   src/video/huc6260.cpp
   src/video/huc6270.cpp
+  src/video/neogeo_video.cpp
   
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
@@ -122,6 +124,7 @@ add_executable(dsp
   src/drivers/galaxian.cpp
   src/drivers/vicdual.cpp
   src/drivers/sega_system1.cpp
+  src/drivers/neogeo.cpp
 
 	
   src/drivers/spectrum.cpp
@@ -186,6 +189,7 @@ add_executable(dsp_tests
   src/cpu/mb88xx.cpp
   src/cpu/mcs51.cpp
   src/cpu/mcs48.cpp
+  src/cpu/hu6280.cpp
   
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
@@ -202,8 +206,10 @@ add_executable(dsp_tests
   src/sound/gb_apu.cpp
   src/sound/polepos_wsg.cpp
   src/sound/polepos_engine.cpp
+  src/sound/huc6280_psg.cpp
   src/sound/fmopn.cpp
   src/sound/ym2612.cpp
+  src/sound/ym2610.cpp
   src/sound/ym2203.cpp
   src/sound/sega_pcm.cpp
   src/sound/upd7759.cpp
@@ -220,6 +226,7 @@ add_executable(dsp_tests
   src/video/sega_315_5313.cpp
   src/video/sega16.cpp
   src/video/apple2_video.cpp
+  src/video/neogeo_video.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/via6522.cpp
@@ -277,6 +284,7 @@ add_executable(dsp_tests
   src/drivers/hangon.cpp
   src/drivers/system16.cpp
   src/drivers/pcengine.cpp
+  src/drivers/neogeo.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)
