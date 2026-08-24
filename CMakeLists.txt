@@ -49,6 +49,7 @@ add_executable(dsp
   src/sound/polepos_engine.cpp
   src/sound/sega_pcm.cpp
   src/sound/upd7759.cpp
+  src/sound/huc6280_psg.cpp
     
   src/video/gfx.cpp
   src/video/atari_mo.cpp
@@ -60,6 +61,8 @@ add_executable(dsp
   src/video/avg_starwars.cpp
   src/video/sega16.cpp
   src/video/apple2_video.cpp
+  src/video/huc6260.cpp
+  src/video/huc6270.cpp
   
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
@@ -132,6 +135,7 @@ add_executable(dsp
   src/sound/sid6581.cpp
   src/drivers/c64.cpp
   src/drivers/apple2.cpp
+  src/drivers/exelv.cpp
     
   src/drivers/sms.cpp
   src/machine/sega_vdp.cpp
@@ -154,8 +158,7 @@ add_executable(dsp
   src/machine/mos6526.cpp
   src/machine/mos6566.cpp
   src/drivers/atari_lynx.cpp
-  src/drivers/exelv.cpp
-
+  src/drivers/pcengine.cpp
 
       
   src/core/rom_loader.cpp
