@@ -381,11 +381,8 @@ void Outrun::sub_write(uint32_t address, uint16_t value) {
 
 uint8_t Outrun::sub_read_byte(uint32_t address) {
     address &= 0xfffff;
-    if (address >= 0x90000 && address <= 0x9ffff) {
-        // Pascal only swaps on the high-byte (even) half of the access
-        // (m68000_1.read_8bits_hi_dir). A word read uses the word handler
-        // (sub_read) and swaps once; an odd-byte read must not swap again.
-        if ((address & 1) == 0) swap_road();
+    if (address >= 0x90000 && address <= 0x9ffff && (address & 1) == 0) {
+        swap_road();
         return 0xff;
     }
     const uint16_t word = sub_read(address);
@@ -394,10 +391,6 @@ uint8_t Outrun::sub_read_byte(uint32_t address) {
 
 void Outrun::sub_write_byte(uint32_t address, uint8_t value) {
     address &= 0xfffff;
-    if (address >= 0x90000 && address <= 0x9ffff) {
-        road_control_ = uint8_t(value & 3);
-        return;
-    }
     uint16_t old = sub_read(address);
     if (address & 1) old = uint16_t((old & 0xff00) | value);
     else old = uint16_t((old & 0x00ff) | (uint16_t(value) << 8));
