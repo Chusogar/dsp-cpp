@@ -305,7 +305,9 @@ an OKI M6295, and the 336×240 picture is an 8×8 playfield, an 8×8 alpha layer
 and 16×8 5bpp motion objects with the GAL priority mixer from the PCB.
 
 ROMs are **not** shipped. Use the MAME `skullxbo` parent (non-merged). Settings
-live in a parallel 2816 EEPROM; coins are read on the JSA board (5/6).
+live in a parallel 2816 EEPROM (initialised to a Hamming-valid empty image so
+boot does not stall in the first-time programmer); coins are read on the JSA
+board (5/6).
 
 ```bash
 ./build/dsp --game skullxbo /path/to/skullxbo.zip

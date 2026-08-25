@@ -3307,6 +3307,7 @@ void test_skullxbo_roms_if_present() {
         machine.drain_audio(audio);
         for (int16_t sample : audio) energy += int64_t(sample) * sample;
     }
+    check(machine.debug_ipl() < 7, "Skull & Crossbones enables 68000 interrupts after EEPROM init");
     check(unique_pixels(machine) > 8, "Skull & Crossbones attract mode draws a colour picture");
     check(energy > 0, "Skull & Crossbones produces attract-mode audio");
 }

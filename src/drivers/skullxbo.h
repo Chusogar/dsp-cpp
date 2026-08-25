@@ -32,6 +32,7 @@ public:
     static constexpr uint32_t kJsaClock = 3579545;
     static constexpr uint32_t kSoundClock = kJsaClock / 2;
     static constexpr uint32_t kOkiClock = kJsaClock / 3;
+    static constexpr int kCpuSync = 8;
 
     SkullXbo();
 
@@ -53,10 +54,13 @@ public:
     const char* title() const override { return "Skull & Crossbones"; }
 
     uint32_t debug_pc() const { return main_cpu_.pc(); }
+    uint8_t debug_ipl() const { return main_cpu_.cc.im; }
 
 private:
     uint16_t main_read(uint32_t address);
     void main_write(uint32_t address, uint16_t value);
+    uint8_t main_read_byte(uint32_t address);
+    void main_write_byte(uint32_t address, uint8_t value);
     uint8_t sound_read(uint16_t address);
     void sound_write(uint16_t address, uint8_t value);
     void on_sound_cycles(int cycles);
@@ -66,10 +70,14 @@ private:
 
     bool load_roms(const std::string& rom_path, std::string* error);
     void decode_graphics();
+    void init_blank_eeprom();
+    uint8_t eeprom_read(uint32_t address) const;
+    void eeprom_write(uint32_t address, uint8_t value);
     void set_palette(int index, uint16_t value);
     void scanline_update(int scanline);
     void render_frame();
     uint32_t pal_color(int index) const;
+    void pump_sound(int slices);
 
     M68000 main_cpu_;
     M6502 sound_cpu_;

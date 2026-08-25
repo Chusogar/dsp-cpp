@@ -129,6 +129,8 @@ SkullXbo::SkullXbo()
 
     main_cpu_.set_memory_handlers([this](uint32_t a) { return main_read(a); },
                                   [this](uint32_t a, uint16_t v) { main_write(a, v); });
+    main_cpu_.set_byte_handlers([this](uint32_t a) { return main_read_byte(a); },
+                                [this](uint32_t a, uint8_t v) { main_write_byte(a, v); });
     sound_cpu_.set_memory_handlers([this](uint16_t a) { return sound_read(a); },
                                    [this](uint16_t a, uint8_t v) { sound_write(a, v); });
     sound_cpu_.set_cycle_handler([this](int cycles) { on_sound_cycles(cycles); });
@@ -145,15 +147,15 @@ SkullXbo::SkullXbo()
         motion_object_config(), slip_ram_.data(), sprite_ram_.data(), kScreenWidth * 2 + 16,
         kScreenHeight + 8);
 
-    main_cycles_per_line_ = int(kMainClock / (kScanlines * kFramesPerSecond));
-    sound_cycles_per_line_ = int(kSoundClock / (kScanlines * kFramesPerSecond));
+    main_cycles_per_line_ = int(kMainClock / (kScanlines * kFramesPerSecond * kCpuSync));
+    sound_cycles_per_line_ = int(kSoundClock / (kScanlines * kFramesPerSecond * kCpuSync));
     sound_irq_lines_ = std::max(1, kScanlines / 4);
 }
 
 bool SkullXbo::init(const std::string& rom_path, std::string* error) {
     if (!load_roms(rom_path, error)) return false;
     decode_graphics();
-    eeprom_.fill(0xff);
+    init_blank_eeprom();
     reset();
     return true;
 }
@@ -279,6 +281,41 @@ size_t SkullXbo::alpha_index(uint32_t address) const {
     return size_t((address - 0xffc000) >> 1);
 }
 
+void SkullXbo::init_blank_eeprom() {
+    // A factory 2816 is 0xFF, which is not a Hamming codeword. The boot ROM
+    // then programs every slot through $15B2, one byte per ~7 ms software delay,
+    // while IRQs are still masked. That is authentic first-boot behaviour but
+    // it blocks attract for several hundred frames.
+    //
+    // Each 15-byte slot stores 10 data bytes plus 5 parity bytes. An all-zero
+    // payload is valid iff the overall-parity byte (the first byte of the slot)
+    // is 0xFF — the same image a cabinet has after a successful first init
+    // with empty high scores.
+    eeprom_.fill(0);
+    for (size_t slot = 0; slot * 15 < eeprom_.size(); slot++) eeprom_[slot * 15] = 0xff;
+}
+
+uint8_t SkullXbo::eeprom_read(uint32_t address) const {
+    address &= 0xffffff;
+    if (address < 0xff6000 || address > 0xff6fff) return 0xff;
+    if ((address & 1) == 0) return 0xff;  // D8-D15 are unconnected (umask 0x00ff)
+    const size_t index = size_t((address - 0xff6000) >> 1);
+    return index < eeprom_.size() ? eeprom_[index] : 0xff;
+}
+
+void SkullXbo::eeprom_write(uint32_t address, uint8_t value) {
+    address &= 0xffffff;
+    if (address < 0xff6000 || address > 0xff6fff) return;
+    if (!eeprom_unlocked_ || (address & 1) == 0) return;
+    const size_t index = size_t((address - 0xff6000) >> 1);
+    if (index < eeprom_.size()) eeprom_[index] = value;
+    eeprom_unlocked_ = false;
+}
+
+void SkullXbo::pump_sound(int slices) {
+    for (int i = 0; i < slices; i++) sound_cpu_.run(32);
+}
+
 void SkullXbo::set_palette(int index, uint16_t value) {
     if (index < 0 || size_t(index) >= palette_ram_.size()) return;
     palette_ram_[size_t(index)] = value;
@@ -311,8 +348,7 @@ uint16_t SkullXbo::main_read(uint32_t address) {
         return value;
     }
     if (address >= 0xff6000 && address <= 0xff6fff) {
-        const size_t index = size_t((address - 0xff6000) >> 1);
-        if (index < eeprom_.size()) return uint16_t(0xff00 | eeprom_[index]);
+        return uint16_t((uint16_t(eeprom_read(address & ~1u)) << 8) | eeprom_read(address | 1u));
     }
     if (address >= 0xff2000 && address <= 0xff2fff) return palette_ram_[(address >> 1) & 0x7ff];
     if (address >= 0xff8000 && address <= 0xff9fff) return playfield_[(address >> 1) & 0x7ff];
@@ -348,6 +384,9 @@ void SkullXbo::main_write(uint32_t address, uint16_t value) {
         main_to_sound_data_ = uint8_t(value);
         main_to_sound_ready_ = true;
         sound_cpu_.set_nmi(IrqLine::Assert);
+        // The 68000 polls the JSA mailbox in the same timeslice. MAME boosts
+        // the 6502 quantum until a response arrives.
+        for (int i = 0; i < 256 && !sound_to_main_ready_; i++) sound_cpu_.run(32);
         return;
     }
     if (address >= 0xff1800 && address <= 0xff1bff) {
@@ -357,7 +396,11 @@ void SkullXbo::main_write(uint32_t address, uint16_t value) {
         oki_.set_rom(oki_rom_);
         timed_int_ = false;
         ym_int_ = false;
+        main_to_sound_ready_ = false;
+        sound_to_main_ready_ = false;
+        sound_cpu_.set_nmi(IrqLine::Clear);
         update_sound_irq();
+        pump_sound(64);
         return;
     }
     if ((address >= 0xff1c00 && address <= 0xff1c7f) ||
@@ -389,11 +432,7 @@ void SkullXbo::main_write(uint32_t address, uint16_t value) {
     }
     if (address >= 0xff4800 && address <= 0xff4fff) return;  // mobwr unknown
     if (address >= 0xff6000 && address <= 0xff6fff) {
-        if (eeprom_unlocked_) {
-            const size_t index = size_t((address - 0xff6000) >> 1);
-            if (index < eeprom_.size()) eeprom_[index] = uint8_t(value);
-            eeprom_unlocked_ = false;
-        }
+        eeprom_write(address | 1u, uint8_t(value));
         return;
     }
     if (address >= 0xff8000 && address <= 0xff9fff) {
@@ -423,6 +462,29 @@ void SkullXbo::main_write(uint32_t address, uint16_t value) {
         return;
     }
     if (address >= 0xffe000) work_ram_[(address >> 1) & 0xfff] = value;
+}
+
+uint8_t SkullXbo::main_read_byte(uint32_t address) {
+    address &= 0xffffff;
+    if (address >= 0xff6000 && address <= 0xff6fff) return eeprom_read(address);
+    const uint16_t word = main_read(address & ~1u);
+    return (address & 1) ? uint8_t(word) : uint8_t(word >> 8);
+}
+
+void SkullXbo::main_write_byte(uint32_t address, uint8_t value) {
+    address &= 0xffffff;
+    if (address >= 0xff0c00 && address <= 0xff0fff) {
+        eeprom_unlocked_ = true;
+        return;
+    }
+    if (address >= 0xff6000 && address <= 0xff6fff) {
+        eeprom_write(address, value);
+        return;
+    }
+    uint16_t word = main_read(address & ~1u);
+    if (address & 1) word = uint16_t((word & 0xff00) | value);
+    else word = uint16_t((word & 0x00ff) | (uint16_t(value) << 8));
+    main_write(address & ~1u, word);
 }
 
 uint8_t SkullXbo::sound_read(uint16_t address) {
@@ -670,8 +732,10 @@ void SkullXbo::run_frame() {
             update_sound_irq();
         }
         if (line == kVBlankLine) render_frame();
-        main_cpu_.run(main_cycles_per_line_);
-        sound_cpu_.run(sound_cycles_per_line_);
+        for (int step = 0; step < kCpuSync; step++) {
+            main_cpu_.run(main_cycles_per_line_);
+            sound_cpu_.run(sound_cycles_per_line_);
+        }
     }
 }
 
