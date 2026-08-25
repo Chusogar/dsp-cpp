@@ -147,15 +147,15 @@ bool Pirates::load_program(const std::string& rom_path, std::string* error) {
     RomLoader loader;
     if (!loader.open(rom_path, error)) return false;
 
-    std::vector<uint8_t> lo(0x80000, 0), hi(0x80000, 0);
-    const auto& low_entries = game_ == Game::Pirates ? kPiratesProgramLow : kGenixProgramLow;
-    const auto& high_entries = game_ == Game::Pirates ? kPiratesProgramHigh : kGenixProgramHigh;
-    if (!loader.load(low_entries, lo, error)) return false;
-    if (!loader.load(high_entries, hi, error)) return false;
+    std::vector<uint8_t> even(0x80000, 0), odd(0x80000, 0);
+    const auto& even_entries = game_ == Game::Pirates ? kPiratesProgramLow : kGenixProgramLow;
+    const auto& odd_entries = game_ == Game::Pirates ? kPiratesProgramHigh : kGenixProgramHigh;
+    if (!loader.load(even_entries, even, error)) return false;
+    if (!loader.load(odd_entries, odd, error)) return false;
 
-    // roms_load16w: p:0 is the even/low byte, p:1 the odd/high byte.
+    // roms_load16w: p:0 (even) is the high byte of each word, p:1 (odd) the low byte.
     std::vector<uint16_t> raw(0x80000);
-    for (size_t i = 0; i < raw.size(); i++) raw[i] = uint16_t((uint16_t(hi[i]) << 8) | lo[i]);
+    for (size_t i = 0; i < raw.size(); i++) raw[i] = uint16_t((uint16_t(even[i]) << 8) | odd[i]);
 
     for (uint32_t f = 0; f < 0x80000; f++) {
         const uint8_t vl = program_data_low(uint8_t(raw[program_addr_low(f)] & 0xff));

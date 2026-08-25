@@ -3255,6 +3255,7 @@ void test_pirates_roms_if_present() {
     dsp::Pirates machine(dsp::Pirates::Game::Pirates);
     std::string error;
     check(machine.init(path, &error), "MAME pirates set loads");
+    check(machine.debug_pc() < 0x100000u, "Pirates reset PC is inside decrypted ROM");
     dsp::MachineInputs inputs;
     int64_t energy = 0;
     for (int frame = 0; frame < 300; frame++) {

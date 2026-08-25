@@ -55,6 +55,8 @@ public:
 
     const char* title() const override;
 
+    uint32_t debug_pc() const { return main_cpu_.pc(); }
+
 private:
     // ---------------------------------------------------------------------
     // Main CPU memory map
