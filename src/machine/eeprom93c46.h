@@ -5,10 +5,14 @@
 
 namespace dsp {
 
-// 93C46 serial EEPROM, 8-bit organisation (128 x 8), ported from eepromser.pas.
+// 93C46 serial EEPROM, ported from eepromser.pas.
+//
+// The chip is wired as 128 x 8 (CPS1) or 64 x 16 (Pirates / Genix). Command
+// address width, cell width and the in-memory packing of each cell all follow
+// eepromser_chip.create(E93C46, bits).
 class Eeprom93C46 {
 public:
-    Eeprom93C46();
+    explicit Eeprom93C46(int data_bits = 8);
 
     void reset();
 
@@ -16,6 +20,10 @@ public:
     void cs_write(uint8_t state);
     void clk_write(uint8_t state);
     void di_write(uint8_t state);
+
+    int data_bits() const { return data_bits_; }
+    int command_address_bits() const { return command_address_bits_; }
+    int address_bits() const { return address_bits_; }
 
     std::array<uint8_t, 0x80>& data() { return data_; }
     const std::array<uint8_t, 0x80>& data() const { return data_; }
@@ -51,9 +59,10 @@ private:
     static constexpr uint8_t kCsFalling = 1 << 1;
     static constexpr uint8_t kClkRising = 1 << 2;
     static constexpr uint8_t kClkFalling = 1 << 3;
-    static constexpr int kCommandAddressBits = 7;
-    static constexpr int kAddressBits = 7;
-    static constexpr int kDataBits = 8;
+
+    int data_bits_ = 8;
+    int command_address_bits_ = 7;
+    int address_bits_ = 7;
 
     State state_ = State::InReset;
     Command command_ = Command::Invalid;

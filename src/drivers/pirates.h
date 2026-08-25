@@ -13,7 +13,7 @@
 
 namespace dsp {
 
-// Nova/Data East "Pirates" hardware (also used by "Genix Family"), ported
+// NIX "Pirates" hardware (also used by "Genix Family"), ported
 // from pirates_hw.pas.
 //
 // One M68000 running everything (there is no separate sound CPU): a single
@@ -32,7 +32,7 @@ public:
     static constexpr int kScreenHeight = 224;
     static constexpr int kScanlines = 256;
     static constexpr int kVBlankLine = 240;
-    static constexpr double kFramesPerSecond = 58.0;
+    static constexpr double kFramesPerSecond = 60.0;
     static constexpr uint32_t kMainClock = 16000000;
     static constexpr uint32_t kOkiClock = 1333333;
 
@@ -64,7 +64,8 @@ private:
     void on_main_cycles(int cycles);
 
     void write_palette(int index, uint16_t value);
-    void write_tile_ram(uint32_t offset, uint16_t value);
+    void select_oki_bank(int bank);
+    uint32_t pal_color(int index) const;
 
     // ---------------------------------------------------------------------
     // Loading / decryption
@@ -78,7 +79,7 @@ private:
     // ---------------------------------------------------------------------
     void render_frame();
     void draw_layer(int base_word, int width_tiles, int height_tiles, int color_add,
-                    bool transparent, int scroll_x);
+                    bool transparent, int scroll_x, int dest_width);
     void draw_sprites();
 
     Game game_;

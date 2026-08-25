@@ -131,6 +131,7 @@ add_executable(dsp
   src/drivers/neogeo.cpp
   src/drivers/opwolf.cpp
   src/drivers/trackfld.cpp
+  src/drivers/pirates.cpp
 
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
@@ -167,7 +168,6 @@ add_executable(dsp
   src/machine/mos6566.cpp
   src/drivers/atari_lynx.cpp
   src/drivers/pcengine.cpp
-  src/drivers/pirates.cpp
   
       
   src/core/rom_loader.cpp
@@ -298,6 +298,7 @@ add_executable(dsp_tests
   src/drivers/neogeo.cpp
   src/drivers/opwolf.cpp
   src/drivers/trackfld.cpp
+  src/drivers/pirates.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

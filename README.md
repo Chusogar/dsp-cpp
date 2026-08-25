@@ -1,7 +1,7 @@
 # dsp-cpp
 
 C++17 + SDL2 port of [dsp-emulator](https://github.com/leniad/dsp-emulator) (Free Pascal).
-Arcade: **Bagman**, **Mikie**, **Track & Field**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
+Arcade: **Bagman**, **Mikie**, **Track & Field**, **Pirates**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
 **Double Dragon II**, Taito SJ (**Elevator Action**, **Jungle King**), Taito
 **Operation Wolf**, Irem M62
 (**Kung-Fu Master**, **Spelunker**, **Lode Runner**), SNK (**Ikari Warriors**,
@@ -40,6 +40,8 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Konami-1 decrypt | `src/misc/konami_decrypt.pas` | Opcode-only XOR used by Track & Field |
 | VLM5030 | `src/snd/vlm_5030.pas` | LPC speech chip used by Track & Field |
 | Track & Field driver | `src/arcade/trackandfield_hw.pas` | Konami-1 6809 + Z80, SN76496, DAC, VLM5030, row scroll |
+| 93C46 EEPROM | `src/devices/eepromser.pas` | 128×8 (CPS1) or 64×16 (Pirates) serial EEPROM |
+| Pirates driver | `src/arcade/pirates_hw.pas` | 68000 + OKI M6295, 93C46, three tile layers and sprites |
 | M68000/68010 CPU | `src/cpu/m68000.pas` | Gauntlet main CPU |
 | M6502 CPU | `src/cpu/m6502.pas` | Gauntlet sound CPU, NES 2A03, optional 65C02 CMOS opcodes for the Lynx |
 | Mr. Do driver | `src/arcade/mrdo_hw.pas` | `rol90` tile/sprite decode |
@@ -149,6 +151,7 @@ holding the individual files:
 ./build/dsp --game ddragon /path/to/ddragon.zip
 ./build/dsp --game elevator /path/to/elevator.zip
 ./build/dsp --game opwolf /path/to/opwolf.zip
+./build/dsp --game pirates /path/to/pirates.zip
 ./build/dsp --game kungfum /path/to/kungfum.zip
 ./build/dsp --game ikari /path/to/ikari.zip
 ./build/dsp --game mslug /path/to/mslug.zip
@@ -203,7 +206,8 @@ Options:
                    trackfld: 0=A coinage, 1=B lives/difficulty;
                    gauntlet: service switch;
                    double dragon: 0=A coinage/cabinet, 1=B gameplay;
-                   opwolf: 0=A coinage/continue, 1=B difficulty/language)
+                   opwolf: 0=A coinage/continue, 1=B difficulty/language;
+                   pirates: settings live in the on-board 93C46 EEPROM)
 --mute             disable audio
 --fullscreen       start in full screen
 --screenshot FILE  headless mode: render frames and write FILE (BMP)
@@ -264,6 +268,31 @@ c2_d13.bin, c9_d15.bin, 361b16.f1, 361b17.b16, 361b18.e15
 Each player has three buttons (run / jump / action): Left Ctrl, Left Alt and X
 for player 1. Coins are 5/6, start is 1/2. DIP bank 0 is coinage (default `$FF`),
 bank 1 is lives / difficulty / demo sounds (default `$59`).
+
+### Pirates
+
+NIX 1994 (`pirates_hw.pas`). One 16 MHz 68000 runs everything: an OKI M6295
+(1.333 MHz, pin 7 low) is mapped at `$A00000`, a 64×16 93C46 EEPROM holds the
+settings, and the 288×224 picture is three 8×8 tile layers plus 16×16 sprites.
+Every ROM is address- and data-scrambled; the decrypted program image also
+needs the `$62C0` protection patch (`$6006`) from the Pascal driver.
+
+ROMs are **not** shipped. Use the MAME `pirates` parent (non-merged):
+
+```
+r_449b.bin, l_5c1e.bin,
+p4_4d48.bin, p2_5d74.bin, p1_7b30.bin, p8_9f4f.bin,
+s1_6e89.bin, s2_6df3.bin, s4_fdcc.bin, s8_4b7c.bin,
+s89_49d4.bin
+```
+
+```bash
+./build/dsp --game pirates /path/to/pirates.zip
+```
+
+There are no DIP banks; coin/lives settings are stored in the EEPROM and
+changed from the game's own service menu. The same PCB also runs Genix Family
+(`--game genix`).
 
 ### Exelvision EXL-100 and EXELTEL
 

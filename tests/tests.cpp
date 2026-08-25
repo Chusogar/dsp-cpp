@@ -69,6 +69,8 @@
 #include "sound/vlm5030.h"
 #include "drivers/opwolf.h"
 #include "drivers/trackfld.h"
+#include "drivers/pirates.h"
+#include "machine/eeprom93c46.h"
 #include "sound/ay8910.h"
 #include "sound/msm5205.h"
 #include "sound/nes_apu.h"
@@ -3174,6 +3176,98 @@ void test_trackfld_roms_if_present() {
     check(energy > 0, "Track & Field produces attract-mode audio");
 }
 
+void eeprom_clock_bit(dsp::Eeprom93C46& eeprom, int di) {
+    eeprom.di_write(uint8_t(di & 1));
+    eeprom.clk_write(1);
+    eeprom.clk_write(0);
+}
+
+void eeprom_send_bits(dsp::Eeprom93C46& eeprom, uint32_t value, int bits) {
+    for (int i = bits - 1; i >= 0; i--) eeprom_clock_bit(eeprom, int((value >> i) & 1));
+}
+
+void test_eeprom93c46_16bit() {
+    dsp::Eeprom93C46 eight;
+    check(eight.data_bits() == 8 && eight.command_address_bits() == 7 && eight.address_bits() == 7,
+          "default 93C46 is 128 x 8");
+
+    dsp::Eeprom93C46 eeprom(16);
+    check(eeprom.data_bits() == 16 && eeprom.command_address_bits() == 6 && eeprom.address_bits() == 6,
+          "Pirates 93C46 is 64 x 16");
+    eeprom.reset();
+
+    // EWEN (unlock): start bit, opcode 00, 11xxxx
+    eeprom.cs_write(1);
+    eeprom_clock_bit(eeprom, 1);
+    eeprom_send_bits(eeprom, 0x00, 2);
+    eeprom_send_bits(eeprom, 0x30, 6);
+    eeprom.cs_write(0);
+
+    // WRITE address 0x12 = 0xa55a
+    eeprom.cs_write(1);
+    eeprom_clock_bit(eeprom, 1);
+    eeprom_send_bits(eeprom, 0x01, 2);
+    eeprom_send_bits(eeprom, 0x12, 6);
+    eeprom_send_bits(eeprom, 0xa55a, 16);
+    eeprom.cs_write(0);
+
+    check(eeprom.data()[0x12 * 2] == 0xa5 && eeprom.data()[0x12 * 2 + 1] == 0x5a,
+          "16-bit 93C46 stores words big-endian");
+
+    // READ address 0x12
+    eeprom.cs_write(1);
+    eeprom_clock_bit(eeprom, 1);
+    eeprom_send_bits(eeprom, 0x02, 2);
+    eeprom_send_bits(eeprom, 0x12, 6);
+    uint16_t value = 0;
+    for (int i = 0; i < 16; i++) {
+        eeprom_clock_bit(eeprom, 0);
+        value = uint16_t((value << 1) | eeprom.do_read());
+    }
+    eeprom.cs_write(0);
+    check(value == 0xa55a, "16-bit 93C46 reads back the written word");
+}
+
+void test_pirates_driver() {
+    dsp::Pirates machine(dsp::Pirates::Game::Pirates);
+    check(std::strcmp(machine.title(), "Pirates") == 0, "Pirates title");
+    check(machine.screen_width() == 288 && machine.screen_height() == 224,
+          "Pirates reports 288x224");
+    std::string error = "unset";
+    check(!machine.init("/no/such/pirates.zip", &error), "missing Pirates ROMs fail init");
+    check(error.find("not found") != std::string::npos || error.find("cannot") != std::string::npos ||
+              error.size() > 3,
+          "init reports why the Pirates ROM set is missing");
+}
+
+void test_pirates_roms_if_present() {
+    const char* paths[] = {"/tmp/roms/pirates.zip", "/tmp/pirates.zip"};
+    const char* path = nullptr;
+    for (const char* candidate : paths) {
+        std::ifstream probe(candidate);
+        if (probe) {
+            path = candidate;
+            break;
+        }
+    }
+    if (path == nullptr) return;
+
+    dsp::Pirates machine(dsp::Pirates::Game::Pirates);
+    std::string error;
+    check(machine.init(path, &error), "MAME pirates set loads");
+    dsp::MachineInputs inputs;
+    int64_t energy = 0;
+    for (int frame = 0; frame < 300; frame++) {
+        machine.set_inputs(inputs);
+        machine.run_frame();
+        std::vector<int16_t> audio;
+        machine.drain_audio(audio);
+        for (int16_t sample : audio) energy += int64_t(sample) * sample;
+    }
+    check(unique_pixels(machine) > 8, "Pirates attract mode draws a colour picture");
+    check(energy > 0, "Pirates produces attract-mode audio");
+}
+
 void test_opwolf_roms_if_present() {
     const char* paths[] = {"/tmp/roms/opwolf.zip", "/tmp/opwolf-roms/opwolf.zip"};
     const char* path = nullptr;
@@ -4668,6 +4762,9 @@ int main() {
     test_opwolf_roms_if_present();
     test_trackfld_driver();
     test_trackfld_roms_if_present();
+    test_eeprom93c46_16bit();
+    test_pirates_driver();
+    test_pirates_roms_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
