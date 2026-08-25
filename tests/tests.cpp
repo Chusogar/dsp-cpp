@@ -3099,7 +3099,11 @@ void test_opwolf_roms_if_present() {
 
     dsp::OpWolf machine;
     std::string error;
-    check(machine.init(path, &error), "MAME Operation Wolf set loads");
+    check(machine.init(path, &error), "MAME opwolf set loads");
+    for (const std::string& warning : machine.warnings()) {
+        check(warning.find("b20-09") == std::string::npos,
+              "MAME opwolf does not use a second ADPCM ROM");
+    }
     dsp::MachineInputs inputs;
     for (int frame = 0; frame < 60; frame++) {
         machine.set_inputs(inputs);

@@ -17,8 +17,9 @@
 namespace dsp {
 
 // Operation Wolf (Taito, 1987), ported from operationwolf_hw.pas.
-// 8 MHz 68000, 4 MHz Z80 sound CPU (TC0140SYT mailbox), YM2151, two MSM5205,
-// software C-Chip, 320×240 light-gun cabinet.
+// ROM set is MAME `opwolf` (src/mame/taito/opwolf.cpp). 8 MHz 68000, 4 MHz Z80
+// sound CPU (TC0140SYT mailbox), YM2151, two MSM5205, software C-Chip,
+// 320×240 light-gun cabinet.
 class OpWolf : public Machine {
 public:
     static constexpr int kScreenWidth = 320;
