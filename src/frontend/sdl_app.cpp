@@ -164,6 +164,7 @@ int SdlApp::run(Machine& machine) {
         return 1;
     }
     SDL_RenderSetLogicalSize(renderer, width, height);
+    if (machine.uses_pointer()) SDL_ShowCursor(SDL_ENABLE);
 
     SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
                                              SDL_TEXTUREACCESS_STREAMING, width, height);

@@ -1,23 +1,87 @@
 #include "drivers/opwolf.h"
 
 #include <algorithm>
+#include <filesystem>
 
 #include "core/rom_loader.h"
 
 namespace dsp {
 namespace {
 
+// MAME `ROM_START(opwolf)` in src/mame/taito/opwolf.cpp (World, rev 2, set 1).
+// Names accept the `.icXX` labels used in some dumps; CRC is the MAME value.
 const std::vector<RomEntry> kMainRoms = {
-    {"b20-05-02.40|b20-05-02.ic40", 0x10000, 0x00000, 0x3ffbfe3a},
-    {"b20-03-02.30|b20-03-02.ic30", 0x10000, 0x00001, 0xfdabd8a5},
+    {"b20-05-02.40|b20-05-02.ic40|b20-05-2.40", 0x10000, 0x00000, 0x3ffbfe3a},
+    {"b20-03-02.30|b20-03-02.ic30|b20-03-2.30", 0x10000, 0x00001, 0xfdabd8a5},
     {"b20-04.39|b20-04.ic39", 0x10000, 0x20000, 0x216b4838},
     {"b20-20.29|b20-20.ic29", 0x10000, 0x20001, 0xd244431a},
 };
 const std::vector<RomEntry> kSoundRoms = {{"b20-07.10|b20-07.ic10", 0x10000, 0, 0x45c7ace3}};
+const RomEntry kCchipEprom{"b20-18.73|b20-18.ic73", 0x2000, 0, 0x5987b4e9};
+const RomEntry kCchipMcu{"cchip_upd78c11.bin", 0x1000, 0, 0x43021521};
 const std::vector<RomEntry> kTileRoms = {{"b20-13.13|b20-13.ic13", 0x80000, 0, 0xf6acdab1}};
 const std::vector<RomEntry> kSpriteRoms = {{"b20-14.72|b20-14.ic72", 0x80000, 0, 0x89f889e5}};
-const std::vector<RomEntry> kAdpcmA = {{"b20-08.21|b20-08.ic21", 0x80000, 0, 0xf3e19c64}};
-const std::vector<RomEntry> kAdpcmB = {{"b20-09.22|b20-09.ic22", 0x80000, 0, 0xcf88a7a5}};
+const std::vector<RomEntry> kAdpcm = {{"b20-08.21|b20-08.ic21", 0x80000, 0, 0xf3e19c64}};
+
+// Load by MAME filename, then by CRC so a renamed dump of the same set still works.
+bool load_bytes(RomLoader& loader, const RomEntry& entry, std::vector<uint8_t>& data,
+                std::string* error) {
+    data.assign(entry.length, 0);
+    RomEntry single{entry.name, entry.length, 0, entry.crc};
+    std::string name_error;
+    if (loader.load({single}, data, &name_error)) return true;
+    for (const std::string& name : loader.filenames()) {
+        std::vector<uint8_t> candidate;
+        if (!loader.try_read(name, candidate)) continue;
+        if (candidate.size() != entry.length) continue;
+        if (entry.crc != 0 && crc32_of(candidate.data(), candidate.size()) == entry.crc) {
+            data = std::move(candidate);
+            return true;
+        }
+    }
+    if (error) {
+        *error = name_error.empty() ? std::string("missing ROM file: ") + entry.name : name_error;
+    }
+    return false;
+}
+
+bool load_raw(RomLoader& loader, const std::vector<RomEntry>& entries, std::vector<uint8_t>& dest,
+              std::string* error) {
+    for (const RomEntry& entry : entries) {
+        std::vector<uint8_t> data;
+        if (!load_bytes(loader, entry, data, error)) return false;
+        if (entry.offset + entry.length > dest.size()) dest.resize(entry.offset + entry.length);
+        std::copy(data.begin(), data.end(), dest.begin() + std::ptrdiff_t(entry.offset));
+    }
+    return true;
+}
+
+bool load_from_zip(const std::string& path, const RomEntry& entry, std::vector<uint8_t>& dest) {
+    RomLoader extra;
+    std::string extra_error;
+    return extra.open(path, &extra_error) && load_bytes(extra, entry, dest, &extra_error);
+}
+
+bool load_cchip_mcu(const std::string& rom_path, RomLoader& game, std::vector<uint8_t>& dest,
+                    std::string* error) {
+    std::string game_error;
+    if (load_bytes(game, kCchipMcu, dest, &game_error)) return true;
+
+    namespace fs = std::filesystem;
+    const fs::path parent = fs::path(rom_path).parent_path();
+    const char* extras[] = {"taito_cchip.zip", "cchip.zip"};
+    for (const char* zip : extras) {
+        const fs::path sibling = parent.empty() ? fs::path(zip) : parent / zip;
+        if (load_from_zip(sibling.string(), kCchipMcu, dest)) return true;
+        if (load_from_zip((fs::path("/tmp/roms") / zip).string(), kCchipMcu, dest)) return true;
+    }
+    if (error) {
+        *error = game_error.empty()
+                     ? "missing C-Chip MCU ROM cchip_upd78c11.bin (MAME taito_cchip device)"
+                     : game_error;
+    }
+    return false;
+}
 
 const std::vector<int> kPixelX = {8,  12, 0,  4,  24, 28, 16, 20,
                                   40, 44, 32, 36, 56, 60, 48, 52};
@@ -68,6 +132,13 @@ OpWolf::OpWolf()
                                   [this](uint32_t address, uint16_t value) {
                                       main_write(address, value);
                                   });
+    // Byte accesses to the TC0140SYT must not read-modify-write the word: a
+    // dummy read of $3E0002 consumes a mailbox nibble and kills the handshake
+    // (Pascal only returns comm_r on read_8bits_hi_dir).
+    main_cpu_.set_byte_handlers([this](uint32_t address) { return main_read_byte(address); },
+                                [this](uint32_t address, uint8_t value) {
+                                    main_write_byte(address, value);
+                                });
     sound_cpu_.set_memory_handlers(
         [this](uint16_t address) { return sound_read(address); },
         [this](uint16_t address, uint8_t value) { sound_write(address, value); });
@@ -91,11 +162,11 @@ bool OpWolf::load_roms(const std::string& rom_path, std::string* error) {
     RomLoader loader;
     if (!loader.open(rom_path, error)) return false;
 
+    // ROM_LOAD16_BYTE: even file = high byte of each 68000 word.
     rom_.assign(0x20000, 0);
     for (const RomEntry& entry : kMainRoms) {
-        std::vector<uint8_t> data(entry.length, 0);
-        RomEntry single{entry.name, entry.length, 0, entry.crc};
-        if (!loader.load({single}, data, error)) return false;
+        std::vector<uint8_t> data;
+        if (!load_bytes(loader, entry, data, error)) return false;
         const bool high = (entry.offset & 1u) == 0;
         const uint32_t word_base = entry.offset >> 1;
         for (uint32_t index = 0; index < entry.length; index++) {
@@ -106,29 +177,36 @@ bool OpWolf::load_roms(const std::string& rom_path, std::string* error) {
     }
 
     std::vector<uint8_t> sound_rom(0x10000, 0);
-    if (!loader.load(kSoundRoms, sound_rom, error)) return false;
+    if (!load_raw(loader, kSoundRoms, sound_rom, error)) return false;
     std::copy(sound_rom.begin(), sound_rom.begin() + 0x4000, sound_rom_.begin());
     for (int bank = 0; bank < 4; bank++) {
         std::copy(sound_rom.begin() + bank * 0x4000, sound_rom.begin() + (bank + 1) * 0x4000,
                   sound_bank_[size_t(bank)].begin());
     }
 
+    // MAME maps these as cchip:cchip_eprom and the TAITO_CCHIP device MCU ROM.
+    // The driver still uses the software C-Chip, but the set is rejected unless
+    // both dumps are present so a MAME `opwolf` zip is used as-is.
+    std::vector<uint8_t> cchip_eprom;
+    if (!load_bytes(loader, kCchipEprom, cchip_eprom, error)) return false;
+    std::vector<uint8_t> cchip_mcu;
+    if (!load_cchip_mcu(rom_path, loader, cchip_mcu, error)) return false;
+    if (cchip_eprom.size() != kCchipEprom.length || cchip_mcu.size() != kCchipMcu.length) {
+        if (error) *error = "C-Chip ROMs have the wrong size";
+        return false;
+    }
+
     std::vector<uint8_t> tile_rom(0x80000, 0);
-    if (!loader.load(kTileRoms, tile_rom, error)) return false;
+    if (!load_raw(loader, kTileRoms, tile_rom, error)) return false;
     std::vector<uint8_t> sprite_rom(0x80000, 0);
-    if (!loader.load(kSpriteRoms, sprite_rom, error)) return false;
+    if (!load_raw(loader, kSpriteRoms, sprite_rom, error)) return false;
     decode_graphics(tile_rom, sprite_rom);
 
-    std::vector<uint8_t> adpcm_a(0x80000, 0);
-    if (!loader.load(kAdpcmA, adpcm_a, error)) return false;
-    std::vector<uint8_t> adpcm_b = adpcm_a;
-    std::string adpcm_b_error;
-    if (!loader.load(kAdpcmB, adpcm_b, &adpcm_b_error)) {
-        warnings_.push_back("b20-09.22 missing, second ADPCM channel uses b20-08.21");
-        adpcm_b = adpcm_a;
-    }
-    msm0_.set_rom(adpcm_a);
-    msm1_.set_rom(std::move(adpcm_b));
+    // Both MSM5205 chips share the single 512 KiB ADPCM region (`b20-08.21`).
+    std::vector<uint8_t> adpcm(0x80000, 0);
+    if (!load_raw(loader, kAdpcm, adpcm, error)) return false;
+    msm0_.set_rom(adpcm);
+    msm1_.set_rom(adpcm);
 
     for (const std::string& warning : loader.warnings()) warnings_.push_back(warning);
     return true;
@@ -189,7 +267,10 @@ uint16_t OpWolf::main_read(uint32_t address) {
     if ((address & ~1u) == 0x380002) return dsw_b_;
     if ((address & ~1u) == 0x3a0000) return gun_x_;
     if ((address & ~1u) == 0x3a0002) return gun_y_;
-    if ((address & ~1u) == 0x3e0002) return uint16_t(uint16_t(syt_.comm_r()) << 8);
+    if ((address & ~1u) == 0x3e0002) {
+        // Word reads do not touch the mailbox; MOVE.B of the high byte does.
+        return 0;
+    }
     if (address >= 0xc00000 && address <= 0xc0ffff) {
         return ram2_[(address & 0xffff) >> 1];
     }
@@ -262,6 +343,31 @@ void OpWolf::main_write(uint32_t address, uint16_t value) {
         ram3_[(address & 0x3fff) >> 1] = value;
         return;
     }
+}
+
+uint8_t OpWolf::main_read_byte(uint32_t address) {
+    address &= 0xffffffu;
+    if ((address & ~1u) == 0x3e0002) {
+        return (address & 1u) == 0 ? syt_.comm_r() : 0;
+    }
+    const uint16_t word = main_read(address);
+    return (address & 1u) ? uint8_t(word) : uint8_t(word >> 8);
+}
+
+void OpWolf::main_write_byte(uint32_t address, uint8_t value) {
+    address &= 0xffffffu;
+    if ((address & ~1u) == 0x3e0000) {
+        if ((address & 1u) == 0) syt_.port_w(value);
+        return;
+    }
+    if ((address & ~1u) == 0x3e0002) {
+        if ((address & 1u) == 0) syt_.comm_w(value);
+        return;
+    }
+    uint16_t word = main_read(address);
+    if (address & 1u) word = uint16_t((word & 0xff00) | value);
+    else word = uint16_t((word & 0x00ff) | (uint16_t(value) << 8));
+    main_write(address, word);
 }
 
 uint8_t OpWolf::sound_read(uint16_t address) {
@@ -410,6 +516,33 @@ void OpWolf::draw_sprites() {
     }
 }
 
+void OpWolf::draw_sight() {
+    // Host overlay matching dsp-emulator's show_mouse_cursor / MAME's light-gun
+    // crosshair. The 68000 gun ports are offset by +15 in X (visible crop).
+    const int cx = int(gun_x_) - 15;
+    const int cy = int(gun_y_);
+    auto plot = [&](int x, int y, uint32_t color) {
+        if (x < 0 || y < 0 || x >= kScreenWidth || y >= kScreenHeight) return;
+        framebuffer_[size_t(y * kScreenWidth + x)] = color;
+    };
+    const uint32_t outline = 0xff000000u;
+    const uint32_t fill = 0xffffffffu;
+    for (int d = -6; d <= 6; d++) {
+        if (d >= -1 && d <= 1) continue;
+        plot(cx + d, cy - 1, outline);
+        plot(cx + d, cy, fill);
+        plot(cx + d, cy + 1, outline);
+        plot(cx - 1, cy + d, outline);
+        plot(cx, cy + d, fill);
+        plot(cx + 1, cy + d, outline);
+    }
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            plot(cx + dx, cy + dy, (dx == 0 && dy == 0) ? fill : outline);
+        }
+    }
+}
+
 void OpWolf::update_video() {
     draw_tilemap(false);
     draw_tilemap(true);
@@ -423,6 +556,7 @@ void OpWolf::update_video() {
                 composite_[size_t(source_y * kWorkWidth + x + 16)];
         }
     }
+    draw_sight();
 }
 
 void OpWolf::run_frame() {

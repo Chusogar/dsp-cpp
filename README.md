@@ -326,9 +326,11 @@ pointer); Left Ctrl / Space fires, Left Alt / Z throws a grenade.
 DIP banks: 0 = A (continue, demo sounds, coin A/B; default `$FF`), 1 = B
 (difficulty, starting magazines, continue discount, language; default `$7F`).
 
-ROM set: `b20-05-02.40`, `b20-03-02.30`, `b20-04.39`, `b20-20.29`, `b20-07.10`,
-`b20-13.13`, `b20-14.72`, `b20-08.21`, and `b20-09.22` (second ADPCM; if it is
-missing the first ROM is reused).
+ROM set is MAME `opwolf` (World, rev 2, set 1): `b20-05-02.40`, `b20-03-02.30`,
+`b20-04.39`, `b20-20.29`, `b20-07.10`, `b20-18.73` (C-Chip EPROM), `b20-13.13`,
+`b20-14.72`, `b20-08.21` (shared by both MSM5205 chips), and
+`cchip_upd78c11.bin` (TAITO_CCHIP MCU; may live in the game zip or in
+`taito_cchip.zip` next to it). Files can also match by CRC if they were renamed.
 
 ### Irem M72 (R-Type, Hammerin' Harry, R-Type II)
 
@@ -763,7 +765,7 @@ as `super_cassette_vision.pas`. The host keyboard supplies 0–9, Q, W and P
 | Arrows | Player 1 movement |
 | Left Ctrl / Space | Player 1 button 1 (Operation Wolf fire) |
 | Left Alt / Z | Player 1 button 2 (Operation Wolf grenade) |
-| Mouse | Operation Wolf gun (shown when `--game opwolf`) |
+| Mouse | Operation Wolf gun; a crosshair is drawn on the screen |
 | X | Player 1 button 3 (Double Dragon jump, NeoGeo C) |
 | C | Player 1 button 4 (NeoGeo D) |
 | 3 / 4 | Player 1 / 2 select (NeoGeo) |
