@@ -43,6 +43,7 @@ add_executable(dsp
   src/sound/upd1771.cpp
   src/sound/fmopn.cpp
   src/sound/ym2203.cpp
+  src/sound/ym2610.cpp
   src/sound/ym3812.cpp
   src/sound/nes_apu.cpp
   src/sound/polepos_wsg.cpp
@@ -50,6 +51,7 @@ add_executable(dsp
   src/sound/sega_pcm.cpp
   src/sound/upd7759.cpp
   src/sound/huc6280_psg.cpp
+  src/sound/vlm5030.cpp
     
   src/video/gfx.cpp
   src/video/atari_mo.cpp
@@ -63,6 +65,7 @@ add_executable(dsp
   src/video/apple2_video.cpp
   src/video/huc6260.cpp
   src/video/huc6270.cpp
+  src/video/neogeo_video.cpp
   
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
@@ -99,6 +102,9 @@ add_executable(dsp
   src/machine/c64_tape.cpp
   src/machine/z80pio.cpp
   src/machine/sega_decrypt.cpp
+  src/machine/konami_decrypt.cpp
+  src/machine/tc0140syt.cpp
+  src/machine/opwolf_cchip.cpp
 
     
   src/drivers/bagman.cpp
@@ -122,8 +128,10 @@ add_executable(dsp
   src/drivers/galaxian.cpp
   src/drivers/vicdual.cpp
   src/drivers/sega_system1.cpp
+  src/drivers/neogeo.cpp
+  src/drivers/opwolf.cpp
+  src/drivers/trackfld.cpp
 
-	
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
   src/drivers/spectrum_3.cpp
@@ -159,7 +167,8 @@ add_executable(dsp
   src/machine/mos6566.cpp
   src/drivers/atari_lynx.cpp
   src/drivers/pcengine.cpp
-
+  src/drivers/pirates.cpp
+  
       
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp
@@ -186,6 +195,7 @@ add_executable(dsp_tests
   src/cpu/mb88xx.cpp
   src/cpu/mcs51.cpp
   src/cpu/mcs48.cpp
+  src/cpu/hu6280.cpp
   
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
@@ -202,11 +212,15 @@ add_executable(dsp_tests
   src/sound/gb_apu.cpp
   src/sound/polepos_wsg.cpp
   src/sound/polepos_engine.cpp
+  src/sound/huc6280_psg.cpp
   src/sound/fmopn.cpp
   src/sound/ym2612.cpp
+  src/sound/ym2610.cpp
   src/sound/ym2203.cpp
   src/sound/sega_pcm.cpp
   src/sound/upd7759.cpp
+  src/sound/huc6280_psg.cpp
+  src/sound/vlm5030.cpp
   src/video/huc6270.cpp
   src/video/huc6260.cpp
   src/video/gfx.cpp
@@ -220,6 +234,7 @@ add_executable(dsp_tests
   src/video/sega_315_5313.cpp
   src/video/sega16.cpp
   src/video/apple2_video.cpp
+  src/video/neogeo_video.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/via6522.cpp
@@ -255,7 +270,10 @@ add_executable(dsp_tests
   src/machine/fd1089.cpp
   src/machine/i8243.cpp
   src/machine/diskii.cpp
-  src/machine/c64_tape.cpp  
+  src/machine/c64_tape.cpp
+  src/machine/tc0140syt.cpp
+  src/machine/opwolf_cchip.cpp
+  src/machine/konami_decrypt.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
   src/drivers/msx2.cpp
@@ -277,6 +295,9 @@ add_executable(dsp_tests
   src/drivers/hangon.cpp
   src/drivers/system16.cpp
   src/drivers/pcengine.cpp
+  src/drivers/neogeo.cpp
+  src/drivers/opwolf.cpp
+  src/drivers/trackfld.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

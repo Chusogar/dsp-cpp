@@ -3,6 +3,7 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -52,7 +53,8 @@ constexpr struct {
 	{Key::F9, SDL_SCANCODE_F9}, {Key::F10, SDL_SCANCODE_F10}, {Key::F11, SDL_SCANCODE_F11}, {Key::F12, SDL_SCANCODE_F12},
 };
 
-void collect_inputs(Machine& machine) {
+void collect_inputs(Machine& machine, int pointer_x, int pointer_y, uint32_t mouse_buttons,
+                    bool has_pointer) {
     const Uint8* keys = SDL_GetKeyboardState(nullptr);
     MachineInputs inputs;
     inputs.player1.up = keys[SDL_SCANCODE_UP];
@@ -62,7 +64,9 @@ void collect_inputs(Machine& machine) {
     inputs.player1.button1 = keys[SDL_SCANCODE_LCTRL] || keys[SDL_SCANCODE_SPACE];
     inputs.player1.button2 = keys[SDL_SCANCODE_LALT] || keys[SDL_SCANCODE_Z];
     inputs.player1.button3 = keys[SDL_SCANCODE_X];
+    inputs.player1.button4 = keys[SDL_SCANCODE_C];
     inputs.player1.start = keys[SDL_SCANCODE_1];
+    inputs.player1.select = keys[SDL_SCANCODE_3];
 
     inputs.player2.up = keys[SDL_SCANCODE_R];
     inputs.player2.down = keys[SDL_SCANCODE_F];
@@ -71,10 +75,20 @@ void collect_inputs(Machine& machine) {
     inputs.player2.button1 = keys[SDL_SCANCODE_A];
     inputs.player2.button2 = keys[SDL_SCANCODE_S];
     inputs.player2.button3 = keys[SDL_SCANCODE_Q];
+    inputs.player2.button4 = keys[SDL_SCANCODE_W];
     inputs.player2.start = keys[SDL_SCANCODE_2];
+    inputs.player2.select = keys[SDL_SCANCODE_4];
 
     inputs.coin1 = keys[SDL_SCANCODE_5];
     inputs.coin2 = keys[SDL_SCANCODE_6];
+
+    if (machine.uses_pointer() && has_pointer) {
+        inputs.has_pointer = true;
+        inputs.pointer_x = pointer_x;
+        inputs.pointer_y = pointer_y;
+        inputs.pointer_button1 = (mouse_buttons & SDL_BUTTON_LMASK) != 0;
+        inputs.pointer_button2 = (mouse_buttons & SDL_BUTTON_RMASK) != 0;
+    }
 
     if (machine.uses_keyboard()) {
         for (const auto& entry : kKeyMap) inputs.keys[size_t(entry.key)] = keys[entry.scancode];
@@ -150,6 +164,7 @@ int SdlApp::run(Machine& machine) {
         return 1;
     }
     SDL_RenderSetLogicalSize(renderer, width, height);
+    if (machine.uses_pointer()) SDL_ShowCursor(SDL_ENABLE);
 
     SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
                                              SDL_TEXTUREACCESS_STREAMING, width, height);
@@ -273,7 +288,22 @@ int SdlApp::run(Machine& machine) {
             if (!running || paused) continue;
         }
 
-        collect_inputs(machine);
+        int pointer_x = 0;
+        int pointer_y = 0;
+        uint32_t mouse_buttons = 0;
+        if (machine.uses_pointer()) {
+            int mx = 0;
+            int my = 0;
+            mouse_buttons = SDL_GetMouseState(&mx, &my);
+            int win_w = 0;
+            int win_h = 0;
+            SDL_GetWindowSize(window, &win_w, &win_h);
+            if (win_w > 0 && win_h > 0) {
+                pointer_x = mx * width / win_w;
+                pointer_y = my * height / win_h;
+            }
+        }
+        collect_inputs(machine, pointer_x, pointer_y, mouse_buttons, machine.uses_pointer());
         machine.run_frame();
 
         samples.clear();

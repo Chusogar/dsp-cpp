@@ -31,6 +31,9 @@ public:
         return read_file(name, out);
     }
 
+    // Basenames of every file in the zip or directory (lower case).
+    std::vector<std::string> filenames() const;
+
     const std::vector<std::string>& warnings() const { return warnings_; }
 
 private:

@@ -23,6 +23,10 @@ public:
     explicit M6809(uint32_t clock);
 
     void set_memory_handlers(ReadHandler read, WriteHandler write);
+    // Optional opcode map. Konami-1 boards encrypt instruction fetches but
+    // leave operands and data reads alone (m6809.pas `opcode`). When empty,
+    // fetch_opcode uses `read`.
+    void set_opcode_read(ReadHandler handler) { opcode_read_ = std::move(handler); }
     // Called after every instruction with the number of elapsed cycles.
     void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
 
@@ -54,6 +58,7 @@ private:
     uint16_t read_word(uint16_t address);
     void write_word(uint16_t address, uint16_t value);
     uint8_t fetch();
+    uint8_t fetch_opcode();
     uint16_t fetch_word();
 
     void push_s(uint8_t value);
@@ -123,6 +128,7 @@ private:
     uint8_t operand_ = 0;
 
     ReadHandler read_;
+    ReadHandler opcode_read_;
     WriteHandler write_;
     CycleHandler cycle_handler_;
 };

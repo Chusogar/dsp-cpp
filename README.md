@@ -1,10 +1,11 @@
 # dsp-cpp
 
 C++17 + SDL2 port of [dsp-emulator](https://github.com/leniad/dsp-emulator) (Free Pascal).
-Arcade: **Bagman**, **Mikie**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
-**Double Dragon II**, Taito SJ (**Elevator Action**, **Jungle King**), Irem M62
+Arcade: **Bagman**, **Mikie**, **Track & Field**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
+**Double Dragon II**, Taito SJ (**Elevator Action**, **Jungle King**), Taito
+**Operation Wolf**, Irem M62
 (**Kung-Fu Master**, **Spelunker**, **Lode Runner**), SNK (**Ikari Warriors**,
-**Athena**, **TNK III**, **ASO**), Capcom **CPS1**, Irem **M72** (**R-Type**),
+**Athena**, **TNK III**, **ASO**), SNK **NeoGeo MVS**, Capcom **CPS1**, Irem **M72** (**R-Type**),
 Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Namco
 **Pole Position** / **Pole Position II**.
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC, **Commodore 64**, **EXL-100** /
@@ -36,6 +37,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Graphics decoding, palette | `src/misc/gfx_engine.pas`, `pal_engine.pas` | Bit-level layouts and resistor weights |
 | Bagman driver | `src/arcade/bagman_hw.pas` | Memory map, video, inputs, DIP switches |
 | Mikie driver | `src/arcade/mikie_hw.pas` | M6809 + sound Z80, PROM colour lookup tables, sprites |
+| Konami-1 decrypt | `src/misc/konami_decrypt.pas` | Opcode-only XOR used by Track & Field |
+| VLM5030 | `src/snd/vlm_5030.pas` | LPC speech chip used by Track & Field |
+| Track & Field driver | `src/arcade/trackandfield_hw.pas` | Konami-1 6809 + Z80, SN76496, DAC, VLM5030, row scroll |
 | M68000/68010 CPU | `src/cpu/m68000.pas` | Gauntlet main CPU |
 | M6502 CPU | `src/cpu/m6502.pas` | Gauntlet sound CPU, NES 2A03, optional 65C02 CMOS opcodes for the Lynx |
 | Mr. Do driver | `src/arcade/mrdo_hw.pas` | `rol90` tile/sprite decode |
@@ -54,9 +58,13 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Double Dragon driver | `src/arcade/doubledragon_hw.pas` | Both variants: banked ROM, shared RAM, scroll, sprites, sound CPUs |
 | M6805/M68705 MCU | `src/cpu/m6805.pas` | MC68705P3 protection MCU of Elevator Action |
 | Taito SJ driver | `src/arcade/taitosj_hw.pas` | Main and sound Z80, four AY-3-8910, DAC, MCU handshake, three tile layers with per column scroll, sprites and PROM priorities |
+| TC0140SYT | `src/arcade/misc/taito_sound.pas` | Taito 68000↔Z80 nibble mailbox used by Operation Wolf |
+| Operation Wolf C-Chip | `src/arcade/misc/opwolf_cchip.pas` | Software protection MCU: coins, difficulty, level tables |
+| Operation Wolf driver | `src/arcade/operationwolf_hw.pas` | 68000, Z80, YM2151, two MSM5205, 320×240 light gun |
 | M6803 MCU | `src/cpu/m680x.pas` (`TCPU_M6803`) | Irem M62 sound CPU: 128 bytes of internal RAM, ports 1-4, no internal ROM |
 | Irem M62 driver | `src/arcade/m62_hw.pas` | Kung-Fu Master, Spelunker, Spelunker II, Lode Runner and Lode Runner II: Z80, M6803, two AY-3-8910, two MSM5205, tiles and multi-height sprites |
 | SNK driver | `src/arcade/snk_hw.pas` | Three Z80s, YM3526, Ikari/Athena/TNK III/ASO video (chars, tiles, 16x16 and 32x32 sprites, hardflags) |
+| NeoGeo MVS | new (MAME `neogeo.cpp` / NeoGeoDev) | 68000 + Z80, YM2610 (FM+SSG+ADPCM), LSPC2-A2 sprites and fix layer, MVS BIOS |
 | CPS1 driver | `src/arcade/cps1_hw.pas` | 68000 + Z80, CPS-A/B, three scroll layers, sprites, YM2151+OKI or QSound, Kabuki, 93C46 |
 | NEC V20/V30 CPU | `src/cpu/nec_v20_v30.pas` | R-Type main CPU, 20-bit segmented addressing |
 | M72 driver | `src/arcade/m72_hw.pas` | R-Type, Hammerin' Harry and R-Type II: V30 + Z80, YM2151, tiled FG/BG with priority, sprites |
@@ -133,14 +141,17 @@ holding the individual files:
 ./build/dsp --game bagman /path/to/bagman.zip
 ./build/dsp --scale 3 --dip 0xfe /path/to/roms/bagman/
 ./build/dsp --game mikie /path/to/mikie.zip
+./build/dsp --game trackfld /path/to/trackfld.zip
 ./build/dsp --game gauntlet /path/to/gauntlet.zip
 ./build/dsp --game indydoom /path/to/indytemp.zip
 ./build/dsp --game roadrunn /path/to/roadrunn.zip
 ./build/dsp --game mrdo /path/to/mrdo.zip
 ./build/dsp --game ddragon /path/to/ddragon.zip
 ./build/dsp --game elevator /path/to/elevator.zip
+./build/dsp --game opwolf /path/to/opwolf.zip
 ./build/dsp --game kungfum /path/to/kungfum.zip
 ./build/dsp --game ikari /path/to/ikari.zip
+./build/dsp --game mslug /path/to/mslug.zip
 ./build/dsp --game ffight /path/to/ffight.zip
 ./build/dsp --game rtype /path/to/rtype.zip
 ./build/dsp --game tapper /path/to/tapper.zip
@@ -189,8 +200,10 @@ Options:
 --scale N          window scale factor (default 3)
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
                    mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
+                   trackfld: 0=A coinage, 1=B lives/difficulty;
                    gauntlet: service switch;
-                   double dragon: 0=A coinage/cabinet, 1=B gameplay)
+                   double dragon: 0=A coinage/cabinet, 1=B gameplay;
+                   opwolf: 0=A coinage/continue, 1=B difficulty/language)
 --mute             disable audio
 --fullscreen       start in full screen
 --screenshot FILE  headless mode: render frames and write FILE (BMP)
@@ -226,6 +239,31 @@ Whip / hop / button 1 is Left Ctrl or Space. Coins are 5/6. Arrow keys drive the
 digital joystick (Indy, Peter) or the analog stick (Road Runner, through the
 ADC at `$f40000`). The Marble Madness trackball is not emulated yet (reads as
 `$FF`, matching the Pascal stub).
+
+### Track & Field
+
+Konami 1983 button-mash sports game (`trackandfield_hw.pas`). A Konami-1
+(encrypted 6809) runs the game at `18432000/12`, a Z80 at `14318180/4` drives
+an SN76496, an 8-bit DAC and a VLM5030 speech ROM, and the 256×224 picture is
+a 64×32 tilemap with 9-bit per-row scroll plus 32 sprites.
+
+ROMs are **not** shipped. Use the MAME `trackfld` parent (Hyper Olympic / Track
+& Field):
+
+```
+a01_e01.bin, a02_e02.bin, a03_k03.bin, a04_e04.bin, a05_e05.bin,
+h16_e12.bin, h15_e11.bin, h14_e10.bin,
+c11_d06.bin, c12_d07.bin, c13_d08.bin, c14_d09.bin,
+c2_d13.bin, c9_d15.bin, 361b16.f1, 361b17.b16, 361b18.e15
+```
+
+```bash
+./build/dsp --game trackfld /path/to/trackfld.zip
+```
+
+Each player has three buttons (run / jump / action): Left Ctrl, Left Alt and X
+for player 1. Coins are 5/6, start is 1/2. DIP bank 0 is coinage (default `$FF`),
+bank 1 is lives / difficulty / demo sounds (default `$59`).
 
 ### Exelvision EXL-100 and EXELTEL
 
@@ -303,6 +341,27 @@ Jungle King ROM set: `kn21-1.bin`, `kn22-1.bin`, `kn43.bin`, `kn24.bin`, `kn25.b
 Neither set has been run here with real ROMs yet: the driver is only checked against a
 synthetic set, so this hardware is still unverified.
 
+### Operation Wolf
+
+Taito's 1987 light-gun cabinet: an 8 MHz 68000, a software C-Chip for coins and
+level data, two 64×64 8×8 tilemaps plus 16×16 sprites, and a 4 MHz Z80 talking
+to a YM2151 and two MSM5205 ADPCM chips through the TC0140SYT mailbox. The
+visible area is 320×240. Aim with the mouse (or the arrows if there is no
+pointer); Left Ctrl / Space fires, Left Alt / Z throws a grenade.
+
+```bash
+./build/dsp --game opwolf /path/to/opwolf.zip
+```
+
+DIP banks: 0 = A (continue, demo sounds, coin A/B; default `$FF`), 1 = B
+(difficulty, starting magazines, continue discount, language; default `$7F`).
+
+ROM set is MAME `opwolf` (World, rev 2, set 1): `b20-05-02.40`, `b20-03-02.30`,
+`b20-04.39`, `b20-20.29`, `b20-07.10`, `b20-18.73` (C-Chip EPROM), `b20-13.13`,
+`b20-14.72`, `b20-08.21` (shared by both MSM5205 chips), and
+`cchip_upd78c11.bin` (TAITO_CCHIP MCU; may live in the game zip or in
+`taito_cchip.zip` next to it). Files can also match by CRC if they were renamed.
+
 ### Irem M72 (R-Type, Hammerin' Harry, R-Type II)
 
 The board runs an 8 MHz NEC V30, a 3.579545 MHz Z80 with a YM2151, and (on Harry
@@ -372,6 +431,31 @@ and TNK III.
 
 The Ikari set accepts both the old `1.rom` / `7.rom` / `7122er.prm` names and the
 MAME 0.221 `1.4p` / `p7.3b` / `a6002-1.1k` names.
+
+### NeoGeo MVS
+
+SNK's 1990 arcade board: a 12 MHz 68000, a 4 MHz Z80, a YM2610 (four FM
+channels, AY-3-8910 SSG, six ADPCM-A voices and one ADPCM-B channel) and the
+LSPC2-A2 video chip (381 chained sprites plus an 8×8 fix layer). The visible
+area is 320×224 at ~59.19 Hz.
+
+ROMs are **not** included. Point `--game` at a MAME split cart zip and put
+`neogeo.zip` next to it (BIOS `sp-s2.sp1`, `sfix.sfix`, `sm1.sm1`, `000-lo.lo`).
+`--game neogeo` loads whatever cart zip you pass; names such as `mslug`,
+`nam1975`, `kof98` and `fatfury` only change the window title. Unencrypted
+cartridges work; SMA / CMC / PVC protected sets (Metal Slug 3+, later KOF) need
+those chips and will not boot yet.
+
+```bash
+./build/dsp --game mslug /path/to/mslug.zip
+./build/dsp --game nam1975 /path/to/nam1975.zip
+./build/dsp --game kof98 /path/to/kof98.zip
+./build/dsp --game neogeo /path/to/neogeo.zip   # BIOS only
+```
+
+A/B/C/D are Left Ctrl, Left Alt, X and C. Select is `3`/`4`. Coins are `5`/`6`.
+DIP bank 0 is the MVS hardware switches (active low; default `0xff`). Bit 0 is
+the settings / test menu.
 
 ### ZX Spectrum 48K
 
@@ -709,9 +793,12 @@ as `super_cassette_vision.pas`. The host keyboard supplies 0–9, Q, W and P
 | Key | Action |
 | --- | --- |
 | Arrows | Player 1 movement |
-| Left Ctrl / Space | Player 1 button 1 |
-| Left Alt / Z | Player 1 button 2 |
-| X | Player 1 button 3 (Double Dragon jump) |
+| Left Ctrl / Space | Player 1 button 1 (Operation Wolf fire) |
+| Left Alt / Z | Player 1 button 2 (Operation Wolf grenade) |
+| Mouse | Operation Wolf gun; a crosshair is drawn on the screen |
+| X | Player 1 button 3 (Double Dragon jump, NeoGeo C) |
+| C | Player 1 button 4 (NeoGeo D) |
+| 3 / 4 | Player 1 / 2 select (NeoGeo) |
 | D / G / R / F | Player 2 movement |
 | A / S | Player 2 buttons |
 | Q | Player 2 button 3 |
