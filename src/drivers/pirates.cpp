@@ -19,8 +19,7 @@ uint32_t argb(uint8_t r, uint8_t g, uint8_t b) {
 }
 
 // Generic N->N bit permutation, source bit positions listed MSB first for the
-// destination, mirroring the BITSWAPxx() macros the original driver was
-// written against.
+// destination, mirroring the BITSWAPxx() macros in pirates_hw.pas.
 uint32_t bitswap(uint32_t value, std::initializer_list<int> bits) {
     uint32_t out = 0;
     int shift = int(bits.size()) - 1;
@@ -39,15 +38,8 @@ uint32_t bitswap24(uint32_t value, std::initializer_list<int> bits) {
     return bitswap(value, bits);
 }
 
-// --------------------------------------------------------------------------
-// ROM descrambling tables for the Pirates / Genix Family PCB. Every ROM on
-// this board has its address lines and data lines scrambled independently;
-// the wiring below undoes that scramble once at load time so the rest of the
-// driver can treat every ROM as a plain, linear image.
-// --------------------------------------------------------------------------
-
 // 68000 program ROMs: word wide, low/high byte halves use different address
-// scrambles and different data bit swaps.
+// scrambles and different data bit swaps (decr_and_load_rom).
 uint32_t program_addr_low(uint32_t f) {
     return bitswap24(f, {23, 22, 21, 20, 19, 18, 4, 8, 3, 14, 2, 15, 17, 0, 9, 13, 10, 5, 16, 7, 12, 6, 1, 11});
 }
@@ -57,21 +49,22 @@ uint32_t program_addr_high(uint32_t f) {
 uint8_t program_data_low(uint8_t v) { return bitswap8(v, {4, 2, 7, 1, 6, 5, 0, 3}); }
 uint8_t program_data_high(uint8_t v) { return bitswap8(v, {1, 4, 7, 0, 3, 5, 6, 2}); }
 
-// OKI M6295 sample ROM and background/foreground/text tile ROMs share the
-// same address scramble.
-uint32_t gfx_oki_addr(uint32_t f) {
+// OKI M6295 sample ROM (decr_and_load_oki). Tiles use a different swap.
+uint32_t oki_addr(uint32_t f) {
     return bitswap24(f, {23, 22, 21, 20, 19, 10, 16, 13, 8, 4, 7, 11, 14, 17, 12, 6, 2, 0, 5, 18, 15, 3, 1, 9});
 }
 uint8_t oki_data(uint8_t v) { return bitswap8(v, {2, 3, 4, 0, 7, 5, 1, 6}); }
 
-// Tile ROMs (4 chips, one per bit plane).
+// Tile ROMs (decr_and_load_gfx): one 27C040-style plane per chip, always at
+// $80000 spacing even when Genix only fills the first 256 KB of each plane.
+uint32_t tile_addr(uint32_t f) {
+    return bitswap24(f, {23, 22, 21, 20, 19, 18, 10, 2, 5, 9, 7, 13, 16, 14, 11, 4, 1, 6, 12, 17, 3, 0, 15, 8});
+}
 uint8_t tile_data_plane0(uint8_t v) { return bitswap8(v, {2, 3, 4, 0, 7, 5, 1, 6}); }
 uint8_t tile_data_plane1(uint8_t v) { return bitswap8(v, {4, 2, 7, 1, 6, 5, 0, 3}); }
 uint8_t tile_data_plane2(uint8_t v) { return bitswap8(v, {1, 4, 7, 0, 3, 5, 6, 2}); }
 uint8_t tile_data_plane3(uint8_t v) { return bitswap8(v, {2, 3, 4, 0, 7, 5, 1, 6}); }
 
-// Sprite ROMs use their own address scramble plus a different set of four
-// per-plane data swaps.
 uint32_t sprite_addr(uint32_t f) {
     return bitswap24(f, {23, 22, 21, 20, 19, 18, 17, 5, 12, 14, 8, 3, 0, 7, 9, 16, 4, 2, 6, 11, 13, 1, 10, 15});
 }
@@ -80,9 +73,8 @@ uint8_t sprite_data_plane1(uint8_t v) { return bitswap8(v, {1, 4, 7, 0, 3, 5, 6,
 uint8_t sprite_data_plane2(uint8_t v) { return bitswap8(v, {2, 3, 4, 0, 7, 5, 1, 6}); }
 uint8_t sprite_data_plane3(uint8_t v) { return bitswap8(v, {4, 2, 7, 1, 6, 5, 0, 3}); }
 
-constexpr int kPlaneSize = 0x80000;  // one 27C040-style ROM per plane
+constexpr int kPlaneSize = 0x80000;
 
-// pirates.zip / genix.zip (MAME "non-merged" romsets).
 const std::vector<RomEntry> kPiratesProgramLow = {{"r_449b.bin", 0x80000, 0, 0x224aeeda}};
 const std::vector<RomEntry> kPiratesProgramHigh = {{"l_5c1e.bin", 0x80000, 0, 0x46740204}};
 const std::vector<RomEntry> kPiratesGfx = {
@@ -115,11 +107,30 @@ const std::vector<RomEntry> kGenixSprites = {
 };
 const std::vector<RomEntry> kGenixOki = {{"0.31", 0x80000, 0, 0x80d087bc}};
 
+using PlaneFn = uint8_t (*)(uint8_t);
+
+void decrypt_planes(std::vector<uint8_t>& dest, const std::vector<uint8_t>& raw,
+                    uint32_t (*addr_fn)(uint32_t), const PlaneFn plane_fn[4]) {
+    dest.assign(size_t(kPlaneSize) * 4, 0);
+    for (uint32_t f = 0; f < uint32_t(kPlaneSize); f++) {
+        const uint32_t addr = addr_fn(f);
+        for (int plane = 0; plane < 4; plane++) {
+            const size_t src = size_t(plane) * size_t(kPlaneSize) + f;
+            uint8_t value = src < raw.size() ? raw[src] : 0;
+            dest[size_t(plane) * size_t(kPlaneSize) + addr] = plane_fn[plane](value);
+        }
+    }
+}
+
 }  // namespace
 
 Pirates::Pirates(Game game)
-    : game_(game), main_cpu_(kMainClock), oki_(kOkiClock, /*pin7_high=*/false) {
+    : game_(game),
+      main_cpu_(kMainClock),
+      oki_(kOkiClock, /*pin7_high=*/false),
+      eeprom_(16) {
     framebuffer_.assign(size_t(kScreenWidth) * size_t(kScreenHeight), 0xff000000u);
+    canvas_.assign(512u * 256u, 0xff000000u);
 
     main_cpu_.set_memory_handlers([this](uint32_t a) { return main_read(a); },
                                   [this](uint32_t a, uint16_t v) { main_write(a, v); });
@@ -132,22 +143,19 @@ const char* Pirates::title() const {
     return game_ == Game::Pirates ? "Pirates" : "Genix Family";
 }
 
-// ---------------------------------------------------------------------------
-// Loading
-// ---------------------------------------------------------------------------
-
 bool Pirates::load_program(const std::string& rom_path, std::string* error) {
     RomLoader loader;
     if (!loader.open(rom_path, error)) return false;
 
-    std::vector<uint8_t> lo(0x80000, 0), hi(0x80000, 0);
-    const auto& low_entries = game_ == Game::Pirates ? kPiratesProgramLow : kGenixProgramLow;
-    const auto& high_entries = game_ == Game::Pirates ? kPiratesProgramHigh : kGenixProgramHigh;
-    if (!loader.load(low_entries, lo, error)) return false;
-    if (!loader.load(high_entries, hi, error)) return false;
+    std::vector<uint8_t> even(0x80000, 0), odd(0x80000, 0);
+    const auto& even_entries = game_ == Game::Pirates ? kPiratesProgramLow : kGenixProgramLow;
+    const auto& odd_entries = game_ == Game::Pirates ? kPiratesProgramHigh : kGenixProgramHigh;
+    if (!loader.load(even_entries, even, error)) return false;
+    if (!loader.load(odd_entries, odd, error)) return false;
 
+    // roms_load16w: p:0 (even) is the high byte of each word, p:1 (odd) the low byte.
     std::vector<uint16_t> raw(0x80000);
-    for (size_t i = 0; i < raw.size(); i++) raw[i] = uint16_t((uint16_t(hi[i]) << 8) | lo[i]);
+    for (size_t i = 0; i < raw.size(); i++) raw[i] = uint16_t((uint16_t(even[i]) << 8) | odd[i]);
 
     for (uint32_t f = 0; f < 0x80000; f++) {
         const uint8_t vl = program_data_low(uint8_t(raw[program_addr_low(f)] & 0xff));
@@ -165,7 +173,7 @@ bool Pirates::load_sound(const std::string& rom_path, std::string* error) {
     if (!loader.load(game_ == Game::Pirates ? kPiratesOki : kGenixOki, raw, error)) return false;
 
     std::vector<uint8_t> decoded(0x80000, 0);
-    for (uint32_t f = 0; f < 0x80000; f++) decoded[gfx_oki_addr(f)] = oki_data(raw[f]);
+    for (uint32_t f = 0; f < 0x80000; f++) decoded[oki_addr(f)] = oki_data(raw[f]);
 
     std::copy(decoded.begin(), decoded.begin() + 0x40000, sound_banks_[0].begin());
     std::copy(decoded.begin() + 0x40000, decoded.end(), sound_banks_[1].begin());
@@ -176,60 +184,46 @@ bool Pirates::load_graphics(const std::string& rom_path, std::string* error) {
     RomLoader loader;
     if (!loader.open(rom_path, error)) return false;
 
-    // Tiles: 4 planes x 512 KB (128 KB for Genix), one plane per physical chip.
     {
         const auto& entries = game_ == Game::Pirates ? kPiratesGfx : kGenixGfx;
-        const uint32_t plane_size = game_ == Game::Pirates ? 0x80000 : 0x40000;
-        std::vector<uint8_t> raw(size_t(plane_size) * 4, 0);
+        std::vector<uint8_t> raw(size_t(kPlaneSize) * 4, 0);
         if (!loader.load(entries, raw, error)) return false;
 
-        std::vector<uint8_t> decoded(raw.size(), 0);
-        using PlaneFn = uint8_t (*)(uint8_t);
-        const PlaneFn plane_fn[4] = {tile_data_plane0, tile_data_plane1, tile_data_plane2, tile_data_plane3};
-        for (uint32_t f = 0; f < plane_size; f++) {
-            const uint32_t addr = gfx_oki_addr(f) % plane_size;
-            for (int plane = 0; plane < 4; plane++)
-                decoded[size_t(plane) * plane_size + addr] =
-                    plane_fn[plane](raw[size_t(plane) * plane_size + f]);
-        }
+        std::vector<uint8_t> decoded;
+        const PlaneFn plane_fn[4] = {tile_data_plane0, tile_data_plane1, tile_data_plane2,
+                                      tile_data_plane3};
+        decrypt_planes(decoded, raw, tile_addr, plane_fn);
 
         GfxLayout layout;
         layout.width = 8;
         layout.height = 8;
-        layout.total = int((raw.size() * 8) / (4 * 64));
+        layout.total = 0x10000;
         layout.planes = 4;
         layout.char_increment = 8 * 8;
-        layout.plane_offsets = {0, int(plane_size) * 8, int(plane_size) * 16, int(plane_size) * 24};
+        // gfx_set_desc_data(4, 0, 8*8, $180000*8, $100000*8, $80000*8, 0)
+        layout.plane_offsets = {0x180000 * 8, 0x100000 * 8, 0x80000 * 8, 0};
         layout.x_offsets = {7, 6, 5, 4, 3, 2, 1, 0};
         layout.y_offsets = {0, 8, 16, 24, 32, 40, 48, 56};
         tiles_.decode(layout, decoded);
     }
 
-    // Sprites: 4 planes x 512 KB (128 KB for Genix), 16x16 elements.
     {
         const auto& entries = game_ == Game::Pirates ? kPiratesSprites : kGenixSprites;
-        const uint32_t plane_size = game_ == Game::Pirates ? 0x80000 : 0x40000;
-        std::vector<uint8_t> raw(size_t(plane_size) * 4, 0);
+        std::vector<uint8_t> raw(size_t(kPlaneSize) * 4, 0);
         if (!loader.load(entries, raw, error)) return false;
 
-        std::vector<uint8_t> decoded(raw.size(), 0);
-        using PlaneFn = uint8_t (*)(uint8_t);
+        std::vector<uint8_t> decoded;
         const PlaneFn plane_fn[4] = {sprite_data_plane0, sprite_data_plane1, sprite_data_plane2,
                                       sprite_data_plane3};
-        for (uint32_t f = 0; f < plane_size; f++) {
-            const uint32_t addr = sprite_addr(f) % plane_size;
-            for (int plane = 0; plane < 4; plane++)
-                decoded[size_t(plane) * plane_size + addr] =
-                    plane_fn[plane](raw[size_t(plane) * plane_size + f]);
-        }
+        decrypt_planes(decoded, raw, sprite_addr, plane_fn);
 
         GfxLayout layout;
         layout.width = 16;
         layout.height = 16;
-        layout.total = int((raw.size() * 8) / (4 * 256));
+        layout.total = 0x4000;
         layout.planes = 4;
         layout.char_increment = 16 * 16;
-        layout.plane_offsets = {0, int(plane_size) * 8, int(plane_size) * 16, int(plane_size) * 24};
+        layout.plane_offsets = {0x180000 * 8, 0x100000 * 8, 0x80000 * 8, 0};
         layout.x_offsets = {7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8};
         layout.y_offsets = {0, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240};
         sprites_.decode(layout, decoded);
@@ -237,18 +231,26 @@ bool Pirates::load_graphics(const std::string& rom_path, std::string* error) {
     return true;
 }
 
+void Pirates::select_oki_bank(int bank) {
+    bank &= 1;
+    if (bank == last_oki_bank_) return;
+    last_oki_bank_ = bank;
+    oki_.set_rom(std::vector<uint8_t>(sound_banks_[size_t(bank)].begin(),
+                                      sound_banks_[size_t(bank)].end()));
+}
+
 bool Pirates::init(const std::string& rom_path, std::string* error) {
     if (!load_program(rom_path, error)) return false;
     if (!load_sound(rom_path, error)) return false;
     if (!load_graphics(rom_path, error)) return false;
 
-    // Pirates only: a two byte protection patch applied by the original
-    // driver directly to the decrypted program image (a real board would run
-    // this through an external protection MCU/PAL the emulator never
-    // implemented; the patch value comes from the reference driver).
+    // Pirates only: two-byte protection patch from pirates_hw.pas
+    // (`rom[$62c0 shr 1] := $6006`).
     if (game_ == Game::Pirates) rom_[0x62c0 / 2] = 0x6006;
 
     eeprom_.reset();
+    last_oki_bank_ = -1;
+    select_oki_bank(0);
     reset();
     return true;
 }
@@ -261,20 +263,16 @@ void Pirates::reset() {
     scroll_x_ = 0;
 }
 
-// ---------------------------------------------------------------------------
-// Main CPU memory map
-// ---------------------------------------------------------------------------
-
 uint16_t Pirates::main_read(uint32_t addr) {
     addr &= 0xffffff;
     if (addr <= 0xfffff) return rom_[addr >> 1];
     if (addr >= 0x100000 && addr <= 0x10ffff) {
-        const uint32_t off = (addr & 0xffff) >> 1;
         if (game_ == Game::Genix) {
-            if (off == 0x9e98) return 4;
-            if (off >= 0x9e99 && off <= 0x9e9b) return 0;
+            const uint32_t byte_off = addr & 0xffff;
+            if (byte_off == 0x9e98) return 4;
+            if (byte_off >= 0x9e99 && byte_off <= 0x9e9b) return 0;
         }
-        return work_ram_[off];
+        return work_ram_[(addr & 0xffff) >> 1];
     }
     if (addr == 0x300000) return in1_;
     if (addr == 0x400000) {
@@ -303,11 +301,7 @@ void Pirates::main_write(uint32_t addr, uint16_t value) {
         eeprom_.di_write(uint8_t((value >> 2) & 1));
         eeprom_.cs_write(uint8_t(value & 1));
         eeprom_.clk_write(uint8_t((value >> 1) & 1));
-        const int bank = (value >> 6) & 1;
-        if (bank != last_oki_bank_) {
-            last_oki_bank_ = bank;
-            oki_.set_rom(std::vector<uint8_t>(sound_banks_[bank].begin(), sound_banks_[bank].end()));
-        }
+        select_oki_bank((value >> 6) & 1);
         return;
     }
     if (addr == 0x700000) {
@@ -337,6 +331,11 @@ void Pirates::write_palette(int index, uint16_t value) {
     palette_[size_t(index)] = argb(r, g, b);
 }
 
+uint32_t Pirates::pal_color(int index) const {
+    if (index < 0 || size_t(index) >= palette_.size()) return 0xff000000u;
+    return palette_[size_t(index)];
+}
+
 void Pirates::on_main_cycles(int cycles) {
     oki_accumulator_ += int64_t(cycles) * int64_t(oki_.sample_frequency());
     while (oki_accumulator_ >= int64_t(kMainClock)) {
@@ -349,10 +348,6 @@ void Pirates::on_main_cycles(int cycles) {
         audio_.push_back(int16_t(std::clamp(last_oki_, -32768, 32767)));
     }
 }
-
-// ---------------------------------------------------------------------------
-// Inputs
-// ---------------------------------------------------------------------------
 
 void Pirates::set_inputs(const MachineInputs& inputs) {
     uint16_t in1 = 0xffff;
@@ -368,9 +363,10 @@ void Pirates::set_inputs(const MachineInputs& inputs) {
     if (inputs.player2.left) in1 &= ~0x0200;
     if (inputs.player2.up) in1 &= ~0x0400;
     if (inputs.player2.down) in1 &= ~0x0800;
-    if (inputs.player2.button1) in1 &= ~0x1000;
-    if (inputs.player2.button2) in1 &= ~0x2000;
-    if (inputs.player2.button3) in1 &= ~0x4000;
+    // Pascal P2 uses but1/but2/but3 (not but0), so button2/3/4 here.
+    if (inputs.player2.button2) in1 &= ~0x1000;
+    if (inputs.player2.button3) in1 &= ~0x2000;
+    if (inputs.player2.button4) in1 &= ~0x4000;
     if (inputs.player2.start) in1 &= ~0x8000;
     in1_ = in1;
 
@@ -385,12 +381,8 @@ void Pirates::set_dip_switch(int, uint8_t) {
     // EEPROM and is configured from the game's own service menu.
 }
 
-// ---------------------------------------------------------------------------
-// Video
-// ---------------------------------------------------------------------------
-
 void Pirates::draw_layer(int base_word, int width_tiles, int height_tiles, int color_add,
-                         bool transparent, int scroll_x) {
+                         bool transparent, int scroll_x, int dest_width) {
     const int layer_w = width_tiles * 8;
     for (int f = 0; f < width_tiles * height_tiles; f++) {
         const int tx = f / height_tiles;
@@ -398,7 +390,7 @@ void Pirates::draw_layer(int base_word, int width_tiles, int height_tiles, int c
         const size_t entry = size_t(base_word) + size_t(f) * 2;
         if (entry + 1 >= tile_ram_.size()) continue;
         const uint16_t nchar = tile_ram_[entry];
-        const int group = int((tile_ram_[entry + 1] & 0x1ff) + color_add) & 0x1ff;
+        const int pal_base = (int(tile_ram_[entry + 1] & 0x1ff) + color_add) << 4;
         const uint8_t* px = tiles_.element(nchar);
 
         const int base_x = ((tx * 8 - scroll_x) % layer_w + layer_w) % layer_w;
@@ -409,8 +401,14 @@ void Pirates::draw_layer(int base_word, int width_tiles, int height_tiles, int c
             for (int x = 0; x < 8; x++) {
                 const uint8_t p = px[y * 8 + x];
                 if (transparent && p == 0) continue;
-                const int fx = (base_x + x) % 512;
-                canvas_[size_t(fy) * 512 + size_t(fx)] = palette_[size_t(group) * 16 + p];
+                int fx = base_x + x;
+                if (layer_w != 512) {
+                    if (fx < 0 || fx >= dest_width) continue;
+                } else {
+                    fx %= 512;
+                }
+                if (fx < 0 || fx >= 512) continue;
+                canvas_[size_t(fy) * 512 + size_t(fx)] = pal_color(pal_base + p);
             }
         }
     }
@@ -428,8 +426,8 @@ void Pirates::draw_sprites() {
         const int nchar = atrib >> 2;
         const bool flip_x = (atrib & 2) != 0;
         const bool flip_y = (atrib & 1) != 0;
-        const int group = (0x180 + int(sprite_ram_[base + 4] & 0xff)) & 0x1ff;
-        const int sy = 0xf2 - int(sy_raw);
+        const int pal_base = (int(sprite_ram_[base + 4] & 0xff) << 4) + 0x1800;
+        const int sy = int(uint16_t(0x00f2 - sy_raw));
 
         const uint8_t* px = sprites_.element(nchar);
         for (int y = 0; y < 16; y++) {
@@ -441,21 +439,19 @@ void Pirates::draw_sprites() {
                 if (p == 0) continue;
                 const int fx = sx + x;
                 if (fx < 0 || fx >= 512) continue;
-                canvas_[size_t(fy) * 512 + size_t(fx)] = palette_[size_t(group) * 16 + p];
+                canvas_[size_t(fy) * 512 + size_t(fx)] = pal_color(pal_base + p);
             }
         }
     }
 }
 
 void Pirates::render_frame() {
-    if (canvas_.size() != 512u * 256u) canvas_.assign(512u * 256u, 0xff000000u);
-
-    // Background (opaque, scrolling), foreground (transparent, same scroll),
-    // fixed text/UI layer on top, sprites last.
-    draw_layer(0x1540, 64, 32, 0x100, /*transparent=*/false, scroll_x_);
-    draw_layer(0x9c0, 64, 32, 0x080, /*transparent=*/true, scroll_x_);
-    draw_layer(0xc0, 36, 32, 0x000, /*transparent=*/true, 0);
+    // Pascal compose: BG (opaque) then FG onto the 512-wide playfield, sprites
+    // on top of that, then the 288-wide text layer last.
+    draw_layer(0x1540, 64, 32, 0x100, /*transparent=*/false, scroll_x_, 512);
+    draw_layer(0x9c0, 64, 32, 0x080, /*transparent=*/true, scroll_x_, 512);
     draw_sprites();
+    draw_layer(0xc0, 36, 32, 0x000, /*transparent=*/true, 0, 288);
 
     for (int y = 0; y < kScreenHeight; y++) {
         const uint32_t* src = &canvas_[size_t(y + 16) * 512];

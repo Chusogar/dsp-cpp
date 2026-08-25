@@ -3,8 +3,31 @@
 #include <cstddef>
 
 namespace dsp {
+namespace {
 
-Eeprom93C46::Eeprom93C46() { data_.fill(0xff); }
+int calc_address_bits(int cells) {
+    int value = cells - 1;
+    int bits = 0;
+    while (value != 0) {
+        value >>= 1;
+        bits++;
+    }
+    return bits;
+}
+
+}  // namespace
+
+Eeprom93C46::Eeprom93C46(int data_bits) {
+    data_.fill(0xff);
+    data_bits_ = (data_bits == 16) ? 16 : 8;
+    if (data_bits_ == 16) {
+        command_address_bits_ = 6;
+        address_bits_ = calc_address_bits(64);
+    } else {
+        command_address_bits_ = 7;
+        address_bits_ = calc_address_bits(128);
+    }
+}
 
 void Eeprom93C46::reset() {
     state_ = State::InReset;
@@ -38,19 +61,29 @@ void Eeprom93C46::clk_write(uint8_t state) {
 void Eeprom93C46::di_write(uint8_t state) { di_state_ = uint8_t(state & 1); }
 
 void Eeprom93C46::write_cell(uint16_t address, uint16_t value) {
+    if (data_bits_ == 16) {
+        const size_t index = size_t(address & 0x3f) * 2;
+        data_[index] = uint8_t(value >> 8);
+        data_[index + 1] = uint8_t(value);
+        return;
+    }
     data_[size_t(address & 0x7f)] = uint8_t(value);
 }
 
 uint16_t Eeprom93C46::read_cell(uint16_t address) const {
+    if (data_bits_ == 16) {
+        const size_t index = size_t(address & 0x3f) * 2;
+        return uint16_t((uint16_t(data_[index]) << 8) | data_[index + 1]);
+    }
     return data_[size_t(address & 0x7f)];
 }
 
 void Eeprom93C46::parse_command_and_address() {
     command_ = Command::Invalid;
-    address_ = uint16_t(command_address_accum_ & ((1u << kCommandAddressBits) - 1));
-    switch (command_address_accum_ >> kCommandAddressBits) {
+    address_ = uint16_t(command_address_accum_ & ((1u << command_address_bits_) - 1));
+    switch (command_address_accum_ >> command_address_bits_) {
         case 0:
-            switch (address_ >> (kCommandAddressBits - 2)) {
+            switch (address_ >> (command_address_bits_ - 2)) {
                 case 0: command_ = Command::Lock; break;
                 case 1: command_ = Command::WriteAll; break;
                 case 2: command_ = Command::EraseAll; break;
@@ -79,7 +112,7 @@ void Eeprom93C46::execute_write_command() {
                 state_ = State::InReset;
                 return;
             }
-            for (uint16_t cell = 0; cell < (1u << kAddressBits); cell++) {
+            for (uint16_t cell = 0; cell < (1u << address_bits_); cell++) {
                 write_cell(cell, uint16_t(read_cell(cell) & shift_register_));
             }
             state_ = State::WaitForCompletion;
@@ -122,7 +155,7 @@ void Eeprom93C46::execute_command() {
                 state_ = State::InReset;
                 return;
             }
-            for (uint16_t cell = 0; cell < (1u << kAddressBits); cell++) write_cell(cell, 0xffff);
+            for (uint16_t cell = 0; cell < (1u << address_bits_); cell++) write_cell(cell, 0xffff);
             state_ = State::WaitForCompletion;
             break;
         default: break;
@@ -147,7 +180,7 @@ void Eeprom93C46::handle_event(uint8_t event) {
             if (event == kClkRising) {
                 command_address_accum_ = (command_address_accum_ << 1) | di_state_;
                 bits_accum_ = uint8_t(bits_accum_ + 1);
-                if (bits_accum_ == 2 + kCommandAddressBits) execute_command();
+                if (bits_accum_ == uint8_t(2 + command_address_bits_)) execute_command();
             } else if (event == kCsFalling) {
                 state_ = State::InReset;
             }
@@ -156,10 +189,10 @@ void Eeprom93C46::handle_event(uint8_t event) {
             if (event == kClkRising) {
                 uint8_t bit_index = bits_accum_;
                 bits_accum_ = uint8_t(bits_accum_ + 1);
-                if ((bit_index % kDataBits) == 0 && bit_index == 0) {
+                if ((bit_index % uint8_t(data_bits_)) == 0 && bit_index == 0) {
                     uint16_t cell = uint16_t(
-                        (address_ + bits_accum_ / kDataBits) & ((1u << kAddressBits) - 1));
-                    shift_register_ = uint32_t(read_cell(cell)) << (32 - kDataBits);
+                        (address_ + bits_accum_ / uint8_t(data_bits_)) & ((1u << address_bits_) - 1));
+                    shift_register_ = uint32_t(read_cell(cell)) << (32 - data_bits_);
                 } else {
                     shift_register_ = (shift_register_ << 1) | 1;
                 }
@@ -171,7 +204,7 @@ void Eeprom93C46::handle_event(uint8_t event) {
             if (event == kClkRising) {
                 shift_register_ = (shift_register_ << 1) | di_state_;
                 bits_accum_ = uint8_t(bits_accum_ + 1);
-                if (bits_accum_ == kDataBits) execute_write_command();
+                if (bits_accum_ == uint8_t(data_bits_)) execute_write_command();
             } else if (event == kCsFalling) {
                 state_ = State::InReset;
             }
