@@ -3162,11 +3162,16 @@ void test_trackfld_roms_if_present() {
     std::string error;
     check(machine.init(path, &error), "MAME trackfld set loads");
     dsp::MachineInputs inputs;
+    int64_t energy = 0;
     for (int frame = 0; frame < 180; frame++) {
         machine.set_inputs(inputs);
         machine.run_frame();
+        std::vector<int16_t> audio;
+        machine.drain_audio(audio);
+        for (int16_t sample : audio) energy += int64_t(sample) * sample;
     }
     check(unique_pixels(machine) > 8, "Track & Field attract mode draws a colour picture");
+    check(energy > 0, "Track & Field produces attract-mode audio");
 }
 
 void test_opwolf_roms_if_present() {
