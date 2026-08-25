@@ -51,6 +51,7 @@ add_executable(dsp
   src/sound/sega_pcm.cpp
   src/sound/upd7759.cpp
   src/sound/huc6280_psg.cpp
+  src/sound/vlm5030.cpp
     
   src/video/gfx.cpp
   src/video/atari_mo.cpp
@@ -101,6 +102,7 @@ add_executable(dsp
   src/machine/c64_tape.cpp
   src/machine/z80pio.cpp
   src/machine/sega_decrypt.cpp
+  src/machine/konami_decrypt.cpp
   src/machine/tc0140syt.cpp
   src/machine/opwolf_cchip.cpp
 
@@ -128,6 +130,7 @@ add_executable(dsp
   src/drivers/sega_system1.cpp
   src/drivers/neogeo.cpp
   src/drivers/opwolf.cpp
+  src/drivers/trackfld.cpp
 
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
@@ -216,6 +219,7 @@ add_executable(dsp_tests
   src/sound/sega_pcm.cpp
   src/sound/upd7759.cpp
   src/sound/huc6280_psg.cpp
+  src/sound/vlm5030.cpp
   src/video/huc6270.cpp
   src/video/huc6260.cpp
   src/video/gfx.cpp
@@ -268,6 +272,7 @@ add_executable(dsp_tests
   src/machine/c64_tape.cpp
   src/machine/tc0140syt.cpp
   src/machine/opwolf_cchip.cpp
+  src/machine/konami_decrypt.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
   src/drivers/msx2.cpp
@@ -291,6 +296,7 @@ add_executable(dsp_tests
   src/drivers/pcengine.cpp
   src/drivers/neogeo.cpp
   src/drivers/opwolf.cpp
+  src/drivers/trackfld.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

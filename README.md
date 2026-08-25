@@ -1,7 +1,7 @@
 # dsp-cpp
 
 C++17 + SDL2 port of [dsp-emulator](https://github.com/leniad/dsp-emulator) (Free Pascal).
-Arcade: **Bagman**, **Mikie**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
+Arcade: **Bagman**, **Mikie**, **Track & Field**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
 **Double Dragon II**, Taito SJ (**Elevator Action**, **Jungle King**), Taito
 **Operation Wolf**, Irem M62
 (**Kung-Fu Master**, **Spelunker**, **Lode Runner**), SNK (**Ikari Warriors**,
@@ -37,6 +37,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Graphics decoding, palette | `src/misc/gfx_engine.pas`, `pal_engine.pas` | Bit-level layouts and resistor weights |
 | Bagman driver | `src/arcade/bagman_hw.pas` | Memory map, video, inputs, DIP switches |
 | Mikie driver | `src/arcade/mikie_hw.pas` | M6809 + sound Z80, PROM colour lookup tables, sprites |
+| Konami-1 decrypt | `src/misc/konami_decrypt.pas` | Opcode-only XOR used by Track & Field |
+| VLM5030 | `src/snd/vlm_5030.pas` | LPC speech chip used by Track & Field |
+| Track & Field driver | `src/arcade/trackandfield_hw.pas` | Konami-1 6809 + Z80, SN76496, DAC, VLM5030, row scroll |
 | M68000/68010 CPU | `src/cpu/m68000.pas` | Gauntlet main CPU |
 | M6502 CPU | `src/cpu/m6502.pas` | Gauntlet sound CPU, NES 2A03, optional 65C02 CMOS opcodes for the Lynx |
 | Mr. Do driver | `src/arcade/mrdo_hw.pas` | `rol90` tile/sprite decode |
@@ -138,6 +141,7 @@ holding the individual files:
 ./build/dsp --game bagman /path/to/bagman.zip
 ./build/dsp --scale 3 --dip 0xfe /path/to/roms/bagman/
 ./build/dsp --game mikie /path/to/mikie.zip
+./build/dsp --game trackfld /path/to/trackfld.zip
 ./build/dsp --game gauntlet /path/to/gauntlet.zip
 ./build/dsp --game indydoom /path/to/indytemp.zip
 ./build/dsp --game roadrunn /path/to/roadrunn.zip
@@ -196,6 +200,7 @@ Options:
 --scale N          window scale factor (default 3)
 --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex (bagman: one bank,
                    mikie: 0=A coinage, 1=B gameplay, 2=C flip screen;
+                   trackfld: 0=A coinage, 1=B lives/difficulty;
                    gauntlet: service switch;
                    double dragon: 0=A coinage/cabinet, 1=B gameplay;
                    opwolf: 0=A coinage/continue, 1=B difficulty/language)
@@ -234,6 +239,31 @@ Whip / hop / button 1 is Left Ctrl or Space. Coins are 5/6. Arrow keys drive the
 digital joystick (Indy, Peter) or the analog stick (Road Runner, through the
 ADC at `$f40000`). The Marble Madness trackball is not emulated yet (reads as
 `$FF`, matching the Pascal stub).
+
+### Track & Field
+
+Konami 1983 button-mash sports game (`trackandfield_hw.pas`). A Konami-1
+(encrypted 6809) runs the game at `18432000/12`, a Z80 at `14318180/4` drives
+an SN76496, an 8-bit DAC and a VLM5030 speech ROM, and the 256×224 picture is
+a 64×32 tilemap with 9-bit per-row scroll plus 32 sprites.
+
+ROMs are **not** shipped. Use the MAME `trackfld` parent (Hyper Olympic / Track
+& Field):
+
+```
+a01_e01.bin, a02_e02.bin, a03_k03.bin, a04_e04.bin, a05_e05.bin,
+h16_e12.bin, h15_e11.bin, h14_e10.bin,
+c11_d06.bin, c12_d07.bin, c13_d08.bin, c14_d09.bin,
+c2_d13.bin, c9_d15.bin, 361b16.f1, 361b17.b16, 361b18.e15
+```
+
+```bash
+./build/dsp --game trackfld /path/to/trackfld.zip
+```
+
+Each player has three buttons (run / jump / action): Left Ctrl, Left Alt and X
+for player 1. Coins are 5/6, start is 1/2. DIP bank 0 is coinage (default `$FF`),
+bank 1 is lives / difficulty / demo sounds (default `$59`).
 
 ### Exelvision EXL-100 and EXELTEL
 

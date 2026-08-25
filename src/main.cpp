@@ -29,6 +29,7 @@
 #include "drivers/galaxian.h"
 #include "drivers/vicdual.h"
 #include "drivers/opwolf.h"
+#include "drivers/trackfld.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -72,7 +73,7 @@ void print_supported_emulators() {
         "Supported emulators (--game NAME):\n"
         "\n"
         "  Arcade:\n"
-        "    bagman, mikie, gauntlet, mrdo, ddragon, ddragon2,\n"
+        "    bagman, mikie, trackfld, gauntlet, mrdo, ddragon, ddragon2,\n"
         "    elevator, junglek, indydoom, peter, marble, starwars, roadrunn,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
 		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
@@ -123,7 +124,8 @@ void print_usage(const char* program) {
         "                     Pentagon/Scorpion .trd/.scl\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
-        "                     bank, mikie has three (0=A, 1=B, 2=C); opwolf: 0=A coinage,\n"
+        "                     bank, mikie has three (0=A, 1=B, 2=C); trackfld: 0=A coinage,\n"
+        "                     1=B lives/difficulty; opwolf: 0=A coinage,\n"
         "                     1=B difficulty/language; cpc: 0=colour(1)/\n"
         "                     green(0) monitor, 1=joysticks on the keyboard matrix\n"
         "                     (off by default, see README)\n"
@@ -136,6 +138,7 @@ void print_usage(const char* program) {
         "Controls: arrows move, Left Ctrl/Space button 1, Left Alt/Z button 2,\n"
         "          X button 3, C button 4 (NeoGeo D), 3/4 select (NeoGeo),\n"
         "          1/2 start, 5/6 insert coin, P pause, F3 reset, Esc quit.\n"
+        "Track & Field: Left Ctrl / Left Alt / X are the three run/jump buttons.\n"
         "Operation Wolf: mouse aims the gun, Left Ctrl/Space fire, Left Alt/Z grenade;\n"
         "          arrows also move the sight if there is no mouse.\n"
         "On the Spectrum the host keyboard is the Spectrum keyboard (Left Shift is\n"
@@ -148,6 +151,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	// arcade
     if (game == "bagman") return std::make_unique<dsp::Bagman>();
     if (game == "mikie") return std::make_unique<dsp::Mikie>();
+    if (game == "trackfld" || game == "trackfield" || game == "trackandfield") {
+        return std::make_unique<dsp::TrackFld>();
+    }
     if (game == "gauntlet") return std::make_unique<dsp::Gauntlet>();
 	if (game == "mrdo") return std::make_unique<dsp::MrDo>();
     

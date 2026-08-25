@@ -65,7 +65,10 @@
 #include "machine/sega_315_5195.h"
 #include "machine/tc0140syt.h"
 #include "machine/opwolf_cchip.h"
+#include "machine/konami_decrypt.h"
+#include "sound/vlm5030.h"
 #include "drivers/opwolf.h"
+#include "drivers/trackfld.h"
 #include "sound/ay8910.h"
 #include "sound/msm5205.h"
 #include "sound/nes_apu.h"
@@ -470,6 +473,52 @@ void test_m6809_branches_and_stack() {
     cpu.run(40);
     check(cpu.s == 0x3000, "m6809 pshs/puls balance the stack");
     check(cpu.a == 0x05, "m6809 beq skips the branch target");
+}
+
+void test_konami1_decode_and_opcode_fetch() {
+    uint8_t src[16] = {};
+    uint8_t dest[16] = {};
+    dsp::konami1_decode(src, dest, 16);
+    check(dest[0x0] == 0x22, "Konami-1 XOR at A1=0 A3=0 is 0x22");
+    check(dest[0x2] == 0x82, "Konami-1 XOR at A1=1 A3=0 is 0x82");
+    check(dest[0x8] == 0x28, "Konami-1 XOR at A1=0 A3=1 is 0x28");
+    check(dest[0xa] == 0x88, "Konami-1 XOR at A1=1 A3=1 is 0x88");
+
+    auto memory = make_memory();
+    auto opcodes = make_memory();
+    memory[0xfffe] = 0x60;
+    memory[0xffff] = 0x00;
+    // Encrypted LDA #$5a at $6000: opcode 0x86 ^ 0x22 = 0xa4, immediate stays 0x5a.
+    memory[0x6000] = uint8_t(0x86 ^ 0x22);
+    memory[0x6001] = 0x5a;
+    dsp::konami1_decode(memory.data() + 0x6000, opcodes.data() + 0x6000, 0xa000);
+
+    dsp::M6809 cpu(1536000);
+    cpu.set_memory_handlers(
+        [&memory](uint16_t address) { return memory[address]; },
+        [&memory](uint16_t address, uint8_t value) { memory[address] = value; });
+    cpu.set_opcode_read([&opcodes, &memory](uint16_t address) {
+        return address >= 0x6000 ? opcodes[address] : memory[address];
+    });
+    cpu.reset();
+    cpu.run(2);
+    check(cpu.a == 0x5a, "Konami-1 opcode fetch decrypts LDA but not the immediate");
+}
+
+void test_vlm5030_pins() {
+    dsp::Vlm5030 vlm;
+    vlm.reset();
+    check(vlm.get_bsy() == 0, "VLM5030 is idle after reset");
+    vlm.set_st(1);
+    check(vlm.get_bsy() == 1, "rising ST raises BSY");
+    vlm.update_stream();
+    vlm.update_stream();
+    check(vlm.get_bsy() == 1, "BSY stays set through the setup wait");
+    vlm.data_w(0);
+    vlm.set_rst(1);
+    vlm.reset();
+    check(vlm.get_bsy() == 0, "reset clears BSY");
+    check(vlm.update() == 0, "idle VLM5030 outputs silence");
 }
 
 void test_m6809_interrupts() {
@@ -3085,6 +3134,41 @@ void test_opwolf_cchip_and_driver() {
           "init reports why the Operation Wolf ROM set is missing");
 }
 
+void test_trackfld_driver() {
+    dsp::TrackFld machine;
+    check(std::strcmp(machine.title(), "Track & Field") == 0, "Track & Field title");
+    check(machine.screen_width() == 256 && machine.screen_height() == 224,
+          "Track & Field reports 256x224");
+    std::string error = "unset";
+    check(!machine.init("/no/such/trackfld.zip", &error), "missing Track & Field ROMs fail init");
+    check(error.find("not found") != std::string::npos || error.find("cannot") != std::string::npos ||
+              error.size() > 3,
+          "init reports why the Track & Field ROM set is missing");
+}
+
+void test_trackfld_roms_if_present() {
+    const char* paths[] = {"/tmp/roms/trackfld.zip", "/tmp/trackfld.zip"};
+    const char* path = nullptr;
+    for (const char* candidate : paths) {
+        std::ifstream probe(candidate);
+        if (probe) {
+            path = candidate;
+            break;
+        }
+    }
+    if (path == nullptr) return;
+
+    dsp::TrackFld machine;
+    std::string error;
+    check(machine.init(path, &error), "MAME trackfld set loads");
+    dsp::MachineInputs inputs;
+    for (int frame = 0; frame < 180; frame++) {
+        machine.set_inputs(inputs);
+        machine.run_frame();
+    }
+    check(unique_pixels(machine) > 8, "Track & Field attract mode draws a colour picture");
+}
+
 void test_opwolf_roms_if_present() {
     const char* paths[] = {"/tmp/roms/opwolf.zip", "/tmp/opwolf-roms/opwolf.zip"};
     const char* path = nullptr;
@@ -4476,6 +4560,8 @@ int main() {
     test_m6809_reset_and_loads();
     test_m6809_branches_and_stack();
     test_m6809_interrupts();
+    test_konami1_decode_and_opcode_fetch();
+    test_vlm5030_pins();
     test_sn76496();
     test_m68000_reset_and_moves();
     test_m68000_branches_and_subroutines();
@@ -4575,6 +4661,8 @@ int main() {
     test_tc0140syt_mailbox();
     test_opwolf_cchip_and_driver();
     test_opwolf_roms_if_present();
+    test_trackfld_driver();
+    test_trackfld_roms_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
