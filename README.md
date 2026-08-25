@@ -42,6 +42,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Track & Field driver | `src/arcade/trackandfield_hw.pas` | Konami-1 6809 + Z80, SN76496, DAC, VLM5030, row scroll |
 | 93C46 EEPROM | `src/devices/eepromser.pas` | 128×8 (CPS1) or 64×16 (Pirates) serial EEPROM |
 | Pirates driver | `src/arcade/pirates_hw.pas` | 68000 + OKI M6295, 93C46, three tile layers and sprites |
+| Skull & Crossbones driver | MAME `skullxbo.cpp` / `atarijsa.cpp` | Atari 68000 + JSA-II (6502, YM2151, OKI M6295), playfield, alpha and motion objects |
 | M68000/68010 CPU | `src/cpu/m68000.pas` | Gauntlet main CPU |
 | M6502 CPU | `src/cpu/m6502.pas` | Gauntlet sound CPU, NES 2A03, optional 65C02 CMOS opcodes for the Lynx |
 | Mr. Do driver | `src/arcade/mrdo_hw.pas` | `rol90` tile/sprite decode |
@@ -152,6 +153,7 @@ holding the individual files:
 ./build/dsp --game elevator /path/to/elevator.zip
 ./build/dsp --game opwolf /path/to/opwolf.zip
 ./build/dsp --game pirates /path/to/pirates.zip
+./build/dsp --game skullxbo /path/to/skullxbo.zip
 ./build/dsp --game kungfum /path/to/kungfum.zip
 ./build/dsp --game ikari /path/to/ikari.zip
 ./build/dsp --game mslug /path/to/mslug.zip
@@ -293,6 +295,21 @@ s89_49d4.bin
 There are no DIP banks; coin/lives settings are stored in the EEPROM and
 changed from the game's own service menu. The same PCB also runs Genix Family
 (`--game genix`).
+
+### Skull & Crossbones
+
+Atari 1989 (`skullxbo` in MAME). There is no Pascal unit in dsp-emulator; this
+port follows MAME `skullxbo.cpp` and the Atari JSA-II board in `atarijsa.cpp`.
+A 7.16 MHz 68000 runs the game, a 1.79 MHz 6502 on JSA-II drives a YM2151 and
+an OKI M6295, and the 336×240 picture is an 8×8 playfield, an 8×8 alpha layer
+and 16×8 5bpp motion objects with the GAL priority mixer from the PCB.
+
+ROMs are **not** shipped. Use the MAME `skullxbo` parent (non-merged). Settings
+live in a parallel 2816 EEPROM; coins are read on the JSA board (5/6).
+
+```bash
+./build/dsp --game skullxbo /path/to/skullxbo.zip
+```
 
 ### Exelvision EXL-100 and EXELTEL
 

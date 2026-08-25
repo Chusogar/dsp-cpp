@@ -31,6 +31,7 @@
 #include "drivers/opwolf.h"
 #include "drivers/trackfld.h"
 #include "drivers/pirates.h"
+#include "drivers/skullxbo.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -97,7 +98,7 @@ void print_supported_emulators() {
 		"    spacetrk, carnival, brdrline, digger, pulsar, heiankyo, alphaho,\n"
         "    neogeo, nam1975, maglord, mslug, kof94, kof95, kof97, kof98,\n"
         "    fatfury, samsho, aof, lastblad, bstars, whp,\n"
-        "    opwolf, pirates, genix\n"
+        "    opwolf, pirates, genix, skullxbo\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
@@ -365,6 +366,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	}
 	if (game == "genix") {
 		return std::make_unique<dsp::Pirates>(dsp::Pirates::Game::Genix);
+	}
+	if (game == "skullxbo" || game == "skulls" || game == "skullandcrossbones") {
+		return std::make_unique<dsp::SkullXbo>();
 	}
 
 

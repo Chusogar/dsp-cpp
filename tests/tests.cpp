@@ -70,6 +70,7 @@
 #include "drivers/opwolf.h"
 #include "drivers/trackfld.h"
 #include "drivers/pirates.h"
+#include "drivers/skullxbo.h"
 #include "machine/eeprom93c46.h"
 #include "sound/ay8910.h"
 #include "sound/msm5205.h"
@@ -3269,6 +3270,47 @@ void test_pirates_roms_if_present() {
     check(energy > 0, "Pirates produces attract-mode audio");
 }
 
+void test_skullxbo_driver() {
+    dsp::SkullXbo machine;
+    check(std::strcmp(machine.title(), "Skull & Crossbones") == 0, "Skull & Crossbones title");
+    check(machine.screen_width() == 336 && machine.screen_height() == 240,
+          "Skull & Crossbones reports 336x240");
+    std::string error = "unset";
+    check(!machine.init("/no/such/skullxbo.zip", &error), "missing Skull & Crossbones ROMs fail init");
+    check(error.find("not found") != std::string::npos || error.find("cannot") != std::string::npos ||
+              error.size() > 3,
+          "init reports why the Skull & Crossbones ROM set is missing");
+}
+
+void test_skullxbo_roms_if_present() {
+    const char* paths[] = {"/tmp/roms/skullxbo.zip", "/tmp/skullxbo.zip"};
+    const char* path = nullptr;
+    for (const char* candidate : paths) {
+        std::ifstream probe(candidate);
+        if (probe) {
+            path = candidate;
+            break;
+        }
+    }
+    if (path == nullptr) return;
+
+    dsp::SkullXbo machine;
+    std::string error;
+    check(machine.init(path, &error), "MAME skullxbo set loads");
+    check(machine.debug_pc() < 0x80000u, "Skull & Crossbones reset PC is inside ROM");
+    dsp::MachineInputs inputs;
+    int64_t energy = 0;
+    for (int frame = 0; frame < 360; frame++) {
+        machine.set_inputs(inputs);
+        machine.run_frame();
+        std::vector<int16_t> audio;
+        machine.drain_audio(audio);
+        for (int16_t sample : audio) energy += int64_t(sample) * sample;
+    }
+    check(unique_pixels(machine) > 8, "Skull & Crossbones attract mode draws a colour picture");
+    check(energy > 0, "Skull & Crossbones produces attract-mode audio");
+}
+
 void test_opwolf_roms_if_present() {
     const char* paths[] = {"/tmp/roms/opwolf.zip", "/tmp/opwolf-roms/opwolf.zip"};
     const char* path = nullptr;
@@ -4766,6 +4808,8 @@ int main() {
     test_eeprom93c46_16bit();
     test_pirates_driver();
     test_pirates_roms_if_present();
+    test_skullxbo_driver();
+    test_skullxbo_roms_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
