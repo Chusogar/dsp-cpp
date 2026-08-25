@@ -132,6 +132,13 @@ OpWolf::OpWolf()
                                   [this](uint32_t address, uint16_t value) {
                                       main_write(address, value);
                                   });
+    // Byte accesses to the TC0140SYT must not read-modify-write the word: a
+    // dummy read of $3E0002 consumes a mailbox nibble and kills the handshake
+    // (Pascal only returns comm_r on read_8bits_hi_dir).
+    main_cpu_.set_byte_handlers([this](uint32_t address) { return main_read_byte(address); },
+                                [this](uint32_t address, uint8_t value) {
+                                    main_write_byte(address, value);
+                                });
     sound_cpu_.set_memory_handlers(
         [this](uint16_t address) { return sound_read(address); },
         [this](uint16_t address, uint8_t value) { sound_write(address, value); });
@@ -260,7 +267,10 @@ uint16_t OpWolf::main_read(uint32_t address) {
     if ((address & ~1u) == 0x380002) return dsw_b_;
     if ((address & ~1u) == 0x3a0000) return gun_x_;
     if ((address & ~1u) == 0x3a0002) return gun_y_;
-    if ((address & ~1u) == 0x3e0002) return uint16_t(uint16_t(syt_.comm_r()) << 8);
+    if ((address & ~1u) == 0x3e0002) {
+        // Word reads do not touch the mailbox; MOVE.B of the high byte does.
+        return 0;
+    }
     if (address >= 0xc00000 && address <= 0xc0ffff) {
         return ram2_[(address & 0xffff) >> 1];
     }
@@ -333,6 +343,31 @@ void OpWolf::main_write(uint32_t address, uint16_t value) {
         ram3_[(address & 0x3fff) >> 1] = value;
         return;
     }
+}
+
+uint8_t OpWolf::main_read_byte(uint32_t address) {
+    address &= 0xffffffu;
+    if ((address & ~1u) == 0x3e0002) {
+        return (address & 1u) == 0 ? syt_.comm_r() : 0;
+    }
+    const uint16_t word = main_read(address);
+    return (address & 1u) ? uint8_t(word) : uint8_t(word >> 8);
+}
+
+void OpWolf::main_write_byte(uint32_t address, uint8_t value) {
+    address &= 0xffffffu;
+    if ((address & ~1u) == 0x3e0000) {
+        if ((address & 1u) == 0) syt_.port_w(value);
+        return;
+    }
+    if ((address & ~1u) == 0x3e0002) {
+        if ((address & 1u) == 0) syt_.comm_w(value);
+        return;
+    }
+    uint16_t word = main_read(address);
+    if (address & 1u) word = uint16_t((word & 0xff00) | value);
+    else word = uint16_t((word & 0x00ff) | (uint16_t(value) << 8));
+    main_write(address, word);
 }
 
 uint8_t OpWolf::sound_read(uint16_t address) {
@@ -481,6 +516,33 @@ void OpWolf::draw_sprites() {
     }
 }
 
+void OpWolf::draw_sight() {
+    // Host overlay matching dsp-emulator's show_mouse_cursor / MAME's light-gun
+    // crosshair. The 68000 gun ports are offset by +15 in X (visible crop).
+    const int cx = int(gun_x_) - 15;
+    const int cy = int(gun_y_);
+    auto plot = [&](int x, int y, uint32_t color) {
+        if (x < 0 || y < 0 || x >= kScreenWidth || y >= kScreenHeight) return;
+        framebuffer_[size_t(y * kScreenWidth + x)] = color;
+    };
+    const uint32_t outline = 0xff000000u;
+    const uint32_t fill = 0xffffffffu;
+    for (int d = -6; d <= 6; d++) {
+        if (d >= -1 && d <= 1) continue;
+        plot(cx + d, cy - 1, outline);
+        plot(cx + d, cy, fill);
+        plot(cx + d, cy + 1, outline);
+        plot(cx - 1, cy + d, outline);
+        plot(cx, cy + d, fill);
+        plot(cx + 1, cy + d, outline);
+    }
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            plot(cx + dx, cy + dy, (dx == 0 && dy == 0) ? fill : outline);
+        }
+    }
+}
+
 void OpWolf::update_video() {
     draw_tilemap(false);
     draw_tilemap(true);
@@ -494,6 +556,7 @@ void OpWolf::update_video() {
                 composite_[size_t(source_y * kWorkWidth + x + 16)];
         }
     }
+    draw_sight();
 }
 
 void OpWolf::run_frame() {

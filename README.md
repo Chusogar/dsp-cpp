@@ -765,7 +765,7 @@ as `super_cassette_vision.pas`. The host keyboard supplies 0–9, Q, W and P
 | Arrows | Player 1 movement |
 | Left Ctrl / Space | Player 1 button 1 (Operation Wolf fire) |
 | Left Alt / Z | Player 1 button 2 (Operation Wolf grenade) |
-| Mouse | Operation Wolf gun (shown when `--game opwolf`) |
+| Mouse | Operation Wolf gun; a crosshair is drawn on the screen |
 | X | Player 1 button 3 (Double Dragon jump, NeoGeo C) |
 | C | Player 1 button 4 (NeoGeo D) |
 | 3 / 4 | Player 1 / 2 select (NeoGeo) |

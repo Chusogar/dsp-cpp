@@ -3105,11 +3105,21 @@ void test_opwolf_roms_if_present() {
               "MAME opwolf does not use a second ADPCM ROM");
     }
     dsp::MachineInputs inputs;
-    for (int frame = 0; frame < 60; frame++) {
+    int64_t energy = 0;
+    for (int frame = 0; frame < 180; frame++) {
         machine.set_inputs(inputs);
         machine.run_frame();
+        std::vector<int16_t> audio;
+        machine.drain_audio(audio);
+        for (int16_t sample : audio) energy += int64_t(sample) * sample;
+        if (frame == 59) {
+            check(unique_pixels(machine) >= 1, "Operation Wolf produces a framebuffer after boot");
+            const uint32_t* pixels = machine.framebuffer();
+            const int sight = 120 * 320 + 160;  // default gun (175,120) minus the +15 X crop
+            check(pixels[sight] == 0xffffffffu, "Operation Wolf draws the gun sight overlay");
+        }
     }
-    check(unique_pixels(machine) >= 1, "Operation Wolf produces a framebuffer after boot");
+    check(energy > 0, "Operation Wolf produces attract-mode audio");
 
     inputs.coin1 = true;
     for (int frame = 0; frame < 20; frame++) {

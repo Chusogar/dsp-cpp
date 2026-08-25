@@ -56,6 +56,8 @@ public:
 private:
     uint16_t main_read(uint32_t address);
     void main_write(uint32_t address, uint16_t value);
+    uint8_t main_read_byte(uint32_t address);
+    void main_write_byte(uint32_t address, uint8_t value);
     uint8_t sound_read(uint16_t address);
     void sound_write(uint16_t address, uint8_t value);
     void on_sound_cycles(int cycles);
@@ -71,6 +73,7 @@ private:
     void blit_layer(const std::vector<uint32_t>& layer, uint16_t scroll_x, uint16_t scroll_y,
                     bool transparent);
     void draw_sprites();
+    void draw_sight();
 
     M68000 main_cpu_;
     Z80 sound_cpu_;
