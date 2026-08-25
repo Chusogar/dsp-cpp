@@ -109,6 +109,12 @@ void M6809::write_word(uint16_t address, uint16_t value) {
 
 uint8_t M6809::fetch() { return read(pc_++); }
 
+uint8_t M6809::fetch_opcode() {
+    uint8_t value = opcode_read_ ? opcode_read_(pc_) : read(pc_);
+    pc_ = uint16_t(pc_ + 1);
+    return value;
+}
+
 uint16_t M6809::fetch_word() {
     uint16_t value = read_word(pc_);
     pc_ = uint16_t(pc_ + 2);
@@ -649,7 +655,7 @@ int M6809::run(int cycles) {
             return cycles;
         }
 
-        uint8_t opcode = fetch();
+        uint8_t opcode = fetch_opcode();
         switch (kMode[opcode]) {
             case 0: break;  // implied
             case 1: address_ = uint16_t((dp << 8) | fetch()); break;
@@ -727,7 +733,7 @@ int M6809::run(int cycles) {
                 break;
             case 0x10:
             case 0x11: {
-                uint8_t opcode2 = fetch();
+                uint8_t opcode2 = fetch_opcode();
                 switch (kMode1X[opcode2]) {
                     case 1: address_ = uint16_t((dp << 8) | fetch()); break;
                     case 3: address_ = fetch_word(); break;
