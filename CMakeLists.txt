@@ -132,6 +132,7 @@ add_executable(dsp
   src/drivers/opwolf.cpp
   src/drivers/trackfld.cpp
   src/drivers/pirates.cpp
+  src/drivers/skullxbo.cpp
 
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
@@ -299,6 +300,7 @@ add_executable(dsp_tests
   src/drivers/opwolf.cpp
   src/drivers/trackfld.cpp
   src/drivers/pirates.cpp
+  src/drivers/skullxbo.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)
