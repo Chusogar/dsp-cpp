@@ -47,7 +47,12 @@ void Namco51xx::vblank(bool state) {
     cpu_.set_tc(!state);
 }
 
-void Namco51xx::run(int cycles) { cpu_.run(cycles); }
+void Namco51xx::run(int cycles) {
+    // Galaga's Z80 is 3.072 MHz; the MB8843 is clocked at 1.536 MHz.
+    // The Mb88 core consumes clock cycles directly, so execute half as many
+    // MCU cycles for each host-Z80 cycle batch.
+    cpu_.run(cycles / 2);
+}
 
 uint8_t Namco51xx::k_r() const { return uint8_t((rw_ << 3) | (port_o_ & 0x07)); }
 
