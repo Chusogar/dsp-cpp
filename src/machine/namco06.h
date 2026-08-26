@@ -6,19 +6,10 @@
 
 namespace dsp {
 
-// Namco 06XX bus multiplexer between the main CPU and up to four Namco
-// MB88xx I/O peripherals (51xx input/coin, 52xx sample player, 53xx I/O,
-// 54xx sound trigger).
-//
-// Control register format ($7100 on this hardware family):
-//   bits 0-3: bitmask of which slots are addressed by this access (more
-//             than one bit can be set; real hardware wire-ANDs their reads)
-//   bit 4: transfer direction - 0 = the main CPU is about to WRITE to the
-//          selected slot(s), 1 = it is about to READ from them
-// The 06XX clock divider generates the host NMI at approximately 4 kHz on
-// the Galaga CPU board. With a 3.072 MHz Z80 this is one NMI every 768 CPU
-// cycles. The old implementation accidentally generated one NMI every 4000
-// cycles (768 Hz), which can stall Galaga's 51XX communication during boot.
+// Namco 06XX bus multiplexer. The upper three control bits select the
+// internal clock divider; bit 4 selects read/write and bits 0..3 select the
+// attached 5xXX devices. The 06XX clock generates the host NMI and gates the
+// chip-select lines. This timing is essential during Galaga POST.
 class Namco06xx {
 public:
     struct Slot {
@@ -35,52 +26,94 @@ public:
 
     void reset() {
         control_ = 0;
-        nmi_accumulator_ = 0;
+        clock_accumulator_ = 0;
+        timer_state_ = false;
+        read_stretch_ = false;
         for (auto& sel : selected_) sel = false;
         for (auto& s : slots_)
             if (s.chip_select) s.chip_select(false);
+        if (nmi_callback_) nmi_callback_ = nmi_callback_; // keep callback installed
     }
 
     void ctrl_write(uint8_t value) {
         control_ = value;
-        const uint8_t mask = value & 0x0f;
-        const bool read_mode = (value & 0x10) != 0;
-        for (int i = 0; i < 4; i++) {
-            const bool sel = (mask & (1 << i)) != 0;
-            if (sel != selected_[size_t(i)]) {
-                selected_[size_t(i)] = sel;
-                if (slots_[size_t(i)].chip_select) slots_[size_t(i)].chip_select(sel);
+        clock_accumulator_ = 0;
+        timer_state_ = false;
+
+        if ((control_ & 0xe0) == 0) {
+            read_stretch_ = false;
+            for (int i = 0; i < 4; i++) {
+                selected_[size_t(i)] = false;
+                if (slots_[size_t(i)].chip_select) slots_[size_t(i)].chip_select(false);
             }
-            if (sel && slots_[size_t(i)].set_rw) slots_[size_t(i)].set_rw(read_mode);
+            return;
         }
+
+        // A read starts with one suppressed NMI, giving the selected MCU a
+        // half-clock to place its value on the bus (MAME's read_stretch).
+        read_stretch_ = (control_ & 0x10) != 0;
     }
+
     uint8_t ctrl_read() const { return control_; }
 
     void data_write(uint8_t /*offset*/, uint8_t value) {
         if ((control_ & 0x10) != 0) return;
         const uint8_t mask = control_ & 0x0f;
         for (int i = 0; i < 4; i++)
-            if ((mask & (1 << i)) != 0 && slots_[size_t(i)].write) slots_[size_t(i)].write(value);
-    }
-    uint8_t data_read(uint8_t /*offset*/) const {
-        if ((control_ & 0x10) == 0) return 0;
-        uint8_t res = 0xff;
-        const uint8_t mask = control_ & 0x0f;
-        for (int i = 0; i < 4; i++)
-            if ((mask & (1 << i)) != 0 && slots_[size_t(i)].read) res &= slots_[size_t(i)].read();
-        return res;
+            if ((mask & (1 << i)) != 0 && slots_[size_t(i)].write)
+                slots_[size_t(i)].write(value);
     }
 
-    // Galaga: 3.072 MHz / 768 = 4 kHz NMI clock.
-    // Count actual Z80 cycles so variable-sized instruction batches do not
-    // introduce timing drift.
-    void tick(int cycles, uint32_t /*cpu_clock*/) {
-        if ((control_ & 0x0f) == 0) return;
-        constexpr int64_t kNmiDivider = 768;
-        nmi_accumulator_ += cycles;
-        while (nmi_accumulator_ >= kNmiDivider) {
-            nmi_accumulator_ -= kNmiDivider;
-            if (nmi_callback_) nmi_callback_();
+    uint8_t data_read(uint8_t /*offset*/) const {
+        if ((control_ & 0x10) == 0) return 0;
+        uint8_t result = 0xff;
+        const uint8_t mask = control_ & 0x0f;
+        for (int i = 0; i < 4; i++)
+            if ((mask & (1 << i)) != 0 && slots_[size_t(i)].read)
+                result &= slots_[size_t(i)].read();
+        return result;
+    }
+
+    // The 06XX clock is driven from its input clock. On each half-period the
+    // clock state toggles; on the high/rising phase the selected devices are
+    // strobed and the controlling CPU receives an NMI, except for the first
+    // read phase (read_stretch). The Galaga device is clocked at
+    // 18.432 MHz / 8 / 64 = 36 kHz; control bits 7..5 select /1../8.
+    void tick(int cycles, uint32_t cpu_clock) {
+        if ((control_ & 0xe0) == 0 || cycles <= 0 || cpu_clock == 0) return;
+
+        const uint32_t num_shifts = uint32_t((control_ >> 5) & 7);
+        const uint32_t divisor = 1u << num_shifts;
+        const uint64_t input_clock = 36'000; // Galaga 06XX clock
+        const uint64_t half_num = uint64_t(cpu_clock) * divisor;
+        const uint64_t half_den = input_clock * 2u;
+
+        clock_accumulator_ += uint64_t(cycles) * half_den;
+        while (clock_accumulator_ >= half_num) {
+            clock_accumulator_ -= half_num;
+            timer_state_ = !timer_state_;
+
+            if (timer_state_) {
+                const bool read = (control_ & 0x10) != 0;
+                const uint8_t mask = control_ & 0x0f;
+                for (int i = 0; i < 4; i++) {
+                    const bool selected = (mask & (1 << i)) != 0;
+                    selected_[size_t(i)] = selected;
+                    if (selected && slots_[size_t(i)].set_rw)
+                        slots_[size_t(i)].set_rw(read);
+                    if (slots_[size_t(i)].chip_select)
+                        slots_[size_t(i)].chip_select(selected);
+                }
+
+                if (!read_stretch && nmi_callback_)
+                    nmi_callback_();
+                read_stretch_ = false;
+            } else {
+                for (int i = 0; i < 4; i++) {
+                    if (selected_[size_t(i)] && slots_[size_t(i)].chip_select)
+                        slots_[size_t(i)].chip_select(false);
+                }
+            }
         }
     }
 
@@ -89,7 +122,9 @@ private:
     std::array<bool, 4> selected_{};
     std::function<void()> nmi_callback_;
     uint8_t control_ = 0;
-    int64_t nmi_accumulator_ = 0;
+    uint64_t clock_accumulator_ = 0;
+    bool timer_state_ = false;
+    bool read_stretch_ = false;
 };
 
 }  // namespace dsp
