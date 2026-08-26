@@ -31,6 +31,11 @@
 #include "drivers/opwolf.h"
 #include "drivers/trackfld.h"
 #include "drivers/pirates.h"
+#include "drivers/armedf.h"
+#include "drivers/neogeo.h"
+#include "drivers/wwfsstar.h"
+#include "drivers/citycon.h"
+#include "drivers/commando.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -58,7 +63,6 @@
 #include "drivers/atari_lynx.h"
 #include "drivers/scv.h"
 #include "drivers/pcengine.h"
-#include "drivers/neogeo.h"
 
 #include "frontend/sdl_app.h"
 
@@ -96,8 +100,12 @@ void print_supported_emulators() {
 		"    headon2s, invho2, nsub, samurai, invinco, invds, tranqgun,\n"
 		"    spacetrk, carnival, brdrline, digger, pulsar, heiankyo, alphaho,\n"
         "    neogeo, nam1975, maglord, mslug, kof94, kof95, kof97, kof98,\n"
+		"    pbobblen, turfmast, tws96\n"
         "    fatfury, samsho, aof, lastblad, bstars, whp,\n"
         "    opwolf, pirates, genix\n"
+		"    terraf, armedf, cclimbr2, legion\n"
+		"    citycon, commando\n"
+		"    wwfsstar\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
@@ -367,6 +375,15 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 		return std::make_unique<dsp::Pirates>(dsp::Pirates::Game::Genix);
 	}
 
+	if (game == "armedf") { return std::make_unique<dsp::ArmedF>(dsp::ArmedF::Game::ArmedF); }
+	if (game == "terraf") { return std::make_unique<dsp::ArmedF>(dsp::ArmedF::Game::Terraf); }
+	if (game == "cclimbr2") { return std::make_unique<dsp::ArmedF>(dsp::ArmedF::Game::Cclimbr2); }
+	if (game == "legion") { return std::make_unique<dsp::ArmedF>(dsp::ArmedF::Game::Legion); }
+
+	if (game == "wwfsstar") { return std::make_unique<dsp::Wwfsstar>(); }
+	if (game == "citycon") return std::make_unique<dsp::CityCon>();
+    if (game == "commando") return std::make_unique<dsp::Commando>();
+    
 
 	// computers
     if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48k>();

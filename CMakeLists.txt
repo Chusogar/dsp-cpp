@@ -132,6 +132,11 @@ add_executable(dsp
   src/drivers/opwolf.cpp
   src/drivers/trackfld.cpp
   src/drivers/pirates.cpp
+  src/drivers/armedf.cpp
+  src/machine/nb1414_m4.cpp
+  src/drivers/wwfsstar.cpp
+  src/drivers/citycon.cpp
+  src/drivers/commando.cpp	
 
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
@@ -274,6 +279,7 @@ add_executable(dsp_tests
   src/machine/tc0140syt.cpp
   src/machine/opwolf_cchip.cpp
   src/machine/konami_decrypt.cpp
+  src/machine/nb1414_m4.cpp
   src/drivers/spectrum.cpp
   src/drivers/amstrad_cpc.cpp
   src/drivers/msx2.cpp
@@ -299,6 +305,7 @@ add_executable(dsp_tests
   src/drivers/opwolf.cpp
   src/drivers/trackfld.cpp
   src/drivers/pirates.cpp
+  src/drivers/armedf.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

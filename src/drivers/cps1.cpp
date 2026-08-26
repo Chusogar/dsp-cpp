@@ -1072,7 +1072,7 @@ bool Cps1::load_roms(const std::string& rom_path, std::string* error) {
             if (!load_raw(loader, {{"dm-17.7j", 0x80000, 0x80000, 0x3ea1b0f2}}, cpu, error))
                 return false;
             sound.assign(0x10000, 0);
-            if (!load_raw(loader, {{"dm_26.10a", 0x10000, 0, 0x3692f6e5}}, sound, error))
+            if (!load_raw(loader, {{"26.10a", 0x10000, 0, 0x3692f6e5}}, sound, error))
                 return false;
             if (!load_64b(loader,
                           {{"dm-05.3a", 0x80000, 0, 0x0ba9c0b0},

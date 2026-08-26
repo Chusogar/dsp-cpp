@@ -57,16 +57,18 @@ bool is_bios_name(const std::string& name) {
 }
 
 int p_rank(const std::string& name) {
-    if (has_part(name, "p1") || has_part(name, "pg1")) return 1;
-    if (has_part(name, "p2") || has_part(name, "pg2")) return 2;
+    // ep1/ep2: Taito/Puzzle Bobble style program ROMs (e.g. d96-07.ep1).
+    if (has_part(name, "p1") || has_part(name, "pg1") || has_part(name, "ep1")) return 1;
+    if (has_part(name, "p2") || has_part(name, "pg2") || has_part(name, "ep2")) return 2;
     if (has_part(name, "sp2")) return 3;
-    if (has_part(name, "p3")) return 4;
-    if (has_part(name, "p4")) return 5;
+    if (has_part(name, "p3") || has_part(name, "ep3")) return 4;
+    if (has_part(name, "p4") || has_part(name, "ep4")) return 5;
     return 9;
 }
 
 int c_rank(const std::string& name) {
-    for (int i = 8; i >= 1; i--) {
+    // Prefer longer names first so "c10" is not matched as "c1".
+    for (int i = 16; i >= 1; i--) {
         if (has_part(name, "c" + std::to_string(i))) return i;
     }
     return 9;
@@ -145,8 +147,14 @@ std::string title_for(const std::string& game) {
         {"pulstar", "Pulstar"},
         {"blazstar", "Blazing Star"},
         {"breakers", "Breakers"},
-        {"pbobblen", "Puzzle Bobble"},
+        {"pbobblen", "Puzzle Bobble / Puzzle Bubble"},
+        {"pbobblenb", "Puzzle Bobble (bootleg)"},
         {"pbobbl2n", "Puzzle Bobble 2"},
+        {"pbobble", "Puzzle Bobble 2"},
+        {"puzzlebubble", "Puzzle Bobble / Puzzle Bubble"},
+        {"puzzlebubble", "Puzzle Bobble / Puzzle Bubble"},
+        {"pbubble", "Puzzle Bobble / Puzzle Bubble"},
+        {"bustamove", "Puzzle Bobble / Bust-A-Move"},
         {"wakuwak7", "Waku Waku 7"},
         {"twinspri", "Twinkle Star Sprites"},
         {"viewpoin", "Viewpoint"},
@@ -159,6 +167,14 @@ std::string title_for(const std::string& game) {
         {"preisle2", "Prehistoric Isle 2"},
         {"sengoku3", "Sengoku 3"},
         {"zupapa", "Zupapa!"},
+        {"turfmast", "Neo Turf Masters"},
+        {"neoturfm", "Neo Turf Masters"},
+        {"neoturmasters", "Neo Turf Masters"},
+        {"neoturfmasters", "Neo Turf Masters"},
+        {"tws96", "Tecmo World Soccer '96"},
+        {"twsoc96", "Tecmo World Soccer '96"},
+        {"tecmows96", "Tecmo World Soccer '96"},
+        {"tecmoworldsoccer96", "Tecmo World Soccer '96"},
     };
     auto it = kTitles.find(game);
     return it == kTitles.end() ? "NeoGeo" : it->second;
@@ -227,7 +243,10 @@ bool neo_geo_header_at(const std::vector<uint8_t>& rom, size_t offset) {
 bool NeoGeo::is_game_name(const std::string& name) {
     if (name == "neogeo" || name == "mvs" || name == "aes") return true;
     return title_for(name) != std::string("NeoGeo") || name.find("kof") == 0 ||
-           name.find("mslug") == 0 || name.find("fatfury") == 0 || name.find("samsho") == 0;
+           name.find("mslug") == 0 || name.find("fatfury") == 0 || name.find("samsho") == 0 ||
+           name.find("pbobbl") == 0 || name.find("pbobble") == 0 || name.find("puzzle") == 0 ||
+           name.find("bustamove") == 0 || name.find("turfmast") == 0 || name.find("neoturf") == 0 ||
+           name.find("tws96") == 0 || name.find("twsoc") == 0 || name.find("tecmows") == 0;
 }
 
 NeoGeo::NeoGeo(std::string game_name)
@@ -389,18 +408,29 @@ bool NeoGeo::load_roms(const std::string& rom_path, std::string* error) {
     v_rom_.clear();
     for (const std::string& name : v_files) append_file(v_rom_, read_named(game, name));
 
+    // C ROMs are loaded as MAME ROM_LOAD16_BYTE pairs (c1/c2, c3/c4, ...):
+    // each pair is byte-interleaved into the next contiguous span of the C space.
+    // When a later pair is shorter (e.g. twsoc96 4MB+4MB then 1MB+1MB) it is
+    // appended immediately after the previous pair — same as MAME's rising offset.
     c_rom_.clear();
     for (size_t i = 0; i < c_files.size(); i += 2) {
         const std::vector<uint8_t> even = read_named(game, c_files[i]);
         const std::vector<uint8_t> odd =
-            i + 1 < c_files.size() ? read_named(game, c_files[i + 1]) : std::vector<uint8_t>(even.size(), 0);
+            i + 1 < c_files.size() ? read_named(game, c_files[i + 1])
+                                   : std::vector<uint8_t>(even.size(), 0);
         const size_t n = std::max(even.size(), odd.size());
-        const size_t offset = c_rom_.size();
-        c_rom_.resize(offset + n * 2, 0);
+        if (n == 0) continue;
+        const size_t base = c_rom_.size();
+        c_rom_.resize(base + n * 2, 0);
         for (size_t b = 0; b < n; b++) {
-            if (b < even.size()) c_rom_[offset + b * 2] = even[b];
-            if (b < odd.size()) c_rom_[offset + b * 2 + 1] = odd[b];
+            if (b < even.size()) c_rom_[base + b * 2 + 0] = even[b];
+            if (b < odd.size()) c_rom_[base + b * 2 + 1] = odd[b];
         }
+    }
+    // Round up to a whole number of 128-byte tiles so decode never walks past the end.
+    if (!c_rom_.empty()) {
+        const size_t tiles = (c_rom_.size() + 127) / 128;
+        c_rom_.resize(tiles * 128, 0);
     }
 
     if (bios_.empty() && p_rom_.empty()) {
@@ -445,7 +475,7 @@ void NeoGeo::reset() {
     rtc_clock_ = false;
     rtc_strobe_ = false;
     video_.reset();
-    video_.set_use_bios_fix(true);
+    video_.set_use_bios_fix(s_rom_.empty());  // cart S present → use cart FIX
     ym_.reset();
     z80_.reset();
     m68k_.reset();
@@ -630,21 +660,24 @@ void NeoGeo::write_byte(uint32_t address, uint8_t value) {
             if ((address & 0x70) == 0x50) rtc_write(value);
             return;
         }
-        if ((address & 0xfe0000) == 0x3a0000 && (address & 1) != 0) {
+        if ((address & 0xfe0000) == 0x3a0000) {
+            // System latch: address bits select register and state (NeoGeoDev / MAME).
+            // Odd-byte and word writes both accepted.
             const int latch = (address >> 1) & 7;
             const bool bit = (address & 0x10) != 0;
             switch (latch) {
-                case 1:
+                case 0:  // $3A0001 / $3A0011 — lock/unlock I/O (ignored)
+                    break;
+                case 1:  // $3A0003 / $3A0013 — bios/cart vectors
                     bios_vectors_ = !bit;
                     break;
-                case 5:
+                case 5:  // $3A000B / $3A001B — bios/cart FIX (S) ROM
                     video_.set_use_bios_fix(!bit);
                     break;
-                case 6:
+                case 6:  // $3A000D / $3A001D — SRAM lock
                     sram_unlocked_ = bit;
                     break;
-                case 7:
-                    // $3A000F selects bank 1, $3A001F selects bank 0.
+                case 7:  // $3A000F / $3A001F — palette bank
                     video_.set_palette_bank(bit ? 0 : 1);
                     break;
                 default:
@@ -793,7 +826,7 @@ void NeoGeo::on_m68k_cycles(int cycles) {
 
 void NeoGeo::run_frame() {
     watchdog_++;
-    if (watchdog_ > 8) {
+    if (watchdog_ > 180) {
         reset();
         watchdog_ = 0;
     }
