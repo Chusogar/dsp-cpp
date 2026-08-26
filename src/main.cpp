@@ -36,6 +36,7 @@
 #include "drivers/wwfsstar.h"
 #include "drivers/citycon.h"
 #include "drivers/commando.h"
+#include "drivers/galaga_hw.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -90,9 +91,6 @@ void print_supported_emulators() {
         "    polepos, polepos2\n"
         "    outrun, hangon, enduro, sharrier, fantzone, shinobi,\n"
 		"    alexkidd, aliensyn, wb3, tetris, altbeast,\n"
-        
-		"    alexkidd, aliensyn, wb3, tetris, altbeast\n"
-        
         "    pitfall2, teddyboy, wboy, mrviking, seganinj, upndown,\n"
 		"    flicky, gardia,\n"
 		"    galaxian, mooncrst, scramble,\n"
@@ -384,6 +382,8 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "citycon") return std::make_unique<dsp::CityCon>();
     if (game == "commando") return std::make_unique<dsp::Commando>();
     
+	if (game == "galaga") { return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Galaga); }
+	
 
 	// computers
     if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48k>();

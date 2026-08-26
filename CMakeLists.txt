@@ -136,7 +136,8 @@ add_executable(dsp
   src/machine/nb1414_m4.cpp
   src/drivers/wwfsstar.cpp
   src/drivers/citycon.cpp
-  src/drivers/commando.cpp	
+  src/drivers/commando.cpp
+  src/drivers/galaga_hw.cpp
 
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
