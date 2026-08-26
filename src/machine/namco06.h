@@ -32,7 +32,6 @@ public:
         for (auto& sel : selected_) sel = false;
         for (auto& s : slots_)
             if (s.chip_select) s.chip_select(false);
-        if (nmi_callback_) nmi_callback_ = nmi_callback_; // keep callback installed
     }
 
     void ctrl_write(uint8_t value) {
@@ -74,21 +73,24 @@ public:
         return result;
     }
 
-    // The 06XX clock is driven from its input clock. On each half-period the
-    // clock state toggles; on the high/rising phase the selected devices are
-    // strobed and the controlling CPU receives an NMI, except for the first
-    // read phase (read_stretch). The Galaga device is clocked at
-    // 18.432 MHz / 8 / 64 = 36 kHz; control bits 7..5 select /1../8.
+    // Galaga 06XX input clock is 18.432 MHz / 8 / 64 = 36 kHz.
+    // Control bits 7..5 select a further divide-by-1..8. The device toggles
+    // its internal clock each half-period; on the high phase it strobes the
+    // selected MCU(s) and raises the host NMI, except for the first read
+    // phase which is suppressed by read_stretch.
     void tick(int cycles, uint32_t cpu_clock) {
         if ((control_ & 0xe0) == 0 || cycles <= 0 || cpu_clock == 0) return;
 
-        const uint32_t num_shifts = uint32_t((control_ >> 5) & 7);
-        const uint32_t divisor = 1u << num_shifts;
-        const uint64_t input_clock = 36'000; // Galaga 06XX clock
+        const uint32_t shifts = uint32_t((control_ >> 5) & 7);
+        const uint32_t divisor = 1u << shifts;
+        constexpr uint64_t input_clock = 36'000;
+
+        // Accumulate half-periods using integer arithmetic so no floating
+        // point timing drift is introduced.
         const uint64_t half_num = uint64_t(cpu_clock) * divisor;
         const uint64_t half_den = input_clock * 2u;
-
         clock_accumulator_ += uint64_t(cycles) * half_den;
+
         while (clock_accumulator_ >= half_num) {
             clock_accumulator_ -= half_num;
             timer_state_ = !timer_state_;
