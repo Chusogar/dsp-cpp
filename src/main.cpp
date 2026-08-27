@@ -103,6 +103,7 @@ void print_supported_emulators() {
         "    opwolf, pirates, genix\n"
 		"    terraf, armedf, cclimbr2, legion\n"
 		"    citycon, commando\n"
+		"    galaga, digdug, bosconian, xevious, sxevious\n"
 		"    wwfsstar\n"
         "\n"
         "  Computers:\n"
@@ -310,6 +311,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "galaxian") return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::Galaxian);
 	if (game == "mooncrst" || game == "mooncresta") return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::MoonCresta);
 	if (game == "scramble") return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::Scramble);
+	if (game == "frogger") return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::Frogger);
 
 	if (game == "opwolf" || game == "operationwolf" || game == "operation-wolf") {
 		return std::make_unique<dsp::OpWolf>();
@@ -373,16 +375,20 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 		return std::make_unique<dsp::Pirates>(dsp::Pirates::Game::Genix);
 	}
 
-	if (game == "armedf") { return std::make_unique<dsp::ArmedF>(dsp::ArmedF::Game::ArmedF); }
-	if (game == "terraf") { return std::make_unique<dsp::ArmedF>(dsp::ArmedF::Game::Terraf); }
-	if (game == "cclimbr2") { return std::make_unique<dsp::ArmedF>(dsp::ArmedF::Game::Cclimbr2); }
-	if (game == "legion") { return std::make_unique<dsp::ArmedF>(dsp::ArmedF::Game::Legion); }
+	if (game == "armedf") { return std::make_unique<dsp::ArmedfHw>(dsp::ArmedfHw::Game::ArmedF); }
+	if (game == "terraf") { return std::make_unique<dsp::ArmedfHw>(dsp::ArmedfHw::Game::TerraForce); }
+	if (game == "cclimbr2") { return std::make_unique<dsp::ArmedfHw>(dsp::ArmedfHw::Game::CrazyClimber2); }
+	if (game == "legion") { return std::make_unique<dsp::ArmedfHw>(dsp::ArmedfHw::Game::Legion); }
 
 	if (game == "wwfsstar") { return std::make_unique<dsp::Wwfsstar>(); }
 	if (game == "citycon") return std::make_unique<dsp::CityCon>();
     if (game == "commando") return std::make_unique<dsp::Commando>();
     
 	if (game == "galaga") { return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Galaga); }
+	if (game == "digdug") { return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::DigDug); }
+	if (game == "xevious") { return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Xevious); }
+	if (game == "sxevious") { return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::SuperXevious); }
+	if (game == "bosconian") { return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Bosconian); }
 	
 
 	// computers

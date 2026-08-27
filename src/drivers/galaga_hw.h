@@ -9,6 +9,8 @@
 #include "cpu/z80.h"
 #include "machine/namco06.h"
 #include "machine/namco51.h"
+#include "machine/namco51_sw.h"
+#include "machine/namco50.h"
 #include "machine/namco53.h"
 #include "machine/namco54.h"
 #include "sound/namco_wsg.h"
@@ -89,8 +91,13 @@ private:
     NamcoWsg wsg_;
     Namco06xx bridge_;
     Namco06xx bridge2_;  // Bosconian only: second 06xx for the IO50XX_1 slot
-    Namco51xx io51_;
-    Namco53xx io53_;  // Dig Dug only
+    // Pascal uses a high-level software 51xx for Galaga (no MB88). Keep the
+    // MCU model available for other games on this board that need it.
+    Namco51xx io51_mcu_;
+    Namco51xxSw io51_;
+    Namco50xx io50_;   // Xevious / Bosconian protection + scores
+    Namco50xx io50b_;  // Bosconian second 50xx on the video board
+    Namco53xx io53_;   // Dig Dug only
     Namco54xx io54_;
 
     GfxSet chars_;
@@ -107,9 +114,10 @@ private:
     std::array<uint8_t, 0x10000> mem_{};       // main CPU space (ROM + RAM)
     std::array<uint8_t, 0x4000> sub_rom_{};    // sub1 private ROM window
     std::array<uint8_t, 0x4000> sub2_rom_{};   // sub2 private ROM window
-    std::array<uint32_t, 32 + 64> palette_{};  // base colours + star palette
+    std::array<uint32_t, 256> palette_{};  // up to 256 (Xevious); Galaga uses 32+stars
     std::array<uint8_t, 0x100> char_lut_{};
     std::array<uint8_t, 0x200> tile_lut_{};
+    std::array<uint8_t, 0x200> sprite_lut_{};
 
     std::vector<uint8_t> digdug_bg_map_;    // raw background lookup ROM
     std::vector<uint8_t> xevious_tiles_;    // "BB" lookup ROM
@@ -126,7 +134,14 @@ private:
 
     // Dig Dug background controller
     uint8_t bg_select_ = 0, bg_color_bank_ = 0;
+    uint8_t tx_color_mode_ = 0;
     bool bg_disable_ = false, bg_repaint_ = false;
+
+    // Dig Dug extra decoded gfx (bg tile ROM is digdug_bg_map_).
+    std::vector<uint8_t> digdug_chars_rotated_;  // 1bpp playfield chars
+    std::vector<uint8_t> digdug_bg_chars_;       // rotated bg char pixels
+    std::array<uint8_t, 0x100> digdug_char_lut_{};
+    std::array<uint8_t, 0x100> digdug_bg_lut_{};
 
     uint8_t in0_ = 0xff, in1_ = 0xff, in2_ = 0xff;
     uint8_t dsw_a_ = 0xff, dsw_b_ = 0xff;
@@ -135,6 +150,8 @@ private:
     std::vector<int16_t> audio_;
     int64_t wsg_accumulator_ = 0;
     int main_cycles_per_line_ = 0;
+    int frame_count_ = 0;  // debug: auto-coin after boot
+    int nmi_pulse_count_ = 0;
 };
 
 }  // namespace dsp

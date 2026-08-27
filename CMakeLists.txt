@@ -105,6 +105,7 @@ add_executable(dsp
   src/machine/konami_decrypt.cpp
   src/machine/tc0140syt.cpp
   src/machine/opwolf_cchip.cpp
+  src/machine/namco50.cpp
 
     
   src/drivers/bagman.cpp

@@ -74,13 +74,14 @@ private:
 };
 
 // Galaxian hardware family (Namco / Midway / Nichibutsu / Konami).
-// Port of galaxian_hw.pas — Galaxian, Moon Cresta, Scramble.
+// Port of galaxian_hw.pas — Galaxian, Moon Cresta, Scramble, Frogger.
 class Galaxian : public Machine {
 public:
     enum class Game {
         Galaxian,
         MoonCresta,
         Scramble,
+        Frogger,
     };
 
     static constexpr int kScreenWidth = 224;
@@ -120,6 +121,8 @@ private:
     void write_mooncrst(uint16_t address, uint8_t value);
     uint8_t read_scramble(uint16_t address);
     void write_scramble(uint16_t address, uint8_t value);
+    uint8_t read_frogger(uint16_t address);
+    void write_frogger(uint16_t address, uint8_t value);
     void on_cycles(int cycles);
 
     bool load_roms(const std::string& rom_path, std::string* error);
@@ -127,6 +130,7 @@ private:
     void build_palette(const std::vector<uint8_t>& prom);
     static void decrypt_mooncrst(std::vector<uint8_t>& rom);
     void setup_scramble_ppi();
+    void setup_frogger_ppi();
 
     int calc_nchar(int offset) const;
     void calc_sprite(int index, int& code, bool& flipx, bool& flipy) const;
@@ -134,6 +138,8 @@ private:
     void update_video();
     void draw_tile(int offset);
     void draw_sprite(int index);
+    void draw_tile_frogger(int offset);
+    void draw_sprite_frogger(int index);
     void draw_bullets();
     void draw_stars();
 

@@ -15,12 +15,20 @@ namespace dsp {
 //             than one bit can be set; real hardware wire-ANDs their reads)
 //   bit 4:    transfer direction - 0 = the main CPU is about to WRITE to the
 //             selected slot(s), 1 = it is about to READ from them
-// Whenever the low nibble is non-zero the chip also runs a free-running
-// ~4kHz (main-CPU-clock/768) timer that pulses the host's NMI line - this is
-// how the 51xx/53xx chips get main-CPU attention for coin/service polling,
-// so it must keep ticking even between data accesses.
+//
+// NMI timer (matches leniad/dsp-emulator namcoio_06xx_5Xxx.pas):
+//   When the low nibble is non-zero the chip runs a free-running timer of
+//   fixed period 768 main-CPU cycles (~250 us @ 3.072 MHz) that pulses the
+//   host's NMI line.  The timer does NOT modify the control register; the
+//   Z80 NMI handler is responsible for writing $10 (or clearing the low
+//   nibble) when the transfer is complete.  Bits 5-7 are ignored (unlike
+//   MAME's variable-divisor model used on Pole Position).
 class Namco06xx {
 public:
+    // Fixed NMI period used by Galaga / Bosconian / Dig Dug / Xevious
+    // (Pascal: timers.init(0, 768, nmi_function, nil, false)).
+    static constexpr int kNmiPeriodCycles = 768;
+
     struct Slot {
         std::function<void(bool)> chip_select;
         std::function<void(bool)> set_rw;   // true = CPU is reading
@@ -36,6 +44,7 @@ public:
     void reset() {
         control_ = 0;
         nmi_accumulator_ = 0;
+        nmi_enabled_ = false;
         for (auto& sel : selected_) sel = false;
         for (auto& s : slots_)
             if (s.chip_select) s.chip_select(false);
@@ -52,6 +61,22 @@ public:
                 if (slots_[size_t(i)].chip_select) slots_[size_t(i)].chip_select(sel);
             }
             if (sel && slots_[size_t(i)].set_rw) slots_[size_t(i)].set_rw(read_mode);
+        }
+        // Pascal: if (data and $f)=0 then disable timer else enable.
+        if (mask == 0) {
+            nmi_enabled_ = false;
+            nmi_accumulator_ = 0;
+        } else {
+            nmi_enabled_ = true;
+            // Restart the period on each ctrl write (same as timers.enabled=true
+            // after a previous fire in the Pascal timer engine).
+            nmi_accumulator_ = 0;
+            // Read-request: notify selected chips when bit4 is set.
+            if (read_mode) {
+                for (int i = 0; i < 4; i++)
+                    if ((mask & (1 << i)) != 0 && slots_[size_t(i)].set_rw)
+                        slots_[size_t(i)].set_rw(true);
+            }
         }
     }
     uint8_t ctrl_read() const { return control_; }
@@ -71,14 +96,12 @@ public:
         return res;
     }
 
-    // Call once per main-CPU cycle_handler tick to keep the ~4kHz NMI timer
-    // running while the chip is enabled (control low nibble != 0).
-    void tick(int cycles, uint32_t cpu_clock) {
-        if ((control_ & 0x0f) == 0) return;
-        nmi_accumulator_ += int64_t(cycles) * 768;
-        const int64_t period = int64_t(cpu_clock);
-        while (nmi_accumulator_ >= period) {
-            nmi_accumulator_ -= period;
+    // Call once per main-CPU cycle_handler tick (or accumulated cycles).
+    void tick(int cycles, uint32_t /*cpu_clock*/) {
+        if (!nmi_enabled_) return;
+        nmi_accumulator_ += cycles;
+        while (nmi_accumulator_ >= kNmiPeriodCycles) {
+            nmi_accumulator_ -= kNmiPeriodCycles;
             if (nmi_callback_) nmi_callback_();
         }
     }
@@ -89,6 +112,7 @@ private:
     std::function<void()> nmi_callback_;
     uint8_t control_ = 0;
     int64_t nmi_accumulator_ = 0;
+    bool nmi_enabled_ = false;
 };
 
 }  // namespace dsp

@@ -59,6 +59,35 @@ const std::vector<RomEntry> kScrambleSound = {
     {"ot3.5e", 0x0800, 0x1000, 0xba2fa933},
 };
 
+const std::vector<RomEntry> kFroggerCpu = {
+    {"frogger.26", 0x1000, 0x0000, 0x597696d6},
+    {"frogger.27", 0x1000, 0x1000, 0xb6e6fcc3},
+    {"frsm3.7", 0x1000, 0x2000, 0xaca22ae0},
+};
+const std::vector<RomEntry> kFroggerGfx = {
+    {"frogger.607", 0x0800, 0x0000, 0x05f7d883},
+    {"frogger.606", 0x0800, 0x0800, 0xf524ee30},
+};
+const std::vector<RomEntry> kFroggerPal = {{"pr-91.6l", 0x0020, 0x0000, 0x413703bf}};
+const std::vector<RomEntry> kFroggerSound = {
+    {"frogger.608", 0x0800, 0x0000, 0xe8ab0256},
+    {"frogger.609", 0x0800, 0x0800, 0x7380a48f},
+    {"frogger.610", 0x0800, 0x1000, 0x31d7eb27},
+};
+
+// Frogger has D0/D1 swapped on the sound ROM and on the second GFX ROM.
+uint8_t bitswap8_d0d1(uint8_t v) {
+    return uint8_t((v & 0xfc) | ((v & 0x01) << 1) | ((v & 0x02) >> 1));
+}
+
+// Frogger scrambles the low/high nibble of the horizontal coordinate.
+inline int frogger_x(uint8_t v) { return ((v & 0x0f) << 4) | (v >> 4); }
+
+// Frogger rotates the colour bits of the attribute/sprite colour field.
+inline int frogger_color(uint8_t v) {
+    return ((((v >> 1) & 3) + ((v << 2) & 4)) & 7) << 2;
+}
+
 GfxLayout char_layout(int total) {
     GfxLayout layout;
     layout.width = 8;
@@ -126,6 +155,7 @@ const char* Galaxian::title() const {
     switch (game_) {
         case Game::MoonCresta: return "Moon Cresta";
         case Game::Scramble: return "Scramble";
+        case Game::Frogger: return "Frogger";
         default: return "Galaxian";
     }
 }
@@ -222,6 +252,31 @@ bool Galaxian::load_roms(const std::string& rom_path, std::string* error) {
             warnings_.push_back("Scramble sound ROMs missing; audio disabled");
         }
         setup_scramble_ppi();
+    } else if (game_ == Game::Frogger) {
+        std::vector<uint8_t> cpu_rom(0x3000, 0);
+        if (!loader.load(kFroggerCpu, cpu_rom, error)) return false;
+        std::copy(cpu_rom.begin(), cpu_rom.end(), memory_.begin());
+
+        std::vector<uint8_t> gfx_rom(0x1000, 0);
+        if (!loader.load(kFroggerGfx, gfx_rom, error)) return false;
+        for (size_t i = 0x800; i < gfx_rom.size(); ++i)
+            gfx_rom[i] = bitswap8_d0d1(gfx_rom[i]);
+        decode_graphics(gfx_rom, 0x100, 0x40);
+
+        std::vector<uint8_t> pal(0x20, 0);
+        if (!loader.load(kFroggerPal, pal, error)) return false;
+        build_palette(pal);
+
+        std::vector<uint8_t> snd(0x1800, 0);
+        if (loader.load(kFroggerSound, snd, nullptr)) {
+            for (size_t i = 0; i < 0x800; ++i) snd[i] = bitswap8_d0d1(snd[i]);
+            std::copy(snd.begin(), snd.end(), sound_memory_.begin());
+            sound_present_ = true;
+        } else {
+            sound_present_ = false;
+            warnings_.push_back("Frogger sound ROMs missing; audio disabled");
+        }
+        setup_frogger_ppi();
     } else if (game_ == Game::MoonCresta) {
         std::vector<uint8_t> cpu_rom(0x4000, 0);
         if (!loader.load(kMooncrstCpu, cpu_rom, error)) return false;
@@ -298,7 +353,7 @@ void Galaxian::reset() {
     stars_enable_ = false;
     scramble_background_ = false;
     stars_scroll_ = 0;
-    if (game_ == Game::Scramble) {
+    if (game_ == Game::Scramble || game_ == Game::Frogger) {
         in0_ = in1_ = in2_ = 0xff;  // active-low
     } else {
         in0_ = in1_ = 0;
@@ -322,9 +377,29 @@ void Galaxian::reset() {
     audio_.clear();
     cpu_.set_nmi(IrqLine::Clear);
     if (game_ == Game::Scramble) setup_scramble_ppi();
+    if (game_ == Game::Frogger) setup_frogger_ppi();
 }
 
 void Galaxian::set_inputs(const MachineInputs& inputs) {
+    if (game_ == Game::Frogger) {
+        // eventos_frogger — active low
+        in0_ = in1_ = in2_ = 0xff;
+        if (inputs.player2.up) in0_ &= ~0x01;
+        if (inputs.player1.right) in0_ &= ~0x10;
+        if (inputs.player1.left) in0_ &= ~0x20;
+        if (inputs.coin2) in0_ &= ~0x40;
+        if (inputs.coin1) in0_ &= ~0x80;
+
+        if (inputs.player2.right) in1_ &= ~0x10;
+        if (inputs.player2.left) in1_ &= ~0x20;
+        if (inputs.player2.start) in1_ &= ~0x40;
+        if (inputs.player1.start) in1_ &= ~0x80;
+
+        if (inputs.player2.down) in2_ &= ~0x01;
+        if (inputs.player1.up) in2_ &= ~0x10;
+        if (inputs.player1.down) in2_ &= ~0x40;
+        return;
+    }
     if (game_ == Game::Scramble) {
         // eventos_scramble — active low (clear bit when pressed)
         in0_ = 0xff;
@@ -365,6 +440,95 @@ void Galaxian::set_dip_switch(int bank, uint8_t value) {
     if (bank == 0) dsw_a_ = value;
     else if (bank == 1) dsw_b_ = value;
     else if (bank == 2) dsw_c_ = value;
+}
+
+void Galaxian::setup_frogger_ppi() {
+    // PPI0: inputs (frogger_port_0_[abc]_read)
+    ppi0_.set_port_a([this]() { return in0_; });
+    ppi0_.set_port_b([this]() { return uint8_t(in1_ | dsw_a_); });
+    ppi0_.set_port_c([this]() { return uint8_t(in2_ | dsw_b_); });
+
+    // PPI1: sound latch + IRQ towards the Konami sound board
+    ppi1_.set_port_a({}, [this](uint8_t v) { sound_latch_ = v; });
+    ppi1_.set_port_b({}, [this](uint8_t v) {
+        if (port_b_latch_ == 0 && v != 0 && sound_present_)
+            sound_cpu_.set_irq(IrqLine::Hold);
+        port_b_latch_ = v;
+    });
+    ppi1_.set_port_c({}, {});
+}
+
+// ---- Frogger map ----
+// $0000-$2fff ROM, $8000-$87ff RAM, $a800-$afff videoram,
+// $b000-$b7ff attributes/sprites/bullets, $b800-$bfff latches,
+// $c000-$ffff PPI 8255 (A1/A2 select the port, A12/A13 the chip).
+uint8_t Galaxian::read_frogger(uint16_t address) {
+    if (address <= 0x3fff) return memory_[address];
+    if (address >= 0x8000 && address <= 0x87ff) return memory_[address];
+    if (address >= 0xa800 && address <= 0xafff) return videoram_[address & 0x3ff];
+    if (address >= 0xb000 && address <= 0xb7ff) {
+        const uint8_t off = uint8_t(address & 0xff);
+        if (off <= 0x3f) return attributes_[off];
+        if (off <= 0x5f) return sprites_[off & 0x1f];
+        if (off <= 0x7f) return bullets_[off & 0x1f];
+        return memory_[0xb000 + off];
+    }
+    if (address >= 0xc000) {
+        uint8_t res = 0xff;
+        if (address & 0x1000) res = uint8_t(res & ppi1_.read((address >> 1) & 3));
+        if (address & 0x2000) res = uint8_t(res & ppi0_.read((address >> 1) & 3));
+        return res;
+    }
+    return 0xff;
+}
+
+void Galaxian::write_frogger(uint16_t address, uint8_t value) {
+    if (address <= 0x3fff) return;
+    if (address >= 0x8000 && address <= 0x87ff) {
+        memory_[address] = value;
+        return;
+    }
+    if (address >= 0xa800 && address <= 0xafff) {
+        const int off = address & 0x3ff;
+        if (videoram_[size_t(off)] != value) {
+            videoram_[size_t(off)] = value;
+            dirty_[size_t(off)] = true;
+        }
+        return;
+    }
+    if (address >= 0xb000 && address <= 0xb7ff) {
+        const uint8_t off = uint8_t(address & 0xff);
+        if (off <= 0x3f) {
+            if (attributes_[off] != value) {
+                attributes_[off] = value;
+                const int col = off >> 1;
+                for (int row = 0; row < 32; ++row)
+                    dirty_[size_t(col + (row << 5))] = true;
+            }
+            return;
+        }
+        if (off <= 0x5f) {
+            sprites_[off & 0x1f] = value;
+            return;
+        }
+        if (off <= 0x7f) {
+            bullets_[off & 0x1f] = value;
+            return;
+        }
+        memory_[0xb000 + off] = value;
+        return;
+    }
+    if (address >= 0xb800 && address <= 0xbfff) {
+        if ((address & 0x1f) == 8) {
+            nmi_enable_ = (value & 1) != 0;
+            if (!nmi_enable_) cpu_.set_nmi(IrqLine::Clear);
+        }
+        return;
+    }
+    if (address >= 0xc000) {
+        if (address & 0x1000) ppi1_.write((address >> 1) & 3, value);
+        if (address & 0x2000) ppi0_.write((address >> 1) & 3, value);
+    }
 }
 
 // ---- Galaxian map ----
@@ -597,6 +761,7 @@ void Galaxian::write_scramble(uint16_t address, uint8_t value) {
 uint8_t Galaxian::read_byte(uint16_t address) {
     switch (game_) {
         case Game::Scramble: return read_scramble(address);
+        case Game::Frogger: return read_frogger(address);
         case Game::MoonCresta: return read_mooncrst(address);
         default: return read_galaxian(address);
     }
@@ -605,6 +770,7 @@ uint8_t Galaxian::read_byte(uint16_t address) {
 void Galaxian::write_byte(uint16_t address, uint8_t value) {
     switch (game_) {
         case Game::Scramble: write_scramble(address, value); break;
+        case Game::Frogger: write_frogger(address, value); break;
         case Game::MoonCresta: write_mooncrst(address, value); break;
         default: write_galaxian(address, value); break;
     }
@@ -620,6 +786,12 @@ void Galaxian::write_byte(uint16_t address, uint8_t value) {
 // AY0 port A = sound latch, port B = konami_sound_timer_r
 
 uint8_t Galaxian::sound_read(uint16_t address) {
+    if (game_ == Game::Frogger) {
+        const uint16_t a = uint16_t(address & 0x7fff);
+        if (a <= 0x1fff) return sound_memory_[a];
+        if (a >= 0x4000 && a <= 0x5fff) return sound_memory_[0x4000 + (a & 0x3ff)];
+        return 0xff;
+    }
     if (address <= 0x1fff) return sound_memory_[address];
     // RAM $8000-$83ff, mirror 0x6c00 (MAME konami_sound_map)
     const uint16_t ram_base = uint16_t(address & ~uint16_t(0x6c00));
@@ -629,6 +801,12 @@ uint8_t Galaxian::sound_read(uint16_t address) {
 }
 
 void Galaxian::sound_write(uint16_t address, uint8_t value) {
+    if (game_ == Game::Frogger) {
+        const uint16_t a = uint16_t(address & 0x7fff);
+        if (a >= 0x4000 && a <= 0x5fff) sound_memory_[0x4000 + (a & 0x3ff)] = value;
+        // $6000-$7fff: discrete RC filters (no netlist -> nop)
+        return;
+    }
     const uint16_t ram_base = uint16_t(address & ~uint16_t(0x6c00));
     if (ram_base >= 0x8000 && ram_base <= 0x83ff) {
         sound_memory_[0x8000 + (address & 0x3ff)] = value;
@@ -639,6 +817,7 @@ void Galaxian::sound_write(uint16_t address, uint8_t value) {
 }
 
 uint8_t Galaxian::konami_sound_timer_r() const {
+    // Frogger wires the timer bits to port B in a different order (see below).
     // MAME: period = 16*16*2*8*5*2 = 40960 master clocks;
     // sound CPU clock is master/8, so cycles*8 mod 40960.
     constexpr uint32_t kPeriod = 16u * 16u * 2u * 8u * 5u * 2u;  // 40960
@@ -648,14 +827,22 @@ uint8_t Galaxian::konami_sound_timer_r() const {
         hibit = 1;
         cycles -= 16u * 16u * 2u * 8u * 5u;
     }
-    return uint8_t((hibit << 7) |
-                   (((cycles >> 14) & 1) << 6) |
-                   (((cycles >> 13) & 1) << 5) |
-                   (((cycles >> 11) & 1) << 4) |
-                   0x0e);
+    const uint8_t value = uint8_t((hibit << 7) |
+                                  (((cycles >> 14) & 1) << 6) |
+                                  (((cycles >> 13) & 1) << 5) |
+                                  (((cycles >> 11) & 1) << 4) |
+                                  0x0e);
+    if (game_ == Game::Frogger) {
+        // BITSWAP8(timer,7,6,3,4,5,2,1,0)
+        return uint8_t((value & 0xc7) | ((value & 0x08) << 3) | (value & 0x10) |
+                       ((value & 0x20) >> 3));
+    }
+    return value;
 }
 
 uint8_t Galaxian::sound_in(uint16_t port) {
+    if (game_ == Game::Frogger)
+        return (port & 0xff) == 0x40 ? ay0_.read() : uint8_t(0xff);
     // konami_ay8910_r — both chips can be selected at once
     const uint8_t offset = uint8_t(port);
     uint8_t result = 0xff;
@@ -665,6 +852,14 @@ uint8_t Galaxian::sound_in(uint16_t port) {
 }
 
 void Galaxian::sound_out(uint16_t port, uint8_t value) {
+    if (game_ == Game::Frogger) {
+        switch (port & 0xff) {
+            case 0x40: ay0_.write(value); break;
+            case 0x80: ay0_.control(value); break;
+            default: break;
+        }
+        return;
+    }
     // konami_ay8910_w
     const uint8_t offset = uint8_t(port);
     // AY #1 (bits 4/5)
@@ -696,7 +891,7 @@ void Galaxian::on_cycles(int cycles) {
         audio_accumulator_ -= kCpuClock;
         int32_t sample = 0;
         if (sound_present_ && !sound_mute_) {
-            sample = ay0_.update() + ay1_.update();
+            sample = game_ == Game::Frogger ? ay0_.update() : (ay0_.update() + ay1_.update());
         }
         audio_.push_back(int16_t(std::clamp(sample, int32_t(-32768), int32_t(32767))));
     }
@@ -741,6 +936,48 @@ void Galaxian::draw_tile(int offset) {
             const uint8_t pix = pixels[y * 8 + x];
             tilemap_[size_t(sy * 256 + sx)] =
                 pix == 0 ? 0u : palette_[size_t(pix + color)];
+        }
+    }
+}
+
+void Galaxian::draw_tile_frogger(int offset) {
+    const int tile_x = 31 - (offset / 32);
+    const int tile_y = offset % 32;
+    const uint8_t attr = attributes_[size_t(tile_y * 2)];
+    const int color = frogger_color(attributes_[size_t(1 + tile_y * 2)]);
+    const int scroll = (tile_x * 8) + ((attr & 0x0f) << 4) + (attr >> 4);
+    const uint8_t* pixels = chars_.element(videoram_[size_t(offset & 0x3ff)]);
+    for (int y = 0; y < 8; ++y) {
+        const int sy = tile_y * 8 + y;
+        for (int x = 0; x < 8; ++x) {
+            const int sx = (scroll + x) & 0xff;
+            const uint8_t pix = pixels[y * 8 + x];
+            if (pix == 0) continue;
+            tilemap_[size_t(sy * 256 + sx)] = palette_[size_t(pix + color)];
+        }
+    }
+}
+
+void Galaxian::draw_sprite_frogger(int index) {
+    const uint8_t* e = &sprites_[index * 4];
+    const int y = int(e[3]) + 1;
+    if (y < 16) return;
+    const uint8_t attr = e[1];
+    const int code = attr & 0x3f;
+    const bool flipx = (attr & 0x80) != 0;
+    const bool flipy = (attr & 0x40) != 0;
+    const int color = frogger_color(e[2]);
+    const int x = frogger_x(e[0]);
+    const uint8_t* pixels = sprites_gfx_.element(code);
+    for (int py = 0; py < 16; ++py) {
+        const int sy = y + py;
+        if (sy < 0 || sy >= 256) continue;
+        const int src_y = flipy ? (15 - py) : py;
+        for (int px = 0; px < 16; ++px) {
+            const int src_x = flipx ? (15 - px) : px;
+            const uint8_t pix = pixels[src_y * 16 + src_x];
+            if (pix == 0) continue;
+            composite_[size_t(sy * 256 + ((x + px) & 0xff))] = palette_[size_t(pix + color)];
         }
     }
 }
@@ -801,6 +1038,23 @@ void Galaxian::draw_stars() {
 }
 
 void Galaxian::update_video() {
+    if (game_ == Game::Frogger) {
+        // Half of the (rotated) screen is the blue river background.
+        for (int y = 0; y < 128; ++y)
+            std::fill(tilemap_.begin() + y * 256, tilemap_.begin() + y * 256 + 256,
+                      palette_[35]);
+        std::fill(tilemap_.begin() + 128 * 256, tilemap_.end(), palette_[0]);
+
+        for (int offset = 0; offset < 0x400; ++offset) draw_tile_frogger(offset);
+        composite_ = tilemap_;
+        for (int i = 7; i >= 0; --i) draw_sprite_frogger(i);
+
+        for (int y = 0; y < kScreenHeight; ++y) {
+            const uint32_t* src = &composite_[size_t(y * 256 + 16)];
+            std::copy(src, src + kScreenWidth, &framebuffer_[size_t(y * kScreenWidth)]);
+        }
+        return;
+    }
     // Background
     if (game_ == Game::Scramble && scramble_background_) {
         tilemap_.fill(palette_[35]);

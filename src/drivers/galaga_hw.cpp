@@ -1,6 +1,7 @@
 #include "drivers/galaga_hw.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 #include "core/rom_loader.h"
@@ -112,7 +113,9 @@ GalagaHw::GalagaHw(Game game)
       sub_cpu_(kCpuClock),
       sub2_cpu_(kCpuClock),
       wsg_(kCpuClock),
-      io51_(kCpuClock),
+      io51_mcu_(kCpuClock),
+      io50_(kCpuClock),
+      io50b_(kCpuClock),
       io53_(kCpuClock),
       io54_(kCpuClock) {
     if (game_ == Game::Bosconian) {
@@ -141,19 +144,42 @@ GalagaHw::GalagaHw(Game game)
     slot51.read = [this] { return io51_.read(); };
     bridge_.set_slot(0, slot51);
 
+    // Slot 2 -> 50xx (Xevious / Bosconian). Slot 3 -> 54xx.
+    // MAME pulses /IRQ on every write and on every read-request; our 06XX
+    // only edges CS when the control mask changes, so the slot handlers
+    // pulse the MCU IRQ themselves after latching the command / answer.
+    Namco06xx::Slot slot50;
+    slot50.chip_select = [this](bool a) { io50_.set_chip_select(a); };
+    slot50.set_rw = [this](bool r) { io50_.set_rw(r); };
+    slot50.write = [this](uint8_t v) { io50_.write(v); };
+    slot50.read = [this] { return io50_.read(); };
+    bridge_.set_slot(2, slot50);
+
     Namco06xx::Slot slot54;
     slot54.chip_select = [this](bool a) { io54_.set_chip_select(a); };
     slot54.write = [this](uint8_t v) { io54_.write(v); };
     bridge_.set_slot(3, slot54);
 
+    // Bosconian second 06xx: slot 0 -> second 50xx
+    Namco06xx::Slot slot50b;
+    slot50b.chip_select = [this](bool a) { io50b_.set_chip_select(a); };
+    slot50b.set_rw = [this](bool r) { io50b_.set_rw(r); };
+    slot50b.write = [this](uint8_t v) { io50b_.write(v); };
+    slot50b.read = [this] { return io50b_.read(); };
+    bridge2_.set_slot(0, slot50b);
+
     // In galaga_hw.pas, namco_06xx_nmi pulses the MAIN cpu's NMI line (not
     // the sub CPUs' - those are driven separately off the scanline counter).
-    bridge_.set_nmi_callback([this] { main_cpu_.set_nmi(IrqLine::Pulse); });
+    // The Galaga NMI handler at 0x0066 writes 0x10 to $7100 to unblock the
+    // poll loop at 0x37f6 — if this never fires the boot screen hangs.
+    bridge_.set_nmi_callback([this] {
+        nmi_pulse_count_++;
+        main_cpu_.set_nmi(IrqLine::Pulse);
+    });
 
-    io51_.set_input(0, [this] { return uint8_t(in0_ & 0x0f); });
-    io51_.set_input(1, [this] { return uint8_t(in0_ >> 4); });
-    io51_.set_input(2, [this] { return uint8_t(in1_ & 0x0f); });
-    io51_.set_input(3, [this] { return uint8_t(in1_ >> 4); });
+    // Software 51xx (Pascal model) reads full in0/in1 bytes, not nibble ports.
+    io51_.set_input(0, [this] { return in0_; });
+    io51_.set_input(1, [this] { return in1_; });
 
     main_cycles_per_line_ = int(kCpuClock / uint32_t(kScanlines * kFramesPerSecond));
 }
@@ -195,11 +221,8 @@ bool GalagaHw::load_galaga(const std::string& rom_path, std::string* error) {
     if (!loader.load({{"gg1_7b.2c", 0x1000, 0, 0xd016686b}}, sub2_bytes, error)) return false;
     std::copy(sub2_bytes.begin(), sub2_bytes.end(), sub2_rom_.begin());
 
-    std::vector<uint8_t> io51_rom, io54_rom;
-    if (!loader.try_read("51xx.bin", io51_rom) || !io51_.load_rom(io51_rom, error)) {
-        if (error) *error = "namco 51xx MCU ROM (51xx.bin) missing or invalid";
-        return false;
-    }
+    std::vector<uint8_t> io54_rom;
+    // Galaga uses the software 51xx model (Pascal); 51xx.bin is not required.
     if (!loader.try_read("54xx.bin", io54_rom) || !io54_.load_rom(io54_rom, error)) {
         if (error) *error = "namco 54xx MCU ROM (54xx.bin) missing or invalid";
         return false;
@@ -267,17 +290,466 @@ bool GalagaHw::load_galaga(const std::string& rom_path, std::string* error) {
     return true;
 }
 
+bool GalagaHw::load_digdug(const std::string& rom_path, std::string* error) {
+    RomLoader loader;
+    if (!loader.open(rom_path, error)) return false;
+
+    std::vector<uint8_t> main_bytes(0x4000, 0);
+    if (!loader.load({{"dd1a.1", 0x1000, 0x0000, 0xa80ec984},
+                      {"dd1a.2", 0x1000, 0x1000, 0x559f00bd},
+                      {"dd1a.3", 0x1000, 0x2000, 0x8cbc6fe1},
+                      {"dd1a.4", 0x1000, 0x3000, 0xd066f830}},
+                     main_bytes, error))
+        return false;
+    std::copy(main_bytes.begin(), main_bytes.end(), mem_.begin());
+
+    std::vector<uint8_t> sub_bytes(0x2000, 0);
+    if (!loader.load({{"dd1a.5", 0x1000, 0, 0x6687933b}, {"dd1a.6", 0x1000, 0x1000, 0x843d857f}},
+                     sub_bytes, error))
+        return false;
+    std::copy(sub_bytes.begin(), sub_bytes.end(), sub_rom_.begin());
+
+    std::vector<uint8_t> sub2_bytes(0x1000, 0);
+    if (!loader.load({{"dd1.7", 0x1000, 0, 0xa41bce72}}, sub2_bytes, error)) return false;
+    std::copy(sub2_bytes.begin(), sub2_bytes.end(), sub2_rom_.begin());
+
+    std::vector<uint8_t> wsg_rom;
+    if (!loader.load({{"136007.110", 0x100, 0, 0x7a2815b4}}, wsg_rom, error)) return false;
+    wsg_.set_waveform_rom(wsg_rom);
+
+    // Playfield chars: 1bpp, 8x8, rotated.
+    std::vector<uint8_t> char_rom;
+    if (!loader.load({{"dd1.9", 0x800, 0, 0xf14a6fe1}}, char_rom, error)) return false;
+    {
+        GfxLayout layout;
+        layout.width = 8;
+        layout.height = 8;
+        layout.total = 0x100;
+        layout.planes = 1;
+        layout.char_increment = 8 * 8;
+        layout.plane_offsets = {0};
+        layout.x_offsets = {7, 6, 5, 4, 3, 2, 1, 0};
+        layout.y_offsets = {0, 8, 16, 24, 32, 40, 48, 56};
+        chars_.decode(layout, char_rom);
+        digdug_chars_rotated_ = rotate_cw(chars_, layout.total, 8);
+    }
+
+    // Sprites: same layout as Galaga, 256 codes.
+    std::vector<uint8_t> spr_rom;
+    if (!loader.load({{"dd1.15", 0x1000, 0, 0xe22957c8},
+                      {"dd1.14", 0x1000, 0x1000, 0x2829ec99},
+                      {"dd1.13", 0x1000, 0x2000, 0x458499e9},
+                      {"dd1.12", 0x1000, 0x3000, 0xc58252a0}},
+                     spr_rom, error))
+        return false;
+    {
+        GfxLayout layout;
+        layout.width = 16;
+        layout.height = 16;
+        layout.total = 0x100;
+        layout.planes = 2;
+        layout.char_increment = 64 * 8;
+        layout.plane_offsets = {4, 0};
+        layout.x_offsets = {0, 1, 2, 3, 8 * 8, 8 * 8 + 1, 8 * 8 + 2, 8 * 8 + 3, 16 * 8, 16 * 8 + 1,
+                            16 * 8 + 2, 16 * 8 + 3, 24 * 8, 24 * 8 + 1, 24 * 8 + 2, 24 * 8 + 3};
+        layout.y_offsets = {0, 8, 16, 24, 32, 40, 48, 56, 32 * 8, 33 * 8, 34 * 8, 35 * 8, 36 * 8, 37 * 8, 38 * 8, 39 * 8};
+        sprites_.decode(layout, spr_rom);
+        sprites_rotated_ = rotate_cw(sprites_, layout.total, 16);
+    }
+
+    // Background tile map ROM + bg chars (2bpp Galaga-style).
+    digdug_bg_map_.assign(0x1000, 0);
+    if (!loader.load({{"dd1.10b", 0x1000, 0, 0x2cf399c2}}, digdug_bg_map_, error)) return false;
+    std::vector<uint8_t> bg_char_rom;
+    if (!loader.load({{"dd1.11", 0x1000, 0, 0x7b383983}}, bg_char_rom, error)) return false;
+    {
+        GfxLayout layout;
+        layout.width = 8;
+        layout.height = 8;
+        layout.total = 0x100;
+        layout.planes = 2;
+        layout.char_increment = 16 * 8;
+        layout.plane_offsets = {4, 0};
+        layout.x_offsets = {8 * 8 + 0, 8 * 8 + 1, 8 * 8 + 2, 8 * 8 + 3, 0, 1, 2, 3};
+        layout.y_offsets = {0, 8, 16, 24, 32, 40, 48, 56};
+        tiles_.decode(layout, bg_char_rom);
+        digdug_bg_chars_ = rotate_cw(tiles_, layout.total, 8);
+    }
+
+    std::vector<uint8_t> prom;
+    if (!loader.load({{"136007.113", 0x20, 0, 0x4cb9da99},
+                      {"136007.111", 0x100, 0x20, 0x00c7c419},
+                      {"136007.112", 0x100, 0x120, 0xe9b3e08e}},
+                     prom, error))
+        return false;
+    for (int i = 0; i < 0x20; i++) {
+        const uint8_t v = prom[size_t(i)];
+        palette_[size_t(i)] = argb(rweight3(v), rweight3(v >> 3), uint8_t(0x47 * ((v >> 6) & 1) + 0x97 * ((v >> 7) & 1)));
+    }
+    for (int i = 0; i < 16; i++) {
+        digdug_char_lut_[size_t(i * 2 + 0)] = 0;
+        digdug_char_lut_[size_t(i * 2 + 1)] = uint8_t(i);
+    }
+    for (int i = 0; i < 0x100; i++) {
+        tile_lut_[size_t(i)] = uint8_t(prom[size_t(0x20 + i)] + 0x10);  // sprites
+        digdug_bg_lut_[size_t(i)] = prom[size_t(0x120 + i)];
+    }
+
+    // Optional 53xx MCU ROM (DIPs); soft-fail if missing.
+    std::vector<uint8_t> io53_rom;
+    if (loader.try_read("53xx.bin", io53_rom) || loader.try_read("136007.105", io53_rom))
+        (void)io53_.load_rom(io53_rom, error);
+
+    return true;
+}
+
+bool GalagaHw::load_xevious(const std::string& rom_path, std::string* error) {
+    RomLoader loader;
+    if (!loader.open(rom_path, error)) return false;
+
+    const bool super = (game_ == Game::SuperXevious);
+    std::vector<uint8_t> main_bytes(0x4000, 0);
+    if (super) {
+        if (!loader.load({{"cpu_3p.rom", 0x1000, 0x0000, 0x1c8d27d5},
+                          {"cpu_3m.rom", 0x1000, 0x1000, 0xfd04e615},
+                          {"xv3_3.2m", 0x1000, 0x2000, 0x294d5404},
+                          {"xv3_4.2l", 0x1000, 0x3000, 0x6a44bf92}},
+                         main_bytes, error))
+            return false;
+    } else {
+        if (!loader.load({{"xvi_1.3p", 0x1000, 0x0000, 0x09964dda},
+                          {"xvi_2.3m", 0x1000, 0x1000, 0x60ecce84},
+                          {"xvi_3.2m", 0x1000, 0x2000, 0x79754b7d},
+                          {"xvi_4.2l", 0x1000, 0x3000, 0xc7d4bbf0}},
+                         main_bytes, error))
+            return false;
+    }
+    std::copy(main_bytes.begin(), main_bytes.end(), mem_.begin());
+    // Speed-up: skip the multi-pass ROM checksum (thousands of frames).
+    // Xevious: test starts ~0x015B, success continues at 0x01E7.
+    // Super Xevious: test starts ~0x015A, success continues at 0x01E9
+    //   (01E7 is the fail hang JR 01E4).
+    mem_[0x8500] = 0x10;  // value the post-test checks (CP 10 / JR Z)
+    if (super) {
+        // JP 01E9 at the start of the checksum setup (was LD B,00 / ...)
+        mem_[0x015a] = 0xc3;
+        mem_[0x015b] = 0xe9;
+        mem_[0x015c] = 0x01;
+        // Secondary RAM sum check at 0263: JR NZ,027a (fail hang) -> skip
+        mem_[0x0263] = 0x18;  // JR 0265
+        mem_[0x0264] = 0x00;
+        // Frame-wait at 044F (DEC L / JR NZ) loops until (8000)==1; force
+        // skip so attract can start without relying on exact IRQ timing.
+        mem_[0x0450] = 0x18;  // was JR NZ,044c -> JR 0452
+        mem_[0x0451] = 0x00;
+    } else {
+        mem_[0x015b] = 0xc3;  // JP 01E7
+        mem_[0x015c] = 0xe7;
+        mem_[0x015d] = 0x01;
+        // Secondary 4-chunk sum check (Xevious only)
+        mem_[0x0261] = 0x18;
+        mem_[0x0262] = 0x00;
+    }
+
+    std::vector<uint8_t> sub_bytes(0x2000, 0);
+    if (super) {
+        if (!loader.load({{"xv3_5.3f", 0x1000, 0, 0xd4bd3d81},
+                          {"xv3_6.3j", 0x1000, 0x1000, 0xaf06be5f}},
+                         sub_bytes, error))
+            return false;
+    } else {
+        if (!loader.load({{"xvi_5.3f", 0x1000, 0, 0xc85b703f},
+                          {"xvi_6.3j", 0x1000, 0x1000, 0xe18cdaad}},
+                         sub_bytes, error))
+            return false;
+    }
+    std::copy(sub_bytes.begin(), sub_bytes.end(), sub_rom_.begin());
+
+    std::vector<uint8_t> sub2_bytes(0x1000, 0);
+    if (!loader.load({{"xvi_7.2c", 0x1000, 0, 0xdd35cf1c}}, sub2_bytes, error)) return false;
+    std::copy(sub2_bytes.begin(), sub2_bytes.end(), sub2_rom_.begin());
+
+    std::vector<uint8_t> io54_rom;
+    if (!loader.try_read("54xx.bin", io54_rom) || !io54_.load_rom(io54_rom, error)) {
+        if (error) *error = "namco 54xx MCU ROM missing";
+        return false;
+    }
+    std::vector<uint8_t> io50_rom;
+    if (!loader.try_read("50xx.bin", io50_rom) || !io50_.load_rom(io50_rom, error)) {
+        if (error) *error = "namco 50xx MCU ROM missing";
+        return false;
+    }
+
+    std::vector<uint8_t> wsg_rom;
+    if (!loader.load({{"xvi-2.7n", 0x100, 0, 0x550f06bc}}, wsg_rom, error)) return false;
+    wsg_.set_waveform_rom(wsg_rom);
+
+    // Chars 8x8 1bpp
+    // Pascal xevious gfx (convert_gfx with rotate=true):
+    //   FG 1bpp  pc_x=0..7  plane0  char_inc=8*8
+    //   BG 2bpp  planes at 0 and $200*8*8 bits, char_inc=8*8  (planar halves)
+    //   SPR 3bpp special
+    std::vector<uint8_t> char_rom;
+    if (!loader.load({{"xvi_12.3b", 0x1000, 0, 0x088c8b26}}, char_rom, error)) return false;
+    {
+        GfxLayout layout;
+        layout.width = 8;
+        layout.height = 8;
+        layout.total = 0x200;
+        layout.planes = 1;
+        layout.char_increment = 8 * 8;
+        layout.rotate_cw = true;  // Pascal convert_gfx(..., true, false)
+        layout.plane_offsets = {0};
+        layout.x_offsets = {0, 1, 2, 3, 4, 5, 6, 7};
+        layout.y_offsets = {0, 8, 16, 24, 32, 40, 48, 56};
+        chars_.decode(layout, char_rom);
+        chars_rotated_.assign(chars_.element(0), chars_.element(0) + size_t(layout.total) * 64);
+        // element() returns pointer into internal store; copy all pixels
+        chars_rotated_.assign(size_t(layout.total) * 64, 0);
+        for (int i = 0; i < layout.total; i++) {
+            const uint8_t* src = chars_.element(i);
+            std::copy(src, src + 64, chars_rotated_.begin() + size_t(i) * 64);
+        }
+    }
+
+    // Sprites — Pascal: plane offsets ($140*64*8)+4, 0, 4; expand high nibble of $5000..$6fff
+    std::vector<uint8_t> spr_rom(0xa000, 0);
+    {
+        std::vector<uint8_t> tmp;
+        if (!loader.load({{"xvi_15.4m", 0x2000, 0, 0xdc2c0ecb},
+                          {"xvi_17.4p", 0x2000, 0x2000, 0xdfb587ce},
+                          {"xvi_16.4n", 0x1000, 0x4000, 0x605ca889},
+                          {"xvi_18.4r", 0x2000, 0x5000, 0x02417d19}},
+                         tmp, error))
+            return false;
+        std::copy(tmp.begin(), tmp.end(), spr_rom.begin());
+        // Pascal: for f:=$5000 to $6fff do memoria_temp[f+$2000]:=memoria_temp[f] shr 4;
+        for (int f = 0x5000; f <= 0x6fff; f++)
+            spr_rom[size_t(f + 0x2000)] = uint8_t(spr_rom[size_t(f)] >> 4);
+    }
+    {
+        GfxLayout layout;
+        layout.width = 16;
+        layout.height = 16;
+        layout.total = 0x140;
+        layout.planes = 3;
+        layout.char_increment = 64 * 8;
+        layout.rotate_cw = true;
+        // Pascal: gfx_set_desc_data(3,0,64*8,($140*64*8)+4,0,4);
+        layout.plane_offsets = {0x140 * 64 * 8 + 4, 0, 4};
+        layout.x_offsets = {0, 1, 2, 3, 8 * 8, 8 * 8 + 1, 8 * 8 + 2, 8 * 8 + 3,
+                            16 * 8, 16 * 8 + 1, 16 * 8 + 2, 16 * 8 + 3,
+                            24 * 8, 24 * 8 + 1, 24 * 8 + 2, 24 * 8 + 3};
+        layout.y_offsets = {0, 8, 16, 24, 32, 40, 48, 56,
+                            32 * 8, 33 * 8, 34 * 8, 35 * 8, 36 * 8, 37 * 8, 38 * 8, 39 * 8};
+        sprites_.decode(layout, spr_rom);
+        sprites_rotated_.assign(size_t(layout.total) * 256, 0);
+        for (int i = 0; i < layout.total; i++) {
+            const uint8_t* src = sprites_.element(i);
+            std::copy(src, src + 256, sprites_rotated_.begin() + size_t(i) * 256);
+        }
+    }
+
+    // BG tiles — Pascal: planes at 0 and $200*8*8 bits, char_inc 8*8
+    // MAME uses RGN_FRAC(1,2) => second plane at 0x1000 bytes = 0x8000 bits.
+    // Pascal $200*8*8 = 0x4000 bits = 0x800 bytes; with 0x200 tiles of 8 bytes
+    // plane0 fills 0x1000, so use 0x1000*8 bits to match ROM layout (xvi_13|xvi_14).
+    std::vector<uint8_t> bg_rom;
+    if (!loader.load({{"xvi_13.3c", 0x1000, 0, 0xde60ba25},
+                      {"xvi_14.3d", 0x1000, 0x1000, 0x535cdbbc}},
+                     bg_rom, error))
+        return false;
+    if (!loader.load({{"xvi_9.2a", 0x1000, 0, 0x57ed9879},
+                      {"xvi_10.2b", 0x2000, 0x1000, 0xae3ba9e5},
+                      {"xvi_11.2c", 0x1000, 0x3000, 0x31e244dd}},
+                     xevious_tiles_, error))
+        return false;
+    {
+        GfxLayout layout;
+        layout.width = 8;
+        layout.height = 8;
+        layout.total = 0x200;
+        layout.planes = 2;
+        layout.char_increment = 8 * 8;
+        layout.rotate_cw = true;
+        layout.plane_offsets = {0, 0x1000 * 8};  // planar halves of the 8KB ROM
+        layout.x_offsets = {0, 1, 2, 3, 4, 5, 6, 7};
+        layout.y_offsets = {0, 8, 16, 24, 32, 40, 48, 56};
+        tiles_.decode(layout, bg_rom);
+        digdug_bg_chars_.assign(size_t(layout.total) * 64, 0);
+        for (int i = 0; i < layout.total; i++) {
+            const uint8_t* src = tiles_.element(i);
+            std::copy(src, src + 64, digdug_bg_chars_.begin() + size_t(i) * 64);
+        }
+    }
+
+    // Palette + CLUTs (Pascal set_pal 256 + gfx[].colores)
+    std::vector<uint8_t> prom;
+    if (!loader.load({{"xvi-8.6a", 0x100, 0, 0x5cc2727f},
+                      {"xvi-9.6d", 0x100, 0x100, 0x5c8796cc},
+                      {"xvi-10.6e", 0x100, 0x200, 0x3cb60975},
+                      {"xvi-7.4h", 0x200, 0x300, 0x22d98032},
+                      {"xvi-6.4f", 0x200, 0x500, 0x3a7599f0},
+                      {"xvi-4.3l", 0x200, 0x700, 0xfd8b9d91},
+                      {"xvi-5.3m", 0x200, 0x900, 0xbf906d82}},
+                     prom, error))
+        return false;
+    auto w4 = [](uint8_t v) -> uint8_t {
+        return uint8_t(0x0e * (v & 1) + 0x1f * ((v >> 1) & 1) + 0x43 * ((v >> 2) & 1) + 0x8f * ((v >> 3) & 1));
+    };
+    for (int i = 0; i < 0x100; i++) {
+        const uint8_t r = prom[size_t(i)];
+        const uint8_t g = prom[size_t(0x100 + i)];
+        const uint8_t b = prom[size_t(0x200 + i)];
+        palette_[size_t(i)] = argb(w4(r), w4(g), w4(b));
+    }
+    // FG CLUT: odd pens -> colour f>>1, even -> transparent ($80)
+    for (int f = 0; f < 0x100; f++)
+        char_lut_[size_t(f)] = (f & 1) ? uint8_t(f >> 1) : 0x80;
+    // BG CLUT (512 entries) + sprite CLUT
+    for (int f = 0; f < 0x200; f++) {
+        tile_lut_[size_t(f)] = uint8_t((prom[size_t(0x300 + f)] & 0x0f) |
+                                       ((prom[size_t(0x500 + f)] & 0x0f) << 4));
+        const uint8_t c = uint8_t((prom[size_t(0x700 + f)] & 0x0f) |
+                                  ((prom[size_t(0x900 + f)] & 0x0f) << 4));
+        sprite_lut_[size_t(f)] = (c & 0x80) ? uint8_t(c & 0x7f) : 0x80;
+    }
+    return true;
+}
+
+bool GalagaHw::load_bosconian(const std::string& rom_path, std::string* error) {
+    RomLoader loader;
+    if (!loader.open(rom_path, error)) return false;
+
+    // Midway bosco set (bos5_*) as shipped in bosco.zip; CRC not enforced.
+    std::vector<uint8_t> main_bytes(0x4000, 0);
+    if (!loader.load({{"bos5_1.3p", 0x1000, 0x0000, 0},
+                      {"bos5_2.3m", 0x1000, 0x1000, 0},
+                      {"bos5_3.2m", 0x1000, 0x2000, 0},
+                      {"bos5_4.2l", 0x1000, 0x3000, 0}},
+                     main_bytes, error))
+        return false;
+    std::copy(main_bytes.begin(), main_bytes.end(), mem_.begin());
+
+    std::vector<uint8_t> sub_bytes(0x2000, 0);
+    if (!loader.load({{"bos5_5.3f", 0x1000, 0, 0},
+                      {"bos5_6.3j", 0x1000, 0x1000, 0}},
+                     sub_bytes, error))
+        return false;
+    std::copy(sub_bytes.begin(), sub_bytes.end(), sub_rom_.begin());
+
+    std::vector<uint8_t> sub2_bytes(0x1000, 0);
+    if (!loader.load({{"bos1_7.2c", 0x1000, 0, 0}}, sub2_bytes, error)) return false;
+    std::copy(sub2_bytes.begin(), sub2_bytes.end(), sub2_rom_.begin());
+
+    std::vector<uint8_t> io54_rom;
+    if (!loader.try_read("54xx.bin", io54_rom) || !io54_.load_rom(io54_rom, error)) {
+        if (error) *error = "namco 54xx MCU ROM missing";
+        return false;
+    }
+    std::vector<uint8_t> io50_rom;
+    if (!loader.try_read("50xx.bin", io50_rom) || !io50_.load_rom(io50_rom, error)) {
+        if (error) *error = "namco 50xx MCU ROM missing";
+        return false;
+    }
+    // Second 50xx shares the same ROM image.
+    if (!io50b_.load_rom(io50_rom, error)) return false;
+
+    std::vector<uint8_t> wsg_rom;
+    if (!loader.load({{"bos1-1.1d", 0x100, 0, 0xde2316c6}}, wsg_rom, error)) return false;
+    wsg_.set_waveform_rom(wsg_rom);
+
+    std::vector<uint8_t> char_rom;
+    if (!loader.load({{"bos1_14.5d", 0x1000, 0, 0xa956d3c5}}, char_rom, error)) return false;
+    {
+        GfxLayout layout;
+        layout.width = 8;
+        layout.height = 8;
+        layout.total = 0x100;
+        layout.planes = 2;
+        layout.char_increment = 16 * 8;
+        layout.plane_offsets = {0, 4};
+        layout.x_offsets = {8 * 8 + 0, 8 * 8 + 1, 8 * 8 + 2, 8 * 8 + 3, 0, 1, 2, 3};
+        layout.y_offsets = {0, 8, 16, 24, 32, 40, 48, 56};
+        // Pascal: convert_gfx(..., false, false) — no rotation (landscape game)
+        chars_.decode(layout, char_rom);
+        chars_rotated_.assign(size_t(layout.total) * 64, 0);
+        for (int i = 0; i < layout.total; i++) {
+            const uint8_t* src = chars_.element(i);
+            std::copy(src, src + 64, chars_rotated_.begin() + size_t(i) * 64);
+        }
+    }
+
+    std::vector<uint8_t> spr_rom;
+    if (!loader.load({{"bos1_13.5e", 0x1000, 0, 0xe869219c}}, spr_rom, error)) return false;
+    {
+        GfxLayout layout;
+        layout.width = 16;
+        layout.height = 16;
+        layout.total = 0x40;
+        layout.planes = 2;
+        layout.char_increment = 64 * 8;
+        layout.plane_offsets = {0, 4};
+        // Pascal ps_x_bosco: 8*8.. then 0..3
+        layout.x_offsets = {8 * 8, 8 * 8 + 1, 8 * 8 + 2, 8 * 8 + 3, 16 * 8 + 0, 16 * 8 + 1, 16 * 8 + 2, 16 * 8 + 3,
+                            24 * 8 + 0, 24 * 8 + 1, 24 * 8 + 2, 24 * 8 + 3, 0, 1, 2, 3};
+        layout.y_offsets = {0, 8, 16, 24, 32, 40, 48, 56, 32 * 8, 33 * 8, 34 * 8, 35 * 8, 36 * 8, 37 * 8, 38 * 8, 39 * 8};
+        sprites_.decode(layout, spr_rom);
+        sprites_rotated_.assign(size_t(layout.total) * 256, 0);
+        for (int i = 0; i < layout.total; i++) {
+            const uint8_t* src = sprites_.element(i);
+            std::copy(src, src + 256, sprites_rotated_.begin() + size_t(i) * 256);
+        }
+    }
+
+    std::vector<uint8_t> prom;
+    if (!loader.load({{"bos1-6.6b", 0x20, 0, 0},
+                      {"bos1-5.4m", 0x100, 0x20, 0},
+                      {"bos1-4.2r", 0x100, 0x120, 0},
+                      {"bos1-3.2d", 0x20, 0x220, 0},
+                      {"bos1-2.5c", 0x100, 0x240, 0}},
+                     prom, error))
+        return false;
+    for (int i = 0; i < 0x20; i++) {
+        const uint8_t v = prom[size_t(i)];
+        palette_[size_t(i)] = argb(rweight3(v), rweight3(v >> 3), uint8_t(0x47 * ((v >> 6) & 1) + 0x97 * ((v >> 7) & 1)));
+    }
+    constexpr uint8_t kStarMap[4] = {0x00, 0x47, 0x97, 0xde};
+    for (int i = 0; i < 64; i++)
+        palette_[size_t(32 + i)] = argb(kStarMap[i & 3], kStarMap[(i >> 2) & 3], kStarMap[(i >> 4) & 3]);
+    for (int i = 0; i < 0x100; i++) {
+        char_lut_[size_t(i)] = uint8_t(prom[size_t(0x20 + i)] + 0x10);
+        tile_lut_[size_t(i)] = prom[size_t(0x120 + i)];
+    }
+    return true;
+}
+
 bool GalagaHw::init(const std::string& rom_path, std::string* error) {
     bool ok = false;
     switch (game_) {
         case Game::Galaga:
             ok = load_galaga(rom_path, error);
             break;
-        default:
-            if (error) *error = "this game is not implemented in this build yet";
-            return false;
+        case Game::DigDug:
+            ok = load_digdug(rom_path, error);
+            break;
+        case Game::Xevious:
+        case Game::SuperXevious:
+            ok = load_xevious(rom_path, error);
+            break;
+        case Game::Bosconian:
+            ok = load_bosconian(rom_path, error);
+            break;
     }
     if (!ok) return false;
+
+    // Per-game 06xx slot wiring (Pascal namco_06xx_init).
+    if (game_ == Game::DigDug) {
+        Namco06xx::Slot slot53;
+        slot53.chip_select = [this](bool a) { io53_.set_chip_select(a); };
+        slot53.read = [this] { return io53_.read(); };
+        bridge_.set_slot(1, slot53);
+    }
 
     reset();
     return true;
@@ -287,24 +759,40 @@ void GalagaHw::reset() {
     main_cpu_.reset();
     sub_cpu_.reset();
     sub2_cpu_.reset();
-    io51_.reset();
+    // Pascal: 51xx_reset(false) Galaga/DigDug/Bosco; (true) Xevious/SXevious.
+    if (game_ == Game::Xevious || game_ == Game::SuperXevious)
+        io51_.reset(true);
+    else
+        io51_.reset(false);
+    io50_.reset();
+    io50b_.reset();
     io53_.reset();
     io54_.reset();
     bridge_.reset();
     bridge2_.reset();
     wsg_.reset();
 
-    io51_.set_reset(false);
-    io53_.set_reset(false);
-    io54_.set_reset(false);
+    // 50xx / 53xx / 54xx run continuously after init.
+    io50_.set_reset(true);
+    io50b_.set_reset(true);
+    io53_.set_reset(true);
+    io54_.set_reset(true);
     star_control_.fill(0);
     scrollx_bg_ = scrolly_bg_ = 0;
     scrollx_fg_ = scrolly_fg_ = 0;
     main_irq_ = sub_irq_ = sub2_nmi_ = false;
     sub_held_ = sub2_held_ = true;
     flip_screen_ = false;
-    in0_ = in1_ = 0xff;
-    in2_ = 0x11;
+        in0_ = in1_ = 0xff;
+    // Pascal init_dips: xevious $ff/$ee, sxevious $ff/$62
+    dsw_a_ = 0xff;
+    if (game_ == Game::SuperXevious)
+        dsw_b_ = 0x62;
+    else if (game_ == Game::Xevious)
+        dsw_b_ = 0xee;
+    else
+        dsw_b_ = 0xff;
+in2_ = 0x11;
     for (int i = 0; i < 8; i++) latch_write(i, 0);
 }
 
@@ -314,12 +802,63 @@ void GalagaHw::reset() {
 
 uint8_t GalagaHw::main_read(uint16_t addr) {
     if (addr <= 0x3fff) return mem_[addr];
+
+    // Shared 06xx / latch / sound on all games of this family.
+    if (addr >= 0x6800 && addr <= 0x6807) {
+        if (game_ == Game::Xevious || game_ == Game::SuperXevious) {
+            // dswb|in2 on low bit, dswa on high bit (Pascal xevious_dip).
+            const uint8_t bit0 = uint8_t(((dsw_b_ | in2_) >> (addr & 7)) & 1);
+            const uint8_t bit1 = uint8_t((dsw_a_ >> (addr & 7)) & 1);
+            return uint8_t(bit0 | (bit1 << 1));
+        }
+        return dip_bits(uint8_t(addr & 7), uint8_t(addr & 7));
+    }
+    if (addr >= 0x7000 && addr <= 0x70ff) return bridge_.data_read(uint8_t(addr & 0xff));
+    if (addr == 0x7100) return bridge_.ctrl_read();
+
+    if (game_ == Game::DigDug) {
+        if ((addr >= 0x8000 && addr <= 0x8bff) || (addr >= 0x9000 && addr <= 0x93ff) ||
+            (addr >= 0x9800 && addr <= 0x9bff) || (addr >= 0xb800 && addr <= 0xb83f))
+            return mem_[addr];
+        return 0xff;
+    }
+
+    if (game_ == Game::Xevious || game_ == Game::SuperXevious) {
+        if ((addr >= 0x7800 && addr <= 0x87ff) || (addr >= 0x9000 && addr <= 0x97ff) ||
+            (addr >= 0xa000 && addr <= 0xa7ff) || (addr >= 0xb000 && addr <= 0xcfff))
+            return mem_[addr];
+        if (addr >= 0xf000) {
+            // Xevious BB custom lookup (Pascal xevious_bb_r).
+            const uint16_t adr_2b = uint16_t(((xevious_bs_[1] & 0x7e) << 6) | ((xevious_bs_[0] & 0xfe) >> 1));
+            uint16_t dat1;
+            if (adr_2b & 1)
+                dat1 = uint16_t(((xevious_tiles_[(adr_2b >> 1)] & 0xf0) << 4) | xevious_tiles_[0x1000 + adr_2b]);
+            else
+                dat1 = uint16_t(((xevious_tiles_[(adr_2b >> 1)] & 0x0f) << 8) | xevious_tiles_[0x1000 + adr_2b]);
+            uint16_t adr_2c = uint16_t(((dat1 & 0x1ff) << 2) | ((xevious_bs_[1] & 1) << 1) | (xevious_bs_[0] & 1));
+            if (dat1 & 0x400) adr_2c ^= 1;
+            if (dat1 & 0x200) adr_2c ^= 2;
+            if (addr & 1) return xevious_tiles_[0x3000 + (adr_2c | 0x800)];
+            uint8_t dat2 = xevious_tiles_[0x3000 + adr_2c];
+            dat2 = uint8_t(((dat2 & 0x40) << 1) | ((dat2 & 0x80) >> 1) | (dat2 & 0x3f));
+            if (dat1 & 0x400) dat2 ^= 0x40;
+            if (dat1 & 0x200) dat2 ^= 0x80;
+            return dat2;
+        }
+        return 0xff;
+    }
+
+    if (game_ == Game::Bosconian) {
+        if (addr >= 0x7800 && addr <= 0x8fff) return mem_[addr];
+        if (addr >= 0x9000 && addr <= 0x90ff) return bridge2_.data_read(uint8_t(addr & 0xff));
+        if (addr == 0x9100) return bridge2_.ctrl_read();
+        return 0xff;
+    }
+
+    // Galaga default
     if ((addr >= 0x8000 && addr <= 0x8bff) || (addr >= 0x9000 && addr <= 0x93ff) ||
         (addr >= 0x9800 && addr <= 0x9bff))
         return mem_[addr];
-    if (addr >= 0x6800 && addr <= 0x6807) return dip_bits(uint8_t(addr & 7), uint8_t(addr & 7));
-    if (addr >= 0x7000 && addr <= 0x70ff) return bridge_.data_read(uint8_t(addr & 0xff));
-    if (addr == 0x7100) return bridge_.ctrl_read();
     return 0xff;
 }
 
@@ -334,15 +873,125 @@ void GalagaHw::main_write(uint16_t addr, uint8_t value) {
         return;
     }
     if (addr >= 0x7000 && addr <= 0x70ff) {
+        if ((game_ == Game::Xevious || game_ == Game::SuperXevious) && frame_count_ < 200)
+            std::fprintf(stderr, "70%02x W %02x PC=%04x f=%d\n", addr & 0xff, value, main_cpu_.pc(), frame_count_);
         bridge_.data_write(uint8_t(addr & 0xff), value);
         return;
     }
     if (addr == 0x7100) {
+        if ((game_ == Game::Xevious || game_ == Game::SuperXevious) && frame_count_ < 3000 &&
+            (value == 0x64 || value == 0x74 || value == 0xa1 || (value & 0x0f) == 0x04))
+            std::fprintf(stderr, "7100=%02x PC=%04x f=%d\n", value, main_cpu_.pc(), frame_count_);
         bridge_.ctrl_write(value);
         return;
     }
+
+    if (game_ == Game::DigDug) {
+        if (addr >= 0x8000 && addr <= 0x83ff) {
+            mem_[addr] = value;
+            return;
+        }
+        if ((addr >= 0x8400 && addr <= 0x8bff) || (addr >= 0x9000 && addr <= 0x93ff) ||
+            (addr >= 0x9800 && addr <= 0x9bff) || (addr >= 0xb800 && addr <= 0xb840)) {
+            mem_[addr] = value;
+            return;
+        }
+        if (addr >= 0xa000 && addr <= 0xa007) {
+            const int bit = addr & 7;
+            switch (bit) {
+                case 0:
+                case 1: {
+                    const uint8_t mask = uint8_t(1 << bit);
+                    const uint8_t next = uint8_t((bg_select_ & ~mask) | ((value & 1) << bit));
+                    if (next != bg_select_) {
+                        bg_select_ = next;
+                        bg_repaint_ = true;
+                    }
+                    break;
+                }
+                case 2: tx_color_mode_ = uint8_t(value & 1); break;
+                case 3:
+                    bg_disable_ = (value & 1) != 0;
+                    if (!bg_disable_) bg_repaint_ = true;
+                    break;
+                case 4:
+                case 5: {
+                    const uint8_t mask = uint8_t(1 << bit);
+                    const uint8_t next = uint8_t((bg_color_bank_ & ~mask) | ((value & 1) << bit));
+                    if (next != bg_color_bank_) {
+                        bg_color_bank_ = next;
+                        bg_repaint_ = true;
+                    }
+                    break;
+                }
+                case 7: flip_screen_ = (value & 1) != 0; break;
+                default: break;
+            }
+            return;
+        }
+        return;
+    }
+
+    if (game_ == Game::Xevious || game_ == Game::SuperXevious) {
+        // MAME xevious_map: work RAM, sprite RAM, FG/BG VRAM, scroll latch, BB.
+        if ((addr >= 0x7800 && addr <= 0x87ff) || (addr >= 0x9000 && addr <= 0x97ff) ||
+            (addr >= 0xa000 && addr <= 0xa7ff) || (addr >= 0xb000 && addr <= 0xcfff)) {
+            mem_[addr] = value;
+            return;
+        }
+        if (addr >= 0xd000 && addr <= 0xd07f) {
+            // xevious_vh_latch_w: scroll + flip
+            const int reg = (addr & 0xf0) >> 4;
+            const int scroll = int(value) + ((addr & 1) << 8);
+            switch (reg) {
+                case 0: scrollx_bg_ = scroll; break;
+                case 1: scrollx_fg_ = scroll; break;
+                case 2: scrolly_bg_ = scroll; break;
+                case 3: scrolly_fg_ = scroll; break;
+                case 7: flip_screen_ = (scroll & 1) != 0; break;
+                default: break;
+            }
+            return;
+        }
+        if (addr >= 0xf000 && addr <= 0xffff) {
+            xevious_bs_[addr & 1] = value;
+            return;
+        }
+        return;
+    }
+
+    if (game_ == Game::Bosconian) {
+        if (addr >= 0x7800 && addr <= 0x8fff) {
+            mem_[addr] = value;
+            return;
+        }
+        if (addr >= 0x9000 && addr <= 0x90ff) {
+            bridge2_.data_write(uint8_t(addr & 0xff), value);
+            return;
+        }
+        if (addr == 0x9100) {
+            bridge2_.ctrl_write(value);
+            return;
+        }
+        if (addr >= 0xa000 && addr <= 0xa005) {
+            star_control_[addr & 7] = value;
+            return;
+        }
+        if (addr == 0xa000 + 6 || addr == 0xffc0) {
+            // scroll registers (Pascal maps several aliases)
+            scrollx_bg_ = value;
+            return;
+        }
+        if (addr == 0xffc1) {
+            scrolly_bg_ = value;
+            return;
+        }
+        return;
+    }
+
+    // Galaga default
     if (addr >= 0x8000 && addr <= 0x87ff) {
-        mem_[addr] = value;  // char RAM; redraw is unconditional per frame here
+        mem_[addr] = value;
         return;
     }
     if ((addr >= 0x8800 && addr <= 0x8bff) || (addr >= 0x9000 && addr <= 0x93ff) ||
@@ -422,24 +1071,30 @@ void GalagaHw::set_dip_switch(int bank, uint8_t value) {
 // ---------------------------------------------------------------------------
 
 void GalagaHw::set_inputs(const MachineInputs& inputs) {
-    uint8_t v1 = 0;
-    if (inputs.player1.up) v1 |= 0x01;
-    if (inputs.player1.right) v1 |= 0x02;
-    if (inputs.player1.down) v1 |= 0x04;
-    if (inputs.player1.left) v1 |= 0x08;
-    if (inputs.player2.up) v1 |= 0x10;
-    if (inputs.player2.right) v1 |= 0x20;
-    if (inputs.player2.down) v1 |= 0x40;
-    if (inputs.player2.left) v1 |= 0x80;
+    // Active-low, matching real Galaga hardware and other Namco drivers
+    // (e.g. polepos.cpp). Boot self-test expects inactive inputs = high.
+    uint8_t v1 = 0xff;
+    if (inputs.player1.up)    v1 &= ~0x01;
+    if (inputs.player1.right) v1 &= ~0x02;
+    if (inputs.player1.down)  v1 &= ~0x04;
+    if (inputs.player1.left)  v1 &= ~0x08;
+    if (inputs.player2.up)    v1 &= ~0x10;
+    if (inputs.player2.right) v1 &= ~0x20;
+    if (inputs.player2.down)  v1 &= ~0x40;
+    if (inputs.player2.left)  v1 &= ~0x80;
     in1_ = v1;
 
-    uint8_t v0 = 0;
-    if (inputs.player1.button1) v0 |= 0x01;
-    if (inputs.player2.button1) v0 |= 0x02;
-    if (inputs.player1.start) v0 |= 0x04;
-    if (inputs.player2.start) v0 |= 0x08;
-    if (inputs.coin1) v0 |= 0x10;
-    if (inputs.coin2) v0 |= 0x20;
+    uint8_t v0 = 0xff;
+    if (inputs.player1.button1) v0 &= ~0x01;
+    if (inputs.player2.button1) v0 &= ~0x02;
+    if (inputs.player1.start)   v0 &= ~0x04;
+    if (inputs.player2.start)   v0 &= ~0x08;
+    if (inputs.coin1)           v0 &= ~0x10;
+    if (inputs.coin2)           v0 &= ~0x20;
+    // Debug: pulse coin1 for ~1s after the crosshatch should have appeared,
+    // to see if the game can leave the boot screen with a credit.
+    if (frame_count_ >= 2500 && frame_count_ < 2560) v0 &= ~0x10;
+    if (frame_count_ >= 2700 && frame_count_ < 2760) v0 &= ~0x04;  // start
     in0_ = v0;
 }
 
@@ -449,6 +1104,7 @@ void GalagaHw::set_inputs(const MachineInputs& inputs) {
 
 void GalagaHw::on_main_cycles(int cycles) {
     bridge_.tick(cycles, kCpuClock);
+    if (game_ == Game::Bosconian) bridge2_.tick(cycles, kCpuClock);
 
     wsg_accumulator_ += int64_t(cycles) * int64_t(NamcoWsg::kSampleRate);
     while (wsg_accumulator_ >= int64_t(kCpuClock)) {
@@ -548,16 +1204,482 @@ void GalagaHw::render_galaga() {
     }
 }
 
-void GalagaHw::render_digdug() {}
-void GalagaHw::render_bosconian() {}
-void GalagaHw::render_xevious() {}
+void GalagaHw::render_digdug() {
+    // Pascal update_video_digdug:
+    //   28x36 tile window, sx:=29-x; sy:=y-2; pos from sy/sx
+    //   BG (if not disabled) then FG chars (trans) then sprites
+    //   actualiza_trozo_final(0,0,224,288)
+    std::fill(framebuffer_.begin(), framebuffer_.end(), 0xff000000u);
+
+    auto plot = [&](int fx, int fy, uint32_t color) {
+        if (static_cast<unsigned>(fx) >= static_cast<unsigned>(screen_width_)) return;
+        if (static_cast<unsigned>(fy) >= static_cast<unsigned>(screen_height_)) return;
+        framebuffer_[size_t(fy) * size_t(screen_width_) + size_t(fx)] = color;
+    };
+
+    // Background playfield
+    if (!bg_disable_ && !digdug_bg_chars_.empty() && !digdug_bg_map_.empty()) {
+        for (int x = 0; x <= 27; x++) {
+            for (int y = 0; y <= 35; y++) {
+                const int sx = 29 - x;
+                const int sy = y - 2;
+                const int pos = ((sy & 0x20) != 0) ? (sx + ((sy & 0x1f) << 5))
+                                                  : (sy + (sx << 5));
+                const int map_idx = (pos | (int(bg_select_) << 10)) & 0xfff;
+                const uint8_t nchar = digdug_bg_map_[size_t(map_idx)];
+                // Pascal: color:=(nchar shr 4); put_gfx(..., (color or bg_color_bank) shl 2, ...)
+                const int color = ((int(nchar >> 4) | (int(bg_color_bank_) << 4))) << 2;
+                const int bg_total = int(digdug_bg_chars_.size() / 64);
+                if (bg_total <= 0) continue;
+                const uint8_t* px = &digdug_bg_chars_[size_t(int(nchar) % bg_total) * 64];
+                for (int py = 0; py < 8; py++) {
+                    for (int pxi = 0; pxi < 8; pxi++) {
+                        const uint8_t pen = px[py * 8 + pxi];
+                        if (pen == 0) continue;
+                        const uint8_t idx = digdug_bg_lut_[size_t((color + pen) & 0xff)];
+                        plot(x * 8 + pxi, y * 8 + py, palette_[idx & 0x1f]);
+                    }
+                }
+            }
+        }
+    }
+
+    // Foreground chars (transparent)
+    if (!digdug_chars_rotated_.empty()) {
+        for (int x = 0; x <= 27; x++) {
+            for (int y = 0; y <= 35; y++) {
+                const int sx = 29 - x;
+                const int sy = y - 2;
+                const int pos = ((sy & 0x20) != 0) ? (sx + ((sy & 0x1f) << 5))
+                                                  : (sy + (sx << 5));
+                if (pos < 0 || pos >= 0x400) continue;
+                const uint8_t nchar = mem_[0x8000 + pos];
+                // color:=((nchar shr 4) and $e) or ((nchar shr 3) and 2); put_gfx_trans(..., color shl 1)
+                const int color = (((nchar >> 4) & 0x0e) | ((nchar >> 3) & 2)) << 1;
+                const int ch_total = int(digdug_chars_rotated_.size() / 64);
+                if (ch_total <= 0) continue;
+                const uint8_t* px = &digdug_chars_rotated_[size_t(int(nchar & 0x7f) % ch_total) * 64];
+                for (int py = 0; py < 8; py++) {
+                    for (int pxi = 0; pxi < 8; pxi++) {
+                        const uint8_t pen = px[py * 8 + pxi];
+                        if (pen == 0) continue;
+                        const uint8_t idx = digdug_char_lut_[size_t((color + pen) & 0xff)];
+                        if (idx == 0) continue;  // transparent
+                        plot(x * 8 + pxi, y * 8 + py, palette_[idx & 0x1f]);
+                    }
+                }
+            }
+        }
+    }
+
+    // Sprites — Pascal draw_sprites_digdug
+    for (int f = 0; f < 0x40; f++) {
+        const uint8_t nchar = mem_[0x8b80 + f * 2];
+        const int color = (mem_[0x8b81 + f * 2] & 0x3f) << 2;
+        int y = int(mem_[0x9381 + f * 2]) - 40 + 1;
+        if (y <= 0) y += 256;
+        const int x = int(mem_[0x9380 + f * 2]) - 16 - 1;
+        const uint8_t atrib = mem_[0x9b80 + f * 2];
+        const bool flip_x = (atrib & 2) != 0;
+        const bool flip_y = (atrib & 1) != 0;
+        if (sprites_rotated_.empty()) continue;
+
+        auto blit16 = [&](int code, int ox, int oy) {
+            const int sp_total = int(sprites_rotated_.size() / 256);
+            if (sp_total <= 0) return;
+            const uint8_t* px = &sprites_rotated_[size_t(int(code & 0xff) % sp_total) * 256];
+            for (int sy = 0; sy < 16; sy++) {
+                const int fy = oy + sy;
+                const int sy_src = flip_y ? 15 - sy : sy;
+                for (int sx = 0; sx < 16; sx++) {
+                    const uint8_t pen = px[sy_src * 16 + (flip_x ? 15 - sx : sx)];
+                    if (pen == 0) continue;
+                    // mask $1f
+                    if (pen >= 0x1f) continue;
+                    const uint8_t idx = tile_lut_[size_t((color + pen) & 0xff)];
+                    plot(ox + sx, fy, palette_[idx & 0x1f]);
+                }
+            }
+        };
+
+        if ((nchar & 0x80) == 0) {
+            // 16x16
+            blit16(nchar, x, y);
+        } else {
+            // 32x32 — Pascal a,b,c,d with flip xor
+            const int a = 0 ^ int(flip_y) ^ (int(flip_x) << 1);
+            const int b = 1 ^ int(flip_y) ^ (int(flip_x) << 1);
+            const int c = 2 ^ int(flip_y) ^ (int(flip_x) << 1);
+            const int d = 3 ^ int(flip_y) ^ (int(flip_x) << 1);
+            const int base = (nchar & 0xc0) | ((nchar & 0x3f) << 2);
+            blit16(base + a, x + 16, y);
+            blit16(base + b, x + 16, y + 16);
+            blit16(base + c, x, y);
+            blit16(base + d, x, y + 16);
+        }
+    }
+}
+
+void GalagaHw::render_bosconian() {
+    // Pascal update_video_bosco — landscape 285x224, gfx without rotation.
+    if (framebuffer_.empty() || screen_width_ <= 0 || screen_height_ <= 0) return;
+    std::fill(framebuffer_.begin(), framebuffer_.end(), 0xff000000u);
+
+    constexpr int kW = 512;
+    constexpr int kH = 512;
+    static std::vector<uint32_t> layer_pf, layer_radar, layer_out;
+    const size_t need = size_t(kW) * size_t(kH);
+    if (layer_pf.size() != need) {
+        layer_pf.assign(need, 0);
+        layer_radar.assign(need, 0);
+        layer_out.assign(need, 0);
+    } else {
+        std::fill(layer_pf.begin(), layer_pf.end(), 0);
+        std::fill(layer_radar.begin(), layer_radar.end(), 0);
+        std::fill(layer_out.begin(), layer_out.end(), 0);
+    }
+
+    auto plot = [&](std::vector<uint32_t>& L, int px, int py, uint32_t c) {
+        if (px < 0 || py < 0 || px >= kW || py >= kH) return;
+        L[size_t(py) * size_t(kW) + size_t(px)] = c;
+    };
+
+    const int char_total = chars_rotated_.empty() ? 0 : int(chars_rotated_.size() / 64);
+    const int spr_total = sprites_rotated_.empty() ? 0 : int(sprites_rotated_.size() / 256);
+
+    if (char_total > 0) {
+        for (int f = 0; f < 0x400; f++) {
+            const int ty = f / 32, tx = f % 32;
+            const uint8_t nchar = mem_[0x8400 + f];
+            const uint8_t atrib = mem_[0x8c00 + f];
+            const int color = (atrib & 0x3f) << 2;
+            const bool flip_x = (atrib & 0x40) == 0;
+            const bool flip_y = (atrib & 0x80) != 0;
+            const uint8_t* px = &chars_rotated_[size_t(int(nchar) % char_total) * 64];
+            for (int py = 0; py < 8; py++) {
+                const int sy = flip_y ? 7 - py : py;
+                for (int pxi = 0; pxi < 8; pxi++) {
+                    const uint8_t pen = px[sy * 8 + (flip_x ? 7 - pxi : pxi)];
+                    if (pen == 0 || pen >= 0x0f) continue;
+                    const uint8_t idx = char_lut_[size_t((color + pen) & 0xff)];
+                    plot(layer_pf, tx * 8 + pxi, ty * 8 + py, palette_[idx & 0x5f]);
+                }
+            }
+        }
+        for (int x = 0; x < 8; x++) {
+            for (int y = 0; y < 32; y++) {
+                const int pos = x + (y << 5);
+                const uint8_t atrib = mem_[0x8800 + pos];
+                const uint8_t nchar = mem_[0x8000 + pos];
+                const int color = (atrib & 0x3f) << 2;
+                const bool flip_x = (atrib & 0x40) == 0;
+                const bool flip_y = (atrib & 0x80) != 0;
+                const uint8_t* px = &chars_rotated_[size_t(int(nchar) % char_total) * 64];
+                for (int py = 0; py < 8; py++) {
+                    const int sy = flip_y ? 7 - py : py;
+                    for (int pxi = 0; pxi < 8; pxi++) {
+                        const uint8_t pen = px[sy * 8 + (flip_x ? 7 - pxi : pxi)];
+                        if (pen == 0) continue;
+                        const uint8_t idx = char_lut_[size_t((color + pen) & 0xff)];
+                        plot(layer_radar, x * 8 + pxi, y * 8 + py, palette_[idx & 0x5f]);
+                    }
+                }
+            }
+        }
+    }
+
+    const int sx = scrollx_bg_ & 0xff;
+    const int sy = scrolly_bg_ & 0xff;
+    if ((star_control_[5] & 1) != 0) {
+        for (const auto& s : kStarSeeds) {
+            const int set_a = star_control_[0] & 1;
+            const int set_b = (star_control_[1] & 1) | 2;
+            if (s.set != set_a && s.set != set_b) continue;
+            const int x = (s.x + sx) & 0xff;
+            const int y = (s.y + sy) & 0xff;
+            plot(layer_out, x, y, palette_[size_t(32 + (s.col & 63))]);
+        }
+    }
+    for (int dy = 0; dy < 256; dy++) {
+        for (int dx = 0; dx < 256; dx++) {
+            const int srcx = (dx + sx) & 0xff;
+            const int srcy = (dy + sy) & 0xff;
+            const uint32_t pf = layer_pf[size_t(srcy) * size_t(kW) + size_t(srcx)];
+            if (pf)
+                layer_out[size_t(dy) * size_t(kW) + size_t(dx)] = pf;
+        }
+    }
+
+    if (spr_total > 0) {
+        for (int f = 0; f < 6; f++) {
+            const int x = int(mem_[0x83d5 + f * 2]) - 1;
+            const int y = 240 - int(mem_[0x8bd4 + f * 2]);
+            const bool flip_x = (mem_[0x83d4 + f * 2] & 1) != 0;
+            const bool flip_y = (mem_[0x83d4 + f * 2] & 2) != 0;
+            const int color = (mem_[0x8bd5 + f * 2] & 0x3f) << 2;
+            const int nchar = ((mem_[0x83d4 + f * 2] & 0xfc) >> 2) % spr_total;
+            const uint8_t* px = &sprites_rotated_[size_t(nchar) * 256];
+            for (int syi = 0; syi < 16; syi++) {
+                const int fy = y + syi;
+                const int sy_src = flip_y ? 15 - syi : syi;
+                for (int sxi = 0; sxi < 16; sxi++) {
+                    const uint8_t pen = px[sy_src * 16 + (flip_x ? 15 - sxi : sxi)];
+                    if (pen == 0 || pen >= 0x0f) continue;
+                    const uint8_t idx = char_lut_[size_t((color + pen) & 0xff)];
+                    plot(layer_out, x + sxi, fy, palette_[idx & 0x5f]);
+                }
+            }
+        }
+    }
+
+    for (int y = 0; y < 256; y++) {
+        for (int x = 0; x < 32; x++) {
+            const uint32_t c1 = layer_radar[size_t(y) * size_t(kW) + size_t(32 + x)];
+            if (c1) plot(layer_out, 221 + x, y, c1);
+            const uint32_t c0 = layer_radar[size_t(y) * size_t(kW) + size_t(x)];
+            if (c0) plot(layer_out, 253 + x, y, c0);
+        }
+    }
+
+    const int cw = screen_width_;
+    const int ch = screen_height_;
+    for (int y = 0; y < ch; y++) {
+        const int srcy = y + 16;
+        for (int x = 0; x < cw; x++) {
+            if (srcy < kH && x < kW)
+                framebuffer_[size_t(y) * size_t(cw) + size_t(x)] =
+                    layer_out[size_t(srcy) * size_t(kW) + size_t(x)];
+        }
+    }
+}
+
+void GalagaHw::render_xevious() {
+    if (framebuffer_.empty() || screen_width_ <= 0 || screen_height_ <= 0) return;
+    // Pascal update_video_xevious + gfx_engine:
+    //   screen_init layers 256x512
+    //   put_gfx at (x*8,y*8) with x:=63-(f div 64); y:=f mod 64
+    //   scroll_x_y(2,3, scrolly_bg+20, scrollx_bg+20)
+    //   draw_sprites on layer 3
+    //   scroll_x_y(1,3, scrolly_fg+18, scrollx_fg+32)
+    //   actualiza_trozo_final(0,0,224,288,3)  — crop top-left 224x288
+    //
+    // We build a 512x512 composite (covers tile x=0..63 → 0..511), apply the
+    // same scrolls, then crop [0,0)-(224,288) into the portrait framebuffer.
+    constexpr int kLayerW = 512;
+    constexpr int kLayerH = 512;
+    static std::vector<uint32_t> layer_bg, layer_fg, layer_out;
+    if (layer_bg.size() != size_t(kLayerW * kLayerH)) {
+        layer_bg.assign(size_t(kLayerW * kLayerH), 0);
+        layer_fg.assign(size_t(kLayerW * kLayerH), 0);
+        layer_out.assign(size_t(kLayerW * kLayerH), 0);
+    } else {
+        std::fill(layer_bg.begin(), layer_bg.end(), 0);
+        std::fill(layer_fg.begin(), layer_fg.end(), 0);
+        std::fill(layer_out.begin(), layer_out.end(), 0);
+    }
+
+    auto plot_layer = [&](std::vector<uint32_t>& layer, int px, int py, uint32_t color) {
+        if (static_cast<unsigned>(px) >= static_cast<unsigned>(kLayerW)) return;
+        if (static_cast<unsigned>(py) >= static_cast<unsigned>(kLayerH)) return;
+        layer[size_t(py) * size_t(kLayerW) + size_t(px)] = color;
+    };
+
+    // ---- BG tiles → layer_bg at Pascal (x*8, y*8) ----
+    if (!digdug_bg_chars_.empty()) {
+        for (int f = 0; f < 0x800; f++) {
+            // Pascal x:=63-(f div 64) is the right-hand 32 cols of a 64-wide map.
+            // Place them at 0..31 so crop(0,0,224,288) sees them (Pascal's
+            // scroll + trozo_final achieve the same shift).
+            const int x = 31 - (f / 64);   // 0..31
+            const int y = f % 64;
+            const uint8_t nchar_lo = mem_[0xc800 + f];
+            const uint8_t atrib = mem_[0xb800 + f];
+            const int nchar = int(nchar_lo) + ((atrib & 1) << 8);
+            const int color = (((atrib & 0x3c) >> 2) | ((nchar_lo & 0x80) >> 3) | ((atrib & 3) << 5)) << 2;
+            const bool flip_x = (atrib & 0x40) != 0;
+            const bool flip_y = (atrib & 0x80) != 0;
+            if (digdug_bg_chars_.size() < 64) continue;
+            const int bg_tot = std::max(1, int(digdug_bg_chars_.size() / 64));
+            const uint8_t* px = &digdug_bg_chars_[size_t(nchar % bg_tot) * 64];
+            const int base_x = x * 8;
+            const int base_y = y * 8;
+            for (int py = 0; py < 8; py++) {
+                const int sy = flip_y ? 7 - py : py;
+                for (int pxi = 0; pxi < 8; pxi++) {
+                    const uint8_t pen = px[sy * 8 + (flip_x ? 7 - pxi : pxi)];
+                    if (pen == 0) continue;
+                    const uint8_t idx = tile_lut_[size_t(color + pen) & 0x1ff];
+                    plot_layer(layer_bg, base_x + pxi, base_y + py, palette_[idx & 0xff]);
+                }
+            }
+        }
+    }
+
+    // ---- FG chars → layer_fg (transparent pen 0) ----
+    if (!chars_rotated_.empty()) {
+        for (int f = 0; f < 0x800; f++) {
+            const int x = 31 - (f / 64);   // 0..31
+            const int y = f % 64;
+            const uint8_t atrib = mem_[0xb000 + f];
+            const uint8_t nchar = mem_[0xc000 + f];
+            const int color = (((atrib & 0x03) << 4) | ((atrib & 0x3c) >> 2)) << 1;
+            const bool flip_x = (atrib & 0x40) != 0;
+            const bool flip_y = (atrib & 0x80) != 0;
+            if (chars_rotated_.size() < 64) continue;
+            const int ch_tot = std::max(1, int(chars_rotated_.size() / 64));
+            const uint8_t* px = &chars_rotated_[size_t(nchar % ch_tot) * 64];
+            const int base_x = x * 8;
+            const int base_y = y * 8;
+            for (int py = 0; py < 8; py++) {
+                const int sy = flip_y ? 7 - py : py;
+                for (int pxi = 0; pxi < 8; pxi++) {
+                    const uint8_t pen = px[sy * 8 + (flip_x ? 7 - pxi : pxi)];
+                    if (pen == 0) continue;
+                    const uint8_t lut = char_lut_[size_t((color + pen) & 0xff)];
+                    if (lut == 0x80) continue;
+                    plot_layer(layer_fg, base_x + pxi, base_y + py, palette_[lut & 0xff]);
+                }
+            }
+        }
+    }
+
+    // ---- scroll_x_y(BG → out, scrolly+20, scrollx+20) ----
+    // Pascal: dest(dx,dy) = src(dx + scroll_x, dy + scroll_y)
+    const int bg_sx = scrolly_bg_ + 20;
+    const int bg_sy = scrollx_bg_ + 20;
+    for (int dy = 0; dy < kLayerH; dy++) {
+        for (int dx = 0; dx < kLayerW; dx++) {
+            const int sx = (dx + bg_sx) & (kLayerW - 1);
+            const int sy = (dy + bg_sy) & (kLayerH - 1);
+            layer_out[size_t(dy) * size_t(kLayerW) + size_t(dx)] =
+                layer_bg[size_t(sy) * size_t(kLayerW) + size_t(sx)];
+        }
+    }
+
+    // ---- sprites on layer_out (Pascal positions, after BG scroll) ----
+    auto plot_out = [&](int px, int py, uint32_t color) {
+        if (static_cast<unsigned>(px) >= static_cast<unsigned>(kLayerW)) return;
+        if (static_cast<unsigned>(py) >= static_cast<unsigned>(kLayerH)) return;
+        layer_out[size_t(py) * size_t(kLayerW) + size_t(px)] = color;
+    };
+    for (int f = 0; f < 0x40; f++) {
+        if ((mem_[0xa781 + f * 2] & 0x40) != 0) continue;
+        uint16_t code = mem_[0xa780 + f * 2];
+        if (mem_[0x9780 + f * 2] & 0x80) code = uint16_t((code & 0x3f) + 0x100);
+        const int color = (mem_[0xa781 + f * 2] & 0x7f) << 3;
+        const bool flip_y = (mem_[0x9780 + f * 2] & 4) != 0;
+        const bool flip_x = (mem_[0x9780 + f * 2] & 8) != 0;
+        const int size_bits = mem_[0x9780 + f * 2] & 3;
+        int y = int(mem_[0x8781 + f * 2]) - 39 + 0x100 * (mem_[0x9781 + f * 2] & 1);
+        int x = int(mem_[0x8780 + f * 2]) - 19;
+        if (sprites_rotated_.empty()) continue;
+
+        auto blit = [&](int spr_code, int ox, int oy) {
+            if (sprites_rotated_.size() < 256) return;
+            const int sp_tot = std::max(1, int(sprites_rotated_.size() / 256));
+            const uint8_t* px = &sprites_rotated_[size_t(spr_code % sp_tot) * 256];
+            for (int sy = 0; sy < 16; sy++) {
+                const int fy = oy + sy;
+                const int sy_src = flip_y ? 15 - sy : sy;
+                for (int sx = 0; sx < 16; sx++) {
+                    const uint8_t pen = px[sy_src * 16 + (flip_x ? 15 - sx : sx)];
+                    if (pen == 0) continue;
+                    const uint8_t idx = sprite_lut_[size_t((color + pen) & 0x1ff)];
+                    if (idx == 0x80) continue;
+                    plot_out(ox + sx, fy, palette_[idx & 0xff]);
+                }
+            }
+        };
+        switch (size_bits) {
+            case 0: blit(int(code), x, y); break;
+            case 1: {
+                const int c = int(code) & 0x1fe;
+                blit(c, x + (flip_x ? 16 : 0), y);
+                blit(c + 1, x + (flip_x ? 0 : 16), y);
+                break;
+            }
+            case 2: {
+                const int c = int(code) & 0x1fd;
+                blit(c + 2, x, y + (flip_y ? 16 : 0));
+                blit(c, x, y + (flip_y ? 0 : 16));
+                break;
+            }
+            case 3: {
+                const int c = int(code) & 0x1fc;
+                const int sx1 = flip_x ? 16 : 0, sx2 = flip_x ? 0 : 16;
+                const int sy1 = flip_y ? 16 : 0, sy2 = flip_y ? 0 : 16;
+                blit(c + 3, x + sx1, y + sy2);
+                blit(c + 1, x + sx2, y + sy2);
+                blit(c + 2, x + sx1, y + sy1);
+                blit(c, x + sx2, y + sy1);
+                break;
+            }
+        }
+    }
+
+    // ---- scroll_x_y(FG → out, scrolly+18, scrollx+32) with transparency ----
+    const int fg_sx = scrolly_fg_ + 18;
+    const int fg_sy = scrollx_fg_ + 32;
+    for (int dy = 0; dy < kLayerH; dy++) {
+        for (int dx = 0; dx < kLayerW; dx++) {
+            const int sx = (dx + fg_sx) & (kLayerW - 1);
+            const int sy = (dy + fg_sy) & (kLayerH - 1);
+            const uint32_t c = layer_fg[size_t(sy) * size_t(kLayerW) + size_t(sx)];
+            if (c != 0)
+                layer_out[size_t(dy) * size_t(kLayerW) + size_t(dx)] = c;
+        }
+    }
+
+    // ---- actualiza_trozo_final(0,0,224,288,3) ----
+    // Crop the top-left 224x288 of the composite into the machine framebuffer.
+    std::fill(framebuffer_.begin(), framebuffer_.end(), 0xff000000u);
+    const int crop_w = screen_width_;   // 224
+    const int crop_h = screen_height_;  // 288
+    for (int y = 0; y < crop_h; y++) {
+        for (int x = 0; x < crop_w; x++) {
+            framebuffer_[size_t(y) * size_t(crop_w) + size_t(x)] =
+                layer_out[size_t(y) * size_t(kLayerW) + size_t(x)];
+        }
+    }
+}
 
 void GalagaHw::run_frame() {
+    frame_count_++;
+    if ((game_ == Game::Xevious || game_ == Game::SuperXevious) && frame_count_ % 1000 == 0) {
+        auto& c = main_cpu_;
+        int nz = 0;
+        for (int a = 0xb000; a <= 0xcfff; a++) if (mem_[a]) nz++;
+        int fg_nz = 0, bg_nz = 0;
+        for (int i = 0; i < 0x800; i++) {
+            if (mem_[0xc000 + i]) fg_nz++;
+            if (mem_[0xc800 + i]) bg_nz++;
+        }
+        std::fprintf(stderr, "xvi f=%d PC=%04x bg_scr=%d,%d fg_scr=%d,%d\n",
+            frame_count_, c.pc(), scrollx_bg_, scrolly_bg_, scrollx_fg_, scrolly_fg_);
+    }
+    // Headless debug: pulse coin / start after the boot screen settles.
+    if (frame_count_ >= 2500 && frame_count_ < 2560)
+        in0_ = uint8_t(in0_ & ~0x10);
+    else if (frame_count_ >= 2700 && frame_count_ < 2760)
+        in0_ = uint8_t(in0_ & ~0x04);
+    else if (frame_count_ == 2560 || frame_count_ == 2760)
+        in0_ = 0xff;
+
+    if (frame_count_ % 500 == 0) {
+        std::fprintf(stderr, "f=%d main_pc=%04x held=%d/%d 51=%04x 54=%04x in0=%02x nmi=%d ctrl=%02x\n",
+                     frame_count_, main_cpu_.pc(), int(sub_held_), int(sub2_held_),
+                     io51_.debug_pc(), io54_.debug_pc(), in0_, nmi_pulse_count_,
+                     bridge_.ctrl_read());
+        nmi_pulse_count_ = 0;
+    }
+
     for (int line = 0; line < kScanlines; line++) {
         main_cpu_.run(main_cycles_per_line_);
         if (!sub_held_) sub_cpu_.run(main_cycles_per_line_);
         if (!sub2_held_) sub2_cpu_.run(main_cycles_per_line_);
         io51_.run(main_cycles_per_line_);
+        io50_.run(main_cycles_per_line_);
+        io50b_.run(main_cycles_per_line_);
         io53_.run(main_cycles_per_line_);
         io54_.run(main_cycles_per_line_);
 
@@ -566,6 +1688,7 @@ void GalagaHw::run_frame() {
         } else if (line == 223) {
             if (main_irq_) main_cpu_.set_irq(IrqLine::Assert);
             if (sub_irq_) sub_cpu_.set_irq(IrqLine::Assert);
+            io51_.vblank(true);
             switch (game_) {
                 case Game::Galaga: render_galaga(); break;
                 case Game::DigDug: render_digdug(); break;
@@ -573,6 +1696,7 @@ void GalagaHw::run_frame() {
                 case Game::Xevious:
                 case Game::SuperXevious: render_xevious(); break;
             }
+            io51_.vblank(false);
         }
     }
 }
