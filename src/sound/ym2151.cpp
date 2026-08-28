@@ -284,6 +284,12 @@ void YM2151::reset() {
     write_reg(0x1b, 0);  // CT1, CT2 output pins
     write_reg(0x18, 0);  // LFO frequency
     for (int i = 0x20; i <= 0xff; ++i) write_reg(uint8_t(i), 0);
+    // Ensure channels are audible even if the driver has not yet written RL bits
+    // (some Konami Z80 programs key-on before RL/FB/CONNECT is set).
+    for (int ch = 0; ch < 8; ++ch) {
+        pan_[ch * 2] = 0xffffffffu;
+        pan_[ch * 2 + 1] = 0xffffffffu;
+    }
 }
 
 void YM2151::set_irq_bit(uint8_t bit) {

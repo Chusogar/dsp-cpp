@@ -147,6 +147,7 @@ add_executable(dsp
   src/drivers/shadow_warriors_hw.cpp
   src/drivers/actfancer.cpp
   src/drivers/ajax.cpp
+  src/drivers/aliens.cpp
 
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp

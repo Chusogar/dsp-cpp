@@ -39,6 +39,7 @@
 #include "drivers/actfancer.h"
 #include "drivers/galaga_hw.h"
 #include "drivers/ajax.h"
+#include "drivers/aliens.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -109,7 +110,7 @@ void print_supported_emulators() {
 		"    citycon, commando\n"
 		"    wwfsstar\n"
 		"    shadoww, gaiden, ninjagaiden\n"
-		"    actfancer, actfancr\n"
+		"    actfancer, actfancr, aliens, ajax\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
@@ -400,6 +401,8 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	    return std::make_unique<dsp::ShadowWarriors>();
 
 	if (game == "ajax") return std::make_unique<dsp::Ajax>();
+
+	if (game == "aliens") return std::make_unique<dsp::Aliens>();
 	
 
 	// computers
