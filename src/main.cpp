@@ -38,6 +38,7 @@
 #include "drivers/commando.h"
 #include "drivers/actfancer.h"
 #include "drivers/galaga_hw.h"
+#include "drivers/ajax.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -397,6 +398,8 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 
 	if (game == "shadoww" || game == "shadow_warriors" || game == "gaiden" || game == "ninjagaiden")
 	    return std::make_unique<dsp::ShadowWarriors>();
+
+	if (game == "ajax") return std::make_unique<dsp::Ajax>();
 	
 
 	// computers

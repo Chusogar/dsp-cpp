@@ -30,6 +30,7 @@ add_executable(dsp
   src/cpu/nec_v30.cpp
   src/cpu/z8002.cpp
   src/cpu/mb88xx.cpp
+  src/cpu/konami.cpp
  
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
@@ -52,6 +53,7 @@ add_executable(dsp
   src/sound/upd7759.cpp
   src/sound/huc6280_psg.cpp
   src/sound/vlm5030.cpp
+  src/sound/k007232.cpp
     
   src/video/gfx.cpp
   src/video/atari_mo.cpp
@@ -66,6 +68,9 @@ add_executable(dsp
   src/video/huc6260.cpp
   src/video/huc6270.cpp
   src/video/neogeo_video.cpp
+  src/video/k051316.cpp
+  src/video/k051960.cpp
+  src/video/k052109.cpp
   
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
@@ -141,6 +146,7 @@ add_executable(dsp
   src/drivers/galaga_hw.cpp
   src/drivers/shadow_warriors_hw.cpp
   src/drivers/actfancer.cpp
+  src/drivers/ajax.cpp
 
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
