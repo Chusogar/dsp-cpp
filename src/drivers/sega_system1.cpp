@@ -524,7 +524,16 @@ void SegaSystem1::port_c_write(uint8_t value) {
     bg_ram_bank_ = (value >> 1) & 3;
 }
 
-void SegaSystem1::pio_ready_a(bool) { sound_cpu_.set_nmi(IrqLine::Pulse); }
+void SegaSystem1::pio_ready_a(bool state) {
+    // ARDY drives the sound Z80's NMI line directly (see MAME's
+    // out_ardy_callback().set_inputline(m_soundcpu, INPUT_LINE_NMI)); NMI is
+    // edge triggered, so only the rising edge (new command latched by the
+    // main CPU) fires it. The falling edge -- notably the one caused by the
+    // sound CPU's own strobe_a() acknowledgement in snd_read() -- must NOT
+    // re-arm the NMI, or the sound CPU gets stuck re-entering its NMI
+    // handler forever and never reaches the code that actually plays notes.
+    if (state) sound_cpu_.set_nmi(IrqLine::Pulse);
+}
 
 // ---------------------------------------------------------------------------
 // Video

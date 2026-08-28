@@ -468,12 +468,15 @@ bool Ajax::load_roms(const std::string& rom_path, std::string* error) {
     k051960_->set_irq_callback([this](bool state) {
         main_cpu_.set_irq(state ? IrqLine::Hold : IrqLine::Clear);
     });
-    k051960_->set_nmi_callback([this](bool state) {
-        main_cpu_.set_nmi(state ? IrqLine::Hold : IrqLine::Clear);
-    });
-    ym2151_.set_irq_handler([this](bool state) {
-        sound_cpu_.set_irq(state ? IrqLine::Hold : IrqLine::Clear);
-    });
+    // Real Ajax hardware doesn't wire the K051960's NMI output or the
+    // YM2151's timer-IRQ output to anything (see MAME's ajax.cpp: only
+    // k051960->irq_handler() feeds the main CPU's IRQ line; the YM2151
+    // device's irq_handler() is never connected at all). Wiring either of
+    // these here would let a spurious interrupt -- an NMI on the main CPU,
+    // or a YM2151 Timer A overflow landing on the sound Z80's single IM1
+    // vector, the same one used for "new sound command latched" -- derail
+    // the corresponding CPU exactly when the game legitimately uses those
+    // internal chip features, which is what was silencing the sound.
 
     std::vector<uint8_t> zoom(0x80000, 0);
     if (!loader.load(kZoom, zoom, error)) return false;
