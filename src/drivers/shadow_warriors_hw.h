@@ -14,10 +14,10 @@
 
 namespace dsp {
 
-// Shadow Warriors (Taito, 1990), ported from shadow_warriors_hw.pas.
-// ROM set is MAME `shadoww`. 68000 main CPU (9.2 MHz), Z80 sound CPU (4 MHz)
+// Shadow Warriors / Ninja Gaiden (Tecmo, 1988), ported from shadow_warriors_hw.pas.
+// ROM set is MAME `shadoww`. 68000 main CPU (9.216 MHz), Z80 sound CPU (4 MHz)
 // driving two YM2203s and an OKI MSM6295, three scroll layers (text/bg/fg)
-// plus 64-entry sprites composed into a 256×224 screen with blend effects.
+// plus sprites composed into a 256x224 screen with blend effects.
 class ShadowWarriors : public Machine {
 public:
     static constexpr int kScreenWidth = 256;
@@ -82,14 +82,17 @@ private:
     std::array<uint16_t, 0x1000> video_ram2_{};
     std::array<uint16_t, 0x1000> video_ram3_{};
     std::array<uint16_t, 0x1000> sprite_ram_{};
-    std::array<uint16_t, 0x800> palette_ram_{};
+    // 0x78000-0x79fff â†’ 0x2000 bytes = 0x1000 words (Pascal buffer_paleta).
+    std::array<uint16_t, 0x1000> palette_ram_{};
     std::array<uint8_t, 0x10000> mem_snd_{};
 
     GfxSet gfx_char_;
     GfxSet gfx_bg_;
     GfxSet gfx_fg_;
     GfxSet gfx_sprite_;
-    std::array<uint32_t, 0x800> palette_{};
+    // Full palette RAM is 0x1000 words; sprites use 0x000-0x0ff (opaque) and
+    // 0x400-0x4ff (blend), tiles use 0x100/0x200/0x300 banks.
+    std::array<uint32_t, 0x1000> palette_{};
     std::vector<uint32_t> text_layer_;
     std::vector<uint32_t> bg_layer_;
     std::vector<uint32_t> fg_layer_;

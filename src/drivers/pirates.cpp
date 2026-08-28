@@ -91,21 +91,21 @@ const std::vector<RomEntry> kPiratesSprites = {
 };
 const std::vector<RomEntry> kPiratesOki = {{"s89_49d4.bin", 0x80000, 0, 0x63a739ec}};
 
-const std::vector<RomEntry> kGenixProgramLow = {{"1.15", 0x80000, 0, 0xd26abfb0}};
-const std::vector<RomEntry> kGenixProgramHigh = {{"2.16", 0x80000, 0, 0xa14a25b4}};
+const std::vector<RomEntry> kGenixProgramLow = {{"11.u15.15c", 0x80000, 0, 0xd26abfb0}};
+const std::vector<RomEntry> kGenixProgramHigh = {{"12.u16.16c", 0x80000, 0, 0xa14a25b4}};
 const std::vector<RomEntry> kGenixGfx = {
-    {"7.34", 0x40000, 0 * kPlaneSize, 0x58da8aac},
-    {"9.35", 0x40000, 1 * kPlaneSize, 0x96bad9a8},
-    {"8.48", 0x40000, 2 * kPlaneSize, 0x0ddc58b6},
-    {"10.49", 0x40000, 3 * kPlaneSize, 0x2be308c5},
+    {"17.u34.12g", 0x40000, 0 * kPlaneSize, 0x58da8aac},
+    {"19.u35.12h", 0x40000, 1 * kPlaneSize, 0x96bad9a8},
+    {"18.u48.13g", 0x40000, 2 * kPlaneSize, 0x0ddc58b6},
+    {"20.u49.13h", 0x40000, 3 * kPlaneSize, 0x2be308c5},
 };
 const std::vector<RomEntry> kGenixSprites = {
-    {"6.69", 0x40000, 0 * kPlaneSize, 0xb8422af7},
-    {"5.70", 0x40000, 1 * kPlaneSize, 0xe46125c5},
-    {"4.71", 0x40000, 2 * kPlaneSize, 0x7a8ed21b},
-    {"3.72", 0x40000, 3 * kPlaneSize, 0xf78bd6ca},
+    {"16.u69.6g", 0x40000, 0 * kPlaneSize, 0xb8422af7},
+    {"15.u70.4g", 0x40000, 1 * kPlaneSize, 0xe46125c5},
+    {"14.u71.3g", 0x40000, 2 * kPlaneSize, 0x7a8ed21b},
+    {"13.u72.1g", 0x40000, 3 * kPlaneSize, 0xf78bd6ca},
 };
-const std::vector<RomEntry> kGenixOki = {{"0.31", 0x80000, 0, 0x80d087bc}};
+const std::vector<RomEntry> kGenixOki = {{"10.u31.1b", 0x80000, 0, 0x80d087bc}};
 
 using PlaneFn = uint8_t (*)(uint8_t);
 

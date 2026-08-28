@@ -156,18 +156,39 @@ bool ShadowWarriors::init(const std::string& rom_path, std::string* error) {
 }
 
 void ShadowWarriors::reset() {
-	/*
     main_cpu_.reset();
-    syt_.reset();
-    reset_sound();
-    in0_ = 0x1f;
-    in1_ = 0xff;
-    in2_ = 0xff;
-    scroll_x1_ = scroll_y1_ = 0;
-    scroll_x2_ = scroll_y2_ = 0;
-    sprite_bank_ = 0;
+    sound_cpu_.reset();
+    ym0_.reset();
+    ym1_.reset();
+    okim_.reset();
+
+    ram_.fill(0);
+    video_ram1_.fill(0);
+    video_ram2_.fill(0);
+    video_ram3_.fill(0);
+    sprite_ram_.fill(0);
+    palette_ram_.fill(0);
+    palette_.fill(0xff000000u);
+
+    scroll_x_txt_ = scroll_y_txt_ = 0;
+    scroll_y_txt_off_ = 0;
+    scroll_x_bg_ = scroll_y_bg_ = 0;
+    scroll_y_bg_off_ = 0;
+    scroll_x_fg_ = scroll_y_fg_ = 0;
+    scroll_y_fg_off_ = 0;
+
+    flip_main_ = false;
+    sound_latch_ = 0;
+
+    in0_ = 0xff;
+    in1_ = 0xffff;
+    dsw_a_ = 0xffff;
+
+    audio_accumulator_ = 0;
+    oki_accumulator_ = 0;
+    oki_last_ = 0;
     audio_.clear();
-	*/
+    framebuffer_.assign(size_t(kScreenWidth) * size_t(kScreenHeight), 0xff000000u);
 }
 
 bool ShadowWarriors::load_roms(const std::string& rom_path, std::string* error) {
@@ -297,7 +318,7 @@ void ShadowWarriors::main_write(uint32_t address, uint16_t value) {
         const int index = int((address & 0x1fff) >> 1);
         if (palette_ram_[size_t(index)] != value) {
             palette_ram_[size_t(index)] = value;
-            set_palette(index, value);
+            if (index < int(palette_.size())) set_palette(index, value);
         }
         return;
     }
@@ -426,18 +447,21 @@ void ShadowWarriors::draw_tilemap() {
 
 void ShadowWarriors::scroll_layer(const std::vector<uint32_t>& layer, int layer_width,
                                   uint16_t scroll_x, uint16_t scroll_y, int mask_x, int mask_y) {
+    // Pascal scroll_x_y → dest at (ADD_SPRITE,ADD_SPRITE)=(64,64), size 256×224.
+    // We also fill the 16 rows that actualiza_trozo_final crops into (dest 288..303)
+    // so the bottom of the 224-line framebuffer is tile data, not only fill_full_screen.
+    static constexpr int kAdd = 64;
+    static constexpr int kRows = kScreenHeight + 16;  // 240: covers crop (64,80)+(0,224)
     scroll_x = uint16_t(scroll_x & mask_x);
     scroll_y = uint16_t(scroll_y & mask_y);
-    // Copies a 256x224 window of the layer into the composite's visible area
-    // (composite col 64, row 80..303) matching actualiza_trozo final blit.
-    for (int k = 0; k < kScreenHeight; k++) {
+    for (int k = 0; k < kRows; k++) {
         const int lr = (int(scroll_y) + k) & mask_y;
-        uint32_t* dst_row = composite_.data() + size_t(64 + k) * kWorkSize;
+        uint32_t* dst_row = composite_.data() + size_t(kAdd + k) * kWorkSize;
         const size_t src_row = size_t(lr) * size_t(layer_width);
         for (int j = 0; j < kScreenWidth; j++) {
             const int lc = (int(scroll_x) + j) & mask_x;
             const uint32_t pixel = layer[src_row + size_t(lc)];
-            if (pixel) dst_row[size_t(64 + j)] = pixel;
+            if (pixel) dst_row[size_t(kAdd + j)] = pixel;
         }
     }
 }
@@ -467,8 +491,10 @@ void ShadowWarriors::draw_sprites(int priority) {
         if (size >= 4) nchar &= 0x7ff7;
         if (size >= 8) nchar &= 0x7fef;
         if (size >= 8) nchar &= 0x7fdf;
-        color &= 0xf0;
-        const int color_base = int(color) * 16 + 0x400;
+        // Pascal: color := color and $f0;
+        // Opaque sprites → palette[pen + color]; blend sprites → palette[pen + color + $400].
+        const int color_bank = int(color & 0xf0);
+        const int color_base = color_bank + (blend ? 0x400 : 0);
 
         const int pos_x = sprite_ram_[size_t(index * 8 + 4)] & 0x1ff;
         const int pos_y = sprite_ram_[size_t(index * 8 + 3)] & 0x1ff;
@@ -479,13 +505,12 @@ void ShadowWarriors::draw_sprites(int priority) {
                 const int sx = flip_x ? 8 * (size - 1 - col) : 8 * col;
                 const uint8_t* pixels = gfx_sprite_.element(nchar + kLayout[row][col]);
                 for (int py = 0; py < 8; py++) {
-                    const int cur_world_y = pos_y + sy + py;
-                    const int comp_y = 80 + cur_world_y;  // window row offset (+16)
+                    // Pascal: (posy + …) + ADD_SPRITE  (ADD_SPRITE = 64)
+                    const int comp_y = 64 + ((pos_y + sy + py) & 0x1ff);
                     if (comp_y < 0 || comp_y >= kWorkSize) continue;
                     const int source_y = flip_y ? 7 - py : py;
                     for (int px = 0; px < 8; px++) {
-                        const int cur_world_x = pos_x + sx + px;
-                        const int comp_x = 64 + cur_world_x;
+                        const int comp_x = 64 + ((pos_x + sx + px) & 0x1ff);
                         if (comp_x < 0 || comp_x >= kWorkSize) continue;
                         const int source_x = flip_x ? 7 - px : px;
                         const uint8_t pen = pixels[size_t(source_y * 8 + source_x)];
@@ -493,9 +518,12 @@ void ShadowWarriors::draw_sprites(int priority) {
                         size_t pos = size_t(comp_y) * kWorkSize + size_t(comp_x);
                         uint32_t color_word = palette_[size_t(color_base + pen)];
                         if (blend) {
-                            const uint16_t a = uint16_t(composite_[pos] & 0xffffffu);
-                            const uint16_t b = uint16_t(color_word & 0xffffffu);
-                            color_word = lit(blend565(a, b));
+                            // Pascal averages RGB565 of background pixel and sprite pen.
+                            const uint32_t bg = composite_[pos];
+                            const uint8_t r = uint8_t((((bg >> 16) & 0xff) + ((color_word >> 16) & 0xff)) >> 1);
+                            const uint8_t g = uint8_t((((bg >> 8) & 0xff) + ((color_word >> 8) & 0xff)) >> 1);
+                            const uint8_t b = uint8_t((((bg >> 0) & 0xff) + ((color_word >> 0) & 0xff)) >> 1);
+                            color_word = 0xff000000u | (uint32_t(r) << 16) | (uint32_t(g) << 8) | b;
                         }
                         composite_[pos] = color_word;
                     }
@@ -506,33 +534,48 @@ void ShadowWarriors::draw_sprites(int priority) {
 }
 
 void ShadowWarriors::update_video() {
+    // Matches update_video_shadoww in shadow_warriors_hw.pas exactly:
+    //   fill_full_screen(4,$200);
+    //   draw_sprites(3);
+    //   scroll_x_y(2,4, scroll_x_bg, scroll_y_bg-scroll_y_bg_off+16);
+    //   draw_sprites(2);
+    //   scroll_x_y(3,4, scroll_x_fg, scroll_y_fg-scroll_y_fg_off+16);
+    //   draw_sprites(1);
+    //   scroll_x_y(1,4, scroll_x_txt, scroll_y_txt-scroll_y_txt_off+16);
+    //   draw_sprites(0);
+    //   actualiza_trozo_final(0,16,256,224,4);
     draw_tilemap();
 
-    const uint16_t bg_off = uint16_t(scroll_y_bg_) + 16 - scroll_y_bg_off_;
-    const uint16_t fg_off = uint16_t(scroll_y_fg_) + 16 - scroll_y_fg_off_;
-    const uint16_t tx_off = uint16_t(scroll_y_txt_) + 16 - scroll_y_txt_off_;
+    const uint16_t bg_sy = uint16_t(scroll_y_bg_ - scroll_y_bg_off_ + 16);
+    const uint16_t fg_sy = uint16_t(scroll_y_fg_ - scroll_y_fg_off_ + 16);
+    const uint16_t tx_sy = uint16_t(scroll_y_txt_ - scroll_y_txt_off_ + 16);
 
-    // fill composite with the base colour, then draw in priority order.
-    composite_.assign(size_t(kWorkSize) * kWorkSize, lit(0x0000));
+    // fill_full_screen(4, $200)
+    composite_.assign(size_t(kWorkSize) * kWorkSize, palette_[0x200]);
+
     draw_sprites(3);
-    scroll_layer(bg_layer_, 1024, scroll_x_bg_, bg_off, 0x3ff, 0x1ff);
+    scroll_layer(bg_layer_, 1024, scroll_x_bg_, bg_sy, 0x3ff, 0x1ff);
     draw_sprites(2);
-    scroll_layer(fg_layer_, 1024, scroll_x_fg_, fg_off, 0x3ff, 0x1ff);
+    scroll_layer(fg_layer_, 1024, scroll_x_fg_, fg_sy, 0x3ff, 0x1ff);
     draw_sprites(1);
-    scroll_layer(text_layer_, 256, scroll_x_txt_, tx_off, 0xff, 0xff);
+    scroll_layer(text_layer_, 256, scroll_x_txt_, tx_sy, 0xff, 0xff);
     draw_sprites(0);
+
+    // actualiza_trozo_final(0,16,256,224,4)
+    // origin = (0+ADD_SPRITE, 16+ADD_SPRITE) = (64, 80)
+    static constexpr int kCropX = 64;
+    static constexpr int kCropY = 80;
     if (flip_main_) {
         for (int y = 0; y < kScreenHeight; y++) {
             for (int x = 0; x < kScreenWidth; x++) {
                 framebuffer_[size_t(y * kScreenWidth + x)] =
-                    composite_[size_t((223 - y + 80) * kWorkSize + (255 - x + 64))];
+                    composite_[size_t((223 - y + kCropY) * kWorkSize + (255 - x + kCropX))];
             }
         }
         return;
     }
-    // actualiza_trozo_final(0,16,256,224): crop the visible window.
     for (int y = 0; y < kScreenHeight; y++) {
-        const size_t src_row = size_t(y + 80) * kWorkSize + 64;
+        const size_t src_row = size_t(y + kCropY) * kWorkSize + kCropX;
         const size_t dst = size_t(y) * kScreenWidth;
         for (int x = 0; x < kScreenWidth; x++) {
             framebuffer_[dst + size_t(x)] = composite_[src_row + size_t(x)];
@@ -555,24 +598,29 @@ void ShadowWarriors::run_frame() {
 }
 
 void ShadowWarriors::set_inputs(const MachineInputs& inputs) {
+    // SYSTEM @ 0x7a000: start1, start2, coin1, coin2 (active low)
     in0_ = 0xff;
-    in1_ = 0xffff;
-    if (inputs.player1.start) in0_ = uint8_t(in0_ & 0xfe);
-    if (inputs.player2.start) in0_ = uint8_t(in0_ & 0xfd);
-    if (inputs.coin1) in0_ = uint8_t(in0_ & 0xbf);
-    if (inputs.coin2) in0_ = uint8_t(in0_ & 0x7f);
+    if (inputs.player1.start) in0_ = uint8_t(in0_ & ~0x01);
+    if (inputs.player2.start) in0_ = uint8_t(in0_ & ~0x02);
+    if (inputs.coin1) in0_ = uint8_t(in0_ & ~0x40);
+    if (inputs.coin2) in0_ = uint8_t(in0_ & ~0x80);
 
-    auto apply = [](const InputState& state, uint16_t& reg) {
-        if (state.left) reg = uint16_t(reg & 0xfffe);
-        if (state.right) reg = uint16_t(reg & 0xfffd);
-        if (state.down) reg = uint16_t(reg & 0xfffb);
-        if (state.up) reg = uint16_t(reg & 0xfff7);
-        if (state.button1) reg = uint16_t(reg & 0xffef);
-        if (state.button2) reg = uint16_t(reg & 0xffdf);
-        if (state.button3) reg = uint16_t(reg & 0xffbf);
+    // P1_P2 @ 0x7a002: P1 in low byte, P2 in high byte (active low)
+    in1_ = 0xffff;
+    auto apply = [](const InputState& state, uint16_t& reg, int shift) {
+        uint16_t mask = uint16_t(0xff << shift);
+        uint16_t bits = 0xff;
+        if (state.left) bits = uint16_t(bits & ~0x01);
+        if (state.right) bits = uint16_t(bits & ~0x02);
+        if (state.down) bits = uint16_t(bits & ~0x04);
+        if (state.up) bits = uint16_t(bits & ~0x08);
+        if (state.button1) bits = uint16_t(bits & ~0x10);
+        if (state.button2) bits = uint16_t(bits & ~0x20);
+        if (state.button3) bits = uint16_t(bits & ~0x40);
+        reg = uint16_t((reg & ~mask) | (uint16_t(bits) << shift));
     };
-    apply(inputs.player1, in1_);
-    apply(inputs.player2, in1_);
+    apply(inputs.player1, in1_, 0);
+    apply(inputs.player2, in1_, 8);
 }
 
 void ShadowWarriors::set_dip_switch(int bank, uint8_t value) {
