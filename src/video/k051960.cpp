@@ -41,6 +41,7 @@ void K051960::reset() {
     sorted_list_.fill(-1);
     irq_enabled_ = false;
     nmi_enabled_ = false;
+    counter_ = 0;
     spriteflip_ = false;
     readroms_ = false;
 }
@@ -54,23 +55,36 @@ void K051960::write(uint16_t offset, uint8_t value) {
 }
 
 uint8_t K051960::k051937_read(uint8_t offset) {
-    return k051937_[offset & 7];
+    offset &= 7;
+    // Pascal k051960.pas: games need bit0 to pulse on each read of reg 0.
+    if (offset == 0) {
+        const uint8_t bit = uint8_t(counter_ & 1);
+        counter_ = uint8_t(counter_ + 1);
+        return bit;
+    }
+    if (readroms_ && offset >= 4) {
+        // ROM read path not required for Ajax/Aliens boot; return 0.
+        return 0;
+    }
+    return k051937_[offset];
 }
 
 void K051960::k051937_write(uint8_t offset, uint8_t value) {
     offset &= 7;
-    k051937_[offset] = value;
     if (offset == 0) {
-        // bit 0 IRQ enable — clear pending when enabled
-        if ((value & 0x01) != 0 && irq_cb_) irq_cb_(false);
-        if ((value & 0x02) != 0 && firq_cb_) firq_cb_(false);
+        // MAME: bit0 = IRQ enable; ACK clears IRQ on 1→0 transition.
+        if ((k051937_[0] & 0x01) != 0 && (value & 0x01) == 0 && irq_cb_) irq_cb_(false);
+        if ((k051937_[0] & 0x02) != 0 && (value & 0x02) == 0 && firq_cb_) firq_cb_(false);
+        k051937_[0] = value;
+        irq_enabled_ = (value & 0x01) != 0;
         nmi_enabled_ = (value & 0x04) != 0;
-        if (nmi_enabled_ && nmi_cb_) nmi_cb_(false);
         spriteflip_ = (value & 0x08) != 0;
         readroms_ = (value & 0x20) != 0;
-        irq_enabled_ = (value & 0x01) != 0;
     } else if (offset >= 2 && offset < 5) {
+        k051937_[offset] = value;
         spriterombank_[offset - 2] = value;
+    } else {
+        k051937_[offset] = value;
     }
 }
 
@@ -84,7 +98,8 @@ void K051960::update_sprites() {
 }
 
 void K051960::update_line(int line) {
-    // Match k051960.pas: NMI every 32 lines if enabled; VBlank IRQ every frame.
+    // Match k051960.pas: NMI every 32 lines if enabled; VBlank IRQ every frame at line 240.
+    // (MAME gates on enable bit; Pascal always asserts — Ajax needs the latter.)
     if ((line % 32) == 0 && nmi_enabled_ && nmi_cb_) nmi_cb_(true);
     if (line == 240 && irq_cb_) irq_cb_(true);
 }

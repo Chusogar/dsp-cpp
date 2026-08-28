@@ -49,6 +49,7 @@ private:
     std::array<uint8_t, 3> spriterombank_{};
     std::array<int, kNumSprites> sorted_list_{};
     bool irq_enabled_ = false;
+    uint8_t counter_ = 0;
     bool nmi_enabled_ = false;
     bool spriteflip_ = false;
     bool readroms_ = false;
