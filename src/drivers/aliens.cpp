@@ -88,15 +88,18 @@ void Aliens::reset() {
 }
 
 void Aliens::run_frame() {
+    // Effective Konami-1 rate is clock/4 (matches cpu_konami.create(12MHz) in Pascal).
     const int main_c = int(double(main_cpu_.clock()) / kFramesPerSecond / kScanlines + 0.5);
     const int snd_c = int(double(kSoundClock) / kFramesPerSecond / kScanlines + 0.5);
 
     for (int line = 0; line < kScanlines; line++) {
+        // Assert VBlank IRQ at the start of line 240 so the main CPU can
+        // service it during this line's cycles (timer DP:$1A ticks in $81F5).
+        if (k051960_) k051960_->update_line(line);
         if (line == 240) update_video();
         main_cpu_.run(main_c);
         sound_cpu_.run(snd_c);
         mix_audio_line(snd_c);
-        if (k051960_) k051960_->update_line(line);
     }
 }
 
