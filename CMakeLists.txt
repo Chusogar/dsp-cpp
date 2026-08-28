@@ -133,12 +133,14 @@ add_executable(dsp
   src/drivers/opwolf.cpp
   src/drivers/trackfld.cpp
   src/drivers/pirates.cpp
-  src/drivers/armedf.cpp
+  src/drivers/armedf_hw.cpp
   src/machine/nb1414_m4.cpp
   src/drivers/wwfsstar.cpp
   src/drivers/citycon.cpp
   src/drivers/commando.cpp
   src/drivers/galaga_hw.cpp
+  src/drivers/rastan_hw.cpp
+  src/drivers/shadow_warriors_hw.cpp
 
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
@@ -307,7 +309,7 @@ add_executable(dsp_tests
   src/drivers/opwolf.cpp
   src/drivers/trackfld.cpp
   src/drivers/pirates.cpp
-  src/drivers/armedf.cpp
+  src/drivers/armedf_hw.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

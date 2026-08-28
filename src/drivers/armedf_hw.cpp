@@ -97,30 +97,27 @@ const std::vector<RomEntry> kLegionSprites = {{"legion.1k", 0x10000, 0, 0xff5a0d
 
 }  // namespace
 
-std::vector<uint8_t> ArmedfHw::rotate_ccw(const GfxSet& src, int count, int size) {
-    std::vector<uint8_t> out(size_t(count) * size_t(size) * size_t(size));
-    for (int n = 0; n < count; n++) {
-        const uint8_t* s = src.element(n);
-        uint8_t* d = &out[size_t(n) * size_t(size) * size_t(size)];
-        for (int row = 0; row < size; row++)
-            for (int col = 0; col < size; col++) d[row * size + col] = s[col * size + (size - 1 - row)];
-    }
-    return out;
-}
-
 ArmedfHw::ArmedfHw(Game game)
     : game_(game), main_cpu_(kMainClock), sound_cpu_(kSoundClock),
       ym_(kSoundClock, game == Game::Legion ? YM3812::kYM3526 : YM3812::kYM3812, 0.4f) {
     if (game_ == Game::CrazyClimber2 || game_ == Game::Legion) {
-        screen_width_ = 288;
-        screen_height_ = 224;
+        region_w_ = 288;
+        region_h_ = 224;
         crop_x_ = 16;
         crop_y_ = 8;
     } else {
-        screen_width_ = 320;
-        screen_height_ = 240;
+        region_w_ = 320;
+        region_h_ = 240;
         crop_x_ = 0;
         crop_y_ = 0;
+    }
+    if (game_ == Game::ArmedF || game_ == Game::Legion) {
+        rotated_ = true;
+        screen_width_ = region_h_;
+        screen_height_ = region_w_;
+    } else {
+        screen_width_ = region_w_;
+        screen_height_ = region_h_;
     }
     if (game_ == Game::CrazyClimber2) {
         irq_level_ = 2;
@@ -273,7 +270,6 @@ bool ArmedfHw::load_roms(const std::string& rom_path, std::string* error) {
         layout.y_offsets.resize(16);
         for (int i = 0; i < 16; i++) layout.y_offsets[size_t(i)] = i * 32;
         sprites_gfx_.decode(layout, spr_rom);
-        sprites_rotated_ = rotate_ccw(sprites_gfx_, total, 16);
     }
 
     reset();
@@ -449,7 +445,7 @@ void ArmedfHw::nb_dma(int src, int dst, int size, bool condition) {
     for (int f = 0; f < size; f++) {
         if (f + dst < 18) continue;  // don't clobber the command/parameter block
         ram_txt_[size_t(f + dst) & 0xfff] = condition ? nb_rom_[size_t(f + src) & 0x3fff] : 0x20;
-        ram_txt_[(size_t(f + dst) + 0x800) & 0xfff] = nb_rom_[size_t(f + size + src) & 0x3fff];
+        ram_txt_[(size_t(f + dst) + 0x400) & 0xfff] = nb_rom_[size_t(f + size + src) & 0x3fff];
     }
 }
 
@@ -457,7 +453,7 @@ void ArmedfHw::nb_fill(int dst, uint8_t tile, uint8_t pal) {
     for (int f = 0; f <= 0x3ff; f++) {
         if (f + dst < 18) continue;
         ram_txt_[size_t(f + dst) & 0xfff] = tile;
-        ram_txt_[(size_t(f + dst) + 0x800) & 0xfff] = pal;
+        ram_txt_[(size_t(f + dst) + 0x400) & 0xfff] = pal;
     }
 }
 
@@ -471,12 +467,12 @@ void ArmedfHw::nb_kozure_score_msg(int dst, int src_base) {
         } else {
             ram_txt_[size_t(f + dst) & 0xfff] = 0x20;
         }
-        ram_txt_[(size_t(f + dst) + 0x800) & 0xfff] = nb_rom_[size_t(0x10f + src_base * 0x1c + f) & 0x3fff];
+        ram_txt_[(size_t(f + dst) + 0x400) & 0xfff] = nb_rom_[size_t(0x10f + src_base * 0x1c + f) & 0x3fff];
     }
     ram_txt_[size_t(6 + dst) & 0xfff] = 0x30;
-    ram_txt_[(size_t(6 + dst) + 0x800) & 0xfff] = nb_rom_[size_t(0x10f + src_base * 0x1c + 6) & 0x3fff];
+    ram_txt_[(size_t(6 + dst) + 0x400) & 0xfff] = nb_rom_[size_t(0x10f + src_base * 0x1c + 6) & 0x3fff];
     ram_txt_[size_t(7 + dst) & 0xfff] = 0x30;
-    ram_txt_[(size_t(7 + dst) + 0x800) & 0xfff] = nb_rom_[size_t(0x10f + src_base * 0x1c + 7) & 0x3fff];
+    ram_txt_[(size_t(7 + dst) + 0x400) & 0xfff] = nb_rom_[size_t(0x10f + src_base * 0x1c + 7) & 0x3fff];
 }
 
 void ArmedfHw::nb_insert_coin_msg() {
@@ -499,7 +495,7 @@ void ArmedfHw::nb_credit_msg() {
 
     dst = (((nb_rom_[0x45] << 8) | nb_rom_[0x46]) & 0x3fff) + 1;
     ram_txt_[size_t(dst) & 0xfff] = uint8_t(credit_count + 0x30);
-    ram_txt_[(size_t(dst) + 0x800) & 0xfff] = nb_rom_[0x48];
+    ram_txt_[(size_t(dst) + 0x400) & 0xfff] = nb_rom_[0x48];
 
     if (credit_count == 1) {
         dst = ((nb_rom_[0x7b] << 8) | nb_rom_[0x7c]) & 0x3fff;
@@ -639,8 +635,8 @@ void ArmedfHw::set_dip_switch(int bank, uint8_t value) {
 int ArmedfHw::text_pos(int x, int y) const {
     switch (game_) {
         case Game::ArmedF: return x * 32 + y;
-        case Game::Legion: return (x & 0x1f) * 32 + y + 0x400 * (x / 32);
-        default: return 32 * y + (x & 0x1f) + 0x400 * (x / 32);  // Terra Force / Crazy Climber 2
+        case Game::Legion: return (x & 0x1f) * 32 + y + 0x800 * (x / 32);
+        default: return 32 * (31 - y) + (x & 0x1f) + 0x800 * (x / 32);  // Terra Force / Crazy Climber 2
     }
 }
 
@@ -666,15 +662,27 @@ void ArmedfHw::draw_tile_layer(const std::array<uint16_t, 0x800>& ram, const Gfx
 }
 
 void ArmedfHw::draw_text_layer() {
+    const bool is_armedf = (game_ == Game::ArmedF);
+    const int attr_base = is_armedf ? 0x800 : 0x400;
+    const int h_scroll = is_armedf ? 0 : (512 - 128);  // terraf-family text plane scroll offset
     for (int f = 0; f <= 0x7ff; f++) {
         const int x = f / 32, y = f % 32;
         const int pos = text_pos(x, y);
-        if (pos < 0 || pos >= 0x800) continue;
-        const uint8_t attr = ram_txt_[size_t(0x800 + pos) & 0xfff];
-        const int nchar = ram_txt_[size_t(pos) & 0xfff] | ((attr & 3) << 8);
-        const int color = (attr >> 4) & 0xf;
+        if (pos < 0 || pos >= 0x1000) continue;
+        uint8_t attr;
+        int nchar;
+        int color;
+        if (!is_armedf && pos < 0x12) {
+            attr = 0;
+            nchar = 0;
+            color = 0;
+        } else {
+            attr = ram_txt_[size_t(attr_base + pos) & 0xfff];
+            nchar = ram_txt_[size_t(pos) & 0xfff] | ((attr & 3) << 8);
+            color = (attr >> 4) & 0xf;
+        }
         const uint8_t* px = chars_gfx_.element(nchar & 0x3ff);
-        const int base_x = x * 8, base_y = y * 8;
+        const int base_x = ((x * 8) + h_scroll) & 511, base_y = y * 8;
         const bool masked = (attr & 8) != 0;
         for (int py = 0; py < 8; py++) {
             const int dy = base_y + py;
@@ -709,7 +717,7 @@ void ArmedfHw::draw_sprites(int priority) {
         const int sx = sprite_buffer_[base + 3] & 0x1ff;
         const int sy = sprite_offset_ + 240 - int(w0 & 0x1ff);
 
-        const uint8_t* px = &sprites_rotated_[size_t(nchar % (sprites_rotated_.size() / 256)) * 256];
+        const uint8_t* px = sprites_gfx_.element(nchar);
         for (int py = 0; py < 16; py++) {
             const int dy = sy + (flip_y ? 15 - py : py);
             if (dy < 0 || dy >= 512) continue;
@@ -718,8 +726,9 @@ void ArmedfHw::draw_sprites(int priority) {
                 if (dx < 0 || dx >= 512) continue;
                 const uint8_t raw = px[py * 16 + pxi];
                 const uint8_t idx = uint8_t(ram_clut_[size_t(clut) * 16 + raw] & 0xf);
+                if (idx == 15) continue;  // transparent sprite pixel: colorkey, leave underlying layer
                 composite_[size_t(dy) * 512 + size_t(dx)] =
-                    idx == 15 ? palette_[0x800] : palette_[size_t((color << 4) + idx) % palette_.size()];
+                    palette_[size_t(0x200 + (color << 4) + idx) % palette_.size()];
             }
         }
     }
@@ -737,7 +746,7 @@ void ArmedfHw::render_frame() {
     if (text_enabled) {
         draw_text_layer();
     } else {
-        std::fill(composite_.begin(), composite_.end(), palette_[0x800]);
+        std::fill(composite_.begin(), composite_.end(), 0xff000000u);  // paleta[$800]: opaque black
         std::fill(fg_text_.begin(), fg_text_.end(), 0u);
     }
 
@@ -758,9 +767,19 @@ void ArmedfHw::render_frame() {
             if (fg_text_[i] != 0) composite_[i] = fg_text_[i];
     if ((video_reg_ & 0x200) != 0) draw_sprites(0);
 
-    for (int y = 0; y < screen_height_; y++) {
-        const uint32_t* src = &composite_[size_t(y + crop_y_ + 8) * 512 + size_t(96 + crop_x_)];
-        std::copy(src, src + screen_width_, &framebuffer_[size_t(y) * size_t(screen_width_)]);
+    const int ox = 96 + crop_x_, oy = 8 + crop_y_;
+    if (rotated_) {
+        // rot270_screen: rotate the cropped region 270° for the display.
+        for (int C = 0; C < region_h_; C++) {
+            const uint32_t* src = &composite_[size_t(oy + C) * 512 + size_t(ox)];
+            for (int R = 0; R < region_w_; R++)
+                framebuffer_[size_t(R) * size_t(region_h_) + size_t(C)] = src[(region_w_ - 1) - R];
+        }
+    } else {
+        for (int y = 0; y < screen_height_; y++) {
+            const uint32_t* src = &composite_[size_t(y + oy) * 512 + size_t(ox)];
+            std::copy(src, src + screen_width_, &framebuffer_[size_t(y) * size_t(screen_width_)]);
+        }
     }
 
     frame_counter_++;

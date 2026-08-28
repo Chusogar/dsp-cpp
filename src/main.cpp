@@ -31,12 +31,14 @@
 #include "drivers/opwolf.h"
 #include "drivers/trackfld.h"
 #include "drivers/pirates.h"
-#include "drivers/armedf.h"
+#include "drivers/armedf_hw.h"
 #include "drivers/neogeo.h"
 #include "drivers/wwfsstar.h"
 #include "drivers/citycon.h"
 #include "drivers/commando.h"
 #include "drivers/galaga_hw.h"
+#include "drivers/shadow_warriors_hw.h"
+#include "drivers/rastan_hw.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -105,6 +107,7 @@ void print_supported_emulators() {
 		"    citycon, commando\n"
 		"    galaga, digdug, bosconian, xevious, sxevious\n"
 		"    wwfsstar\n"
+		"    shadoww, rastan\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
@@ -389,6 +392,10 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "xevious") { return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Xevious); }
 	if (game == "sxevious") { return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::SuperXevious); }
 	if (game == "bosconian") { return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Bosconian); }
+
+	if (game == "rastan") return std::make_unique<dsp::Rastan>();
+
+	if (game == "shadoww") return std::make_unique<dsp::ShadowWarriors>();
 	
 
 	// computers

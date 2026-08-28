@@ -87,11 +87,12 @@ private:
     void draw_tile_layer(const std::array<uint16_t, 0x800>& ram, const GfxSet& gfx, int color_base,
                          int scroll_x, int scroll_y, std::vector<uint32_t>& canvas);
     void draw_sprites(int priority);
-    static std::vector<uint8_t> rotate_ccw(const GfxSet& src, int count, int size);
 
     Game game_;
-    int screen_width_ = 320, screen_height_ = 240;
+    int screen_width_ = 320, screen_height_ = 240;  // reported (possibly rotated) output size
+    int region_w_ = 320, region_h_ = 240;           // source crop region size (o_x2, o_y2)
     int crop_x_ = 0, crop_y_ = 0;
+    bool rotated_ = false;  // armedf/legion rotate the final frame 270°
 
     M68000 main_cpu_;
     Z80 sound_cpu_;
@@ -102,7 +103,6 @@ private:
     GfxSet bg_gfx_;
     GfxSet fg_gfx_;
     GfxSet sprites_gfx_;
-    std::vector<uint8_t> sprites_rotated_;
 
     std::array<uint16_t, 0x30000> rom_{};
     std::array<uint16_t, 0x6400> ram_{};
