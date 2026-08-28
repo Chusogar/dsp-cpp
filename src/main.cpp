@@ -36,9 +36,8 @@
 #include "drivers/wwfsstar.h"
 #include "drivers/citycon.h"
 #include "drivers/commando.h"
+#include "drivers/actfancer.h"
 #include "drivers/galaga_hw.h"
-#include "drivers/shadow_warriors_hw.h"
-#include "drivers/rastan_hw.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -66,6 +65,7 @@
 #include "drivers/atari_lynx.h"
 #include "drivers/scv.h"
 #include "drivers/pcengine.h"
+#include "drivers/shadow_warriors_hw.h"
 
 #include "frontend/sdl_app.h"
 
@@ -96,6 +96,7 @@ void print_supported_emulators() {
         "    pitfall2, teddyboy, wboy, mrviking, seganinj, upndown,\n"
 		"    flicky, gardia,\n"
 		"    galaxian, mooncrst, scramble,\n"
+		"    galaga, digdug, xevious, sxevious, bosco,\n"
 		"    depthch, safari, frogs, sspaceat, sspacaho, headon, headon2,\n"
 		"    headon2s, invho2, nsub, samurai, invinco, invds, tranqgun,\n"
 		"    spacetrk, carnival, brdrline, digger, pulsar, heiankyo, alphaho,\n"
@@ -105,9 +106,9 @@ void print_supported_emulators() {
         "    opwolf, pirates, genix\n"
 		"    terraf, armedf, cclimbr2, legion\n"
 		"    citycon, commando\n"
-		"    galaga, digdug, bosconian, xevious, sxevious\n"
 		"    wwfsstar\n"
-		"    shadoww, rastan\n"
+		"    shadoww, gaiden, ninjagaiden\n"
+		"    actfancer, actfancr\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
@@ -386,16 +387,16 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "wwfsstar") { return std::make_unique<dsp::Wwfsstar>(); }
 	if (game == "citycon") return std::make_unique<dsp::CityCon>();
     if (game == "commando") return std::make_unique<dsp::Commando>();
+    if (game == "actfancer" || game == "actfancr") return std::make_unique<dsp::ActFancer>();
     
-	if (game == "galaga") { return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Galaga); }
-	if (game == "digdug") { return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::DigDug); }
-	if (game == "xevious") { return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Xevious); }
-	if (game == "sxevious") { return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::SuperXevious); }
-	if (game == "bosconian") { return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Bosconian); }
+	if (game == "galaga") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Galaga);
+	if (game == "digdug") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::DigDug);
+	if (game == "xevious") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Xevious);
+	if (game == "sxevious") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::SuperXevious);
+	if (game == "bosco") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Bosconian);
 
-	if (game == "rastan") return std::make_unique<dsp::Rastan>();
-
-	if (game == "shadoww") return std::make_unique<dsp::ShadowWarriors>();
+	if (game == "shadoww" || game == "shadow_warriors" || game == "gaiden" || game == "ninjagaiden")
+	    return std::make_unique<dsp::ShadowWarriors>();
 	
 
 	// computers
@@ -467,6 +468,8 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	
 	if (game == "pce" || game == "pcengine" || game == "tg16")
 	    return std::make_unique<dsp::PcEngine>();
+
+	
 	
     return nullptr;
 }

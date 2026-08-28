@@ -89,6 +89,7 @@ add_executable(dsp
   src/machine/namco51.cpp
   src/machine/namco52.cpp
   src/machine/namco53.cpp
+  src/machine/namco50.cpp
   src/machine/namco54.cpp
   src/machine/sega_315_5195.cpp
   src/machine/fd1089.cpp
@@ -105,7 +106,6 @@ add_executable(dsp
   src/machine/konami_decrypt.cpp
   src/machine/tc0140syt.cpp
   src/machine/opwolf_cchip.cpp
-  src/machine/namco50.cpp
 
     
   src/drivers/bagman.cpp
@@ -139,8 +139,8 @@ add_executable(dsp
   src/drivers/citycon.cpp
   src/drivers/commando.cpp
   src/drivers/galaga_hw.cpp
-  src/drivers/rastan_hw.cpp
   src/drivers/shadow_warriors_hw.cpp
+  src/drivers/actfancer.cpp
 
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
@@ -274,6 +274,7 @@ add_executable(dsp_tests
   src/machine/namco51.cpp
   src/machine/namco52.cpp
   src/machine/namco53.cpp
+  src/machine/namco50.cpp
   src/machine/namco54.cpp
   src/machine/sega_315_5195.cpp
   src/machine/fd1089.cpp
