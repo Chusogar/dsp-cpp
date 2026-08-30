@@ -2989,6 +2989,28 @@ void test_sega_system16_missing_roms() {
     check(std::strcmp(wb3.title(), "Wonder Boy III: Monster Lair") == 0, "Wonder Boy III title");
 }
 
+void test_sega16_palette_banks() {
+    // Out Run keeps the sprite colours in the upper half of its 0x1000 word
+    // colour RAM, so the shadow/highlight bank has to start above it: writing a
+    // tile colour must not repaint the sprite entry 0x800 words later.
+    dsp::Sega16Video video;
+    video.reset();
+    video.init_palette_luts();
+    video.cram_words = 0x1000;
+    video.set_palette_entry(0x800, 0x001f, true);  // sprite red
+    const uint32_t sprite_red = video.palette[0x800];
+    video.set_palette_entry(0x000, 0x7fff, true);  // tile white
+    check(video.palette[0x800] == sprite_red, "OutRun tile colours leave the sprite bank alone");
+    check(video.palette[0x1000] != 0, "OutRun shadow bank sits above the colour RAM");
+
+    // System 16B has half the colour RAM, so its shadow bank starts at 0x800.
+    dsp::Sega16Video s16b;
+    s16b.reset();
+    s16b.init_palette_luts();
+    s16b.set_palette_entry(0x000, 0x7fff, true);
+    check(s16b.palette[0x800] != 0, "System 16B shadow bank stays at 0x800");
+}
+
 int unique_pixels(const dsp::Machine& machine) {
     const uint32_t* fb = machine.framebuffer();
     const int n = machine.screen_width() * machine.screen_height();
@@ -3929,6 +3951,7 @@ int main() {
     test_atari_system1_missing_roms();
     test_sega_pcm_and_mapper();
     test_sega_system16_missing_roms();
+    test_sega16_palette_banks();
     test_sega_roms_if_present();
     test_indy_coin_if_present();
     test_ym2612();

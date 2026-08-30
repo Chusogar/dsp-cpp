@@ -192,22 +192,14 @@ void Sega16Video::set_palette_entry(int index, uint16_t value, bool split_shadow
     const int b = ((value >> 14) & 1) | ((value >> 7) & 0x1e);
     palette[size_t(index)] = pack_rgb(normal[size_t(r)], normal[size_t(g)], normal[size_t(b)]);
     if (split_shadow) {
-        if (value & 0x8000) {
-            palette[size_t(index + 0x1000)] =
-                pack_rgb(shadow[size_t(r)], shadow[size_t(g)], shadow[size_t(b)]);
-        } else {
-            palette[size_t(index + 0x1000)] =
-                pack_rgb(hilight[size_t(r)], hilight[size_t(g)], hilight[size_t(b)]);
-        }
-        if (index + 0x800 < int(palette.size())) {
-            if (value & 0x8000) {
-                palette[size_t(index + 0x800)] =
-                    pack_rgb(shadow[size_t(r)], shadow[size_t(g)], shadow[size_t(b)]);
-            } else {
-                palette[size_t(index + 0x800)] =
-                    pack_rgb(hilight[size_t(r)], hilight[size_t(g)], hilight[size_t(b)]);
-            }
-        }
+        // Bit 15 picks shadow or highlight for the second bank, which sits right
+        // above the colour RAM of this machine.
+        const uint32_t alternate = (value & 0x8000)
+                                       ? pack_rgb(shadow[size_t(r)], shadow[size_t(g)],
+                                                  shadow[size_t(b)])
+                                       : pack_rgb(hilight[size_t(r)], hilight[size_t(g)],
+                                                  hilight[size_t(b)]);
+        palette[size_t(index + cram_words)] = alternate;
     } else {
         palette[size_t(index + 0x800)] =
             pack_rgb(shadow[size_t(r)], shadow[size_t(g)], shadow[size_t(b)]);

@@ -66,6 +66,8 @@ struct Sega16Video {
     std::array<uint8_t, 16> sprite_bank{};
     bool screen_enabled = true;
     uint8_t tile_banks = 0;
+    // Colour RAM words of the machine; the shadow/highlight bank starts there.
+    int cram_words = 0x800;
 };
 
 void draw_sprites_16a(Sega16Video& video, uint32_t* dest, const std::vector<uint16_t>& sprite_rom,

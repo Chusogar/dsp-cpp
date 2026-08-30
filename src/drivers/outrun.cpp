@@ -100,6 +100,7 @@ Outrun::Outrun()
 
 bool Outrun::init(const std::string& rom_path, std::string* error) {
     if (!load_roms(rom_path, error)) return false;
+    video_.cram_words = 0x1000;  // sprites live in the upper half of the colour RAM
     video_.init_palette_luts();
     reset();
     return true;
