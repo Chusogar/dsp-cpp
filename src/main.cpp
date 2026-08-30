@@ -41,6 +41,8 @@
 #include "drivers/aliens.h"
 #include "drivers/simpsons.h"
 #include "drivers/galaga_hw.h"
+#include "drivers/shadow_warriors_hw.h"
+#include "drivers/tetris_atari_hw.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -68,7 +70,7 @@
 #include "drivers/atari_lynx.h"
 #include "drivers/scv.h"
 #include "drivers/pcengine.h"
-#include "drivers/shadow_warriors_hw.h"
+
 
 #include "frontend/sdl_app.h"
 
@@ -109,7 +111,7 @@ void print_supported_emulators() {
         "    opwolf, pirates, genix\n"
 		"    terraf, armedf, cclimbr2, legion\n"
 		"    citycon, commando\n"
-		"    wwfsstar\n"
+		"    wwfsstar, atetris\n"
 		"    shadoww, gaiden, ninjagaiden\n"
 		"    actfancer, actfancr\n"
 		"    ajax, typhoon, simpsons\n"
@@ -401,6 +403,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "xevious") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Xevious);
 	if (game == "sxevious") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::SuperXevious);
 	if (game == "bosco") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Bosconian);
+
+	if (game == "atetris") { return std::make_unique<dsp::AtariTetris>(); }
+	
 	
 
 	// computers

@@ -153,6 +153,7 @@ add_executable(dsp
   src/sound/k053260.cpp
   src/machine/eeprom_er5911.cpp
   src/sound/k007232.cpp
+  src/drivers/tetris_atari_hw.cpp
 
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
