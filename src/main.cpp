@@ -43,6 +43,8 @@
 #include "drivers/galaga_hw.h"
 #include "drivers/shadow_warriors_hw.h"
 #include "drivers/tetris_atari_hw.h"
+#include "drivers/skullxbo.h"
+#include "drivers/gng.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -87,7 +89,7 @@ void print_supported_emulators() {
         "\n"
         "  Arcade:\n"
         "    bagman, mikie, trackfld, gauntlet, mrdo, ddragon, ddragon2,\n"
-        "    elevator, junglek, indydoom, peter, marble, starwars, roadrunn,\n"
+        "    elevator, junglek, indydoom, peter, marble, skullxbo, starwars, roadrunn,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
 		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
         "    kungfum, spelunkr, spelunk2, ldrun, ldrun2,\n"
@@ -405,7 +407,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "bosco") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Bosconian);
 
 	if (game == "atetris") { return std::make_unique<dsp::AtariTetris>(); }
-	
+
+	if (game == "skullxbo") return std::make_unique<dsp::Skullxbo>();
+	if (game == "gng") return std::make_unique<dsp::Gng>();
 	
 
 	// computers

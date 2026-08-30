@@ -59,6 +59,14 @@ public:
     uint32_t bank() const { return bank_; }
     // `prio` of -1 renders every priority.
     void draw(int xscroll, int yscroll, int prio, const DrawTile& draw_tile);
+    // Renders a single SLIP band, so a driver can follow the scroll registers as
+    // they change during the frame (MAME does this with partial screen updates).
+    void draw_band(int band, int xscroll, int yscroll, int prio, const DrawTile& draw_tile);
+    // Screen line -> SLIP band, matching the band selection done by draw().
+    int band_for_line(int line, int yscroll) const {
+        if (slipshift_ == 0) return 0;
+        return ((line + yscroll) & bitmapymask_) >> slipshift_;
+    }
 
     // Lookup tables, exposed so drivers can apply their own code/colour mangling.
     std::vector<uint16_t>& code_lookup() { return code_lookup_; }

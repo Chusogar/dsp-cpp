@@ -129,25 +129,29 @@ void AtariMotionObjects::draw(int xscroll, int yscroll, int prio, const DrawTile
     const int stopband = slipshift_ == 0 ? 0 : ((512 / config_.slipheight) >> 1) - 1;
 
     for (int band = 0; band <= stopband; ++band) {
-        uint16_t link = 0;
-        if (slipshift_ != 0) {
-            link = uint16_t((slip_ram_[band & sliprammask_] >> linkmask_.shift()) &
-                            linkmask_.mask());
-        }
-        build_active_list(link);
-        next_xpos_ = kNoHold;
-        if (active_last_ < 4) continue;
+        draw_band(band, xscroll, yscroll, prio, draw_tile);
+    }
+}
 
-        if (config_.reverse) {
-            for (size_t current = active_last_ - 4;; current -= 4) {
-                render_object(&active_list_[current], xscroll, yscroll, prio, draw_tile);
-                if (current == 0) break;
-            }
-        } else {
-            for (size_t current = 0;; current += 4) {
-                render_object(&active_list_[current], xscroll, yscroll, prio, draw_tile);
-                if (current + 4 >= active_last_) break;
-            }
+void AtariMotionObjects::draw_band(int band, int xscroll, int yscroll, int prio,
+                                   const DrawTile& draw_tile) {
+    uint16_t link = 0;
+    if (slipshift_ != 0) {
+        link = uint16_t((slip_ram_[band & sliprammask_] >> linkmask_.shift()) & linkmask_.mask());
+    }
+    build_active_list(link);
+    next_xpos_ = kNoHold;
+    if (active_last_ < 4) return;
+
+    if (config_.reverse) {
+        for (size_t current = active_last_ - 4;; current -= 4) {
+            render_object(&active_list_[current], xscroll, yscroll, prio, draw_tile);
+            if (current == 0) break;
+        }
+    } else {
+        for (size_t current = 0;; current += 4) {
+            render_object(&active_list_[current], xscroll, yscroll, prio, draw_tile);
+            if (current + 4 >= active_last_) break;
         }
     }
 }

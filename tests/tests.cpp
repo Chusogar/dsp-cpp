@@ -44,6 +44,7 @@
 #include "drivers/genesis.h"
 #include "drivers/hangon.h"
 #include "drivers/outrun.h"
+#include "drivers/skullxbo.h"
 #include "drivers/system16.h"
 #include "machine/fd1089.h"
 #include "machine/bagman_pal.h"
@@ -3011,6 +3012,16 @@ void test_sega16_palette_banks() {
     check(s16b.palette[0x800] != 0, "System 16B shadow bank stays at 0x800");
 }
 
+void test_skullxbo_without_roms() {
+    dsp::Skullxbo machine;
+    std::string error = "unset";
+    check(!machine.init("/no/such/skullxbo.zip", &error), "Skull & Crossbones init fails without the ROM set");
+    check(error != "unset" && !error.empty(), "Skull & Crossbones reports why the set is missing");
+    check(std::strcmp(machine.title(), "Skull & Crossbones") == 0, "Skull & Crossbones title");
+    check(machine.screen_width() == 672 && machine.screen_height() == 240,
+          "Skull & Crossbones screen is 672x240");
+}
+
 int unique_pixels(const dsp::Machine& machine) {
     const uint32_t* fb = machine.framebuffer();
     const int n = machine.screen_width() * machine.screen_height();
@@ -3043,6 +3054,35 @@ void test_sega_roms_if_present() {
         }
         const bool road_table_fresh = identity_lines < 200;
         check(road_table_fresh, "OutRun swaps the freshly written road line table into the display");
+    }
+
+    if (exists("/tmp/roms/skullxbo.zip")) {
+        dsp::Skullxbo machine;
+        std::string error;
+        check(machine.init("/tmp/roms/skullxbo.zip", &error), "Skull & Crossbones MAME set loads");
+        const uint32_t reset_pc = machine.debug_pc();
+        for (int frame = 0; frame < 700; frame++) machine.run_frame();
+        check(machine.debug_pc() != reset_pc, "Skull & Crossbones runs past the reset vector");
+        check(machine.debug_palette_used() > 32, "Skull & Crossbones writes the attract palette");
+        check(unique_pixels(machine) > 16, "Skull & Crossbones attract mode draws a colour picture");
+        check(machine.debug_motion_object_pixels() > 0,
+              "Skull & Crossbones draws motion objects during attract mode");
+
+        std::vector<int16_t> audio;
+        machine.drain_audio(audio);
+        check(!audio.empty(), "Skull & Crossbones drain_audio yields samples");
+
+        // A coin plus a button press must leave attract mode and start a game.
+        dsp::MachineInputs inputs;
+        inputs.coin1 = true;
+        machine.set_inputs(inputs);
+        for (int frame = 0; frame < 20; frame++) machine.run_frame();
+        inputs.coin1 = false;
+        inputs.player1.button1 = true;
+        machine.set_inputs(inputs);
+        for (int frame = 0; frame < 600; frame++) machine.run_frame();
+        check(machine.debug_motion_object_pixels() > 0,
+              "Skull & Crossbones keeps drawing motion objects after starting a game");
     }
 
     if (exists("/tmp/roms/fantzone.zip")) {
@@ -3951,6 +3991,7 @@ int main() {
     test_atari_system1_missing_roms();
     test_sega_pcm_and_mapper();
     test_sega_system16_missing_roms();
+    test_skullxbo_without_roms();
     test_sega16_palette_banks();
     test_sega_roms_if_present();
     test_indy_coin_if_present();
