@@ -270,9 +270,8 @@ uint16_t Outrun::main_read(uint32_t address) {
                 result = road_ram_[(address & 0xfff) >> 1];
                 break;
             case 0x90000 ... 0x9ffff:
-                // Matches sub_read(): Pascal's outrun_getword also exposes
-                // the road buffer swap trigger through this window.
-                swap_road();
+                // Road control register. Only a byte read by the sub CPU swaps
+                // the road buffers, so this window has no side effects.
                 result = 0xffff;
                 break;
             default:
@@ -357,16 +356,6 @@ uint16_t Outrun::sub_read(uint32_t address) {
     if (address <= 0x5ffff) return rom2_[(address & 0x3ffff) >> 1];
     if (address >= 0x60000 && address <= 0x7ffff) return cpu1ram_[(address & 0x7fff) >> 1];
     if (address >= 0x80000 && address <= 0x8ffff) return road_ram_[(address & 0xfff) >> 1];
-    if (address >= 0x90000 && address <= 0x9ffff) {
-        // Pascal's outrun_sub_getword triggers the road double-buffer swap
-        // here (gated on the CPU's "reading the high byte" bus direction,
-        // which a plain word read always satisfies). Our core dispatches
-        // byte-sized CPU reads through a separate handler (sub_read_byte),
-        // so this word-level path needs its own copy of the same trigger
-        // or a word-sized trigger read is silently missed.
-        swap_road();
-        return 0xffff;
-    }
     return 0xffff;
 }
 
@@ -379,8 +368,13 @@ void Outrun::sub_write(uint32_t address, uint16_t value) {
 
 uint8_t Outrun::sub_read_byte(uint32_t address) {
     address &= 0xfffff;
-    if (address >= 0x90000 && address <= 0x9ffff && (address & 1) == 0) {
-        swap_road();
+    if (address >= 0x90000 && address <= 0x9ffff) {
+        // The road board swaps its two line tables when the sub CPU reads the
+        // low byte of the control register ("tst.b $90001" once per road
+        // update). Word reads and byte writes must not swap: the game writes
+        // the control byte right after the tables, and a read-modify-write
+        // swap there would leave the displayed table permanently stale.
+        if (address & 1) swap_road();
         return 0xff;
     }
     const uint16_t word = sub_read(address);
@@ -389,6 +383,10 @@ uint8_t Outrun::sub_read_byte(uint32_t address) {
 
 void Outrun::sub_write_byte(uint32_t address, uint8_t value) {
     address &= 0xfffff;
+    if (address >= 0x90000 && address <= 0x9ffff) {
+        road_control_ = uint8_t(value & 3);
+        return;
+    }
     uint16_t old = sub_read(address);
     if (address & 1) old = uint16_t((old & 0xff00) | value);
     else old = uint16_t((old & 0x00ff) | (uint16_t(value) << 8));

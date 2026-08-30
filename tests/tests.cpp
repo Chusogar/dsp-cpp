@@ -3011,6 +3011,16 @@ void test_sega_roms_if_present() {
         check(machine.debug_pc() != 0x7b1e, "OutRun leaves the mapper boot stub");
         check(machine.debug_sub_pc() != 0x103a, "OutRun sub CPU leaves the handshake wait");
         check(machine.debug_palette_used() > 16, "OutRun writes the attract palette after the handshake");
+        // The sub CPU writes the road line table, then the control byte; if that
+        // byte write swaps the road buffers the display keeps the power-on ramp
+        // (line y selects road line y) forever and hides the horizon.
+        for (int frame = 0; frame < 600; frame++) machine.run_frame();
+        int identity_lines = 0;
+        for (int line = 0; line < 224; line++) {
+            if (machine.debug_road_line(line) == line) identity_lines++;
+        }
+        const bool road_table_fresh = identity_lines < 200;
+        check(road_table_fresh, "OutRun swaps the freshly written road line table into the display");
     }
 
     if (exists("/tmp/roms/fantzone.zip")) {

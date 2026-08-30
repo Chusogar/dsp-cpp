@@ -61,6 +61,7 @@ public:
         for (auto v : road_buffer_) if (v) c++;
         return c;
     }
+    uint16_t debug_road_line(int index) const { return road_buffer_[size_t(index) & 0x7ff]; }
     int debug_palette_used() const {
         int n = 0;
         for (uint16_t v : video_.pal_ram) {
