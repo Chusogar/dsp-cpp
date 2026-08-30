@@ -30,6 +30,10 @@ public:
     void update_line(int line);
     // Draw sprites whose callback priority equals `pri`.
     void draw_sprites(int pri, uint16_t* dest, int dest_w, int dest_h, int crop_x, int crop_y) const;
+    // MAME-style: draw ALL sprites; only write where (pri_buf[x] & mask)==0.
+    // Callback "priority" is treated as a bitmask (GFX_PMASK_*).
+    void draw_sprites_masked(uint16_t* dest, uint8_t* pri_buf, int dest_w, int dest_h,
+                             int crop_x, int crop_y) const;
 
     void set_irq_callback(IrqCallback cb) { irq_cb_ = std::move(cb); }
     void set_firq_callback(IrqCallback cb) { firq_cb_ = std::move(cb); }
@@ -45,6 +49,7 @@ private:
     uint32_t sprite_mask_ = 0;
 
     std::array<uint8_t, 0x400> ram_{};
+    std::array<uint8_t, 0x400> buffer_{};  // MAME sprite DMA latch
     std::array<uint8_t, 8> k051937_{};
     std::array<uint8_t, 3> spriterombank_{};
     std::array<int, kNumSprites> sorted_list_{};

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cstdio>
 
 namespace dsp {
 namespace {

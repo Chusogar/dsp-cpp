@@ -1,5 +1,7 @@
 #include "drivers/ajax.h"
 
+#include <cstdio>
+#include <vector>
 #include <algorithm>
 #include <cstring>
 
@@ -110,24 +112,62 @@ void Ajax::reset() {
     rom_bank1_ = 0;
     rom_bank2_ = 0;
     sub_firq_enable_ = false;
+    gun_rand_ = 0;
+    watchdog_ = 0;
     priority_ = false;
     in0_ = in1_ = in2_ = 0xff;
+    // Pascal: frame_main := konami_0.tframes; (cycles per scanline)
+    frame_main_ = double(main_cpu_.clock()) / kFramesPerSecond / kScanlines;
+    frame_sub_ = double(kSubClock) / kFramesPerSecond / kScanlines;
+    frame_snd_ = double(kSoundClock) / kFramesPerSecond / kScanlines;
     audio_accumulator_ = 0;
     audio_.clear();
 }
 
 void Ajax::run_frame() {
-    // Konami core runs at clock/4; budget cycles from the effective core rate.
-    const int main_c = int(double(main_cpu_.clock()) / kFramesPerSecond / kScanlines + 0.5);
-    const int sub_c = int(double(kSubClock) / kFramesPerSecond / kScanlines + 0.5);
-    const int snd_c = int(double(kSoundClock) / kFramesPerSecond / kScanlines + 0.5);
+    // Match ajax_hw.pas ajax_principal cycle accounting:
+    //   konami_0.run(frame_main);
+    //   frame_main := frame_main + tframes - contador;
+    // Same for sub and sound. Residual over/under-run carries to the next line.
+    const double main_t = double(main_cpu_.clock()) / kFramesPerSecond / kScanlines;
+    const double sub_t = double(kSubClock) / kFramesPerSecond / kScanlines;
+    const double snd_t = double(kSoundClock) / kFramesPerSecond / kScanlines;
 
     for (int line = 0; line < kScanlines; line++) {
         if (line == 240) update_video();
-        main_cpu_.run(main_c);
-        sub_cpu_.run(sub_c);
-        sound_cpu_.run(snd_c);
+
+        // Budget for this line = residual from previous over/under-run.
+        // Guard against non-positive after heavy overrun (run at least 1).
+        auto budget = [](double residual, double tframes) {
+            const int b = int(residual);
+            return b > 0 ? b : (int(tframes) > 0 ? int(tframes) : 1);
+        };
+        const int main_used = main_cpu_.run(budget(frame_main_, main_t));
+        frame_main_ = frame_main_ + main_t - double(main_used);
+
+        const int sub_used = sub_cpu_.run(budget(frame_sub_, sub_t));
+        frame_sub_ = frame_sub_ + sub_t - double(sub_used);
+
+        const int snd_used = sound_cpu_.run(budget(frame_snd_, snd_t));
+        frame_snd_ = frame_snd_ + snd_t - double(snd_used);
+
         if (k051960_) k051960_->update_line(line);
+    }
+    // Empty object-list walker at $6025 (bank 7): when $5900 head is 0 the
+    // LDU/LDA loop spins forever. Real PCB hits the watchdog; Pascal never
+    // hits this because timing keeps the list alive. Prefer a light RTS so
+    // attract/logo state is preserved instead of a full CPU reset.
+    if (main_cpu_.pc() == 0x6025) {
+        if (++watchdog_ > 30) {
+            watchdog_ = 0;
+            // Simulate RTS: pop return address from S (big-endian)
+            const uint16_t s = main_cpu_.s;
+            const uint16_t ret = uint16_t((uint16_t(main_read(s)) << 8) | main_read(uint16_t(s + 1)));
+            main_cpu_.s = uint16_t(s + 2);
+            main_cpu_.set_pc(ret);
+        }
+    } else {
+        watchdog_ = 0;
     }
 }
 
@@ -186,7 +226,7 @@ void Ajax::on_sound_cycles(int cycles) {
 uint8_t Ajax::main_read(uint16_t address) {
     if (address <= 0x01c0) {
         switch ((address & 0x1c0) >> 6) {
-            case 0: return 0;  // gun/analog stub
+            case 0: return uint8_t(gun_rand_++ * 17 + 0x5a);  // MAME: random/gun port
             case 4: return in1_;
             case 6:
                 switch (address & 3) {
@@ -217,7 +257,12 @@ void Ajax::main_write(uint16_t address, uint8_t value) {
     if (address <= 0x01c0) {
         switch ((address & 0x1c0) >> 6) {
             case 0:
-                if (address == 0 && sub_firq_enable_) sub_cpu_.set_firq(IrqLine::Hold);
+                if (address == 0) {
+                    if (sub_firq_enable_) sub_cpu_.set_firq(IrqLine::Hold);
+                } else {
+                    // MAME: non-zero offset in this mirror is watchdog kick
+                    watchdog_ = 0;
+                }
                 break;
             case 1: sound_cpu_.set_irq(IrqLine::Hold); break;
             case 2: sound_latch_ = value; break;
@@ -275,7 +320,10 @@ void Ajax::sub_write(uint16_t address, uint8_t value) {
         return;
     }
     if (address == 0x1800) {
+        // MAME ajax sub_bankswitch_w:
+        // bit6 RMRD, bit5 RVO wraparound, bit4 FIRQST, bits0-3 bank
         if (k052109_) k052109_->set_rmrd_line((value & 0x40) != 0);
+        if (k051316_) k051316_->set_wraparound((value & 0x20) != 0);
         sub_firq_enable_ = (value & 0x10) != 0;
         rom_bank2_ = value & 0x0f;
         return;
@@ -353,29 +401,76 @@ void Ajax::update_video() {
     if (!k052109_ || !k051960_ || !k051316_) return;
 
     k052109_->draw_tiles();
-    k051960_->update_sprites();
-    pens_.assign(size_t(kNativeWidth) * kNativeHeight, 0);
+    k051960_->update_sprites();  // DMA latch like MAME
 
-    // Layer order from update_video_ajax (simplified priority path).
-    k051960_->draw_sprites(1, pens_.data(), kNativeWidth, kNativeHeight, 112, 16);
-    k052109_->draw_layer(2, pens_.data(), kNativeWidth, kNativeHeight, 112, 16);
-    k051960_->draw_sprites(0, pens_.data(), kNativeWidth, kNativeHeight, 112, 16);
+    const int npix = kNativeWidth * kNativeHeight;
+    pens_.assign(size_t(npix), 0);
+    std::vector<uint8_t> pri(size_t(npix), 0);
+    std::vector<uint16_t> layer(size_t(npix), 0);
+
+    auto composite = [&](uint8_t layer_pri) {
+        for (int i = 0; i < npix; i++) {
+            if (layer[size_t(i)]) {
+                pens_[size_t(i)] = layer[size_t(i)];
+                pri[size_t(i)] = layer_pri;
+            }
+        }
+    };
+
+    // MAME screen_update(ajax):
+    //   B (tilemap 2) priority 1
+    //   if m_priority: zoom pri 4, A pri 2
+    //   else:          A pri 2, zoom pri 4
+    //   sprites with priority masks
+    //   F (tilemap 0) on top
+    std::fill(layer.begin(), layer.end(), 0);
+    k052109_->draw_layer(2, layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+    composite(0x01);  // GFX_PMASK_1
+
     if (priority_) {
-        k051960_->draw_sprites(3, pens_.data(), kNativeWidth, kNativeHeight, 112, 16);
-        k051316_->draw(pens_.data(), kNativeWidth, kNativeHeight, 112, 16);
-        k051960_->draw_sprites(2, pens_.data(), kNativeWidth, kNativeHeight, 112, 16);
-        k051960_->draw_sprites(5, pens_.data(), kNativeWidth, kNativeHeight, 112, 16);
-        k052109_->draw_layer(1, pens_.data(), kNativeWidth, kNativeHeight, 112, 16);
-        k051960_->draw_sprites(4, pens_.data(), kNativeWidth, kNativeHeight, 112, 16);
+        std::fill(layer.begin(), layer.end(), 0);
+        k051316_->draw(layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+        composite(0x04);
+        std::fill(layer.begin(), layer.end(), 0);
+        k052109_->draw_layer(1, layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+        composite(0x02);
     } else {
-        k051960_->draw_sprites(5, pens_.data(), kNativeWidth, kNativeHeight, 112, 16);
-        k052109_->draw_layer(1, pens_.data(), kNativeWidth, kNativeHeight, 112, 16);
-        k051316_->draw(pens_.data(), kNativeWidth, kNativeHeight, 112, 16);
-        k051960_->draw_sprites(4, pens_.data(), kNativeWidth, kNativeHeight, 112, 16);
-        k051960_->draw_sprites(3, pens_.data(), kNativeWidth, kNativeHeight, 112, 16);
-        k051960_->draw_sprites(2, pens_.data(), kNativeWidth, kNativeHeight, 112, 16);
+        std::fill(layer.begin(), layer.end(), 0);
+        k052109_->draw_layer(1, layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+        composite(0x02);
+        std::fill(layer.begin(), layer.end(), 0);
+        k051316_->draw(layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+        composite(0x04);
     }
-    k052109_->draw_layer(0, pens_.data(), kNativeWidth, kNativeHeight, 112, 16);
+
+
+    k051960_->draw_sprites_masked(pens_.data(), pri.data(), kNativeWidth, kNativeHeight, 112, 16);
+    // Layer F always on top (MAME draws with priority 0 after sprites)
+    std::fill(layer.begin(), layer.end(), 0);
+    k052109_->draw_layer(0, layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+    for (int i = 0; i < npix; i++) {
+        if (layer[size_t(i)]) pens_[size_t(i)] = layer[size_t(i)];
+    }
+    // Auto-freeze ROZ when logo is axis-aligned AND actually visible on screen.
+    // Prefer the first upright pose with many zoom pens (settle), not later spins.
+    if (k051316_ && !k051316_->frozen()) {
+        uint8_t c[16];
+        k051316_->control_snapshot(c);
+        const int16_t iyx = int16_t((uint16_t(c[4]) << 8) | c[5]);
+        const int16_t ixy = int16_t((uint16_t(c[8]) << 8) | c[9]);
+        const int16_t ix  = int16_t((uint16_t(c[2]) << 8) | c[3]);
+        const int16_t sy  = int16_t((uint16_t(c[6]) << 8) | c[7]);
+        // Count zoom-range pens already in pens_ (post-composite this frame)
+        int zc = 0;
+        for (int i = 0; i < npix; i++) {
+            uint16_t p = pens_[size_t(i)] & 0x7ff;
+            if (p >= 768 && p < 1024) zc++;
+        }
+        // Upright, logo visible near top (sy>0), animation-scale range
+        if (iyx == 0 && ixy == 0 && ix > 0x1000 && ix < 0x2000 && sy > 0 && zc > 500) {
+            k051316_->latch_and_freeze();
+        }
+    }
 
     // Rotate 90° CW: native 304×224 → 224×304
     for (int y = 0; y < kNativeHeight; y++) {
@@ -449,18 +544,14 @@ bool Ajax::load_roms(const std::string& rom_path, std::string* error) {
     if (sprites.empty()) return false;
     k051960_ = std::make_unique<K051960>(
         [](uint16_t& code, uint16_t& color, uint16_t& pri, uint16_t&) {
-            if (color & 0x20)
-                pri = 1;
-            else
-                pri = 0;
-            if (color & 0x10)
-                pri = 3;
-            else
-                pri = 2;
-            if ((color & 0x40) == 0)
-                pri = 5;
-            else
-                pri = 4;
+            // MAME ajax_state::sprite_callback — priority as GFX_PMASK bits:
+            //   bit4 (0x10) → over zoom (PMASK_4)
+            //   bit6 (0x40) clear → over A (PMASK_2)
+            //   bit5 (0x20) → over B (PMASK_1)
+            pri = 0;
+            if (color & 0x10) pri = uint16_t(pri | 0x04);
+            if ((color & 0x40) == 0) pri = uint16_t(pri | 0x02);
+            if (color & 0x20) pri = uint16_t(pri | 0x01);
             color = uint16_t(16 + (color & 0x0f));
             (void)code;
         },
@@ -468,15 +559,12 @@ bool Ajax::load_roms(const std::string& rom_path, std::string* error) {
     k051960_->set_irq_callback([this](bool state) {
         main_cpu_.set_irq(state ? IrqLine::Hold : IrqLine::Clear);
     });
-    // Real Ajax hardware doesn't wire the K051960's NMI output or the
-    // YM2151's timer-IRQ output to anything (see MAME's ajax.cpp: only
-    // k051960->irq_handler() feeds the main CPU's IRQ line; the YM2151
-    // device's irq_handler() is never connected at all). Wiring either of
-    // these here would let a spurious interrupt -- an NMI on the main CPU,
-    // or a YM2151 Timer A overflow landing on the sound Z80's single IM1
-    // vector, the same one used for "new sound command latched" -- derail
-    // the corresponding CPU exactly when the game legitimately uses those
-    // internal chip features, which is what was silencing the sound.
+    k051960_->set_nmi_callback([this](bool state) {
+        main_cpu_.set_nmi(state ? IrqLine::Hold : IrqLine::Clear);
+    });
+    ym2151_.set_irq_handler([this](bool state) {
+        sound_cpu_.set_irq(state ? IrqLine::Hold : IrqLine::Clear);
+    });
 
     std::vector<uint8_t> zoom(0x80000, 0);
     if (!loader.load(kZoom, zoom, error)) return false;

@@ -36,6 +36,7 @@ K051960::K051960(SpriteCallback cb, std::vector<uint8_t> rom, int /*bpp*/)
 
 void K051960::reset() {
     ram_.fill(0);
+    buffer_.fill(0);
     k051937_.fill(0);
     spriterombank_.fill(0);
     sorted_list_.fill(-1);
@@ -72,9 +73,11 @@ uint8_t K051960::k051937_read(uint8_t offset) {
 void K051960::k051937_write(uint8_t offset, uint8_t value) {
     offset &= 7;
     if (offset == 0) {
-        // MAME: bit0 = IRQ enable; ACK clears IRQ on 1→0 transition.
-        if ((k051937_[0] & 0x01) != 0 && (value & 0x01) == 0 && irq_cb_) irq_cb_(false);
-        if ((k051937_[0] & 0x02) != 0 && (value & 0x02) == 0 && firq_cb_) firq_cb_(false);
+        // Pascal k051960.pas: writing 1 to enable bits also CLEARS the IRQ line
+        // (acknowledge). MAME uses 1→0 transition; both need clear-on-enable for Ajax.
+        if ((value & 0x01) != 0 && irq_cb_) irq_cb_(false);
+        if ((value & 0x02) != 0 && firq_cb_) firq_cb_(false);
+        if ((value & 0x04) != 0 && nmi_cb_) nmi_cb_(false);
         k051937_[0] = value;
         irq_enabled_ = (value & 0x01) != 0;
         nmi_enabled_ = (value & 0x04) != 0;
@@ -89,10 +92,12 @@ void K051960::k051937_write(uint8_t offset, uint8_t value) {
 }
 
 void K051960::update_sprites() {
+    // MAME: sprite DMA latches RAM into buffer at frame start
+    buffer_ = ram_;
     sorted_list_.fill(-1);
     for (int f = 0; f < kNumSprites; f++) {
-        if ((ram_[size_t(f * 8)] & 0x80) != 0) {
-            sorted_list_[ram_[size_t(f * 8)] & 0x7f] = f * 8;
+        if ((buffer_[size_t(f * 8)] & 0x80) != 0) {
+            sorted_list_[size_t(buffer_[size_t(f * 8)] & 0x7f)] = f * 8;
         }
     }
 }
@@ -113,14 +118,14 @@ void K051960::draw_sprites(int pri, uint16_t* dest, int dest_w, int dest_h, int 
         if (offs < 0) continue;
 
         uint16_t nchar =
-            uint16_t(ram_[size_t(offs + 2)] | ((ram_[size_t(offs + 1)] & 0x1f) << 8));
-        uint16_t color = ram_[size_t(offs + 3)];
+            uint16_t(buffer_[size_t(offs + 2)] | ((buffer_[size_t(offs + 1)] & 0x1f) << 8));
+        uint16_t color = buffer_[size_t(offs + 3)];
         uint16_t priority = 0;
         uint16_t shadow = uint16_t(color & 0x80);
         if (callback_) callback_(nchar, color, priority, shadow);
         if (int(priority) != pri) continue;
 
-        const uint8_t size = uint8_t((ram_[size_t(offs + 1)] & 0xe0) >> 5);
+        const uint8_t size = uint8_t((buffer_[size_t(offs + 1)] & 0xe0) >> 5);
         const int w = kWidth[size];
         const int h = kHeight[size];
         if (w >= 2) nchar &= 0xfffe;
@@ -130,13 +135,13 @@ void K051960::draw_sprites(int pri, uint16_t* dest, int dest_w, int dest_h, int 
         if (w >= 8) nchar &= 0xffef;
         if (h >= 8) nchar &= 0xffdf;
 
-        int ox = (256 * ram_[size_t(offs + 6)] + ram_[size_t(offs + 7)]) & 0x1ff;
-        int oy = 256 - ((256 * ram_[size_t(offs + 4)] + ram_[size_t(offs + 5)]) & 0x1ff);
-        bool flipx = (ram_[size_t(offs + 6)] & 0x02) != 0;
-        bool flipy = (ram_[size_t(offs + 4)] & 0x02) != 0;
+        int ox = (256 * buffer_[size_t(offs + 6)] + buffer_[size_t(offs + 7)]) & 0x1ff;
+        int oy = 256 - ((256 * buffer_[size_t(offs + 4)] + buffer_[size_t(offs + 5)]) & 0x1ff);
+        bool flipx = (buffer_[size_t(offs + 6)] & 0x02) != 0;
+        bool flipy = (buffer_[size_t(offs + 4)] & 0x02) != 0;
 
-        const int zoom_x = (ram_[size_t(offs + 6)] & 0xfc) >> 2;
-        const int zoom_y = (ram_[size_t(offs + 4)] & 0xfc) >> 2;
+        const int zoom_x = (buffer_[size_t(offs + 6)] & 0xfc) >> 2;
+        const int zoom_y = (buffer_[size_t(offs + 4)] & 0xfc) >> 2;
         const float zx = float(0x100 - zoom_x) / 256.f;
         const float zy = float(0x100 - zoom_y) / 256.f;
 
@@ -179,6 +184,87 @@ void K051960::draw_sprites(int pri, uint16_t* dest, int dest_w, int dest_h, int 
                             dest[size_t(screen_y * dest_w + screen_x)] =
                                 uint16_t(color_base + pen);
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+void K051960::draw_sprites_masked(uint16_t* dest, uint8_t* pri_buf, int dest_w, int dest_h,
+                                  int crop_x, int crop_y) const {
+    if (!dest) return;
+
+    for (int pri_code = 0; pri_code < kNumSprites; pri_code++) {
+        const int offs = sorted_list_[size_t(pri_code)];
+        if (offs < 0) continue;
+
+        uint16_t nchar =
+            uint16_t(buffer_[size_t(offs + 2)] | ((buffer_[size_t(offs + 1)] & 0x1f) << 8));
+        uint16_t color = buffer_[size_t(offs + 3)];
+        uint16_t priority = 0;
+        uint16_t shadow = uint16_t(color & 0x80);
+        if (callback_) callback_(nchar, color, priority, shadow);
+        const uint8_t mask = uint8_t(priority);
+
+        const uint8_t size = uint8_t((buffer_[size_t(offs + 1)] & 0xe0) >> 5);
+        const int w = kWidth[size];
+        const int h = kHeight[size];
+        if (w >= 2) nchar &= 0xfffe;
+        if (h >= 2) nchar &= 0xfffd;
+        if (w >= 4) nchar &= 0xfffb;
+        if (h >= 4) nchar &= 0xfff7;
+        if (w >= 8) nchar &= 0xffef;
+        if (h >= 8) nchar &= 0xffdf;
+
+        int ox = (256 * buffer_[size_t(offs + 6)] + buffer_[size_t(offs + 7)]) & 0x1ff;
+        int oy = 256 - ((256 * buffer_[size_t(offs + 4)] + buffer_[size_t(offs + 5)]) & 0x1ff);
+        bool flipx = (buffer_[size_t(offs + 6)] & 0x02) != 0;
+        bool flipy = (buffer_[size_t(offs + 4)] & 0x02) != 0;
+
+        const int zoom_x = (buffer_[size_t(offs + 6)] & 0xfc) >> 2;
+        const int zoom_y = (buffer_[size_t(offs + 4)] & 0xfc) >> 2;
+        const float zx = float(0x100 - zoom_x) / 256.f;
+        const float zy = float(0x100 - zoom_y) / 256.f;
+
+        if (spriteflip_) {
+            ox = 512 - int(std::lround(zx * w * 16)) - ox;
+            oy = 256 - int(std::lround(zy * h * 16)) - oy;
+            flipx = !flipx;
+            flipy = !flipy;
+        }
+
+        const uint16_t color_base = uint16_t(color << 4);
+
+        for (int y = 0; y < h; y++) {
+            const int sy = oy + int(std::lround(zy * y * 16)) - crop_y;
+            for (int x = 0; x < w; x++) {
+                uint16_t c = nchar;
+                const int sx = ox + int(std::lround(zx * x * 16)) - crop_x;
+                if (flipx) c = uint16_t(c + kXOffset[w - 1 - x]);
+                else c = uint16_t(c + kXOffset[x]);
+                if (flipy) c = uint16_t(c + kYOffset[h - 1 - y]);
+                else c = uint16_t(c + kYOffset[y]);
+
+                const uint8_t* pixels = gfx_.element(int(c & sprite_mask_));
+                if (!pixels) continue;
+
+                const int dw = std::max(1, int(std::lround(16 * zx)));
+                const int dh = std::max(1, int(std::lround(16 * zy)));
+                for (int py = 0; py < dh; py++) {
+                    const int src_y = flipy ? (15 - (py * 16 / dh)) : (py * 16 / dh);
+                    const int screen_y = sy + py;
+                    if (screen_y < 0 || screen_y >= dest_h) continue;
+                    for (int px = 0; px < dw; px++) {
+                        const int src_x = flipx ? (15 - (px * 16 / dw)) : (px * 16 / dw);
+                        const int screen_x = sx + px;
+                        if (screen_x < 0 || screen_x >= dest_w) continue;
+                        const uint8_t pen = pixels[size_t(src_y * 16 + src_x)];
+                        if (!pen) continue;
+                        const size_t di = size_t(screen_y * dest_w + screen_x);
+                        if (pri_buf && (pri_buf[di] & mask) != 0) continue;
+                        dest[di] = uint16_t(color_base + pen);
                     }
                 }
             }

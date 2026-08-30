@@ -37,9 +37,10 @@
 #include "drivers/citycon.h"
 #include "drivers/commando.h"
 #include "drivers/actfancer.h"
-#include "drivers/galaga_hw.h"
 #include "drivers/ajax.h"
 #include "drivers/aliens.h"
+#include "drivers/simpsons.h"
+#include "drivers/galaga_hw.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -110,7 +111,8 @@ void print_supported_emulators() {
 		"    citycon, commando\n"
 		"    wwfsstar\n"
 		"    shadoww, gaiden, ninjagaiden\n"
-		"    actfancer, actfancr, aliens, ajax\n"
+		"    actfancer, actfancr\n"
+		"    ajax, typhoon, simpsons\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
@@ -390,19 +392,15 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "citycon") return std::make_unique<dsp::CityCon>();
     if (game == "commando") return std::make_unique<dsp::Commando>();
     if (game == "actfancer" || game == "actfancr") return std::make_unique<dsp::ActFancer>();
+    if (game == "ajax" || game == "typhoon") return std::make_unique<dsp::Ajax>();
+    if (game == "aliens") return std::make_unique<dsp::Aliens>();
+    if (game == "simpsons") return std::make_unique<dsp::Simpsons>();
     
 	if (game == "galaga") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Galaga);
 	if (game == "digdug") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::DigDug);
 	if (game == "xevious") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Xevious);
 	if (game == "sxevious") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::SuperXevious);
 	if (game == "bosco") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Bosconian);
-
-	if (game == "shadoww" || game == "shadow_warriors" || game == "gaiden" || game == "ninjagaiden")
-	    return std::make_unique<dsp::ShadowWarriors>();
-
-	if (game == "ajax") return std::make_unique<dsp::Ajax>();
-
-	if (game == "aliens") return std::make_unique<dsp::Aliens>();
 	
 
 	// computers
@@ -475,7 +473,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "pce" || game == "pcengine" || game == "tg16")
 	    return std::make_unique<dsp::PcEngine>();
 
-	
+	if (game == "shadoww" || game == "shadow_warriors" || game == "gaiden" ||
+	    game == "ninjagaiden")
+	    return std::make_unique<dsp::ShadowWarriors>();
 	
     return nullptr;
 }

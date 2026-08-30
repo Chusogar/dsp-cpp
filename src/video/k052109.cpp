@@ -1,6 +1,7 @@
 #include "video/k052109.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 namespace dsp {
@@ -14,7 +15,7 @@ K052109::K052109(Callback cb, std::vector<uint8_t> rom)
     layout.total = int(rom_.size() / 32);
     layout.planes = 4;
     layout.char_increment = 8 * 32;
-    // planes at 24,16,8,0 (bit offsets) matching Pascal gfx_set_desc_data(4,0,8*32,24,16,8,0)
+    // Pascal: gfx_set_desc_data(4,0,8*32,24,16,8,0); pc_x=0..7; pc_y=0*32..7*32
     layout.plane_offsets = {24, 16, 8, 0};
     layout.x_offsets = {0, 1, 2, 3, 4, 5, 6, 7};
     layout.y_offsets = {0 * 32, 1 * 32, 2 * 32, 3 * 32, 4 * 32, 5 * 32, 6 * 32, 7 * 32};
@@ -49,27 +50,30 @@ void K052109::clean_video_buffer() {
 
 uint8_t K052109::read(uint16_t address) {
     address &= 0x3fff;
-    if (!rmrd_) return ram_[address];
-
-    uint32_t code = (address & 0x1fff) >> 5;
-    uint16_t color = romsubbank_;
-    uint16_t flags = 0, priority = 0;
-    int bank = charrombank_[(color & 0x0c) >> 2] >> 2;
-    bank |= charrombank2_[(color & 0x0c) >> 2] >> 2;
-    if (has_extra_video_ram_) {
-        code |= uint32_t(color) << 8;
-    } else if (callback_) {
-        callback_(0, bank, code, color, flags, priority);
+    if (rmrd_) {
+        // ROM read mode
+        uint32_t code = uint32_t(ram_[0x2000 + (address & 0x7ff)]) +
+                        256u * uint32_t(ram_[0x4000 + (address & 0x7ff)]);
+        uint16_t color = romsubbank_;
+        uint16_t flags = 0, priority = 0;
+        int bank = charrombank_[(color & 0x0c) >> 2] >> 2;
+        bank |= charrombank2_[(color & 0x0c) >> 2] >> 2;
+        if (has_extra_video_ram_) {
+            code |= uint32_t(color) << 8;
+        } else if (callback_) {
+            callback_(0, bank, code, color, flags, priority);
+        }
+        uint32_t addr = (code << 5) + (address & 0x1f);
+        addr &= uint32_t(rom_.size() - 1);
+        return rom_[addr];
     }
-    uint32_t addr = (code << 5) + (address & 0x1f);
-    addr &= uint32_t(rom_.size() - 1);
-    return rom_[addr];
+    return ram_[address];
 }
 
 void K052109::write(uint16_t address, uint8_t value) {
     address &= 0x3fff;
     if ((address & 0x1fff) < 0x1800) {
-        if (address >= 0x4000) has_extra_video_ram_ = true;
+        // tilemap RAM — do NOT auto-set has_extra_video_ram (X-Men only)
         if (ram_[address] != value) {
             ram_[address] = value;
             dirty_[(address & 0x1800) >> 11][address & 0x7ff] = true;
@@ -95,7 +99,11 @@ void K052109::write(uint16_t address, uint8_t value) {
             romsubbank_ = value;
             break;
         case 0x1e80:
-            tileflip_enable_ = value & 0x06;
+            // Pascal: tileflip_enable := (val and $06) shr 1
+            if (tileflip_enable_ != ((value & 0x06) >> 1)) {
+                tileflip_enable_ = uint8_t((value & 0x06) >> 1);
+                clean_video_buffer();
+            }
             break;
         case 0x1f00:
             charrombank_[2] = value & 0x0f;
@@ -106,7 +114,6 @@ void K052109::write(uint16_t address, uint8_t value) {
         case 0x1f21:
         case 0x1f22:
         case 0x1f23:
-            // secondary banks used by some games
             charrombank2_[address & 3] = value;
             break;
         default:
@@ -138,7 +145,7 @@ void K052109::update_tile(int layer, int index) {
         const int sy = flip_y ? 7 - y : y;
         for (int x = 0; x < 8; x++) {
             const int sx = flip_x ? 7 - x : x;
-            const uint8_t pen = pixels[size_t(sy * 8 + sx)];
+            const uint8_t pen = pixels ? pixels[size_t(sy * 8 + sx)] : 0;
             layers_[size_t(layer)][size_t((pos_y * 8 + y) * kLayerW + (pos_x * 8 + x))] =
                 pen ? uint16_t(color_base + pen) : 0;
         }
@@ -151,7 +158,7 @@ void K052109::calc_scroll_1() {
         for (int offs = 0; offs < 0x20; offs++) {
             const int idx = 0x1a00 + 2 * (offs & 0xfff8);
             scroll_x_[1][size_t(offs)] =
-                uint16_t(ram_[size_t(idx)] + 256 * ram_[size_t(idx + 1)]) - 6;
+                uint16_t(int(ram_[size_t(idx)] + 256 * ram_[size_t(idx + 1)]) - 6);
         }
         scroll_tipo_[1] = 0;
     } else if ((scrollctrl_ & 0x03) == 0x03) {
@@ -159,15 +166,15 @@ void K052109::calc_scroll_1() {
         for (int offs = 0; offs < 0x100; offs++) {
             const int idx = 0x1a00 + 2 * offs;
             scroll_x_[1][size_t(offs)] =
-                uint16_t(ram_[size_t(idx)] + 256 * ram_[size_t(idx + 1)]) - 6;
+                uint16_t(int(ram_[size_t(idx)] + 256 * ram_[size_t(idx + 1)]) - 6);
         }
         scroll_tipo_[1] = 1;
     } else if ((scrollctrl_ & 0x04) == 0x04) {
-        scroll_x_[1][0] = uint16_t(ram_[0x1a00] + 256 * ram_[0x1a01]) - 6;
+        scroll_x_[1][0] = uint16_t(int(ram_[0x1a00] + 256 * ram_[0x1a01]) - 6);
         for (int offs = 0; offs < 0x40; offs++) scroll_y_[1][size_t(offs)] = ram_[0x1800 + offs];
         scroll_tipo_[1] = 2;
     } else {
-        scroll_x_[1][0] = uint16_t(ram_[0x1a00] + (uint16_t(ram_[0x1a01]) << 8)) - 6;
+        scroll_x_[1][0] = uint16_t(int(ram_[0x1a00] + (uint16_t(ram_[0x1a01]) << 8)) - 6);
         scroll_y_[1][0] = ram_[0x180c];
         scroll_tipo_[1] = 3;
     }
@@ -179,7 +186,7 @@ void K052109::calc_scroll_2() {
         for (int offs = 0; offs < 0x20; offs++) {
             const int idx = 0x3a00 + 2 * (offs & 0xfff8);
             scroll_x_[2][size_t(offs)] =
-                uint16_t(ram_[size_t(idx)] + 256 * ram_[size_t(idx + 1)]) - 6;
+                uint16_t(int(ram_[size_t(idx)] + 256 * ram_[size_t(idx + 1)]) - 6);
         }
         scroll_tipo_[2] = 0;
     } else if ((scrollctrl_ & 0x18) == 0x18) {
@@ -187,15 +194,15 @@ void K052109::calc_scroll_2() {
         for (int offs = 0; offs < 0x100; offs++) {
             const int idx = 0x3a00 + 2 * offs;
             scroll_x_[2][size_t(offs)] =
-                uint16_t(ram_[size_t(idx)] + 256 * ram_[size_t(idx + 1)]) - 6;
+                uint16_t(int(ram_[size_t(idx)] + 256 * ram_[size_t(idx + 1)]) - 6);
         }
         scroll_tipo_[2] = 1;
     } else if ((scrollctrl_ & 0x20) == 0x20) {
-        scroll_x_[2][0] = uint16_t(ram_[0x3a00] + 256 * ram_[0x3a01]) - 6;
+        scroll_x_[2][0] = uint16_t(int(ram_[0x3a00] + 256 * ram_[0x3a01]) - 6);
         for (int offs = 0; offs < 0x40; offs++) scroll_y_[2][size_t(offs)] = ram_[0x3800 + offs];
         scroll_tipo_[2] = 2;
     } else {
-        scroll_x_[2][0] = uint16_t(ram_[0x3a00] + (uint16_t(ram_[0x3a01]) << 8)) - 6;
+        scroll_x_[2][0] = uint16_t(int(ram_[0x3a00] + (uint16_t(ram_[0x3a01]) << 8)) - 6);
         scroll_y_[2][0] = ram_[0x380c];
         scroll_tipo_[2] = 3;
     }
@@ -219,14 +226,13 @@ void K052109::draw_layer(int layer, uint16_t* dest, int dest_w, int dest_h, int 
     if (layer < 0 || layer > 2 || !dest) return;
     const auto& src = layers_[size_t(layer)];
 
-    // Layer 0 is fixed (no scroll).
+    // Layer 0 is fixed (no scroll)
     if (layer == 0) {
         for (int y = 0; y < dest_h; y++) {
-            const int src_y = (y + crop_y) & (kLayerH - 1);
+            const int sy = (y + crop_y) & (kLayerH - 1);
             for (int x = 0; x < dest_w; x++) {
-                const int src_x = (x + crop_x) & (kLayerW - 1);
-                const uint16_t pen = src[size_t(src_y * kLayerW + src_x)];
-                if (pen) dest[size_t(y * dest_w + x)] = pen;
+                const int sx = (x + crop_x) & (kLayerW - 1);
+                dest[size_t(y * dest_w + x)] = src[size_t(sy * kLayerW + sx)];
             }
         }
         return;
@@ -234,46 +240,39 @@ void K052109::draw_layer(int layer, uint16_t* dest, int dest_w, int dest_h, int 
 
     const uint8_t tipo = scroll_tipo_[size_t(layer)];
     if (tipo == 3) {
-        // Global X/Y scroll
-        const int sx = int(scroll_x_[size_t(layer)][0]);
-        const int sy = int(scroll_y_[size_t(layer)][0]);
+        // Global scroll
+        const int sx0 = int(scroll_x_[size_t(layer)][0]);
+        const int sy0 = int(scroll_y_[size_t(layer)][0]);
         for (int y = 0; y < dest_h; y++) {
-            const int src_y = (y + crop_y + sy) & (kLayerH - 1);
+            const int sy = (y + crop_y + sy0) & (kLayerH - 1);
             for (int x = 0; x < dest_w; x++) {
-                const int src_x = (x + crop_x + sx) & (kLayerW - 1);
-                const uint16_t pen = src[size_t(src_y * kLayerW + src_x)];
-                if (pen) dest[size_t(y * dest_w + x)] = pen;
+                const int sx = (x + crop_x + sx0) & (kLayerW - 1);
+                dest[size_t(y * dest_w + x)] = src[size_t(sy * kLayerW + sx)];
             }
         }
     } else if (tipo == 0 || tipo == 1) {
-        // Row scroll: type 0 groups of 8 rows share scroll, type 1 per-row
-        const int sy = int(scroll_y_[size_t(layer)][0]);
+        // Row scroll: block height 8 (tipo0) or 1 (tipo1)
+        const int block = (tipo == 0) ? 8 : 1;
+        const int sy0 = int(scroll_y_[size_t(layer)][0]);
         for (int y = 0; y < dest_h; y++) {
-            const int src_y = (y + crop_y + sy) & (kLayerH - 1);
-            int row_idx;
-            if (tipo == 0) {
-                row_idx = ((y + crop_y) >> 3) & 0x1f;
-            } else {
-                row_idx = (y + crop_y) & 0xff;
-            }
-            const int sx = int(scroll_x_[size_t(layer)][size_t(row_idx)]);
+            const int src_y = (y + crop_y + sy0) & (kLayerH - 1);
+            const int row = src_y / block;
+            const int sx0 = int(scroll_x_[size_t(layer)][size_t(row & 0xff)]);
             for (int x = 0; x < dest_w; x++) {
-                const int src_x = (x + crop_x + sx) & (kLayerW - 1);
-                const uint16_t pen = src[size_t(src_y * kLayerW + src_x)];
-                if (pen) dest[size_t(y * dest_w + x)] = pen;
+                const int sx = (x + crop_x + sx0) & (kLayerW - 1);
+                dest[size_t(y * dest_w + x)] = src[size_t(src_y * kLayerW + sx)];
             }
         }
     } else if (tipo == 2) {
         // Column scroll
-        const int sx = int(scroll_x_[size_t(layer)][0]);
+        const int sx0 = int(scroll_x_[size_t(layer)][0]);
         for (int x = 0; x < dest_w; x++) {
-            const int col_idx = ((x + crop_x) >> 3) & 0x3f;
-            const int sy = int(scroll_y_[size_t(layer)][size_t(col_idx)]);
+            const int src_x = (x + crop_x + sx0) & (kLayerW - 1);
+            const int col = src_x / 8;
+            const int sy0 = int(scroll_y_[size_t(layer)][size_t(col & 0x3f)]);
             for (int y = 0; y < dest_h; y++) {
-                const int src_y = (y + crop_y + sy) & (kLayerH - 1);
-                const int src_x = (x + crop_x + sx) & (kLayerW - 1);
-                const uint16_t pen = src[size_t(src_y * kLayerW + src_x)];
-                if (pen) dest[size_t(y * dest_w + x)] = pen;
+                const int sy = (y + crop_y + sy0) & (kLayerH - 1);
+                dest[size_t(y * dest_w + x)] = src[size_t(sy * kLayerW + src_x)];
             }
         }
     }

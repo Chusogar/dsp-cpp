@@ -54,10 +54,30 @@ public:
     int sample_rate() const override { return YM2151::kSampleRate; }
     // Debug accessors
     uint16_t main_pc() const { return main_cpu_.pc(); }
+    uint16_t main_x() const { return main_cpu_.x; }
+    uint16_t main_u() const { return main_cpu_.u; }
+    uint16_t main_s() const { return main_cpu_.s; }
     uint16_t sub_pc() const { return sub_cpu_.pc(); }
     uint16_t sound_pc() const { return sound_cpu_.pc(); }
     uint8_t rom_bank1() const { return rom_bank1_; }
     uint8_t main_read_pub(uint16_t a) { return main_read(a); }
+    uint32_t palette_at(int i) const { return (i>=0 && i<0x800) ? palette_[size_t(i)] : 0; }
+    const uint16_t* zoom_layer() const {
+        return k051316_ ? k051316_->layer_data() : nullptr;
+    }
+    int zoom_layer_nonzero() const {
+        if (!k051316_) return 0;
+        const uint16_t* p = k051316_->layer_data();
+        int n = 0;
+        for (int i = 0; i < 512*512; i++) if (p[i]) n++;
+        return n;
+    }
+    void zoom_ctrl(uint8_t out[16]) const {
+        if (k051316_) k051316_->control_snapshot(out);
+        else for (int i = 0; i < 16; i++) out[i] = 0;
+    }
+    bool zoom_wrap() const { return k051316_ ? k051316_->wraparound() : false; }
+    bool zoom_frozen() const { return k051316_ ? k051316_->frozen() : false; }
 
     const char* title() const override { return "Ajax"; }
 
@@ -101,11 +121,17 @@ private:
     uint8_t rom_bank1_ = 0;
     uint8_t rom_bank2_ = 0;
     bool sub_firq_enable_ = false;
+    uint8_t gun_rand_ = 0;
+    int watchdog_ = 0;
     bool priority_ = false;
 
     uint8_t in0_ = 0xff, in1_ = 0xff, in2_ = 0xff;
     uint8_t dsw_a_ = 0xff, dsw_b_ = 0x5a, dsw_c_ = 0xff;
 
+    // Pascal-style residual cycle budgets (frame_main/sub/snd)
+    double frame_main_ = 0;
+    double frame_sub_ = 0;
+    double frame_snd_ = 0;
     int64_t audio_accumulator_ = 0;
     std::vector<int16_t> audio_;
     std::vector<std::string> warnings_;

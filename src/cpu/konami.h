@@ -38,6 +38,7 @@ public:
 
     uint32_t clock() const { return clock_; }
     uint16_t pc() const { return pc_; }
+    void set_pc(uint16_t pc) { pc_ = pc; }
 
     uint8_t a = 0, b = 0, dp = 0;
     uint16_t x = 0, y = 0, u = 0, s = 0;
