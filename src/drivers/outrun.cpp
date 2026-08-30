@@ -1,10 +1,10 @@
 #include "drivers/outrun.h"
- 
+
 #include <algorithm>
- 
+
 namespace dsp {
 namespace {
- 
+
 const std::vector<RomEntry> kMainRom = {
     {"epr-10380b.133", 0x10000, 0x00000, 0x1f6cadad},
     {"epr-10382b.118", 0x10000, 0x00001, 0xc4c3fa1a},
@@ -48,10 +48,10 @@ const std::vector<RomEntry> kPcmRom = {
     {"opr-10189.70", 0x8000, 0x40000, 0x01366b54},
     {"opr-10188.71", 0x8000, 0x50000, 0xbad30ad9},
 };
- 
+
 }  // namespace
- 
- 
+
+
 Outrun::Outrun()
     : main_cpu_(kMainClock),
       sub_cpu_(kMainClock),
@@ -97,14 +97,15 @@ Outrun::Outrun()
         if (z80_reset_) sound_cpu_.reset();
     });
 }
- 
+
 bool Outrun::init(const std::string& rom_path, std::string* error) {
     if (!load_roms(rom_path, error)) return false;
+    video_.cram_words = 0x1000;  // sprites live in the upper half of the colour RAM
     video_.init_palette_luts();
     reset();
     return true;
 }
- 
+
 bool Outrun::load_roms(const std::string& rom_path, std::string* error) {
     RomLoader loader;
     if (!loader.open(rom_path, error)) return false;
@@ -130,7 +131,7 @@ bool Outrun::load_roms(const std::string& rom_path, std::string* error) {
     }
     return true;
 }
- 
+
 void Outrun::reset() {
     mapper_.reset();
     main_cpu_.reset();
@@ -160,7 +161,7 @@ void Outrun::reset() {
     audio_.clear();
     std::fill(framebuffer_.begin(), framebuffer_.end(), 0);
 }
- 
+
 void Outrun::set_inputs(const MachineInputs& inputs) {
     in0_ = uint16_t(0x00ef | (in0_ & 0x10));
     if (inputs.player1.start) in0_ &= ~0x0008;
@@ -180,21 +181,21 @@ void Outrun::set_inputs(const MachineInputs& inputs) {
     analog_gas_ = (inputs.player1.up || inputs.player1.button1) ? 0xff : 0;
     analog_brake_ = (inputs.player1.down || inputs.player1.button2) ? 0xff : 0;
 }
- 
+
 void Outrun::set_dip_switch(int bank, uint8_t value) {
     if (bank == 0) dsw_a_ = value;
     if (bank == 1) dsw_b_ = value;
 }
- 
+
 void Outrun::drain_audio(std::vector<int16_t>& out) {
     out.swap(audio_);
     audio_.clear();
 }
- 
+
 void Outrun::swap_road() {
     for (int i = 0; i < 0x800; i++) std::swap(road_ram_[size_t(i)], road_buffer_[size_t(i)]);
 }
- 
+
 uint16_t Outrun::io_read(uint16_t address) {
     switch (address & 0x38) {
         case 0x00:
@@ -219,11 +220,11 @@ uint16_t Outrun::io_read(uint16_t address) {
     }
     return 0xffff;
 }
- 
+
 void Outrun::io_write(uint16_t address, uint16_t value) {
     if ((address & 0x38) == 0) ppi_.write(address & 3, uint8_t(value));
 }
- 
+
 uint16_t Outrun::main_read(uint32_t address) {
     address &= 0xffffff;
     if (mapper_.contains(0, address)) {
@@ -283,7 +284,7 @@ uint16_t Outrun::main_read(uint32_t address) {
     if (!mapped) result = mapper_.read_reg(uint8_t((address >> 1) & 0x1f));
     return result;
 }
- 
+
 void Outrun::main_write(uint32_t address, uint16_t value) {
     address &= 0xffffff;
     bool mapped = false;
@@ -350,22 +351,22 @@ void Outrun::main_write(uint32_t address, uint16_t value) {
         }
     }
 }
- 
+
 uint16_t Outrun::sub_read(uint32_t address) {
     address &= 0xfffff;
     if (address <= 0x5ffff) return rom2_[(address & 0x3ffff) >> 1];
     if (address >= 0x60000 && address <= 0x7ffff) return cpu1ram_[(address & 0x7fff) >> 1];
     if (address >= 0x80000 && address <= 0x8ffff) return road_ram_[(address & 0xfff) >> 1];
-return 0xffff;
+    return 0xffff;
 }
- 
+
 void Outrun::sub_write(uint32_t address, uint16_t value) {
     address &= 0xfffff;
     if (address >= 0x60000 && address <= 0x67fff) cpu1ram_[(address & 0x7fff) >> 1] = value;
     else if (address >= 0x80000 && address <= 0x8ffff) road_ram_[(address & 0xfff) >> 1] = value;
     else if (address >= 0x90000 && address <= 0x9ffff) road_control_ = uint8_t(value & 3);
 }
- 
+
 uint8_t Outrun::sub_read_byte(uint32_t address) {
     address &= 0xfffff;
     if (address >= 0x90000 && address <= 0x9ffff) {
@@ -380,7 +381,7 @@ uint8_t Outrun::sub_read_byte(uint32_t address) {
     const uint16_t word = sub_read(address);
     return (address & 1) ? uint8_t(word) : uint8_t(word >> 8);
 }
- 
+
 void Outrun::sub_write_byte(uint32_t address, uint8_t value) {
     address &= 0xfffff;
     if (address >= 0x90000 && address <= 0x9ffff) {
@@ -392,17 +393,17 @@ void Outrun::sub_write_byte(uint32_t address, uint8_t value) {
     else old = uint16_t((old & 0x00ff) | (uint16_t(value) << 8));
     sub_write(address, old);
 }
- 
+
 uint8_t Outrun::sound_read(uint16_t address) {
     if (address >= 0xf000 && address <= 0xf7ff) return pcm_.read(address);
     return sound_rom_[address];
 }
- 
+
 void Outrun::sound_write(uint16_t address, uint8_t value) {
     if (address >= 0xf000 && address <= 0xf7ff) pcm_.write(address, value);
     else if (address >= 0xf800) sound_rom_[address] = value;
 }
- 
+
 uint8_t Outrun::sound_in(uint16_t port) {
     switch (port & 0xff) {
         case 0x00 ... 0x3f:
@@ -416,14 +417,14 @@ uint8_t Outrun::sound_in(uint16_t port) {
     }
     return 0xff;
 }
- 
+
 void Outrun::sound_out(uint16_t port, uint8_t value) {
     if ((port & 0xff) <= 0x3f) {
         if ((port & 1) == 0) ym_.select_register(value);
         else ym_.write(value);
     }
 }
- 
+
 void Outrun::on_sound_cycles(int cycles) {
     ym_.run_timers(cycles);
     pcm_acc_ += int64_t(cycles) * pcm_.tick_rate();
@@ -438,7 +439,7 @@ void Outrun::on_sound_cycles(int cycles) {
         audio_.push_back(int16_t(std::clamp(sample, int32_t(-32768), int32_t(32767))));
     }
 }
- 
+
 void Outrun::update_video() {
     // Attract writes CRAM before PPI port C bit 5. If the palette is live, draw
     // even while the screen-enable bit is still clear.
@@ -475,7 +476,7 @@ void Outrun::update_video() {
     draw_sprites_outrun(video_, framebuffer_.data(), sprite_rom_, sprite_banks_, 3, 0x1000);
     video_.blit_text(framebuffer_.data(), text_high_);
 }
- 
+
 void Outrun::run_frame() {
     const int main_cycles =
         int(double(kMainClock) / kFramesPerSecond / (kScanlines * kCpuSync) + 0.5);
@@ -500,5 +501,5 @@ void Outrun::run_frame() {
         }
     }
 }
- 
+
 }  // namespace dsp

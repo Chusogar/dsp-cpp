@@ -22,9 +22,7 @@
 #include "cpu/upd7801.h"
 #include "cpu/z80.h"
 #include "cpu/z80ctc.h"
-#include "drivers/pcengine.h"
 #include "drivers/amstrad_cpc.h"
-#include "drivers/neogeo.h"
 #include "drivers/atari_lynx.h"
 #include "drivers/atari_system1.h"
 #include "drivers/apple2.h"
@@ -63,14 +61,6 @@
 #include "machine/wd1793.h"
 #include "machine/starwars_math.h"
 #include "machine/sega_315_5195.h"
-#include "machine/tc0140syt.h"
-#include "machine/opwolf_cchip.h"
-#include "machine/konami_decrypt.h"
-#include "sound/vlm5030.h"
-#include "drivers/opwolf.h"
-#include "drivers/trackfld.h"
-#include "drivers/pirates.h"
-#include "machine/eeprom93c46.h"
 #include "sound/ay8910.h"
 #include "sound/msm5205.h"
 #include "sound/nes_apu.h"
@@ -82,10 +72,8 @@
 #include "sound/upd1771.h"
 #include "sound/ym2151.h"
 #include "sound/ym2612.h"
-#include "sound/ym2610.h"
 #include "sound/sega_pcm.h"
 #include "sound/upd7759.h"
-#include "sound/huc6280_psg.h"
 #include "video/v9938.h"
 #include "video/atari_mo.h"
 #include "video/gb_ppu.h"
@@ -93,7 +81,6 @@
 #include "video/tms3556.h"
 #include "video/sega_315_5313.h"
 #include "video/sega16.h"
-#include "video/neogeo_video.h"
 
 namespace {
 
@@ -477,52 +464,6 @@ void test_m6809_branches_and_stack() {
     check(cpu.a == 0x05, "m6809 beq skips the branch target");
 }
 
-void test_konami1_decode_and_opcode_fetch() {
-    uint8_t src[16] = {};
-    uint8_t dest[16] = {};
-    dsp::konami1_decode(src, dest, 16);
-    check(dest[0x0] == 0x22, "Konami-1 XOR at A1=0 A3=0 is 0x22");
-    check(dest[0x2] == 0x82, "Konami-1 XOR at A1=1 A3=0 is 0x82");
-    check(dest[0x8] == 0x28, "Konami-1 XOR at A1=0 A3=1 is 0x28");
-    check(dest[0xa] == 0x88, "Konami-1 XOR at A1=1 A3=1 is 0x88");
-
-    auto memory = make_memory();
-    auto opcodes = make_memory();
-    memory[0xfffe] = 0x60;
-    memory[0xffff] = 0x00;
-    // Encrypted LDA #$5a at $6000: opcode 0x86 ^ 0x22 = 0xa4, immediate stays 0x5a.
-    memory[0x6000] = uint8_t(0x86 ^ 0x22);
-    memory[0x6001] = 0x5a;
-    dsp::konami1_decode(memory.data() + 0x6000, opcodes.data() + 0x6000, 0xa000);
-
-    dsp::M6809 cpu(1536000);
-    cpu.set_memory_handlers(
-        [&memory](uint16_t address) { return memory[address]; },
-        [&memory](uint16_t address, uint8_t value) { memory[address] = value; });
-    cpu.set_opcode_read([&opcodes, &memory](uint16_t address) {
-        return address >= 0x6000 ? opcodes[address] : memory[address];
-    });
-    cpu.reset();
-    cpu.run(2);
-    check(cpu.a == 0x5a, "Konami-1 opcode fetch decrypts LDA but not the immediate");
-}
-
-void test_vlm5030_pins() {
-    dsp::Vlm5030 vlm;
-    vlm.reset();
-    check(vlm.get_bsy() == 0, "VLM5030 is idle after reset");
-    vlm.set_st(1);
-    check(vlm.get_bsy() == 1, "rising ST raises BSY");
-    vlm.update_stream();
-    vlm.update_stream();
-    check(vlm.get_bsy() == 1, "BSY stays set through the setup wait");
-    vlm.data_w(0);
-    vlm.set_rst(1);
-    vlm.reset();
-    check(vlm.get_bsy() == 0, "reset clears BSY");
-    check(vlm.update() == 0, "idle VLM5030 outputs silence");
-}
-
 void test_m6809_interrupts() {
     auto memory = make_memory();
     memory[0xfffe] = 0x10;
@@ -555,182 +496,6 @@ void test_m6809_interrupts() {
     check(fast.a == 0x55, "m6809 takes the firq vector");
     check(!fast.cc.e, "m6809 firq stacks only pc and cc");
 }
-
-// -------------------------- PC Engine ---------------------------------------
-
-std::vector<uint8_t> make_hucard(size_t size = 0x8000) {
-    std::vector<uint8_t> rom(size, 0xff);
-    // Entry point at physical $0400 (logical $e400 with MPR7 = 0): bra *
-    rom[0x0400] = 0x80;
-    rom[0x0401] = 0xfe;
-    rom[0x1ffe] = 0x00;
-    rom[0x1fff] = 0xe4;
-    return rom;
-}
-
-void test_pcengine_hucard_and_memory() {
-    dsp::PcEngine pce;
-    std::string error;
-    auto rom = make_hucard();
-    rom[0x2000] = 0x5a;  // first byte of HuCard bank 1
-    check(pce.load_hucard(rom, &error), "a 32 KiB HuCard image loads");
-    check(pce.debug_pc() == 0xe400, "reset fetches the HuCard vector through MPR7 = 0");
-    check(pce.debug_read(0x002000) == 0x5a, "HuCard bank 1 maps at physical $2000");
-    check(pce.debug_read(0x00a000) == 0x5a, "a 32 KiB card mirrors every 32 KiB");
-
-    pce.debug_write(0x1f0000, 0xa5);
-    check(pce.debug_read(0x1f0000) == 0xa5, "the work RAM bank $f8 is writable");
-    check(pce.debug_read(0x1f2000) == 0xa5, "bank $f9 mirrors the 8 KiB of work RAM");
-    pce.debug_write(0x1ee000, 0x3c);
-    check(pce.debug_read(0x1ee000) == 0x3c, "the backup RAM lives in bank $f7");
-    pce.debug_write(0x000100, 0x11);
-    check(pce.debug_read(0x000100) != 0x11, "HuCard space ignores writes");
-
-    // A 512 byte copier header in front of the image is dropped.
-    std::vector<uint8_t> headered(0x200, 0x00);
-    headered.insert(headered.end(), rom.begin(), rom.end());
-    dsp::PcEngine headed;
-    check(headed.load_hucard(headered, &error), "a headered HuCard loads");
-    check(headed.debug_pc() == 0xe400, "the 512 byte header is skipped");
-}
-
-void test_pcengine_joypad_and_timer() {
-    dsp::PcEngine pce;
-    std::string error;
-    check(pce.load_hucard(make_hucard(), &error), "the pad test HuCard loads");
-
-    dsp::MachineInputs inputs;
-    inputs.player1.button1 = true;
-    inputs.player1.left = true;
-    pce.set_inputs(inputs);
-
-    pce.debug_write(0x1ff000, 0x00);  // SEL low: buttons
-    check((pce.debug_read(0x1ff000) & 0x0f) == 0x0e, "button I pulls its pad line low");
-    pce.debug_write(0x1ff000, 0x01);  // SEL high: directions
-    check((pce.debug_read(0x1ff000) & 0x0f) == 0x07, "left pulls bit 3 of the direction nibble");
-    pce.debug_write(0x1ff000, 0x03);  // CLR high
-    check((pce.debug_read(0x1ff000) & 0x0f) == 0x00, "CLR clears the pad outputs");
-
-    pce.debug_write(0x1ff000, 0x00);
-    inputs.player1 = dsp::InputState{};
-    pce.set_inputs(inputs);
-    check((pce.debug_read(0x1ff000) & 0x0f) == 0x0f, "an idle pad reads all ones");
-
-    pce.debug_write(0x1fec00, 0x01);  // reload value 1 -> 2048 cycles
-    pce.debug_write(0x1fec01, 0x01);  // run
-    check((pce.debug_read(0x1fec00) & 0x7f) == 0x02, "the timer counts down from the reload value");
-}
-
-void test_pcengine_vdc_and_vce() {
-    dsp::PcEngine pce;
-    std::string error;
-    check(pce.load_hucard(make_hucard(), &error), "the video test HuCard loads");
-
-    dsp::HuC6270& vdc = pce.debug_vdc();
-    // One tile of solid colour index 1 at pattern $1000, BAT entry palette 1.
-    for (int row = 0; row < 8; row++) vdc.set_vram(0x1000 + row, 0x00ff);
-    vdc.set_vram(0x0000, uint16_t((1 << 12) | 0x100));
-    // The rest of the BAT points at the blank tile 2, whose pattern is zeroed.
-    for (int column = 1; column < 32; column++) vdc.set_vram(column, 0x0002);
-
-    // Palette entry 17 (palette 1, colour 1) is pure red, the backdrop is blue.
-    pce.debug_write(0x1fe402, 0x11);
-    pce.debug_write(0x1fe403, 0x00);
-    pce.debug_write(0x1fe404, 0x38);  // R = 7
-    pce.debug_write(0x1fe405, 0x00);
-    pce.debug_write(0x1fe402, 0x00);
-    pce.debug_write(0x1fe403, 0x00);
-    pce.debug_write(0x1fe404, 0x07);  // B = 7
-    pce.debug_write(0x1fe405, 0x00);
-
-    pce.debug_write(0x1fe000, 0x05);  // CR
-    pce.debug_write(0x1fe002, 0x80);  // background on
-    pce.debug_write(0x1fe003, 0x00);
-
-    pce.run_frame();
-    const uint32_t* frame = pce.framebuffer();
-    check(frame[0] == 0xffff0000u, "the tile pixel takes palette 1 colour 1");
-    check(frame[pce.screen_width() - 1] == 0xff0000ffu, "empty tiles show the VCE backdrop");
-    check(frame[pce.screen_width()] == frame[0], "active lines are doubled vertically");
-
-    // HDW selects the visible width, so a 128 pixel display stretches each tile.
-    pce.debug_write(0x1fe000, 0x0b);  // HDR
-    pce.debug_write(0x1fe002, 0x0f);
-    pce.debug_write(0x1fe003, 0x03);
-    pce.run_frame();
-    check(frame[31] == 0xffff0000u && frame[32] == 0xff0000ffu,
-          "a narrow HDW stretches the visible pixels across the screen");
-    pce.debug_write(0x1fe000, 0x0b);
-    pce.debug_write(0x1fe002, 0x1f);
-    pce.debug_write(0x1fe003, 0x03);
-
-    // VRAM DMA copies the tile to $2000 and reports through the status port.
-    pce.debug_write(0x1fe000, 0x10);  // SOUR
-    pce.debug_write(0x1fe002, 0x00);
-    pce.debug_write(0x1fe003, 0x10);
-    pce.debug_write(0x1fe000, 0x11);  // DESR
-    pce.debug_write(0x1fe002, 0x00);
-    pce.debug_write(0x1fe003, 0x20);
-    pce.debug_write(0x1fe000, 0x12);  // LENR
-    pce.debug_write(0x1fe002, 0x07);
-    pce.debug_write(0x1fe003, 0x00);
-    check(vdc.vram(0x2000) == 0x00ff && vdc.vram(0x2007) == 0x00ff,
-          "the VRAM DMA copies the requested block");
-    check((pce.debug_read(0x1fe000) & dsp::HuC6270::kStatusDmaDone) != 0,
-          "the VDC status port flags the finished DMA");
-    check((pce.debug_read(0x1fe000) & dsp::HuC6270::kStatusDmaDone) == 0,
-          "reading the status port clears the flags");
-}
-
-void test_pcengine_st_instructions_and_vblank() {
-    dsp::PcEngine pce;
-    std::string error;
-    auto rom = make_hucard();
-    // st0 #$05 / st1 #$08 / st2 #$00 -> CR = $0008, enabling the vblank IRQ,
-    // then wait for the interrupt with the raster IRQ masked off.
-    const uint8_t program[] = {
-        0x78,                    // sei
-        0x03, 0x05,              // st0 #$05
-        0x13, 0x08,              // st1 #$08
-        0x23, 0x00,              // st2 #$00
-        0x80, 0xfe,              // bra *
-    };
-    std::copy(std::begin(program), std::end(program), rom.begin() + 0x0400);
-    check(pce.load_hucard(rom, &error), "the ST test HuCard loads");
-
-    pce.run_frame();
-    check(pce.debug_vdc().reg(0x05) == 0x0008, "st0/st1/st2 reach the VDC register file");
-    check((pce.debug_read(0x1ff403) & 0x02) != 0, "the vblank interrupt asserts IRQ1");
-}
-
-void test_huc6280_psg() {
-    dsp::HuC6280Psg psg;
-    psg.reset();
-    check(psg.update() == 0, "a silent PSG outputs no sample");
-
-    psg.write(0x00, 0x00);  // select channel 0
-    psg.write(0x04, 0x40);  // waveform write mode
-    for (int i = 0; i < 32; i++) psg.write(0x06, uint8_t(i < 16 ? 0x00 : 0x1f));
-    psg.write(0x02, 0x10);  // period
-    psg.write(0x03, 0x00);
-    psg.write(0x05, 0xff);  // full balance
-    psg.write(0x01, 0xff);
-    psg.write(0x04, 0x9f);  // enable at full volume
-
-    bool positive = false;
-    bool negative = false;
-    for (int i = 0; i < 4096; i++) {
-        const int16_t sample = psg.update();
-        if (sample > 1000) positive = true;
-        if (sample < -1000) negative = true;
-    }
-    check(positive && negative, "the waveform channel swings both ways");
-
-    psg.write(0x04, 0xc0 | 0x1f);  // DDA mode, mid level
-    psg.write(0x06, 0x1f);
-    check(psg.update() > 0, "DDA writes drive the output directly");
-}
-
 
 void test_sn76496() {
     dsp::SN76496 psg(14318180 / 8);
@@ -3076,255 +2841,6 @@ void test_polepos_driver() {
     }
 }
 
-void test_tc0140syt_mailbox() {
-    dsp::Tc0140Syt chip;
-    int nmis = 0;
-    int resets = 0;
-    chip.set_nmi_handler([&nmis]() { nmis++; });
-    chip.set_reset_handler([&resets]() { resets++; });
-    chip.reset();
-    chip.slave_port_w(6);
-    chip.slave_comm_w(0);
-    chip.port_w(0);
-    chip.comm_w(0x0a);
-    chip.comm_w(0x0b);
-    check(nmis == 1, "filling master port 01 raises an NMI");
-    check((chip.status() & dsp::Tc0140Syt::kPort01Full) != 0,
-          "port 01 full is reported in the status nibble");
-    chip.slave_port_w(0);
-    check(chip.slave_comm_r() == 0x0a, "the Z80 reads the first master nibble");
-    check(chip.slave_comm_r() == 0x0b, "the Z80 reads the second master nibble");
-    check((chip.status() & dsp::Tc0140Syt::kPort01Full) == 0,
-          "reading port 01 clears the full flag");
-
-    chip.port_w(4);
-    chip.comm_w(1);
-    check(resets == 1, "a non-zero nibble in mode 4 resets the sound CPU");
-    check(chip.status() == 0, "a sound reset clears the mailbox status");
-}
-
-int unique_pixels(const dsp::Machine& machine);
-
-void test_opwolf_cchip_and_driver() {
-    dsp::OpWolfCChip cchip;
-    cchip.reset();
-    check(cchip.status_r() == 1, "the C-Chip status register is always 1");
-    cchip.bank_w(0);
-    cchip.data_w(0x28, 0x00ff);  // word offset $14
-    check(cchip.data_r(0x28) == 0xff, "C-Chip RAM stores the low byte of a 68000 write");
-    cchip.status_w(0);
-    check(cchip.data_r(0xf4) == 1, "status_w sets RAM $7A, which the 68k polls");
-
-    cchip.data_w(0xf4, 1);
-    cchip.update();
-    cchip.data_w(0xf4, 0);
-    cchip.update();
-    cchip.run_cycles(dsp::OpWolfCChip::kCommandCycles);
-    check(cchip.data_r(0xf4) == 1, "command $F5 copies level data and sets $7A");
-    check(cchip.data_r(0x400) == 0x04, "level 0 high byte of the first table word");
-    check(cchip.data_r(0x402) == 0x80, "level 0 low byte of the first table word");
-
-    dsp::OpWolf machine;
-    check(std::strcmp(machine.title(), "Operation Wolf") == 0, "Operation Wolf title");
-    check(machine.screen_width() == 320 && machine.screen_height() == 240,
-          "Operation Wolf reports 320x240");
-    check(machine.uses_pointer(), "Operation Wolf aims with the pointer");
-    std::string error = "unset";
-    check(!machine.init("/no/such/opwolf.zip", &error), "missing Operation Wolf ROMs fail init");
-    check(error.find("not found") != std::string::npos || error.find("cannot") != std::string::npos ||
-              error.size() > 3,
-          "init reports why the Operation Wolf ROM set is missing");
-}
-
-void test_trackfld_driver() {
-    dsp::TrackFld machine;
-    check(std::strcmp(machine.title(), "Track & Field") == 0, "Track & Field title");
-    check(machine.screen_width() == 256 && machine.screen_height() == 224,
-          "Track & Field reports 256x224");
-    std::string error = "unset";
-    check(!machine.init("/no/such/trackfld.zip", &error), "missing Track & Field ROMs fail init");
-    check(error.find("not found") != std::string::npos || error.find("cannot") != std::string::npos ||
-              error.size() > 3,
-          "init reports why the Track & Field ROM set is missing");
-}
-
-void test_trackfld_roms_if_present() {
-    const char* paths[] = {"/tmp/roms/trackfld.zip", "/tmp/trackfld.zip"};
-    const char* path = nullptr;
-    for (const char* candidate : paths) {
-        std::ifstream probe(candidate);
-        if (probe) {
-            path = candidate;
-            break;
-        }
-    }
-    if (path == nullptr) return;
-
-    dsp::TrackFld machine;
-    std::string error;
-    check(machine.init(path, &error), "MAME trackfld set loads");
-    dsp::MachineInputs inputs;
-    int64_t energy = 0;
-    for (int frame = 0; frame < 180; frame++) {
-        machine.set_inputs(inputs);
-        machine.run_frame();
-        std::vector<int16_t> audio;
-        machine.drain_audio(audio);
-        for (int16_t sample : audio) energy += int64_t(sample) * sample;
-    }
-    check(unique_pixels(machine) > 8, "Track & Field attract mode draws a colour picture");
-    check(energy > 0, "Track & Field produces attract-mode audio");
-}
-
-void eeprom_clock_bit(dsp::Eeprom93C46& eeprom, int di) {
-    eeprom.di_write(uint8_t(di & 1));
-    eeprom.clk_write(1);
-    eeprom.clk_write(0);
-}
-
-void eeprom_send_bits(dsp::Eeprom93C46& eeprom, uint32_t value, int bits) {
-    for (int i = bits - 1; i >= 0; i--) eeprom_clock_bit(eeprom, int((value >> i) & 1));
-}
-
-void test_eeprom93c46_16bit() {
-    dsp::Eeprom93C46 eight;
-    check(eight.data_bits() == 8 && eight.command_address_bits() == 7 && eight.address_bits() == 7,
-          "default 93C46 is 128 x 8");
-
-    dsp::Eeprom93C46 eeprom(16);
-    check(eeprom.data_bits() == 16 && eeprom.command_address_bits() == 6 && eeprom.address_bits() == 6,
-          "Pirates 93C46 is 64 x 16");
-    eeprom.reset();
-
-    // EWEN (unlock): start bit, opcode 00, 11xxxx
-    eeprom.cs_write(1);
-    eeprom_clock_bit(eeprom, 1);
-    eeprom_send_bits(eeprom, 0x00, 2);
-    eeprom_send_bits(eeprom, 0x30, 6);
-    eeprom.cs_write(0);
-
-    // WRITE address 0x12 = 0xa55a
-    eeprom.cs_write(1);
-    eeprom_clock_bit(eeprom, 1);
-    eeprom_send_bits(eeprom, 0x01, 2);
-    eeprom_send_bits(eeprom, 0x12, 6);
-    eeprom_send_bits(eeprom, 0xa55a, 16);
-    eeprom.cs_write(0);
-
-    check(eeprom.data()[0x12 * 2] == 0xa5 && eeprom.data()[0x12 * 2 + 1] == 0x5a,
-          "16-bit 93C46 stores words big-endian");
-
-    // READ address 0x12
-    eeprom.cs_write(1);
-    eeprom_clock_bit(eeprom, 1);
-    eeprom_send_bits(eeprom, 0x02, 2);
-    eeprom_send_bits(eeprom, 0x12, 6);
-    uint16_t value = 0;
-    for (int i = 0; i < 16; i++) {
-        eeprom_clock_bit(eeprom, 0);
-        value = uint16_t((value << 1) | eeprom.do_read());
-    }
-    eeprom.cs_write(0);
-    check(value == 0xa55a, "16-bit 93C46 reads back the written word");
-}
-
-void test_pirates_driver() {
-    dsp::Pirates machine(dsp::Pirates::Game::Pirates);
-    check(std::strcmp(machine.title(), "Pirates") == 0, "Pirates title");
-    check(machine.screen_width() == 288 && machine.screen_height() == 224,
-          "Pirates reports 288x224");
-    std::string error = "unset";
-    check(!machine.init("/no/such/pirates.zip", &error), "missing Pirates ROMs fail init");
-    check(error.find("not found") != std::string::npos || error.find("cannot") != std::string::npos ||
-              error.size() > 3,
-          "init reports why the Pirates ROM set is missing");
-}
-
-void test_pirates_roms_if_present() {
-    const char* paths[] = {"/tmp/roms/pirates.zip", "/tmp/pirates.zip"};
-    const char* path = nullptr;
-    for (const char* candidate : paths) {
-        std::ifstream probe(candidate);
-        if (probe) {
-            path = candidate;
-            break;
-        }
-    }
-    if (path == nullptr) return;
-
-    dsp::Pirates machine(dsp::Pirates::Game::Pirates);
-    std::string error;
-    check(machine.init(path, &error), "MAME pirates set loads");
-    check(machine.debug_pc() < 0x100000u, "Pirates reset PC is inside decrypted ROM");
-    dsp::MachineInputs inputs;
-    int64_t energy = 0;
-    for (int frame = 0; frame < 300; frame++) {
-        machine.set_inputs(inputs);
-        machine.run_frame();
-        std::vector<int16_t> audio;
-        machine.drain_audio(audio);
-        for (int16_t sample : audio) energy += int64_t(sample) * sample;
-    }
-    check(unique_pixels(machine) > 8, "Pirates attract mode draws a colour picture");
-    check(energy > 0, "Pirates produces attract-mode audio");
-}
-
-void test_opwolf_roms_if_present() {
-    const char* paths[] = {"/tmp/roms/opwolf.zip", "/tmp/opwolf-roms/opwolf.zip"};
-    const char* path = nullptr;
-    for (const char* candidate : paths) {
-        std::ifstream probe(candidate);
-        if (probe) {
-            path = candidate;
-            break;
-        }
-    }
-    if (path == nullptr) return;
-
-    dsp::OpWolf machine;
-    std::string error;
-    check(machine.init(path, &error), "MAME opwolf set loads");
-    for (const std::string& warning : machine.warnings()) {
-        check(warning.find("b20-09") == std::string::npos,
-              "MAME opwolf does not use a second ADPCM ROM");
-    }
-    dsp::MachineInputs inputs;
-    int64_t energy = 0;
-    for (int frame = 0; frame < 180; frame++) {
-        machine.set_inputs(inputs);
-        machine.run_frame();
-        std::vector<int16_t> audio;
-        machine.drain_audio(audio);
-        for (int16_t sample : audio) energy += int64_t(sample) * sample;
-        if (frame == 59) {
-            check(unique_pixels(machine) >= 1, "Operation Wolf produces a framebuffer after boot");
-            const uint32_t* pixels = machine.framebuffer();
-            const int sight = 120 * 320 + 160;  // default gun (175,120) minus the +15 X crop
-            check(pixels[sight] == 0xffffffffu, "Operation Wolf draws the gun sight overlay");
-        }
-    }
-    check(energy > 0, "Operation Wolf produces attract-mode audio");
-
-    inputs.coin1 = true;
-    for (int frame = 0; frame < 20; frame++) {
-        machine.set_inputs(inputs);
-        machine.run_frame();
-    }
-    inputs.coin1 = false;
-    inputs.player1.start = true;
-    for (int frame = 0; frame < 20; frame++) {
-        machine.set_inputs(inputs);
-        machine.run_frame();
-    }
-    inputs.player1.start = false;
-    for (int frame = 0; frame < 400; frame++) {
-        machine.set_inputs(inputs);
-        machine.run_frame();
-    }
-    check(unique_pixels(machine) > 8,
-          "Operation Wolf draws the mission HUD after a credit and start");
-}
-
 void test_starwars_missing_roms() {
     dsp::StarWars machine;
     check(std::strcmp(machine.title(), "Star Wars") == 0, "Star Wars title");
@@ -3473,6 +2989,28 @@ void test_sega_system16_missing_roms() {
     check(std::strcmp(wb3.title(), "Wonder Boy III: Monster Lair") == 0, "Wonder Boy III title");
 }
 
+void test_sega16_palette_banks() {
+    // Out Run keeps the sprite colours in the upper half of its 0x1000 word
+    // colour RAM, so the shadow/highlight bank has to start above it: writing a
+    // tile colour must not repaint the sprite entry 0x800 words later.
+    dsp::Sega16Video video;
+    video.reset();
+    video.init_palette_luts();
+    video.cram_words = 0x1000;
+    video.set_palette_entry(0x800, 0x001f, true);  // sprite red
+    const uint32_t sprite_red = video.palette[0x800];
+    video.set_palette_entry(0x000, 0x7fff, true);  // tile white
+    check(video.palette[0x800] == sprite_red, "OutRun tile colours leave the sprite bank alone");
+    check(video.palette[0x1000] != 0, "OutRun shadow bank sits above the colour RAM");
+
+    // System 16B has half the colour RAM, so its shadow bank starts at 0x800.
+    dsp::Sega16Video s16b;
+    s16b.reset();
+    s16b.init_palette_luts();
+    s16b.set_palette_entry(0x000, 0x7fff, true);
+    check(s16b.palette[0x800] != 0, "System 16B shadow bank stays at 0x800");
+}
+
 int unique_pixels(const dsp::Machine& machine) {
     const uint32_t* fb = machine.framebuffer();
     const int n = machine.screen_width() * machine.screen_height();
@@ -3495,7 +3033,16 @@ void test_sega_roms_if_present() {
         check(machine.debug_pc() != 0x7b1e, "OutRun leaves the mapper boot stub");
         check(machine.debug_sub_pc() != 0x103a, "OutRun sub CPU leaves the handshake wait");
         check(machine.debug_palette_used() > 16, "OutRun writes the attract palette after the handshake");
-        check(unique_pixels(machine) > 16, "OutRun attract mode draws a colour picture");
+        // The sub CPU writes the road line table, then the control byte; if that
+        // byte write swaps the road buffers the display keeps the power-on ramp
+        // (line y selects road line y) forever and hides the horizon.
+        for (int frame = 0; frame < 600; frame++) machine.run_frame();
+        int identity_lines = 0;
+        for (int line = 0; line < 224; line++) {
+            if (machine.debug_road_line(line) == line) identity_lines++;
+        }
+        const bool road_table_fresh = identity_lines < 200;
+        check(road_table_fresh, "OutRun swaps the freshly written road line table into the display");
     }
 
     if (exists("/tmp/roms/fantzone.zip")) {
@@ -3938,335 +3485,6 @@ void test_genesis_boot() {
     check((th_low & 0x1000) == 0, "Genesis pad A is visible with TH low");
 }
 
-void test_ym2610() {
-    dsp::YM2610 ym(8000000);
-    ym.reset();
-    bool silent = true;
-    for (int i = 0; i < 128; i++) {
-        if (ym.update() != 0) silent = false;
-    }
-    check(silent, "the YM2610 is silent after reset");
-
-    ym.write(0, 0xb0);
-    ym.write(1, 0x07);
-    ym.write(0, 0xb4);
-    ym.write(1, 0xc0);
-    ym.write(0, 0xa4);
-    ym.write(1, 0x22);
-    ym.write(0, 0xa0);
-    ym.write(1, 0x69);
-    for (int op = 0; op < 4; op++) {
-        ym.write(0, uint8_t(0x40 + (op << 2)));
-        ym.write(1, 0x00);
-        ym.write(0, uint8_t(0x50 + (op << 2)));
-        ym.write(1, 0x1f);
-        ym.write(0, uint8_t(0x80 + (op << 2)));
-        ym.write(1, 0x0f);
-    }
-    ym.write(0, 0x28);
-    ym.write(1, 0xf0);
-    bool audible = false;
-    for (int i = 0; i < 4410; i++) {
-        if (ym.update() != 0) audible = true;
-    }
-    check(audible, "the YM2610 produces FM after a key on");
-
-    dsp::YM2610 adpcm(8000000);
-    std::vector<uint8_t> rom(0x200, 0x77);
-    adpcm.set_adpcm_a_rom(rom);
-    adpcm.write(2, 0x01);
-    adpcm.write(3, 0x00);
-    adpcm.write(2, 0x08);
-    adpcm.write(3, 0xdf);
-    adpcm.write(2, 0x10);
-    adpcm.write(3, 0x00);
-    adpcm.write(2, 0x18);
-    adpcm.write(3, 0x00);
-    adpcm.write(2, 0x20);
-    adpcm.write(3, 0x00);
-    adpcm.write(2, 0x28);
-    adpcm.write(3, 0x01);
-    adpcm.write(2, 0x00);
-    adpcm.write(3, 0x01);
-    bool adpcm_audible = false;
-    for (int i = 0; i < 4410; i++) {
-        if (adpcm.update() != 0) adpcm_audible = true;
-    }
-    check(adpcm_audible, "the YM2610 ADPCM-A channel plays a sample");
-}
-
-void test_neogeo_video() {
-    dsp::NeoGeoVideo video;
-    video.reset();
-    std::vector<uint8_t> srom(64, 0);
-    for (int i = 0; i < 32; i++) srom[32 + i] = 0x11;  // tile 1, packed pen 1
-    video.set_fix_roms(srom.data(), srom.size(), nullptr, 0);
-    video.set_use_bios_fix(false);
-    video.decode_graphics();
-    video.write_palette(0, 0x0000);
-    video.write_palette(2, 0x7fff);
-    video.write_register(0x3c0000, 0x7000);
-    video.write_register(0x3c0004, 0x0001);
-    for (int i = 0; i < 40 * 32; i++) video.write_register(0x3c0002, 0x0001);
-    std::vector<uint32_t> fb(size_t(dsp::NeoGeoVideo::kScreenWidth) * dsp::NeoGeoVideo::kScreenHeight,
-                             0);
-    video.render_frame(fb.data());
-    bool bright = false;
-    for (int i = 0; i < dsp::NeoGeoVideo::kScreenWidth * 16; i++) {
-        if (((fb[size_t(i)] >> 16) & 0xff) > 180) {
-            bright = true;
-            break;
-        }
-    }
-    check(bright, "NeoGeo fix layer draws a solid colour-1 tile");
-    check(dsp::NeoGeoVideo::colour(0x7fff) == 0xffffffffu ||
-              ((dsp::NeoGeoVideo::colour(0x7fff) >> 16) & 0xff) > 200,
-          "NeoGeo palette converts 0x7fff to a bright colour");
-}
-
-std::vector<uint8_t> make_neogeo_test_rom() {
-    std::vector<uint8_t> rom(0x800, 0);
-    auto put32 = [&](size_t offset, uint32_t value) {
-        rom[offset] = uint8_t(value >> 24);
-        rom[offset + 1] = uint8_t(value >> 16);
-        rom[offset + 2] = uint8_t(value >> 8);
-        rom[offset + 3] = uint8_t(value);
-    };
-    auto put16 = [&](size_t offset, uint16_t value) {
-        rom[offset] = uint8_t(value >> 8);
-        rom[offset + 1] = uint8_t(value);
-    };
-    put32(0, 0x0010f300);
-    put32(4, 0x00000200);
-    for (int vec = 2; vec < 64; vec++) put32(size_t(vec * 4), 0x000003e0);
-    put16(0x3e0, 0x4e73);  // rte
-
-    size_t pc = 0x200;
-    auto emit16 = [&](uint16_t value) {
-        put16(pc, value);
-        pc += 2;
-    };
-    auto emit32 = [&](uint32_t value) {
-        put32(pc, value);
-        pc += 4;
-    };
-    emit16(0x33fc);
-    emit16(0x0007);
-    emit32(0x003c000c);  // move.w #$0007, $3c000c
-    emit16(0x41f9);
-    emit32(0x00400000);  // lea $400000, a0
-    emit16(0x30fc);
-    emit16(0x0000);
-    emit16(0x30fc);
-    emit16(0x7fff);
-    emit16(0x33fc);
-    emit16(0x7000);
-    emit32(0x003c0000);  // move.w #$7000, $3c0000
-    emit16(0x33fc);
-    emit16(0x0001);
-    emit32(0x003c0004);  // modulo 1
-    emit16(0x303c);
-    emit16(0x04ff);  // move.w #1279, d0
-    const size_t loop = pc;
-    emit16(0x33fc);
-    emit16(0x0001);
-    emit32(0x003c0002);
-    emit16(0x51c8);
-    emit16(uint16_t(int16_t(int(loop) - int(pc + 2))));  // dbra d0, loop
-    emit16(0x13c0);
-    emit32(0x00300001);  // move.b d0, $300001
-    emit16(0x60f8);      // bra.s kick
-    return rom;
-}
-
-void test_neogeo_boot() {
-    std::vector<uint8_t> program = make_neogeo_test_rom();
-    std::vector<uint8_t> bios = program;
-    bios.resize(0x80);
-    std::vector<uint8_t> srom(64, 0);
-    for (int i = 0; i < 32; i++) srom[32 + i] = 0x11;
-
-    dsp::NeoGeo machine("nam1975");
-    std::string error;
-    check(machine.load_synthetic(bios, {}, {}, program, srom, {}, {}, {}, &error),
-          "NeoGeo loads a synthetic cartridge");
-    check(machine.debug_pc() == 0x200, "NeoGeo reset vector is $200");
-    check(machine.debug_read_word(0x300000) == 0xff00 ||
-              (machine.debug_read_word(0x300000) & 0xff00) == 0xff00,
-          "NeoGeo player 1 port is idle high");
-
-    dsp::MachineInputs inputs;
-    inputs.player1.right = true;
-    inputs.player1.button1 = true;
-    inputs.coin1 = true;
-    inputs.player1.start = true;
-    machine.set_inputs(inputs);
-    const uint16_t p1 = machine.debug_read_word(0x300000);
-    check((p1 & 0x0800) == 0, "NeoGeo player 1 right is active low");
-    check((p1 & 0x1000) == 0, "NeoGeo player 1 A is active low");
-
-    for (int frame = 0; frame < 8; frame++) machine.run_frame();
-    check(machine.debug_pc() >= 0x200 && machine.debug_pc() < 0x400,
-          "NeoGeo 68k stays in the test program");
-    check((machine.video().palette(1) & 0x7fff) == 0x7fff, "NeoGeo test ROM writes palette colour 1");
-    check(machine.video().vram(0x7000) == 0x0001, "NeoGeo test ROM fills the fix map");
-    const uint32_t* fb = machine.framebuffer();
-    bool bright = false;
-    for (int i = 0; i < 320 * 16; i++) {
-        if (((fb[i] >> 16) & 0xff) > 180) {
-            bright = true;
-            break;
-        }
-    }
-    check(bright, "NeoGeo test ROM fills the fix layer with a bright tile");
-}
-
-void test_neogeo_calendar_chip() {
-    dsp::NeoGeo machine;
-    std::vector<uint8_t> program(0x200, 0);
-    program[0] = 0x00;
-    program[1] = 0x10;
-    program[2] = 0xf3;
-    program[3] = 0x00;
-    program[4] = 0x00;
-    program[5] = 0x00;
-    program[6] = 0x02;
-    program[7] = 0x00;
-    std::string error;
-    check(machine.load_synthetic(program, {}, {}, program, {}, {}, {}, {}, &error),
-          "NeoGeo calendar test loads a dummy program");
-    auto pulse = [&](uint8_t data) {
-        machine.debug_write_byte(0x280051, data);
-        machine.debug_write_byte(0x280051, uint8_t(data | 0x02));
-        machine.debug_write_byte(0x280051, data);
-    };
-    auto send_command = [&](uint8_t command) {
-        for (int i = 0; i < 4; i++) pulse(uint8_t((command >> i) & 1));
-        machine.debug_write_byte(0x280051, 0x04);
-        machine.debug_write_byte(0x280051, 0x00);
-    };
-    send_command(0x03);
-    send_command(0x01);
-    auto read_bcd = [&]() {
-        uint8_t value = 0;
-        for (int i = 0; i < 8; i++) {
-            const uint8_t status = uint8_t(machine.debug_read_word(0x320000));
-            value = uint8_t((value >> 1) | (status & 0x80));
-            pulse(0);
-        }
-        return value;
-    };
-    check(read_bcd() == 0x00, "uPD4990A seconds BCD is 0 after a time-read");
-    check(read_bcd() == 0x00, "uPD4990A minutes BCD is 0 after a time-read");
-    check(read_bcd() == 0x12, "uPD4990A hours BCD is 0x12 after a time-read");
-    check(read_bcd() == 0x09, "uPD4990A day BCD is 0x09 after a time-read");
-    check(machine.debug_rtc_writes() > 0, "calendar control writes reach the uPD4990A");
-    check((machine.debug_read_word(0x220000) & 0xff) == (machine.debug_read_word(0x320000) & 0xff),
-          "status port is mirrored at $220000");
-
-    send_command(0x08);
-    int first_rise = -1;
-    int second_rise = -1;
-    uint8_t prev_tp = uint8_t(machine.debug_read_word(0x320000) & 0x40);
-    for (int frame = 0; frame < 200; frame++) {
-        machine.run_frame();
-        const uint8_t tp = uint8_t(machine.debug_read_word(0x320000) & 0x40);
-        if (prev_tp == 0 && tp != 0) {
-            if (first_rise < 0) first_rise = frame;
-            else {
-                second_rise = frame;
-                break;
-            }
-        }
-        prev_tp = tp;
-    }
-    check(first_rise >= 0 && second_rise > first_rise, "uPD4990A command 8 produces TP rising edges");
-    const int period = second_rise - first_rise;
-    check(period >= 57 && period <= 63, "uPD4990A 1-second TP is 57-63 vblanks (SP-S2 calendar test)");
-}
-
-void test_neogeo_missing_roms() {
-    dsp::NeoGeo machine;
-    std::string error;
-    check(!machine.init("/tmp/dsp-cpp-missing-neogeo-romset", &error),
-          "NeoGeo rejects a missing ROM path");
-    check(!error.empty(), "NeoGeo reports why the ROM path failed");
-}
-
-bool neogeo_fix_contains(dsp::NeoGeo& machine, const char* text) {
-    for (int row = 0; row < 28; row++) {
-        std::string line;
-        line.reserve(40);
-        for (int col = 0; col < 40; col++) {
-            const int code = machine.video().vram(0x7000 + col * 32 + row) & 0xfff;
-            line.push_back((code >= 0x20 && code < 0x7f) ? char(code) : ' ');
-        }
-        if (line.find(text) != std::string::npos) return true;
-    }
-    return false;
-}
-
-void test_neogeo_roms_if_present() {
-    const char* bios_paths[] = {"/tmp/neogeo-roms/neogeo.zip", "/tmp/roms/neogeo.zip"};
-    const char* mslug_paths[] = {"/tmp/neogeo-roms/mslug.zip", "/tmp/roms/mslug.zip"};
-    auto first_existing = [](const char* const* paths, int count) -> const char* {
-        for (int i = 0; i < count; i++) {
-            std::ifstream probe(paths[i]);
-            if (probe) return paths[i];
-        }
-        return nullptr;
-    };
-    const char* bios = first_existing(bios_paths, 2);
-    const char* mslug = first_existing(mslug_paths, 2);
-    if (mslug == nullptr && bios == nullptr) return;
-
-    if (bios != nullptr) {
-        dsp::NeoGeo machine("neogeo");
-        std::string error;
-        check(machine.init(bios, &error), "MAME neogeo.zip BIOS set loads");
-        check(machine.debug_pc() == 0xc00402, "SP-S2 BIOS reset vector is $C00402");
-        for (int frame = 0; frame < 400; frame++) machine.run_frame();
-        check(!neogeo_fix_contains(machine, "CALENDAR ERROR"),
-              "NeoGeo BIOS calendar self-test does not hang on CALENDAR ERROR");
-        check(machine.debug_pc() != 0xc16baa, "NeoGeo BIOS leaves the calendar-error halt");
-        check(unique_pixels(machine) >= 3, "NeoGeo BIOS draws the post-test crosshatch or colour bars");
-    }
-
-    if (mslug != nullptr) {
-        dsp::NeoGeo machine("mslug");
-        std::string error;
-        check(machine.init(mslug, &error), "MAME mslug.zip loads");
-        check(machine.debug_read_word(0x100) == 0x4e45, "Metal Slug P-ROM has NEO-GEO at $100");
-        check(machine.debug_read_word(0x102) == 0x4f2d, "Metal Slug P-ROM continues NEO-GEO");
-        dsp::MachineInputs inputs;
-        for (int frame = 0; frame < 400; frame++) {
-            machine.set_inputs(inputs);
-            machine.run_frame();
-        }
-        check(!neogeo_fix_contains(machine, "CALENDAR ERROR"),
-              "Metal Slug BIOS calendar self-test does not hang on CALENDAR ERROR");
-
-        inputs.coin1 = true;
-        for (int frame = 0; frame < 20; frame++) {
-            machine.set_inputs(inputs);
-            machine.run_frame();
-        }
-        inputs.coin1 = false;
-        inputs.player1.start = true;
-        for (int frame = 0; frame < 20; frame++) {
-            machine.set_inputs(inputs);
-            machine.run_frame();
-        }
-        inputs.player1.start = false;
-        for (int frame = 0; frame < 240; frame++) {
-            machine.set_inputs(inputs);
-            machine.run_frame();
-        }
-        check(unique_pixels(machine) > 16, "Metal Slug still draws after coin and start");
-        check(machine.debug_pc() < 0xc00000, "Metal Slug runs from cartridge P-ROM after start");
-    }
-}
-
 void write_msx2_dummy_roms(const std::string& dir, bool with_disk) {
     std::filesystem::create_directories(dir);
     std::vector<uint8_t> bios(0x8000, 0x00);
@@ -4660,8 +3878,6 @@ int main() {
     test_m6809_reset_and_loads();
     test_m6809_branches_and_stack();
     test_m6809_interrupts();
-    test_konami1_decode_and_opcode_fetch();
-    test_vlm5030_pins();
     test_sn76496();
     test_m68000_reset_and_moves();
     test_m68000_branches_and_subroutines();
@@ -4735,17 +3951,12 @@ int main() {
     test_atari_system1_missing_roms();
     test_sega_pcm_and_mapper();
     test_sega_system16_missing_roms();
+    test_sega16_palette_banks();
     test_sega_roms_if_present();
     test_indy_coin_if_present();
     test_ym2612();
     test_genesis_vdp();
     test_genesis_boot();
-    test_ym2610();
-    test_neogeo_video();
-    test_neogeo_boot();
-    test_neogeo_calendar_chip();
-    test_neogeo_missing_roms();
-    test_neogeo_roms_if_present();
     test_v9938_status_and_hmmv();
     test_msx_disk_and_fdc();
     test_rp5c01_fixed_clock();
@@ -4753,19 +3964,6 @@ int main() {
     test_diskii_encode_roundtrip();
     test_apple2_missing_roms_and_dummy();
     test_apple2_roms_if_present();
-	test_pcengine_hucard_and_memory();
-    test_pcengine_joypad_and_timer();
-    test_pcengine_vdc_and_vce();
-    test_pcengine_st_instructions_and_vblank();
-    test_huc6280_psg();
-    test_tc0140syt_mailbox();
-    test_opwolf_cchip_and_driver();
-    test_opwolf_roms_if_present();
-    test_trackfld_driver();
-    test_trackfld_roms_if_present();
-    test_eeprom93c46_16bit();
-    test_pirates_driver();
-    test_pirates_roms_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

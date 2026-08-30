@@ -183,29 +183,23 @@ void Sega16Video::reset() {
 
 void Sega16Video::init_palette_luts() {
     build_s16_palette_luts(normal.data(), shadow.data(), hilight.data());
-    // Pascal paleta[$2000] is the blank/disabled-screen colour.
-    palette[0x2000] = pack_rgb(0, 0, 0);
 }
 
-void Sega16Video::set_palette_entry(int index, uint16_t value, bool split_shadow,
-                                    bool shadow_at_800) {
+void Sega16Video::set_palette_entry(int index, uint16_t value, bool split_shadow) {
     pal_ram[size_t(index) & 0xfff] = value;
     const int r = ((value >> 12) & 1) | ((value << 1) & 0x1e);
     const int g = ((value >> 13) & 1) | ((value >> 3) & 0x1e);
     const int b = ((value >> 14) & 1) | ((value >> 7) & 0x1e);
     palette[size_t(index)] = pack_rgb(normal[size_t(r)], normal[size_t(g)], normal[size_t(b)]);
-    uint32_t split = pack_rgb(hilight[size_t(r)], hilight[size_t(g)], hilight[size_t(b)]);
-    if (value & 0x8000) {
-        split = pack_rgb(shadow[size_t(r)], shadow[size_t(g)], shadow[size_t(b)]);
-    }
     if (split_shadow) {
-        palette[size_t(index + 0x1000)] = split;
-        // System 16B change_pal also writes the split colour at +$800. OutRun's
-        // change_pal only writes +$1000; copying to +$800 would overwrite the
-        // sprite palette bank that draw_sprites_outrun reads as (pix+$800).
-        if (shadow_at_800 && index + 0x800 < int(palette.size())) {
-            palette[size_t(index + 0x800)] = split;
-        }
+        // Bit 15 picks shadow or highlight for the second bank, which sits right
+        // above the colour RAM of this machine.
+        const uint32_t alternate = (value & 0x8000)
+                                       ? pack_rgb(shadow[size_t(r)], shadow[size_t(g)],
+                                                  shadow[size_t(b)])
+                                       : pack_rgb(hilight[size_t(r)], hilight[size_t(g)],
+                                                  hilight[size_t(b)]);
+        palette[size_t(index + cram_words)] = alternate;
     } else {
         palette[size_t(index + 0x800)] =
             pack_rgb(shadow[size_t(r)], shadow[size_t(g)], shadow[size_t(b)]);
@@ -345,19 +339,6 @@ void Sega16Video::blit_scrolled(uint32_t* dest, const std::vector<uint32_t>& sou
         for (int x = 0; x < kWidth; x++) {
             const int sx = (x + scroll_x) & (src_width - 1);
             const uint32_t pixel = source[size_t(sy * src_width + sx)];
-            if (pixel != kTransparent) dest[y * kWidth + x] = pixel;
-        }
-    }
-}
-
-void Sega16Video::blit_rowscroll(uint32_t* dest, const std::vector<uint32_t>& source, int scroll_y,
-                                 uint16_t table_base) const {
-    for (int y = 0; y < kHeight; y++) {
-        const int line = (y + scroll_y) & 0x1ff;
-        const int row_i = (line >> 3) & 0x3f;
-        const int rx = (704 - (char_ram[size_t(table_base) + size_t(row_i)] & 0x3ff)) & 0x3ff;
-        for (int x = 0; x < kWidth; x++) {
-            const uint32_t pixel = source[size_t(line * kMapWidth + ((x + rx) & 0x3ff))];
             if (pixel != kTransparent) dest[y * kWidth + x] = pixel;
         }
     }
