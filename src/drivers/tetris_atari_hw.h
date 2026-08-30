@@ -69,7 +69,14 @@ private:
     bool nvram_write_enable_ = false;
     uint8_t in0_ = 0x40;
     uint8_t in1_ = 0;
-    uint8_t dsw_a_ = 0xff;
+
+	// DIP:
+    // bit 2  Freeze
+    // bit 3  Freeze Step
+    // bit 7  Service
+    //
+    // Service OFF = 0x00
+    uint8_t dsw_a_ = 0x00;
 
     int64_t audio_accumulator_ = 0;
     std::vector<int16_t> audio_;
