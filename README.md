@@ -47,6 +47,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | SLAPSTIC | `src/arcade/misc/slapstic.pas` | Types 101-108, bank switched protected ROM |
 | Atari motion objects | `src/arcade/misc/atari_mo.pas` | SLIP based sprite lists |
 | Gauntlet driver | `src/arcade/gauntlet_hw.pas` | Memory map, playfield/char/sprite video, EEPROM, YM2151+POKEY+TMS5220C |
+| Skull & Crossbones driver | MAME `skullxbo.cpp` | 68000 + Atari JSA II (M6502, YM2151, OKIM6295), latched playfield, alpha layer with scanline vscroll commands, motion objects, 2816 EEPROM |
 | Atari System 1 | `src/arcade/atari_system1.pas` | Marble Madness, Peter Pack Rat, Indiana Jones, Road Runner: 68000+SLAPSTIC, M6502, YM2151, POKEY, TMS5220C+VIA speech, PROM gfx banks |
 | HD63701Y MCU | `src/cpu/m680x.pas` | Double Dragon sub CPU: internal RAM/ROM, I/O ports, output compare timer |
 | MSM5205 ADPCM | `src/snd/msm5205.pas` | Two chips in Double Dragon |
@@ -130,6 +131,7 @@ holding the individual files:
 ./build/dsp --scale 3 --dip 0xfe /path/to/roms/bagman/
 ./build/dsp --game mikie /path/to/mikie.zip
 ./build/dsp --game gauntlet /path/to/gauntlet.zip
+./build/dsp --game skullxbo /path/to/skullxbo.zip
 ./build/dsp --game indydoom /path/to/indytemp.zip
 ./build/dsp --game roadrunn /path/to/roadrunn.zip
 ./build/dsp --game mrdo /path/to/mrdo.zip

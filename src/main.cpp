@@ -10,6 +10,7 @@
 #include "drivers/bagman.h"
 #include "drivers/doubledragon.h"
 #include "drivers/gauntlet.h"
+#include "drivers/skullxbo.h"
 #include "drivers/mikie.h"
 #include "drivers/taitosj.h"
 #include "drivers/mrdo.h"
@@ -70,7 +71,7 @@ void print_supported_emulators() {
         "Supported emulators (--game NAME):\n"
         "\n"
         "  Arcade:\n"
-        "    bagman, mikie, gauntlet, mrdo, ddragon, ddragon2,\n"
+        "    bagman, mikie, gauntlet, skullxbo, mrdo, ddragon, ddragon2,\n"
         "    elevator, junglek, indydoom, peter, marble, starwars, roadrunn,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
 		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
@@ -141,6 +142,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "bagman") return std::make_unique<dsp::Bagman>();
     if (game == "mikie") return std::make_unique<dsp::Mikie>();
     if (game == "gauntlet") return std::make_unique<dsp::Gauntlet>();
+    if (game == "skullxbo") return std::make_unique<dsp::Skullxbo>();
 	if (game == "mrdo") return std::make_unique<dsp::MrDo>();
     
     if (game == "ddragon") {

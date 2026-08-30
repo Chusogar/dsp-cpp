@@ -104,6 +104,7 @@ add_executable(dsp
   src/drivers/bagman.cpp
   src/drivers/mikie.cpp
   src/drivers/gauntlet.cpp
+  src/drivers/skullxbo.cpp
   src/drivers/doubledragon.cpp
   src/drivers/taitosj.cpp
   src/drivers/mrdo.cpp
@@ -268,6 +269,7 @@ add_executable(dsp_tests
   src/drivers/exelv.cpp
   src/drivers/starwars.cpp
   src/drivers/polepos.cpp
+  src/drivers/skullxbo.cpp
   src/drivers/atari_system1.cpp
   src/drivers/zx_clone.cpp
   src/drivers/genesis.cpp
