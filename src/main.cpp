@@ -91,7 +91,7 @@ void print_supported_emulators() {
         "  Arcade:\n"
         "    bagman, mikie, trackfld, gauntlet, mrdo, ddragon, ddragon2,\n"
         "    elevator, junglek, indydoom, peter, marble, skullxbo, starwars, roadrunn,\n"
-        "    paperboy,\n"
+        "    paperboy, ssprint, apb, 720,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
 		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
         "    kungfum, spelunkr, spelunk2, ldrun, ldrun2,\n"
@@ -203,6 +203,15 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	}
 	if (game == "paperboy") {
 		return std::make_unique<dsp::AtariSystem2>(dsp::AtariSystem2::Game::Paperboy);
+	}
+	if (game == "ssprint") {
+		return std::make_unique<dsp::AtariSystem2>(dsp::AtariSystem2::Game::SuperSprint);
+	}
+	if (game == "apb") {
+		return std::make_unique<dsp::AtariSystem2>(dsp::AtariSystem2::Game::Apb);
+	}
+	if (game == "720" || game == "720degrees") {
+		return std::make_unique<dsp::AtariSystem2>(dsp::AtariSystem2::Game::Degrees720);
 	}
 
 	if (game == "tapper") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Tapper);

@@ -2,64 +2,415 @@
 
 #include <algorithm>
 #include <cstring>
+#include <map>
 
 #include "core/rom_loader.h"
 
 namespace dsp {
 namespace {
 
-// MAME atarisy2.cpp, paperboy ROM set. The T-11 program is interleaved: the
-// even offset holds the low byte of every word.
-const std::vector<RomEntry> kPaperboyMain = {
-    {"cpu_l07.rv3", 0x4000, 0x008000, 0x4024bb9b},
-    {"cpu_n07.rv3", 0x4000, 0x008001, 0x0260901a},
-    {"cpu_f06.rv2", 0x4000, 0x010000, 0x3fea86ac},
-    {"cpu_n06.rv2", 0x4000, 0x010001, 0x711b17ba},
-    {"cpu_j06.rv1", 0x4000, 0x030000, 0xa754b12d},
-    {"cpu_p06.rv1", 0x4000, 0x030001, 0x89a1ff9c},
-    {"cpu_k06.rv1", 0x4000, 0x050000, 0x290bb034},
-    {"cpu_r06.rv1", 0x4000, 0x050001, 0x826993de},
-    {"cpu_l06.rv2", 0x4000, 0x070000, 0x8a754466},
-    {"cpu_s06.rv2", 0x4000, 0x070001, 0x224209f9},
+// A slice of a ROM file. `source` is the offset inside the file, so a MAME
+// ROM_CONTINUE becomes a second chunk of the same file. `dest` is the offset
+// inside the target region; for the interleaved T-11 program an odd `dest`
+// selects the high byte lane of every word.
+struct RomChunk {
+    const char* name;
+    uint32_t crc;
+    uint32_t source;
+    uint32_t length;
+    uint32_t dest;
 };
 
-const std::vector<RomEntry> kPaperboySound = {
-    {"cpu_a02.rv3", 0x4000, 0x4000, 0xba251bc4},
-    {"cpu_b02.rv2", 0x4000, 0x8000, 0xe4e7a8b9},
-    {"cpu_c02.rv2", 0x4000, 0xc000, 0xd44c2aa2},
+// MAME atarisy2.cpp, paperboy ROM set.
+const std::vector<RomChunk> kPaperboyMain = {
+    {"cpu_l07.rv3", 0x4024bb9b, 0, 0x4000, 0x008000},
+    {"cpu_n07.rv3", 0x0260901a, 0, 0x4000, 0x008001},
+    {"cpu_f06.rv2", 0x3fea86ac, 0, 0x4000, 0x010000},
+    {"cpu_n06.rv2", 0x711b17ba, 0, 0x4000, 0x010001},
+    {"cpu_j06.rv1", 0xa754b12d, 0, 0x4000, 0x030000},
+    {"cpu_p06.rv1", 0x89a1ff9c, 0, 0x4000, 0x030001},
+    {"cpu_k06.rv1", 0x290bb034, 0, 0x4000, 0x050000},
+    {"cpu_r06.rv1", 0x826993de, 0, 0x4000, 0x050001},
+    {"cpu_l06.rv2", 0x8a754466, 0, 0x4000, 0x070000},
+    {"cpu_s06.rv2", 0x224209f9, 0, 0x4000, 0x070001},
 };
 
-const std::vector<RomEntry> kPaperboyPlayfield = {
-    {"vid_a06.rv1", 0x8000, 0x00000, 0xb32ffddf},
-    {"vid_b06.rv1", 0x4000, 0x0c000, 0x301b849d},
-    {"vid_c06.rv1", 0x8000, 0x10000, 0x7bb59d68},
-    {"vid_d06.rv1", 0x4000, 0x1c000, 0x1a1d4ba8},
+const std::vector<RomChunk> kPaperboySound = {
+    {"cpu_a02.rv3", 0xba251bc4, 0, 0x4000, 0x4000},
+    {"cpu_b02.rv2", 0xe4e7a8b9, 0, 0x4000, 0x8000},
+    {"cpu_c02.rv2", 0xd44c2aa2, 0, 0x4000, 0xc000},
 };
 
-const std::vector<RomEntry> kPaperboyMotion = {
-    {"vid_l06.rv1", 0x8000, 0x00000, 0x067ef202},
-    {"vid_k06.rv1", 0x8000, 0x08000, 0x76b977c4},
-    {"vid_j06.rv1", 0x8000, 0x10000, 0x2a3cc8d0},
-    {"vid_h06.rv1", 0x8000, 0x18000, 0x6763a321},
-    {"vid_s06.rv1", 0x8000, 0x20000, 0x0a321b7b},
-    {"vid_p06.rv1", 0x8000, 0x28000, 0x5bd089ee},
-    {"vid_n06.rv1", 0x8000, 0x30000, 0xc34a517d},
-    {"vid_m06.rv1", 0x8000, 0x38000, 0xdf723956},
+const std::vector<RomChunk> kPaperboyPlayfield = {
+    {"vid_a06.rv1", 0xb32ffddf, 0, 0x8000, 0x00000},
+    {"vid_b06.rv1", 0x301b849d, 0, 0x4000, 0x0c000},
+    {"vid_c06.rv1", 0x7bb59d68, 0, 0x8000, 0x10000},
+    {"vid_d06.rv1", 0x1a1d4ba8, 0, 0x4000, 0x1c000},
 };
 
-const std::vector<RomEntry> kPaperboyAlpha = {
-    {"vid_t06.rv1", 0x2000, 0x0000, 0x60d7aebb},
+const std::vector<RomChunk> kPaperboyMotion = {
+    {"vid_l06.rv1", 0x067ef202, 0, 0x8000, 0x00000},
+    {"vid_k06.rv1", 0x76b977c4, 0, 0x8000, 0x08000},
+    {"vid_j06.rv1", 0x2a3cc8d0, 0, 0x8000, 0x10000},
+    {"vid_h06.rv1", 0x6763a321, 0, 0x8000, 0x18000},
+    {"vid_s06.rv1", 0x0a321b7b, 0, 0x8000, 0x20000},
+    {"vid_p06.rv1", 0x5bd089ee, 0, 0x8000, 0x28000},
+    {"vid_n06.rv1", 0xc34a517d, 0, 0x8000, 0x30000},
+    {"vid_m06.rv1", 0xdf723956, 0, 0x8000, 0x38000},
 };
 
-const std::vector<RomEntry> kPaperboyEeprom = {
-    {"paperboy-eeprom.bin", 0x200, 0x0000, 0x756b90cc},
+const std::vector<RomChunk> kPaperboyAlpha = {
+    {"vid_t06.rv1", 0x60d7aebb, 0, 0x2000, 0x0000},
 };
 
-GfxLayout alpha_layout() {
+const std::vector<RomChunk> kPaperboyEeprom = {
+    {"paperboy-eeprom.bin", 0x756b90cc, 0, 0x200, 0x0000},
+};
+
+// MAME atarisy2.cpp, ssprint ROM set (Super Sprint, rev 4).
+const std::vector<RomChunk> kSuperSprintMain = {
+    {"136042-330.7l", 0xee312027, 0, 0x4000, 0x008000},
+    {"136042-331.7n", 0x2ef15354, 0, 0x4000, 0x008001},
+    {"136042-329.6f", 0xed1d6205, 0, 0x8000, 0x010000},
+    {"136042-325.6n", 0xaecaa2bf, 0, 0x8000, 0x010001},
+    {"136042-127.6k", 0xde6c4db9, 0, 0x8000, 0x050000},
+    {"136042-123.6r", 0xaff23b5a, 0, 0x8000, 0x050001},
+    {"136042-126.6l", 0x92f5392c, 0, 0x8000, 0x070000},
+    {"136042-122.6s", 0x0381f362, 0, 0x8000, 0x070001},
+};
+
+const std::vector<RomChunk> kSuperSprintSound = {
+    {"136042-419.2bc", 0xb277915a, 0, 0x4000, 0x8000},
+    {"136042-420.2d", 0x170b2c53, 0, 0x4000, 0xc000},
+};
+
+const std::vector<RomChunk> kSuperSprintPlayfield = {
+    {"136042-105.6a", 0x911499fe, 0x0000, 0x8000, 0x20000},
+    {"136042-105.6a", 0x911499fe, 0x8000, 0x8000, 0x00000},
+    {"136042-106.6b", 0xa39b25ed, 0x0000, 0x8000, 0x08000},
+    {"136042-101.7a", 0x6d015c72, 0x0000, 0x8000, 0x30000},
+    {"136042-101.7a", 0x6d015c72, 0x8000, 0x8000, 0x10000},
+    {"136042-102.7b", 0x54e21f0a, 0x0000, 0x8000, 0x18000},
+    {"136042-107.6c", 0xb7ded658, 0x0000, 0x8000, 0x60000},
+    {"136042-107.6c", 0xb7ded658, 0x8000, 0x8000, 0x40000},
+    {"136042-108.6de", 0x4a804a4c, 0x0000, 0x8000, 0x48000},
+    {"136042-104.7de", 0x339644ed, 0x0000, 0x8000, 0x70000},
+    {"136042-104.7de", 0x339644ed, 0x8000, 0x8000, 0x50000},
+    {"136042-103.7c", 0x64d473a8, 0x0000, 0x8000, 0x58000},
+};
+
+const std::vector<RomChunk> kSuperSprintMotion = {
+    {"136042-113.6l", 0xf869b0fc, 0, 0x8000, 0x00000},
+    {"136042-112.6k", 0xabcbc114, 0, 0x8000, 0x08000},
+    {"136042-110.6jh", 0x9e91e734, 0, 0x8000, 0x10000},
+    {"136042-109.6fh", 0x3a051f36, 0, 0x8000, 0x18000},
+    {"136042-117.6rs", 0xb15c1b90, 0, 0x8000, 0x20000},
+    {"136042-116.6pr", 0x1dcdd5aa, 0, 0x8000, 0x28000},
+    {"136042-115.6n", 0xfb5677d9, 0, 0x8000, 0x30000},
+    {"136042-114.6m", 0x35e70a8d, 0, 0x8000, 0x38000},
+};
+
+const std::vector<RomChunk> kSuperSprintAlpha = {
+    {"136042-118.6t", 0x8489d113, 0, 0x4000, 0x0000},
+};
+
+const std::vector<RomChunk> kSuperSprintEeprom = {
+    {"ssprint-eeprom.bin", 0x9301ed27, 0, 0x200, 0x0000},
+};
+
+// MAME atarisy2.cpp, 720 ROM set (720 Degrees, rev 4).
+const std::vector<RomChunk> kDegrees720Main = {
+    {"136047-3126.7lm", 0x43abd367, 0, 0x4000, 0x008000},
+    {"136047-3127.7mn", 0x772e1e5b, 0, 0x4000, 0x008001},
+    {"136047-3128.6fh", 0xbf6f425b, 0, 0x10000, 0x010000},
+    {"136047-4131.6mn", 0x2ea8a20f, 0, 0x10000, 0x010001},
+    {"136047-1129.6hj", 0xeabf0b01, 0, 0x10000, 0x030000},
+    {"136047-1132.6p", 0xa24f333e, 0, 0x10000, 0x030001},
+    {"136047-1130.6k", 0x93fba845, 0, 0x10000, 0x050000},
+    {"136047-1133.6r", 0x53c177be, 0, 0x10000, 0x050001},
+};
+
+const std::vector<RomChunk> kDegrees720Sound = {
+    {"136047-2134.2a", 0x0db4ca28, 0, 0x4000, 0x4000},
+    {"136047-1135.2b", 0xb1f157d0, 0, 0x4000, 0x8000},
+    {"136047-2136.2cd", 0x00b06bec, 0, 0x4000, 0xc000},
+};
+
+const std::vector<RomChunk> kDegrees720Playfield = {
+    {"136047-1121.6a", 0x7adb5f9a, 0, 0x8000, 0x00000},
+    {"136047-1122.6b", 0x41b60141, 0, 0x8000, 0x08000},
+    {"136047-1123.7a", 0x501881d5, 0, 0x8000, 0x10000},
+    {"136047-1124.7b", 0x096f2574, 0, 0x8000, 0x18000},
+    {"136047-1117.6c", 0x5a55f149, 0, 0x8000, 0x20000},
+    {"136047-1118.6d", 0x9bb2429e, 0, 0x8000, 0x28000},
+    {"136047-1119.7d", 0x8f7b20e5, 0, 0x8000, 0x30000},
+    {"136047-1120.7c", 0x46af6d35, 0, 0x8000, 0x38000},
+};
+
+const std::vector<RomChunk> kDegrees720Motion = {
+    {"136047-1109.6t", 0x0a46b693, 0x0000, 0x8000, 0x020000},
+    {"136047-1109.6t", 0x0a46b693, 0x8000, 0x8000, 0x000000},
+    {"136047-1110.6sr", 0x457d7e38, 0x0000, 0x8000, 0x028000},
+    {"136047-1110.6sr", 0x457d7e38, 0x8000, 0x8000, 0x008000},
+    {"136047-1111.6p", 0xffad0a5b, 0x0000, 0x8000, 0x030000},
+    {"136047-1111.6p", 0xffad0a5b, 0x8000, 0x8000, 0x010000},
+    {"136047-1112.6n", 0x06664580, 0x0000, 0x8000, 0x038000},
+    {"136047-1112.6n", 0x06664580, 0x8000, 0x8000, 0x018000},
+    {"136047-1113.6m", 0x7445dc0f, 0x0000, 0x8000, 0x060000},
+    {"136047-1113.6m", 0x7445dc0f, 0x8000, 0x8000, 0x040000},
+    {"136047-1114.6l", 0x23eaceb0, 0x0000, 0x8000, 0x068000},
+    {"136047-1114.6l", 0x23eaceb0, 0x8000, 0x8000, 0x048000},
+    {"136047-1115.6kj", 0x0cc8de53, 0x0000, 0x8000, 0x070000},
+    {"136047-1115.6kj", 0x0cc8de53, 0x8000, 0x8000, 0x050000},
+    {"136047-1116.6jh", 0x2d8f1369, 0x0000, 0x8000, 0x078000},
+    {"136047-1116.6jh", 0x2d8f1369, 0x8000, 0x8000, 0x058000},
+    {"136047-1101.5t", 0x2ac77b80, 0x0000, 0x8000, 0x0a0000},
+    {"136047-1101.5t", 0x2ac77b80, 0x8000, 0x8000, 0x080000},
+    {"136047-1102.5sr", 0xf19c3b06, 0x0000, 0x8000, 0x0a8000},
+    {"136047-1102.5sr", 0xf19c3b06, 0x8000, 0x8000, 0x088000},
+    {"136047-1103.5p", 0x78f9ab90, 0x0000, 0x8000, 0x0b0000},
+    {"136047-1103.5p", 0x78f9ab90, 0x8000, 0x8000, 0x090000},
+    {"136047-1104.5n", 0x77ce4a7f, 0x0000, 0x8000, 0x0b8000},
+    {"136047-1104.5n", 0x77ce4a7f, 0x8000, 0x8000, 0x098000},
+    {"136047-1105.5m", 0xbef5a025, 0x0000, 0x8000, 0x0e0000},
+    {"136047-1105.5m", 0xbef5a025, 0x8000, 0x8000, 0x0c0000},
+    {"136047-1106.5l", 0x92a159c8, 0x0000, 0x8000, 0x0e8000},
+    {"136047-1106.5l", 0x92a159c8, 0x8000, 0x8000, 0x0c8000},
+    {"136047-1107.5kj", 0x0a94a3ef, 0x0000, 0x8000, 0x0f0000},
+    {"136047-1107.5kj", 0x0a94a3ef, 0x8000, 0x8000, 0x0d0000},
+    {"136047-1108.5jh", 0x9815eda6, 0x0000, 0x8000, 0x0f8000},
+    {"136047-1108.5jh", 0x9815eda6, 0x8000, 0x8000, 0x0d8000},
+};
+
+const std::vector<RomChunk> kDegrees720Alpha = {
+    {"136047-1125.4t", 0x6b7e2328, 0, 0x4000, 0x0000},
+};
+
+const std::vector<RomChunk> kDegrees720Eeprom = {
+    {"720-eeprom.bin", 0xcfe1c24e, 0, 0x200, 0x0000},
+};
+
+// MAME atarisy2.cpp, apb ROM set (APB - All Points Bulletin, rev 7).
+const std::vector<RomChunk> kApbMain = {
+    {"136051-2126.7l", 0x8edf4726, 0, 0x4000, 0x008000},
+    {"136051-2127.7n", 0xe2b2aff2, 0, 0x4000, 0x008001},
+    {"136051-7128.6f", 0xc08504d2, 0, 0x10000, 0x010000},
+    {"136051-7129.6n", 0x79adb57f, 0, 0x10000, 0x010001},
+    {"136051-1130.6j", 0xf64c752e, 0, 0x10000, 0x030000},
+    {"136051-1131.6p", 0x0a506e04, 0, 0x10000, 0x030001},
+    {"136051-1132.6l", 0x6d0e7a4e, 0, 0x10000, 0x070000},
+    {"136051-1133.6s", 0xaf88d429, 0, 0x10000, 0x070001},
+};
+
+const std::vector<RomChunk> kApbSound = {
+    {"136051-5134.2a", 0x1c8bdeed, 0, 0x4000, 0x4000},
+    {"136051-5135.2bc", 0xed6adb91, 0, 0x4000, 0x8000},
+    {"136051-5136.2d", 0x341f8486, 0, 0x4000, 0xc000},
+};
+
+const std::vector<RomChunk> kApbPlayfield = {
+    {"136051-1118.6a", 0x93752c49, 0x0000, 0x8000, 0x00000},
+    {"136051-1120.6bc", 0x043086f8, 0x0000, 0x8000, 0x28000},
+    {"136051-1120.6bc", 0x043086f8, 0x8000, 0x8000, 0x08000},
+    {"136051-1122.7a", 0x5ee79481, 0x0000, 0x8000, 0x30000},
+    {"136051-1122.7a", 0x5ee79481, 0x8000, 0x8000, 0x10000},
+    {"136051-1124.7bc", 0x27760395, 0x0000, 0x8000, 0x38000},
+    {"136051-1124.7bc", 0x27760395, 0x8000, 0x8000, 0x18000},
+    {"136051-1117.6cd", 0xcfc3f8a3, 0x0000, 0x8000, 0x40000},
+    {"136051-1119.6de", 0x68850612, 0x0000, 0x8000, 0x68000},
+    {"136051-1119.6de", 0x68850612, 0x8000, 0x8000, 0x48000},
+    {"136051-1121.7de", 0xc7977062, 0x0000, 0x8000, 0x70000},
+    {"136051-1121.7de", 0xc7977062, 0x8000, 0x8000, 0x50000},
+    {"136051-1123.7cd", 0x3c96c848, 0x0000, 0x8000, 0x78000},
+    {"136051-1123.7cd", 0x3c96c848, 0x8000, 0x8000, 0x58000},
+};
+
+const std::vector<RomChunk> kApbMotion = {
+    {"136051-1105.6t", 0x9b78a88e, 0x0000, 0x8000, 0x020000},
+    {"136051-1105.6t", 0x9b78a88e, 0x8000, 0x8000, 0x000000},
+    {"136051-1106.6rs", 0x4787ff58, 0x0000, 0x8000, 0x028000},
+    {"136051-1106.6rs", 0x4787ff58, 0x8000, 0x8000, 0x008000},
+    {"136051-1107.6pr", 0x0e85f2ac, 0x0000, 0x8000, 0x030000},
+    {"136051-1107.6pr", 0x0e85f2ac, 0x8000, 0x8000, 0x010000},
+    {"136051-1108.6n", 0x70ff9308, 0x0000, 0x8000, 0x038000},
+    {"136051-1108.6n", 0x70ff9308, 0x8000, 0x8000, 0x018000},
+    {"136051-1113.6m", 0x4a445356, 0x0000, 0x8000, 0x060000},
+    {"136051-1113.6m", 0x4a445356, 0x8000, 0x8000, 0x040000},
+    {"136051-1114.6kl", 0xb9b27f3c, 0x0000, 0x8000, 0x068000},
+    {"136051-1114.6kl", 0xb9b27f3c, 0x8000, 0x8000, 0x048000},
+    {"136051-1115.6jk", 0xa7671dd8, 0x0000, 0x8000, 0x070000},
+    {"136051-1115.6jk", 0xa7671dd8, 0x8000, 0x8000, 0x050000},
+    {"136051-1116.6h", 0x879fc7de, 0x0000, 0x8000, 0x078000},
+    {"136051-1116.6h", 0x879fc7de, 0x8000, 0x8000, 0x058000},
+    {"136051-1101.5t", 0x0ef13513, 0x0000, 0x8000, 0x0a0000},
+    {"136051-1101.5t", 0x0ef13513, 0x8000, 0x8000, 0x080000},
+    {"136051-1102.5rs", 0x401e06fd, 0x0000, 0x8000, 0x0a8000},
+    {"136051-1102.5rs", 0x401e06fd, 0x8000, 0x8000, 0x088000},
+    {"136051-1103.5pr", 0x50d820e8, 0x0000, 0x8000, 0x0b0000},
+    {"136051-1103.5pr", 0x50d820e8, 0x8000, 0x8000, 0x090000},
+    {"136051-1104.5n", 0x912d878f, 0x0000, 0x8000, 0x0b8000},
+    {"136051-1104.5n", 0x912d878f, 0x8000, 0x8000, 0x098000},
+    {"136051-1109.5m", 0x6716a408, 0x0000, 0x8000, 0x0e0000},
+    {"136051-1109.5m", 0x6716a408, 0x8000, 0x8000, 0x0c0000},
+    {"136051-1110.5kl", 0x7e184981, 0x0000, 0x8000, 0x0e8000},
+    {"136051-1110.5kl", 0x7e184981, 0x8000, 0x8000, 0x0c8000},
+    {"136051-1111.5jk", 0x353a14fd, 0x0000, 0x8000, 0x0f0000},
+    {"136051-1111.5jk", 0x353a14fd, 0x8000, 0x8000, 0x0d0000},
+    {"136051-1112.5h", 0x3af7c50f, 0x0000, 0x8000, 0x0f8000},
+    {"136051-1112.5h", 0x3af7c50f, 0x8000, 0x8000, 0x0d8000},
+};
+
+const std::vector<RomChunk> kApbAlpha = {
+    {"136051-1125.4t", 0x05a0341c, 0, 0x4000, 0x0000},
+};
+
+// MAME init_paperboy()/init_ssprint() mirror the program ROMs differently.
+enum class MainExpand { None, Paperboy, SuperSprint };
+
+struct GameInfo {
+    const char* title;
+    int slapstic;
+    // MAME m_pedal_count.
+    int pedal_count;
+    bool has_tms;
+    bool rotated;
+    MainExpand expand;
+    uint32_t playfield_size;
+    uint32_t motion_size;
+    uint32_t alpha_size;
+    const std::vector<RomChunk>* main;
+    const std::vector<RomChunk>* sound;
+    const std::vector<RomChunk>* playfield;
+    const std::vector<RomChunk>* motion;
+    const std::vector<RomChunk>* alpha;
+    const std::vector<RomChunk>* eeprom;
+};
+
+const GameInfo& game_info(AtariSystem2::Game game) {
+    static const GameInfo kPaperboy = {
+        /*title=*/"Paperboy",
+        /*slapstic=*/105,
+        /*pedal_count=*/0,
+        /*has_tms=*/true,
+        /*rotated=*/false,
+        /*expand=*/MainExpand::Paperboy,
+        /*playfield_size=*/0x20000,
+        /*motion_size=*/0x40000,
+        /*alpha_size=*/0x2000,
+        &kPaperboyMain,
+        &kPaperboySound,
+        &kPaperboyPlayfield,
+        &kPaperboyMotion,
+        &kPaperboyAlpha,
+        &kPaperboyEeprom,
+    };
+    static const GameInfo kSuperSprint = {
+        /*title=*/"Super Sprint",
+        /*slapstic=*/108,
+        /*pedal_count=*/3,
+        /*has_tms=*/false,
+        /*rotated=*/false,
+        /*expand=*/MainExpand::SuperSprint,
+        /*playfield_size=*/0x80000,
+        /*motion_size=*/0x40000,
+        /*alpha_size=*/0x4000,
+        &kSuperSprintMain,
+        &kSuperSprintSound,
+        &kSuperSprintPlayfield,
+        &kSuperSprintMotion,
+        &kSuperSprintAlpha,
+        &kSuperSprintEeprom,
+    };
+    static const GameInfo kApb = {
+        /*title=*/"APB - All Points Bulletin",
+        /*slapstic=*/110,
+        /*pedal_count=*/2,
+        /*has_tms=*/true,
+        /*rotated=*/true,
+        /*expand=*/MainExpand::None,
+        /*playfield_size=*/0x80000,
+        /*motion_size=*/0x100000,
+        /*alpha_size=*/0x4000,
+        &kApbMain,
+        &kApbSound,
+        &kApbPlayfield,
+        &kApbMotion,
+        &kApbAlpha,
+        /*eeprom=*/nullptr,
+    };
+    static const GameInfo kDegrees720 = {
+        /*title=*/"720 Degrees",
+        /*slapstic=*/107,
+        /*pedal_count=*/-1,
+        /*has_tms=*/true,
+        /*rotated=*/false,
+        /*expand=*/MainExpand::None,
+        /*playfield_size=*/0x40000,
+        /*motion_size=*/0x100000,
+        /*alpha_size=*/0x4000,
+        &kDegrees720Main,
+        &kDegrees720Sound,
+        &kDegrees720Playfield,
+        &kDegrees720Motion,
+        &kDegrees720Alpha,
+        &kDegrees720Eeprom,
+    };
+    switch (game) {
+        case AtariSystem2::Game::SuperSprint: return kSuperSprint;
+        case AtariSystem2::Game::Apb: return kApb;
+        case AtariSystem2::Game::Degrees720: return kDegrees720;
+        case AtariSystem2::Game::Paperboy: break;
+    }
+    return kPaperboy;
+}
+
+// Copies every chunk into `region`. `interleaved` splits the T-11 program into
+// the even/odd byte lanes of each word.
+bool load_region(RomLoader& loader, const std::vector<RomChunk>& chunks,
+                 std::vector<uint8_t>& region, bool interleaved,
+                 std::vector<std::string>& warnings, std::string* error) {
+    std::map<std::string, std::vector<uint8_t>> files;
+    for (const RomChunk& chunk : chunks) {
+        auto it = files.find(chunk.name);
+        if (it == files.end()) {
+            std::vector<uint8_t> data;
+            if (!loader.try_read(chunk.name, data)) {
+                if (error != nullptr) *error = std::string("missing ROM ") + chunk.name;
+                return false;
+            }
+            if (crc32_of(data.data(), data.size()) != chunk.crc) {
+                warnings.push_back(std::string("CRC mismatch on ") + chunk.name);
+            }
+            it = files.emplace(chunk.name, std::move(data)).first;
+        }
+        const std::vector<uint8_t>& data = it->second;
+        if (size_t(chunk.source) + chunk.length > data.size()) {
+            if (error != nullptr) *error = std::string("short ROM ") + chunk.name;
+            return false;
+        }
+        const uint32_t span = interleaved ? chunk.length * 2 : chunk.length;
+        if (size_t(chunk.dest & ~1u) + span > region.size()) {
+            if (error != nullptr) *error = std::string("ROM out of range ") + chunk.name;
+            return false;
+        }
+        if (interleaved) {
+            const uint32_t base = chunk.dest & ~1u;
+            const uint32_t lane = chunk.dest & 1u;
+            for (uint32_t i = 0; i < chunk.length; i++) {
+                region[base + i * 2 + lane] = data[chunk.source + i];
+            }
+        } else {
+            std::memcpy(&region[chunk.dest], &data[chunk.source], chunk.length);
+        }
+    }
+    return true;
+}
+
+GfxLayout alpha_layout(uint32_t region_size) {
     GfxLayout layout;
     layout.width = 8;
     layout.height = 8;
-    layout.total = 0x2000 / 16;
+    layout.total = int(region_size / 16);
     layout.planes = 2;
     layout.char_increment = 8 * 8 * 2;
     layout.plane_offsets = {0, 4};
@@ -68,12 +419,12 @@ GfxLayout alpha_layout() {
     return layout;
 }
 
-GfxLayout playfield_layout() {
-    constexpr int kHalf = 0x10000 * 8;
+GfxLayout playfield_layout(uint32_t region_size) {
+    const int kHalf = int(region_size / 2) * 8;
     GfxLayout layout;
     layout.width = 8;
     layout.height = 8;
-    layout.total = 0x10000 / 16;
+    layout.total = int(region_size / 2 / 16);
     layout.planes = 4;
     layout.char_increment = 8 * 8 * 2;
     layout.plane_offsets = {0, 4, kHalf + 0, kHalf + 4};
@@ -82,12 +433,12 @@ GfxLayout playfield_layout() {
     return layout;
 }
 
-GfxLayout motion_layout() {
-    constexpr int kHalf = 0x20000 * 8;
+GfxLayout motion_layout(uint32_t region_size) {
+    const int kHalf = int(region_size / 2) * 8;
     GfxLayout layout;
     layout.width = 16;
     layout.height = 16;
-    layout.total = 0x20000 / 64;
+    layout.total = int(region_size / 2 / 64);
     layout.planes = 4;
     layout.char_increment = 16 * 16 * 2;
     layout.plane_offsets = {0, 4, kHalf + 0, kHalf + 4};
@@ -146,7 +497,11 @@ AtariSystem2::AtariSystem2(Game game)
       pokey1_(kPokeyClock),
       pokey2_(kPokeyClock),
       tms_(kMasterClock / 4 / 4 / 2, Tms5220::Variant::Tms5220C),
-      slapstic_(105, nullptr) {
+      slapstic_(game_info(game).slapstic, nullptr) {
+    const GameInfo& info = game_info(game);
+    rotated_ = info.rotated;
+    has_tms_ = info.has_tms;
+    pedal_count_ = info.pedal_count;
     rom_.assign(0x90000 / 2, 0);
     alpha_.assign(size_t(kScreenWidth) * kScreenHeight, kTransparent);
     playfield_.assign(size_t(kPlayfieldWidth) * kPlayfieldHeight, 0);
@@ -173,11 +528,7 @@ AtariSystem2::AtariSystem2(Game game)
         motion_config(), nullptr, mob_ram_.data(), kScreenWidth + 16, kScreenHeight + 16);
 }
 
-const char* AtariSystem2::title() const {
-    switch (game_) {
-        default: return "Paperboy";
-    }
-}
+const char* AtariSystem2::title() const { return game_info(game_).title; }
 
 bool AtariSystem2::init(const std::string& rom_path, std::string* error) {
     if (!load_roms(rom_path, error)) return false;
@@ -189,53 +540,63 @@ bool AtariSystem2::load_roms(const std::string& rom_path, std::string* error) {
     RomLoader loader;
     if (!loader.open(rom_path, error)) return false;
 
+    const GameInfo& info = game_info(game_);
+
     std::vector<uint8_t> main_bytes(0x90000, 0);
-    for (const RomEntry& entry : kPaperboyMain) {
-        std::vector<uint8_t> data(entry.length, 0);
-        const RomEntry single{entry.name, entry.length, 0, entry.crc};
-        if (!loader.load({single}, data, error)) return false;
-        const uint32_t base = entry.offset & ~1u;
-        const uint32_t lane = entry.offset & 1u;
-        for (uint32_t i = 0; i < entry.length; i++) {
-            main_bytes[base + i * 2 + lane] = data[i];
-        }
-    }
-    // MAME init_paperboy(): expand the 16k program ROM pairs into 64k chunks.
-    for (uint32_t i = 0x10000; i < 0x90000; i += 0x20000) {
-        std::memcpy(&main_bytes[i + 0x08000], &main_bytes[i], 0x8000);
-        std::memcpy(&main_bytes[i + 0x10000], &main_bytes[i], 0x8000);
-        std::memcpy(&main_bytes[i + 0x18000], &main_bytes[i], 0x8000);
+    if (!load_region(loader, *info.main, main_bytes, true, warnings_, error)) return false;
+    switch (info.expand) {
+        case MainExpand::Paperboy:
+            // MAME init_paperboy(): mirror the 16k program ROM pairs over the
+            // whole 64k bank.
+            for (uint32_t i = 0x10000; i < 0x90000; i += 0x20000) {
+                std::memcpy(&main_bytes[i + 0x08000], &main_bytes[i], 0x8000);
+                std::memcpy(&main_bytes[i + 0x10000], &main_bytes[i], 0x8000);
+                std::memcpy(&main_bytes[i + 0x18000], &main_bytes[i], 0x8000);
+            }
+            break;
+        case MainExpand::SuperSprint:
+            // MAME init_ssprint(): the 32k pairs are mirrored once.
+            for (uint32_t i = 0x10000; i < 0x90000; i += 0x20000) {
+                std::memcpy(&main_bytes[i + 0x10000], &main_bytes[i], 0x10000);
+            }
+            break;
+        case MainExpand::None: break;
     }
     for (size_t i = 0; i < rom_.size(); i++) {
         rom_[i] = uint16_t(main_bytes[i * 2] | (main_bytes[i * 2 + 1] << 8));
     }
 
     std::vector<uint8_t> sound_rom(0x10000, 0);
-    if (!loader.load(kPaperboySound, sound_rom, error)) return false;
+    if (!load_region(loader, *info.sound, sound_rom, false, warnings_, error)) return false;
     std::copy(sound_rom.begin(), sound_rom.end(), sound_memory_.begin());
 
-    std::vector<uint8_t> playfield_rom(0x20000, 0);
-    if (!loader.load(kPaperboyPlayfield, playfield_rom, error)) return false;
-    playfield_gfx_.decode(playfield_layout(), playfield_rom);
+    std::vector<uint8_t> playfield_rom(info.playfield_size, 0);
+    if (!load_region(loader, *info.playfield, playfield_rom, false, warnings_, error)) {
+        return false;
+    }
+    playfield_gfx_.decode(playfield_layout(info.playfield_size), playfield_rom);
 
-    std::vector<uint8_t> motion_rom(0x40000, 0);
-    if (!loader.load(kPaperboyMotion, motion_rom, error)) return false;
+    std::vector<uint8_t> motion_rom(info.motion_size, 0);
+    if (!load_region(loader, *info.motion, motion_rom, false, warnings_, error)) return false;
     // ROMREGION_INVERT: the motion object ROMs are stored inverted, which turns
     // the transparent pen into 15.
     for (uint8_t& value : motion_rom) value = uint8_t(~value);
-    motion_gfx_.decode(motion_layout(), motion_rom);
+    motion_gfx_.decode(motion_layout(info.motion_size), motion_rom);
 
-    std::vector<uint8_t> alpha_rom(0x2000, 0);
-    if (!loader.load(kPaperboyAlpha, alpha_rom, error)) return false;
-    alpha_gfx_.decode(alpha_layout(), alpha_rom);
+    std::vector<uint8_t> alpha_rom(info.alpha_size, 0);
+    if (!load_region(loader, *info.alpha, alpha_rom, false, warnings_, error)) return false;
+    alpha_gfx_.decode(alpha_layout(info.alpha_size), alpha_rom);
 
-    std::vector<uint8_t> eeprom(0x200, 0xff);
-    std::string eeprom_error;
-    if (loader.load(kPaperboyEeprom, eeprom, &eeprom_error)) {
-        std::copy(eeprom.begin(), eeprom.end(), eeprom_.begin());
-    } else {
-        eeprom_.fill(0xff);
-        warnings_.push_back("default EEPROM missing: " + eeprom_error);
+    eeprom_.fill(0xff);
+    if (info.eeprom != nullptr) {
+        std::vector<uint8_t> eeprom(0x200, 0xff);
+        std::string eeprom_error;
+        std::vector<std::string> eeprom_warnings;
+        if (load_region(loader, *info.eeprom, eeprom, false, eeprom_warnings, &eeprom_error)) {
+            std::copy(eeprom.begin(), eeprom.end(), eeprom_.begin());
+        } else {
+            warnings_.push_back("default EEPROM missing: " + eeprom_error);
+        }
     }
 
     const std::vector<std::string>& loader_warnings = loader.warnings();
@@ -294,8 +655,14 @@ void AtariSystem2::reset() {
 
     adc_value_ = 0;
     adc_input_ = {0x80, 0x80, 0x00, 0x00};
+    leta_input_.fill(0);
+    dial_ = 0;
+    spin_position_ = 0;
+    spin_center_count_ = 0;
+    spin_rotate_count_ = 0;
     buttons_ = 0;
     coin1_ = coin2_ = coin3_ = false;
+    start3_ = false;
     service_coin_ = false;
     self_test_ = false;
 
@@ -325,7 +692,7 @@ void AtariSystem2::write_sound_chip_reset(uint8_t value) {
     sound_reset_state_ = (value & 1) != 0;
     ym_.reset();
     // Only the 0 -> 1 transition halts the speech chip.
-    if (!sound_reset_state_) return;
+    if (!sound_reset_state_ || !has_tms_) return;
     tms_.reset();
     tms_.set_rsq(true);
     tms_.set_wsq(true);
@@ -386,6 +753,8 @@ uint16_t AtariSystem2::switch_r() const {
     // "1800": bits 0-3 unused, 4 = main latch pending, 5 = sound latch pending,
     // 6/7 = buttons (active low). "1801" bit 7 = self test (active low).
     uint16_t low = 0xcf;
+    // Super Sprint puts the third start button on bit 3.
+    if (game_ == Game::SuperSprint && start3_) low = uint16_t(low & ~0x08);
     if (main_pending_) low |= 0x10;
     if (sound_pending_) low |= 0x20;
     low = uint16_t(low & ~uint16_t(buttons_));
@@ -398,16 +767,32 @@ uint8_t AtariSystem2::switch_6502_r() const {
     uint8_t result = 0xf4;
     if (sound_pending_) result |= 0x01;
     if (main_pending_) result |= 0x02;
-    if (!tms_.readyq()) result = uint8_t(result & ~0x04);
-    if (coin3_) result = uint8_t(result & ~0x20);
-    if (coin1_) result = uint8_t(result & ~0x40);
-    if (coin2_) result = uint8_t(result & ~0x80);
+    if (has_tms_ && !tms_.readyq()) result = uint8_t(result & ~0x04);
     if (service_coin_) result = uint8_t(result & ~0x10);
+    if (game_ == Game::SuperSprint) {
+        // Super Sprint moves the three coin inputs one bit up.
+        if (coin1_) result = uint8_t(result & ~0x20);
+        if (coin2_) result = uint8_t(result & ~0x40);
+        if (coin3_) result = uint8_t(result & ~0x80);
+    } else {
+        if (coin3_) result = uint8_t(result & ~0x20);
+        if (coin1_) result = uint8_t(result & ~0x40);
+        if (coin2_) result = uint8_t(result & ~0x80);
+    }
     return result;
 }
 
 uint8_t AtariSystem2::adc_channel_value(int channel) const {
     return adc_input_[size_t(channel & 3)];
+}
+
+uint8_t AtariSystem2::leta_r(int channel) const {
+    // 720 wires its rotary control to the first two channels: channel 0 counts
+    // the center disc gaps and channel 1 the rotation.
+    if (pedal_count_ == -1 && channel <= 1) {
+        return channel == 0 ? uint8_t(spin_center_count_) : spin_rotate_count_;
+    }
+    return leta_input_[size_t(channel & 3)];
 }
 
 uint16_t AtariSystem2::main_read(uint16_t address) {
@@ -561,7 +946,7 @@ uint8_t AtariSystem2::sound_read(uint16_t address) {
         return pokey1_.read(address & 0x0f);
     }
     if ((address & ~0x278c) >= 0x1810 && (address & ~0x278c) <= 0x1813) {
-        return 0xff;  // LETA analog inputs, unused on Paperboy
+        return leta_r(address & 3);
     }
     if ((address & ~0x2780) >= 0x1830 && (address & ~0x2780) <= 0x183f) {
         return pokey2_.read(address & 0x0f);
@@ -608,7 +993,7 @@ void AtariSystem2::sound_write(uint16_t address, uint8_t value) {
     const uint16_t io = address & ~0x2781;
     switch (io) {
         case 0x1870:  // speech data
-            tms_.set_data_latch(value);
+            if (has_tms_) tms_.set_data_latch(value);
             return;
         case 0x1874:  // response to the main CPU
             p2portwr_state_ = (interrupt_enable_ & 0x02) != 0;
@@ -623,7 +1008,9 @@ void AtariSystem2::sound_write(uint16_t address, uint8_t value) {
         case 0x187a: return;  // mixer
         case 0x187c:
             // Speech clock select: MASTER_CLOCK/4 / (16 - (12 | bit 5)) / 2.
-            tms_.set_clock(kMasterClock / 4 / uint32_t(16 - (12 | ((value >> 5) & 1))) / 2);
+            if (has_tms_) {
+                tms_.set_clock(kMasterClock / 4 / uint32_t(16 - (12 | ((value >> 5) & 1))) / 2);
+            }
             return;
         case 0x187e:
             write_sound_chip_reset(value);
@@ -631,7 +1018,7 @@ void AtariSystem2::sound_write(uint16_t address, uint8_t value) {
         default: break;
     }
     if ((address & ~0x2780) == 0x1872 || (address & ~0x2780) == 0x1873) {
-        tms_.set_wsq((address & 1) == 0);
+        if (has_tms_) tms_.set_wsq((address & 1) == 0);
         return;
     }
 }
@@ -640,9 +1027,11 @@ void AtariSystem2::on_sound_cycles(int cycles) {
     ym_.run_timers(cycles * 2);
     pokey1_.run(cycles);
     pokey2_.run(cycles);
-    const int tms_clocks =
-        int((int64_t(cycles) * int64_t(tms_.clock()) + (kSoundClock / 2)) / kSoundClock);
-    tms_.tick(tms_clocks);
+    if (has_tms_) {
+        const int tms_clocks =
+            int((int64_t(cycles) * int64_t(tms_.clock()) + (kSoundClock / 2)) / kSoundClock);
+        tms_.tick(tms_clocks);
+    }
 
     // Periodic sound IRQ at MASTER_CLOCK/2/16/16/16/10 = 244.140625 Hz.
     sound_irq_counter_ += cycles;
@@ -655,8 +1044,8 @@ void AtariSystem2::on_sound_cycles(int cycles) {
     audio_accumulator_ += int64_t(cycles) * YM2151::kSampleRate;
     while (audio_accumulator_ >= kSoundClock) {
         audio_accumulator_ -= kSoundClock;
-        const int32_t sample =
-            ym_.update() + pokey1_.update() + pokey2_.update() + tms_.last_sample();
+        const int32_t sample = ym_.update() + pokey1_.update() + pokey2_.update() +
+                               (has_tms_ ? tms_.last_sample() : 0);
         audio_.push_back(int16_t(std::clamp(sample, int32_t(-32768), int32_t(32767))));
     }
 }
@@ -747,7 +1136,10 @@ void AtariSystem2::compose_frame() {
             }
             const int16_t character = alpha_[screen];
             if (character != kTransparent) pen = uint16_t(character);
-            framebuffer_[screen] = palette_[size_t(pen) & 0xff];
+            // ROT270 on APB: the leftmost column becomes the bottom row.
+            const size_t target =
+                rotated_ ? size_t((kScreenWidth - 1 - x) * kScreenHeight + y) : screen;
+            framebuffer_[target] = palette_[size_t(pen) & 0xff];
         }
     }
 }
@@ -799,23 +1191,107 @@ void AtariSystem2::run_frame() {
 
 void AtariSystem2::set_inputs(const MachineInputs& inputs) {
     buttons_ = 0;
-    if (inputs.player1.button1 || inputs.player1.start) buttons_ |= 0x80;
-    if (inputs.player1.button2 || inputs.player2.start) buttons_ |= 0x40;
+    switch (game_) {
+        case Game::SuperSprint:
+            // Bits 7/6/3 are the three start buttons.
+            if (inputs.player1.start) buttons_ |= 0x80;
+            if (inputs.player2.start) buttons_ |= 0x40;
+            start3_ = inputs.player1.button3;
+            break;
+        case Game::Apb:
+            // Bits 1/3 are the two extra buttons; there is no button on 6/7.
+            if (inputs.player1.button2) buttons_ |= 0x02;
+            if (inputs.player1.button3) buttons_ |= 0x08;
+            break;
+        case Game::Paperboy:
+        case Game::Degrees720:
+            if (inputs.player1.button1 || inputs.player1.start) buttons_ |= 0x80;
+            if (inputs.player1.button2 || inputs.player2.start) buttons_ |= 0x40;
+            break;
+    }
     coin1_ = inputs.coin1;
     coin2_ = inputs.coin2;
-    coin3_ = false;
+    coin3_ = inputs.player2.button4;
     service_coin_ = inputs.player2.select;
     self_test_ = inputs.player1.select;
+    update_analog(inputs);
+}
 
-    // Paperboy steers with a pair of 8 bit pots limited to $10-$f0.
-    uint8_t x = 0x80;
-    uint8_t y = 0x80;
-    if (inputs.player1.left && !inputs.player1.right) x = 0x10;
-    if (inputs.player1.right && !inputs.player1.left) x = 0xf0;
-    if (inputs.player1.up && !inputs.player1.down) y = 0x10;
-    if (inputs.player1.down && !inputs.player1.up) y = 0xf0;
-    adc_input_[0] = x;
-    adc_input_[1] = y;
+void AtariSystem2::update_analog(const MachineInputs& inputs) {
+    // The pedals are 6 bit pots read inverted, so a released pedal is $3f.
+    auto pedal = [](bool pressed) { return uint8_t(pressed ? 0x00 : 0x3f); };
+    // The steering wheels are quadrature dials counting up while turning right.
+    auto turn = [](int& value, const InputState& player) {
+        if (player.right && !player.left) value += 2;
+        if (player.left && !player.right) value -= 2;
+        return uint8_t(value);
+    };
+    switch (game_) {
+        case Game::Paperboy: {
+            // Paperboy steers with a pair of 8 bit pots limited to $10-$f0.
+            uint8_t x = 0x80;
+            uint8_t y = 0x80;
+            if (inputs.player1.left && !inputs.player1.right) x = 0x10;
+            if (inputs.player1.right && !inputs.player1.left) x = 0xf0;
+            if (inputs.player1.up && !inputs.player1.down) y = 0x10;
+            if (inputs.player1.down && !inputs.player1.up) y = 0xf0;
+            adc_input_[0] = x;
+            adc_input_[1] = y;
+            break;
+        }
+        case Game::SuperSprint: {
+            // Three cars: the pedals are the three buttons of the keyboard
+            // player, and only the first steering wheel has arrow keys.
+            adc_input_[0] = pedal(inputs.player1.button1);
+            adc_input_[1] = pedal(inputs.player1.button2);
+            adc_input_[2] = pedal(inputs.player1.button4);
+            leta_input_[0] = turn(dial_, inputs.player1);
+            break;
+        }
+        case Game::Apb: {
+            adc_input_[1] = pedal(inputs.player1.button1);
+            leta_input_[0] = turn(dial_, inputs.player1);
+            break;
+        }
+        case Game::Degrees720: {
+            // A held arrow key spins the disc at a comfortable few counts per
+            // frame; a full turn of the real control is 144 counts.
+            constexpr int kSpinSpeed = 3;
+            int direction = 0;
+            if (inputs.player1.right && !inputs.player1.left) direction = kSpinSpeed;
+            if (inputs.player1.left && !inputs.player1.right) direction = -kSpinSpeed;
+            update_spinner(direction);
+            break;
+        }
+    }
+}
+
+// MAME leta_r(): the 720 controller has a 144 count rotation disc plus a center
+// disc whose two teeth are seen as extra counts around positions 2/3 and
+// 141/142.
+void AtariSystem2::update_spinner(int direction) {
+    const int steps = direction < 0 ? -direction : direction;
+    const int sign = direction < 0 ? -1 : 1;
+    for (int step = 0; step < steps; step++) {
+        if (sign < 0) {
+            spin_position_--;
+            if (spin_position_ < 0) {
+                spin_position_ = 143;
+            } else if (spin_position_ == 2 || spin_position_ == 3 || spin_position_ == 141 ||
+                       spin_position_ == 142) {
+                spin_center_count_--;
+            }
+        } else {
+            spin_position_++;
+            if (spin_position_ > 143) {
+                spin_position_ = 0;
+            } else if (spin_position_ == 2 || spin_position_ == 3 || spin_position_ == 141 ||
+                       spin_position_ == 142) {
+                spin_center_count_++;
+            }
+        }
+        spin_rotate_count_ = uint8_t(int(spin_rotate_count_) + sign);
+    }
 }
 
 void AtariSystem2::set_dip_switch(int bank, uint8_t value) {

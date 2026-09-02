@@ -18,10 +18,10 @@
 
 namespace dsp {
 
-// Atari System 2 (Paperboy). The main CPU is a DEC T-11 whose 020000-037777
-// window is banked by a SLAPSTIC 105 between the alpha/motion object RAM and
-// the two halves of the playfield; sound is an M6502 with a YM2151, two POKEYs
-// and a TMS5220C.
+// Atari System 2 (Paperboy, Super Sprint, APB, 720 Degrees). The main CPU is a
+// DEC T-11 whose 020000-037777 window is banked by the SLAPSTIC between the
+// alpha/motion object RAM and the two halves of the playfield; sound is an
+// M6502 with a YM2151, two POKEYs and a TMS5220C.
 class AtariSystem2 : public Machine {
 public:
     static constexpr int kScreenWidth = 512;
@@ -39,7 +39,7 @@ public:
     static constexpr double kFramesPerSecond =
         double(kVideoClock) / 2.0 / 640.0 / double(kScanlines);
 
-    enum class Game { Paperboy };
+    enum class Game { Paperboy, SuperSprint, Apb, Degrees720 };
 
     explicit AtariSystem2(Game game = Game::Paperboy);
 
@@ -51,8 +51,9 @@ public:
     void set_dip_switch(int bank, uint8_t value) override;
 
     const uint32_t* framebuffer() const override { return framebuffer_.data(); }
-    int screen_width() const override { return kScreenWidth; }
-    int screen_height() const override { return kScreenHeight; }
+    // APB runs on a rotated monitor (ROT270).
+    int screen_width() const override { return rotated_ ? kScreenHeight : kScreenWidth; }
+    int screen_height() const override { return rotated_ ? kScreenWidth : kScreenHeight; }
     double frames_per_second() const override { return kFramesPerSecond; }
 
     void drain_audio(std::vector<int16_t>& out) override;
@@ -85,6 +86,9 @@ private:
     uint16_t switch_r() const;
     uint8_t switch_6502_r() const;
     uint8_t adc_channel_value(int channel) const;
+    uint8_t leta_r(int channel) const;
+    void update_analog(const MachineInputs& inputs);
+    void update_spinner(int direction);
 
     void update_video();
     void draw_alpha_tile(int offset);
@@ -96,6 +100,10 @@ private:
     static constexpr uint16_t kMoTransparent = 0xffff;
 
     Game game_;
+    bool rotated_ = false;
+    bool has_tms_ = true;
+    // MAME m_pedal_count: number of pedals, or -1 for the 720 rotary control.
+    int pedal_count_ = 0;
     T11 main_cpu_;
     M6502 sound_cpu_;
     YM2151 ym_;
@@ -158,11 +166,18 @@ private:
 
     uint8_t adc_value_ = 0;
     std::array<uint8_t, 4> adc_input_{};
+    // LETA quadrature inputs: steering dials, or the 720 center/rotate discs.
+    std::array<uint8_t, 4> leta_input_{};
+    int dial_ = 0;
+    int spin_position_ = 0;
+    int spin_center_count_ = 0;
+    uint8_t spin_rotate_count_ = 0;
     uint8_t dsw_[2] = {0, 0};
     uint8_t buttons_ = 0;
     bool coin1_ = false;
     bool coin2_ = false;
     bool coin3_ = false;
+    bool start3_ = false;
     bool service_coin_ = false;
     bool self_test_ = false;
 
