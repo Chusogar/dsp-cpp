@@ -18,6 +18,7 @@
 #include "cpu/m6805.h"
 #include "cpu/m6809.h"
 #include "cpu/m68000.h"
+#include "cpu/t11.h"
 #include "cpu/tms7000.h"
 #include "cpu/upd7801.h"
 #include "cpu/z80.h"
@@ -25,6 +26,7 @@
 #include "drivers/amstrad_cpc.h"
 #include "drivers/atari_lynx.h"
 #include "drivers/atari_system1.h"
+#include "drivers/atari_system2.h"
 #include "drivers/apple2.h"
 #include "drivers/exelv.h"
 #include "drivers/gameboy.h"
@@ -2893,6 +2895,133 @@ void test_starwars_missing_roms() {
     }
 }
 
+std::vector<uint8_t> t11_memory;
+
+std::unique_ptr<dsp::T11> make_t11(uint16_t mode = 0x36ff) {
+    t11_memory.assign(0x10000, 0);
+    auto cpu = std::make_unique<dsp::T11>(10000000, mode);
+    cpu->set_memory_handlers(
+        [](uint16_t address) {
+            return uint16_t(t11_memory[address] | (t11_memory[address + 1] << 8));
+        },
+        [](uint16_t address, uint16_t value, uint16_t mem_mask) {
+            if (mem_mask & 0x00ff) t11_memory[address] = uint8_t(value);
+            if (mem_mask & 0xff00) t11_memory[address + 1] = uint8_t(value >> 8);
+        });
+    return cpu;
+}
+
+void load_t11(uint16_t address, const std::vector<uint16_t>& code) {
+    for (size_t i = 0; i < code.size(); i++) {
+        t11_memory[address + i * 2] = uint8_t(code[i]);
+        t11_memory[address + i * 2 + 1] = uint8_t(code[i] >> 8);
+    }
+}
+
+void test_t11_reset_and_moves() {
+    auto cpu = make_t11();
+    // mov #$1234,r0 / mov r0,r1 / add #1,r1 / br .
+    load_t11(0x8000, {0012700, 0x1234, 0010001, 0062701, 0x0001, 0000777});
+    cpu->reset();
+    check(cpu->pc() == 0x8000, "T-11 mode $36ff starts the CPU at $8000");
+    check(cpu->sp() == 0x00fe, "T-11 reset loads SP with 0376");
+    check((cpu->psw() & 0340) == 0340, "T-11 reset masks all interrupt levels");
+    cpu->run(40);
+    check(cpu->reg(0) == 0x1234, "mov #imm,rn loads an immediate");
+    check(cpu->reg(1) == 0x1235, "mov rn,rm followed by add #imm reaches the second register");
+
+    auto alt = make_t11(0x0000);
+    alt->reset();
+    check(alt->pc() == 0xc000, "the T-11 start address follows the mode register");
+}
+
+void test_t11_addressing_and_bytes() {
+    auto cpu = make_t11();
+    // mov #$2000,r0 / movb #$a5,(r0)+ / movb #$5a,(r0) / mov #$1234,@#$2010
+    // / movb @#$2010,r2 / br .
+    load_t11(0x8000, {0012700, 0x2000, 0112720, 0x00a5, 0112710, 0x005a, 0012737, 0x1234, 0x2010,
+                      0113702, 0x2010, 0000777});
+    cpu->reset();
+    cpu->run(120);
+    check(t11_memory[0x2000] == 0xa5, "movb (rn)+ stores the low byte and autoincrements");
+    check(t11_memory[0x2001] == 0x5a, "movb (rn) stores at the incremented address");
+    check(cpu->reg(0) == 0x2001, "a byte autoincrement steps the register by one");
+    check(t11_memory[0x2010] == 0x34 && t11_memory[0x2011] == 0x12,
+          "mov to an absolute address writes a little endian word");
+    check(cpu->reg(2) == 0x0034, "movb into a register loads the low byte");
+
+    auto sign = make_t11();
+    // mov #$0080,r0 / movb r0,r1 / br .
+    load_t11(0x8000, {0012700, 0x0080, 0110001, 0000777});
+    sign->reset();
+    sign->run(40);
+    check(sign->reg(1) == 0xff80, "movb rn,rm sign extends into the destination register");
+}
+
+void test_t11_stack_and_interrupts() {
+    auto cpu = make_t11();
+    // jsr pc,$8020 / br . ; at $8020: mov #$00ff,r3 / rts pc
+    load_t11(0x8000, {0004767, 0x001c, 0000777});
+    load_t11(0x8020, {0012703, 0x00ff, 0000207});
+    cpu->reset();
+    cpu->run(80);
+    check(cpu->reg(3) == 0x00ff, "jsr pc/rts pc call and return");
+    check(cpu->pc() == 0x8004, "rts pc resumes after the call");
+
+    auto irq = make_t11();
+    load_t11(0x8000, {0000777});          // br .
+    load_t11(0x0100, {0005204, 0000002});  // inc r4 / rti
+    // CP0 alone vectors through 070: new PC then new PSW.
+    load_t11(0070, {0x0100, 0x0000});
+    irq->reset();
+    irq->set_psw(0);
+    irq->run(20);
+    irq->set_irq(dsp::T11::CP0_LINE, dsp::IrqLine::Assert);
+    irq->run(100);
+    check(irq->reg(4) == 1, "the T-11 vectors a CP0 interrupt through 070");
+    irq->set_irq(dsp::T11::CP0_LINE, dsp::IrqLine::Clear);
+    irq->run(400);
+    check(irq->reg(4) == 1, "clearing CP0 stops the interrupt from retriggering");
+}
+
+void test_atari_system2_missing_roms() {
+    dsp::AtariSystem2 machine(dsp::AtariSystem2::Game::Paperboy);
+    std::string error = "unset";
+    check(!machine.init("/no/such/paperboy.zip", &error),
+          "Paperboy init fails without the ROM set");
+    check(error != "unset" && !error.empty(), "init reports why the Atari System 2 set is missing");
+    check(std::strcmp(machine.title(), "Paperboy") == 0, "Paperboy title");
+    check(machine.screen_width() == 512 && machine.screen_height() == 384,
+          "Atari System 2 screen is 512x384");
+}
+
+void test_paperboy_if_present() {
+    const char* rom = "/tmp/roms/paperboy.zip";
+    std::ifstream probe(rom);
+    if (!probe) return;
+    probe.close();
+
+    dsp::AtariSystem2 machine(dsp::AtariSystem2::Game::Paperboy);
+    std::string error;
+    check(machine.init(rom, &error), "Paperboy ROM set loads");
+    size_t best_colors = 0;
+    for (int frame = 0; frame < 800; frame++) {
+        machine.run_frame();
+        if (frame < 400) continue;
+        const uint32_t* fb = machine.framebuffer();
+        std::set<uint32_t> colors;
+        for (int i = 0; i < 512 * 384; i++) colors.insert(fb[i] & 0x00ffffffu);
+        best_colors = std::max(best_colors, colors.size());
+    }
+    check(machine.debug_pc() >= 0x2000, "the T-11 is executing banked or fixed ROM");
+    check(machine.debug_sound_pc() >= 0x4000, "the 6502 is executing sound ROM");
+    check(best_colors > 8, "Paperboy attract mode draws a colour picture");
+
+    std::vector<int16_t> audio;
+    machine.drain_audio(audio);
+    check(!audio.empty(), "Paperboy produces audio samples");
+}
+
 void test_atari_system1_missing_roms() {
     dsp::AtariSystem1 machine(dsp::AtariSystem1::Game::Indy);
     std::string error = "unset";
@@ -3989,6 +4118,11 @@ int main() {
     test_starwars_missing_roms();
     test_polepos_driver();
     test_atari_system1_missing_roms();
+    test_t11_reset_and_moves();
+    test_t11_addressing_and_bytes();
+    test_t11_stack_and_interrupts();
+    test_atari_system2_missing_roms();
+    test_paperboy_if_present();
     test_sega_pcm_and_mapper();
     test_sega_system16_missing_roms();
     test_skullxbo_without_roms();

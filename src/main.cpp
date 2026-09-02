@@ -14,6 +14,7 @@
 #include "drivers/taitosj.h"
 #include "drivers/mrdo.h"
 #include "drivers/atari_system1.h"
+#include "drivers/atari_system2.h"
 #include "drivers/mcr.h"
 #include "drivers/dec0.h"
 #include "drivers/m62.h"
@@ -90,6 +91,7 @@ void print_supported_emulators() {
         "  Arcade:\n"
         "    bagman, mikie, trackfld, gauntlet, mrdo, ddragon, ddragon2,\n"
         "    elevator, junglek, indydoom, peter, marble, skullxbo, starwars, roadrunn,\n"
+        "    paperboy,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
 		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
         "    kungfum, spelunkr, spelunk2, ldrun, ldrun2,\n"
@@ -198,6 +200,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	}
 	if (game == "roadrunn" || game == "roadrunner") {
 		return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::RoadRunner);
+	}
+	if (game == "paperboy") {
+		return std::make_unique<dsp::AtariSystem2>(dsp::AtariSystem2::Game::Paperboy);
 	}
 
 	if (game == "tapper") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Tapper);
