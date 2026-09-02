@@ -2993,6 +2993,42 @@ void test_atari_system2_missing_roms() {
     check(std::strcmp(machine.title(), "Paperboy") == 0, "Paperboy title");
     check(machine.screen_width() == 512 && machine.screen_height() == 384,
           "Atari System 2 screen is 512x384");
+
+    dsp::AtariSystem2 apb(dsp::AtariSystem2::Game::Apb);
+    check(std::strcmp(apb.title(), "APB - All Points Bulletin") == 0, "APB title");
+    check(apb.screen_width() == 384 && apb.screen_height() == 512,
+          "APB runs on a rotated monitor");
+
+    dsp::AtariSystem2 ssprint(dsp::AtariSystem2::Game::SuperSprint);
+    check(std::strcmp(ssprint.title(), "Super Sprint") == 0, "Super Sprint title");
+    dsp::AtariSystem2 degrees720(dsp::AtariSystem2::Game::Degrees720);
+    check(std::strcmp(degrees720.title(), "720 Degrees") == 0, "720 Degrees title");
+}
+
+// Runs one of the other System 2 sets until it paints an attract screen.
+void test_atari_system2_game_if_present(dsp::AtariSystem2::Game game, const char* rom,
+                                        int max_frames) {
+    std::ifstream probe(rom);
+    if (!probe) return;
+    probe.close();
+
+    dsp::AtariSystem2 machine(game);
+    std::string error;
+    const std::string title = machine.title();
+    check(machine.init(rom, &error), (title + " ROM set loads").c_str());
+    const int pixels = machine.screen_width() * machine.screen_height();
+    size_t best_colors = 0;
+    for (int frame = 0; frame < max_frames && best_colors <= 8; frame++) {
+        machine.run_frame();
+        const uint32_t* fb = machine.framebuffer();
+        std::set<uint32_t> colors;
+        for (int i = 0; i < pixels; i++) colors.insert(fb[i] & 0x00ffffffu);
+        best_colors = std::max(best_colors, colors.size());
+    }
+    check(machine.debug_pc() >= 0x2000, (title + ": the T-11 is executing ROM").c_str());
+    check(machine.debug_sound_pc() >= 0x4000,
+          (title + ": the 6502 is executing sound ROM").c_str());
+    check(best_colors > 8, (title + " draws a colour picture").c_str());
 }
 
 void test_paperboy_if_present() {
@@ -4123,6 +4159,12 @@ int main() {
     test_t11_stack_and_interrupts();
     test_atari_system2_missing_roms();
     test_paperboy_if_present();
+    test_atari_system2_game_if_present(dsp::AtariSystem2::Game::SuperSprint,
+                                       "/tmp/roms/ssprint.zip", 1200);
+    test_atari_system2_game_if_present(dsp::AtariSystem2::Game::Degrees720,
+                                       "/tmp/roms/720.zip", 1200);
+    test_atari_system2_game_if_present(dsp::AtariSystem2::Game::Apb,
+                                       "/tmp/roms/apb.zip", 3000);
     test_sega_pcm_and_mapper();
     test_sega_system16_missing_roms();
     test_skullxbo_without_roms();
