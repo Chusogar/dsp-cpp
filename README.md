@@ -49,6 +49,8 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Gauntlet driver | `src/arcade/gauntlet_hw.pas` | Memory map, playfield/char/sprite video, EEPROM, YM2151+POKEY+TMS5220C |
 | Skull & Crossbones driver | MAME `skullxbo.cpp` | 68000 + Atari JSA II (M6502, YM2151, OKIM6295), latched playfield, alpha layer with scanline vscroll commands, motion objects, 2816 EEPROM |
 | Atari System 1 | `src/arcade/atari_system1.pas` | Marble Madness, Peter Pack Rat, Indiana Jones, Road Runner: 68000+SLAPSTIC, M6502, YM2151, POKEY, TMS5220C+VIA speech, PROM gfx banks |
+| DEC T-11 CPU | MAME `t11.cpp` | Atari System 2 main CPU: PDP-11 instruction set, CP0-CP3 prioritised interrupts, mode register start address |
+| Atari System 2 | MAME `atarisy2.cpp` | Paperboy: T-11 + SLAPSTIC 105, M6502, YM2151, two POKEYs, TMS5220C, banked VRAM/ROM, LETA analog controls, EEPROM |
 | HD63701Y MCU | `src/cpu/m680x.pas` | Double Dragon sub CPU: internal RAM/ROM, I/O ports, output compare timer |
 | MSM5205 ADPCM | `src/snd/msm5205.pas` | Two chips in Double Dragon |
 | OKI MSM6295 | `src/snd/oki6295.pas` | Double Dragon II sample player |
@@ -134,6 +136,7 @@ holding the individual files:
 ./build/dsp --game skullxbo /path/to/skullxbo.zip
 ./build/dsp --game indydoom /path/to/indytemp.zip
 ./build/dsp --game roadrunn /path/to/roadrunn.zip
+./build/dsp --game paperboy /path/to/paperboy.zip
 ./build/dsp --game mrdo /path/to/mrdo.zip
 ./build/dsp --game ddragon /path/to/ddragon.zip
 ./build/dsp --game elevator /path/to/elevator.zip
@@ -224,6 +227,26 @@ Whip / hop / button 1 is Left Ctrl or Space. Coins are 5/6. Arrow keys drive the
 digital joystick (Indy, Peter) or the analog stick (Road Runner, through the
 ADC at `$f40000`). The Marble Madness trackball is not emulated yet (reads as
 `$FF`, matching the Pascal stub).
+
+### Atari System 2 (Paperboy)
+
+Atari System 2 replaces the 68000 with a 10 MHz DEC T-11 (`src/cpu/t11.cpp`, a
+port of MAME's core: PDP-11 instruction set, four prioritised CP interrupt
+lines, start address taken from the mode register, which is `$36ff` here). The
+`020000-037777` window is banked between the alpha/motion-object RAM and the two
+playfield halves, and the two `040000`/`060000` ROM windows are paged by a
+SLAPSTIC 105. Sound is a 1.79 MHz M6502 with a YM2151, two POKEYs and a TMS5220C
+behind the usual pair of latches, plus a 2804 EEPROM and the LETA analog inputs.
+The visible area is 512×384.
+
+```bash
+./build/dsp --game paperboy /path/to/paperboy.zip
+```
+
+Coins are 5/6 and 4 is the service coin. Throw a paper with Left Ctrl/Space or
+start 1, brake with Left Alt/Z or start 2. Key 3 holds the self test switch, so
+the diagnostics advance with 2. The handlebar and pedals are the LETA channels
+0/1, driven by the arrow keys.
 
 ### Exelvision EXL-100 and EXELTEL
 

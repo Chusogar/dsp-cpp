@@ -19,6 +19,7 @@ add_executable(dsp
   src/cpu/m6809.cpp
   src/cpu/konami.cpp
   src/cpu/m6502.cpp
+  src/cpu/t11.cpp
   src/cpu/m68000.cpp
   src/cpu/hd63701.cpp
   src/cpu/m6805.cpp
@@ -116,6 +117,7 @@ add_executable(dsp
   src/drivers/taitosj.cpp
   src/drivers/mrdo.cpp
   src/drivers/atari_system1.cpp
+  src/drivers/atari_system2.cpp
   src/drivers/mcr.cpp
   src/drivers/dec0.cpp
   src/drivers/m62.cpp
@@ -210,6 +212,7 @@ add_executable(dsp_tests
   src/cpu/m6809.cpp
   src/cpu/konami.cpp
   src/cpu/m6502.cpp
+  src/cpu/t11.cpp
   src/cpu/m68000.cpp
   src/cpu/hd63701.cpp
   src/cpu/m6805.cpp
@@ -225,6 +228,7 @@ add_executable(dsp_tests
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
+  src/sound/ym3812.cpp
   src/sound/pokey.cpp
   src/sound/msm5205.cpp
   src/sound/okim6295.cpp
@@ -316,6 +320,7 @@ add_executable(dsp_tests
   src/drivers/starwars.cpp
   src/drivers/polepos.cpp
   src/drivers/atari_system1.cpp
+  src/drivers/atari_system2.cpp
   src/drivers/zx_clone.cpp
   src/drivers/genesis.cpp
   src/drivers/outrun.cpp
