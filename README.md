@@ -5,7 +5,7 @@ Arcade: **Bagman**, **Mikie**, **Gauntlet**, **Mr. Do**, **Bubble Bobble**, **Do
 **Double Dragon II**, Taito SJ (**Elevator Action**, **Jungle King**), Irem M62
 (**Kung-Fu Master**, **Spelunker**, **Lode Runner**), SNK (**Ikari Warriors**,
 **Athena**, **TNK III**, **ASO**), Capcom **CPS1**, Irem **M72** (**R-Type**),
-Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Namco
+Midway **MCR** (**Tapper** and family), Atari **Asteroids**, Atari **Star Wars**, and Namco
 **Pole Position** / **Pole Position II**.
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC, **Commodore 64**, **EXL-100** /
 Midway **MCR** (**Tapper** and family), and Atari **Star Wars**.
@@ -98,6 +98,8 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | YM2612 (OPN2) | new (from `fmopn.pas` + YM2612 DAC) | Six FM channels and PCM DAC |
 | 315-5313 VDP | `src/consolas/sega_315_5313.pas` | Planes A/B, window, sprites, DMA, CRAM |
 | Genesis / Mega Drive | `src/consolas/genesis.pas` | 68000 + Z80, VDP, YM2612+PSG, 3-button pads |
+| Atari DVG (Asteroids) | `src/arcade/misc/avg_dvg.pas` | PROM-driven Digital Vector Generator |
+| Asteroids driver | `src/arcade/asteroids_hw.pas` | MOS 6502 @ 1.512 MHz, DVG, discrete sound, 400×320 |
 | Atari AVG (Star Wars) | new (MAME `avgdvg.cpp`) | PROM state machine, colour vector list |
 | MOS 6532 RIOT | new (MAME `mos6532.cpp`) | 128-byte RAM, ports, timer IRQ |
 | Star Wars mathbox | new (MAME `starwars_m.cpp`) | PROM microcode, multiply-accumulate, restoring divider |
@@ -166,6 +168,7 @@ holding the individual files:
 ./build/dsp --game msx2 --disk game.dsk /path/to/msx2-roms/
 ./build/dsp --game apple2 /path/to/apple2p.zip
 ./build/dsp --game apple2e --disk game.dsk /path/to/apple2e.zip
+./build/dsp --game asteroid /path/to/asteroid.zip
 ./build/dsp --game starwars /path/to/starwars.zip
 ./build/dsp --game polepos /path/to/polepos.zip
 ./build/dsp --game polepos2 /path/to/polepos2.zip
@@ -793,6 +796,25 @@ and bank C holds flip screen (bit 0) and upright controls (bit 1).
 
 Mikie ROM set: `n14.11c`, `o13.12a`, `o17.12d`, `n10.6e`, `o11.8i`, `001.f1`, `003.f3`,
 `005.h1`, `007.h3`, `d19.1i`, `d21.3i`, `d20.2i`, `d22.12h`, `d18.f9`.
+
+### Atari Asteroids
+
+Vector arcade from 1979. A 1.512 MHz MOS 6502 drives Atari's Digital Vector
+Generator (DVG, PROM `034602-01.c8`). The visible area is 400×320 at
+~61.52 Hz, with four NMIs per frame. Discrete analog sound is approximated in
+the driver (explode, thump, saucer, thrust, fire). Lunar Lander is not
+implemented.
+
+```bash
+./build/dsp --game asteroid /path/to/asteroid.zip
+```
+
+`--game` also accepts `asteroids`. Rotate with Left/Right, thrust is Up or
+button 3, fire is button 1, hyperspace is button 2. DIP bank 0 defaults to `$84`
+(English, 3 lives, 1C/1C).
+
+ROM set (MAME `asteroid`): `035145-04e.ef2`, `035144-04e.h2`, `035143-02.j2`,
+vector `035127-02.np3`, DVG PROM `034602-01.c8`.
 
 ### Atari Star Wars
 

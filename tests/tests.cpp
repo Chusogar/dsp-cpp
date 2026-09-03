@@ -38,6 +38,7 @@
 #include "drivers/pv2000.h"
 #include "drivers/scv.h"
 #include "drivers/starwars.h"
+#include "drivers/asteroid.h"
 #include "drivers/c64.h"
 #include "machine/mos6566.h"
 #include "drivers/polepos.h"
@@ -3201,6 +3202,16 @@ void test_bublbobl_without_roms() {
           "Bubble Bobble screen is 256x224");
 }
 
+void test_asteroid_without_roms() {
+    dsp::Asteroid machine;
+    std::string error = "unset";
+    check(!machine.init("/no/such/asteroid.zip", &error), "Asteroids init fails without the ROM set");
+    check(error != "unset" && !error.empty(), "Asteroids reports why the set is missing");
+    check(std::strcmp(machine.title(), "Asteroids") == 0, "Asteroids title");
+    check(machine.screen_width() == 400 && machine.screen_height() == 320,
+          "Asteroids screen is 400x320");
+}
+
 int unique_pixels(const dsp::Machine& machine) {
     const uint32_t* fb = machine.framebuffer();
     const int n = machine.screen_width() * machine.screen_height();
@@ -3399,6 +3410,21 @@ void test_sega_roms_if_present() {
         }
         const bool road_table_fresh = identity_lines < 200;
         check(road_table_fresh, "OutRun swaps the freshly written road line table into the display");
+    }
+
+    if (exists("/tmp/roms/asteroid.zip")) {
+        dsp::Asteroid machine;
+        std::string error;
+        check(machine.init("/tmp/roms/asteroid.zip", &error), "Asteroids MAME set loads");
+        const uint16_t reset_pc = machine.debug_pc();
+        for (int frame = 0; frame < 300; frame++) machine.run_frame();
+        check(machine.debug_pc() != reset_pc, "Asteroids 6502 leaves the reset vector");
+        check(machine.debug_dvg_lines() > 4, "DVG produced a vector list in attract");
+        check(unique_pixels(machine) > 4, "Asteroids attract mode draws vectors");
+
+        std::vector<int16_t> audio;
+        machine.drain_audio(audio);
+        check(!audio.empty(), "Asteroids drain_audio yields samples");
     }
 
     if (exists("/tmp/roms/bublbobl.zip")) {
@@ -4367,6 +4393,7 @@ int main() {
     test_sega_system16_missing_roms();
     test_skullxbo_without_roms();
     test_bublbobl_without_roms();
+    test_asteroid_without_roms();
     test_sega16_palette_banks();
     test_sega_roms_if_present();
     test_indy_coin_if_present();
