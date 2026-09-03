@@ -50,6 +50,8 @@ public:
 
     const char* title() const override;
 
+    uint32_t debug_pc() const { return main_cpu_.pc(); }
+
 private:
     bool uses_nb1414() const { return game_ != Game::ArmedF; }
 
@@ -85,7 +87,7 @@ private:
     int text_pos(int x, int y) const;  // per-game text RAM addressing
     void draw_text_layer();
     void draw_tile_layer(const std::array<uint16_t, 0x800>& ram, const GfxSet& gfx, int color_base,
-                         int scroll_x, int scroll_y, std::vector<uint32_t>& canvas);
+                         int code_mask, std::vector<uint32_t>& canvas);
     void draw_sprites(int priority);
 
     Game game_;

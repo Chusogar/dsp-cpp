@@ -99,7 +99,7 @@ const std::vector<RomEntry> kLegionSprites = {{"legion.1k", 0x10000, 0, 0xff5a0d
 
 ArmedfHw::ArmedfHw(Game game)
     : game_(game), main_cpu_(kMainClock), sound_cpu_(kSoundClock),
-      ym_(kSoundClock, game == Game::Legion ? YM3812::kYM3526 : YM3812::kYM3812, 0.4f) {
+      ym_(kSoundClock, game == Game::ArmedF ? YM3812::kYM3812 : YM3812::kYM3526, 0.4f) {
     if (game_ == Game::CrazyClimber2 || game_ == Game::Legion) {
         region_w_ = 288;
         region_h_ = 224;
@@ -445,7 +445,8 @@ void ArmedfHw::nb_dma(int src, int dst, int size, bool condition) {
     for (int f = 0; f < size; f++) {
         if (f + dst < 18) continue;  // don't clobber the command/parameter block
         ram_txt_[size_t(f + dst) & 0xfff] = condition ? nb_rom_[size_t(f + src) & 0x3fff] : 0x20;
-        ram_txt_[(size_t(f + dst) + 0x400) & 0xfff] = nb_rom_[size_t(f + size + src) & 0x3fff];
+        ram_txt_[(size_t(f + dst) + 0x400) & 0xfff] =
+            condition ? nb_rom_[size_t(f + size + src) & 0x3fff] : nb_rom_[0x13];
     }
 }
 
@@ -493,9 +494,11 @@ void ArmedfHw::nb_credit_msg() {
     int dst = ((nb_rom_[0x23] << 8) | nb_rom_[0x24]) & 0x3fff;
     nb_dma(0x25, dst, 0x10, true);
 
-    dst = (((nb_rom_[0x45] << 8) | nb_rom_[0x46]) & 0x3fff) + 1;
-    ram_txt_[size_t(dst) & 0xfff] = uint8_t(credit_count + 0x30);
-    ram_txt_[(size_t(dst) + 0x400) & 0xfff] = nb_rom_[0x48];
+    dst = (((nb_rom_[0x45] << 8) | nb_rom_[0x46]) & 0x3fff);
+    ram_txt_[size_t(dst) & 0xfff] = (credit_count & 0xf0) ? uint8_t(((credit_count & 0xf0) >> 4) + 0x30) : 0x20;
+    ram_txt_[(size_t(dst) + 0x400) & 0xfff] = nb_rom_[0x47];
+    ram_txt_[(size_t(dst) + 1) & 0xfff] = uint8_t((credit_count & 0x0f) + 0x30);
+    ram_txt_[(size_t(dst) + 0x401) & 0xfff] = nb_rom_[0x48];
 
     if (credit_count == 1) {
         dst = ((nb_rom_[0x7b] << 8) | nb_rom_[0x7c]) & 0x3fff;
@@ -641,12 +644,12 @@ int ArmedfHw::text_pos(int x, int y) const {
 }
 
 void ArmedfHw::draw_tile_layer(const std::array<uint16_t, 0x800>& ram, const GfxSet& gfx, int color_base,
-                               int scroll_x, int scroll_y, std::vector<uint32_t>& canvas) {
+                               int code_mask, std::vector<uint32_t>& canvas) {
     for (int f = 0; f < 0x800; f++) {
         const int x = f / 32, y = f % 32;
         const uint16_t attr = ram[size_t(f)];
         const int color = (attr >> 11) & 0x1f;
-        const int nchar = attr & 0x3ff;
+        const int nchar = attr & code_mask;
         const uint8_t* px = gfx.element(nchar);
         const int base_x = x * 16, base_y = y * 16;
         for (int py = 0; py < 16; py++)
@@ -657,14 +660,14 @@ void ArmedfHw::draw_tile_layer(const std::array<uint16_t, 0x800>& ram, const Gfx
                     palette_[size_t((color << 4) + color_base + p) % palette_.size()];
             }
     }
-    (void)scroll_x;
-    (void)scroll_y;
 }
 
 void ArmedfHw::draw_text_layer() {
     const bool is_armedf = (game_ == Game::ArmedF);
     const int attr_base = is_armedf ? 0x800 : 0x400;
-    const int h_scroll = is_armedf ? 0 : (512 - 128);  // terraf-family text plane scroll offset
+    // MAME armedf_v.cpp VIDEO_START(terraf): tx_tilemap->set_scrollx(0, -128).
+    // composite_[x] is screen x, so tilemap 0 lands at screen x = 128.
+    const int h_scroll = is_armedf ? 0 : 128;
     for (int f = 0; f <= 0x7ff; f++) {
         const int x = f / 32, y = f % 32;
         const int pos = text_pos(x, y);
@@ -683,7 +686,9 @@ void ArmedfHw::draw_text_layer() {
         }
         const uint8_t* px = chars_gfx_.element(nchar & 0x3ff);
         const int base_x = ((x * 8) + h_scroll) & 511, base_y = y * 8;
-        const bool masked = (attr & 8) != 0;
+        // attr bit 3: category 1 is drawn under BG/FG; category 0 over them
+        // (MAME: bit 3 clear → NB1414M4 text has priority over the other layers).
+        const bool under = (attr & 8) != 0;
         for (int py = 0; py < 8; py++) {
             const int dy = base_y + py;
             if (dy < 0 || dy >= 256) continue;
@@ -691,19 +696,20 @@ void ArmedfHw::draw_text_layer() {
                 const int dx = base_x + pxi;
                 if (dx < 0 || dx >= 512) continue;
                 const uint8_t p = px[py * 8 + pxi];
+                if (p == 15) continue;
                 const uint32_t opaque = palette_[size_t((color << 4) + p) % palette_.size()];
-                composite_[size_t(dy) * 512 + size_t(dx)] = opaque;  // "screen1": always opaque
-                if (!masked && p != 15)
-                    fg_text_[size_t(dy) * 512 + size_t(dx)] = opaque;  // "screen2": maskable overlay
+                if (under)
+                    composite_[size_t(dy) * 512 + size_t(dx)] = opaque;
                 else
-                    fg_text_[size_t(dy) * 512 + size_t(dx)] = 0;
+                    fg_text_[size_t(dy) * 512 + size_t(dx)] = opaque;
             }
         }
     }
 }
 
 void ArmedfHw::draw_sprites(int priority) {
-    for (int f = 0; f < sprite_count_; f++) {
+    // MAME walks spriteram backwards so later entries lose to earlier ones.
+    for (int f = sprite_count_ - 1; f >= 0; f--) {
         const size_t base = size_t(f) * 4;
         const uint16_t w0 = sprite_buffer_[base + 0];
         if (int((w0 >> 12) & 3) != priority) continue;
@@ -714,7 +720,8 @@ void ArmedfHw::draw_sprites(int priority) {
         const uint16_t atrib = sprite_buffer_[base + 2];
         const int color = (atrib >> 8) & 0x1f;
         const int clut = atrib & 0x7f;
-        const int sx = sprite_buffer_[base + 3] & 0x1ff;
+        // MAME armedf_v.cpp draw_sprites: sx is the raw spriteram word (no 0x1ff mask).
+        const int sx = int(sprite_buffer_[base + 3]);
         const int sy = sprite_offset_ + 240 - int(w0 & 0x1ff);
 
         const uint8_t* px = sprites_gfx_.element(nchar);
@@ -735,20 +742,26 @@ void ArmedfHw::draw_sprites(int priority) {
 }
 
 void ArmedfHw::render_frame() {
+    // FBNeo (scroll_type 5, original terraf) re-reads FG scroll from the NB1414M4
+    // parameter block every frame. MAME only latches on the $7c000 bit14 0→1
+    // edge; the game updates $6800b..e continuously during the attract cinema.
+    if (uses_nb1414()) {
+        scroll_fg_x_ = uint16_t(ram_txt_[0xd] | (ram_txt_[0xe] << 8));
+        scroll_fg_y_ = uint16_t(ram_txt_[0xb] | (ram_txt_[0xc] << 8));
+    }
+
     std::fill(bg_canvas_.begin(), bg_canvas_.end(), 0u);
     std::fill(fg_canvas_.begin(), fg_canvas_.end(), 0u);
     if (fg_text_.size() != 512u * 256u) fg_text_.assign(512u * 256u, 0u);
+    else std::fill(fg_text_.begin(), fg_text_.end(), 0u);
+    std::fill(composite_.begin(), composite_.end(), 0xff000000u);
 
-    draw_tile_layer(ram_bg_, bg_gfx_, 0x600, scroll_bg_x_, scroll_bg_y_, bg_canvas_);
-    draw_tile_layer(ram_fg_, fg_gfx_, 0x400, scroll_fg_x_, scroll_fg_y_, fg_canvas_);
+    draw_tile_layer(ram_bg_, bg_gfx_, 0x600, 0x3ff, bg_canvas_);
+    draw_tile_layer(ram_fg_, fg_gfx_, 0x400, 0x7ff, fg_canvas_);
 
+    // MAME screen_update: tx cat1, bg, fg, tx cat0, then sprites with pmask.
     const bool text_enabled = (video_reg_ & 0x100) != 0;
-    if (text_enabled) {
-        draw_text_layer();
-    } else {
-        std::fill(composite_.begin(), composite_.end(), 0xff000000u);  // paleta[$800]: opaque black
-        std::fill(fg_text_.begin(), fg_text_.end(), 0u);
-    }
+    if (text_enabled) draw_text_layer();
 
     auto blit_scrolled = [&](const std::vector<uint32_t>& src, int sx, int sy) {
         for (int y = 0; y < 256; y++)
@@ -760,7 +773,7 @@ void ArmedfHw::render_frame() {
 
     if ((video_reg_ & 0x800) != 0) blit_scrolled(bg_canvas_, scroll_bg_x_, scroll_bg_y_);
     if ((video_reg_ & 0x200) != 0) draw_sprites(2);
-    if ((video_reg_ & 0x400) != 0) blit_scrolled(fg_canvas_, scroll_fg_x_, scroll_fg_y_);
+    if ((video_reg_ & 0x400) != 0) blit_scrolled(fg_canvas_, scroll_fg_x_ & 0x3ff, scroll_fg_y_ & 0x3ff);
     if ((video_reg_ & 0x200) != 0) draw_sprites(1);
     if (text_enabled)
         for (size_t i = 0; i < fg_text_.size(); i++)
