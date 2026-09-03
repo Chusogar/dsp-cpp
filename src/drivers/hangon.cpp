@@ -175,6 +175,11 @@ HangOn::HangOn(Game game)
                             [this](uint8_t value) {
                                 sound_latch_ = value;
                                 ++ppi_a_writes_;
+                                // Pulse Z80 NMI on every latch write so Space
+                                // Harrier still delivers commands if the 8255
+                                // has not yet been programmed for mode 2 /OBF.
+                                sound_cpu_.set_nmi(IrqLine::Assert);
+                                sound_cpu_.set_nmi(IrqLine::Clear);
                             },
                             [this](uint8_t value) {
                                 z80_reset_ = (value & 0x20) == 0;

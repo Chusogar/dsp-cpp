@@ -62,6 +62,7 @@ public:
     uint32_t debug_sound_resets() const { return sound_resets_; }
     uint8_t debug_sound_latch() const { return sound_latch_; }
     uint8_t debug_main_latch() const { return main_latch_; }
+    uint8_t debug_work(uint16_t offset) const { return work_ram_[offset & 0x7ff]; }
 
 private:
     uint8_t main_read(uint16_t address);
@@ -72,7 +73,7 @@ private:
     void on_sound_cycles(int cycles);
     void quad_pokey_w(uint16_t offset, uint8_t data);
     void outlatch_w(int bit, bool value);
-    void catch_up_sound();
+    void catch_up_sound(int cycles = 80000);
     void update_video();
     void draw_line(int x0, int y0, int x1, int y1, uint32_t color, int intensity);
     uint8_t avg_read(uint16_t address) const;

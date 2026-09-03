@@ -1126,9 +1126,11 @@ void Galaxian::run_frame() {
     const int cycles_per_line =
         int(double(kCpuClock) / (kFramesPerSecond * kScanlines) + 0.5);
     for (int line = 0; line < kScanlines; ++line) {
+        // MAME clocks the 6F flip-flop at vblank and leaves /NMI asserted
+        // until irq_enable_w clears it. A one-line pulse can drop the edge
+        // if the Z80 is mid-instruction when line 248 starts.
         if (line == 248 && nmi_enable_) cpu_.set_nmi(IrqLine::Assert);
         cpu_.run(cycles_per_line);
-        if (line == 248) cpu_.set_nmi(IrqLine::Clear);
     }
     update_video();
     if (uses_discrete_sound()) {

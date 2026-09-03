@@ -238,8 +238,9 @@ void StarWars::reset() {
     audio_.clear();
     in0_ = 0xff;
     in1_ = 0x3f;
-    // MAME DSW0 defaults. Demo Sounds is inverted on ESB (bit 6 = 1 → ON).
-    dsw0_ = (game_ == Game::Empire) ? uint8_t(0xf3) : uint8_t(0x98);
+    // MAME DSW0 defaults (starwars / esb). Demo Sounds is bit 6 = 0 → ON
+    // on both sets; ESB only remaps shields and Jedi-letter bits.
+    dsw0_ = (game_ == Game::Empire) ? uint8_t(0xb7) : uint8_t(0x96);
     riot_pa_out_ = 0xff;
     tms_.strobe_ws_rs(0x03);
     std::fill(framebuffer_.begin(), framebuffer_.end(), 0xff000000u);
@@ -273,7 +274,10 @@ uint8_t StarWars::main_read(uint16_t address) {
         return main_latch_;
     }
     if (address == 0x4401) {
-        if (!main_pending_) catch_up_sound();
+        // Attract send ($BCE9) polls bit 7 until the sound CPU ACKs. A
+        // 14-iteration wait is only ~100 main cycles, so the sound CPU
+        // must run here even after $5A has already been posted.
+        catch_up_sound(8192);
         return uint8_t((sound_pending_ ? 0x80 : 0) | (main_pending_ ? 0x40 : 0));
     }
     if (address >= 0x4500 && address <= 0x45ff) return nvram_[address & 0xff];
@@ -309,6 +313,7 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
         sound_latch_ = value;
         sound_pending_ = true;
         ++sound_writes_;
+        catch_up_sound(8192);
         return;
     }
     if (address >= 0x4500 && address <= 0x45ff) {
@@ -358,9 +363,11 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
     }
 }
 
-void StarWars::catch_up_sound() {
-    // Enough cycles for reset → DP/S init → STA $0000,#$5A.
-    sound_cpu_.run(4096);
+void StarWars::catch_up_sound(int cycles) {
+    // Init clears $2000-$27FF and RIOT RAM before posting $5A; a short
+    // burst leaves the handshake seeing an empty latch. Latch polls use
+    // a smaller burst so $BCE9 can see the sound CPU ACK within 14 reads.
+    if (cycles > 0) sound_cpu_.run(cycles);
 }
 
 void StarWars::outlatch_w(int bit, bool value) {

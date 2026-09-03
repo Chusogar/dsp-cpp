@@ -394,12 +394,17 @@ void OpnCore::set_timers(int value) {
 }
 
 void OpnCore::timer_a_over() {
-    if ((mode_ & 0x04) != 0) status_set(0x01);
+    // Overflow always latches the status bit. Register $27 bits 2/3 only
+    // gate the IRQ pin — firmware (Space Harrier) polls the flag without
+    // necessarily enabling the interrupt.
+    status_ = uint8_t(status_ | 0x01);
+    if ((mode_ & 0x04) != 0) status_set(0);
     tac_ = double(1024 - ta_);
 }
 
 void OpnCore::timer_b_over() {
-    if ((mode_ & 0x08) != 0) status_set(0x02);
+    status_ = uint8_t(status_ | 0x02);
+    if ((mode_ & 0x08) != 0) status_set(0);
     tbc_ = double((256 - tb_) << 4);
 }
 
