@@ -106,7 +106,8 @@ uint8_t Asteroid::read_byte(uint16_t address) {
 
     if (address >= 0x2000 && address <= 0x2007) {
         if (address == 0x2001) return (total_cycles_ & 0x100) ? 0x80 : 0x7f;
-        if (address == 0x2002) return dvg_.done() ? 0x80 : 0x00;
+        // VG HALT is active-low on IN0 bit 2: $80 while the DVG is running.
+        if (address == 0x2002) return dvg_.done() ? 0x7f : 0x80;
         const uint8_t mask = uint8_t(1u << (address & 7));
         return (in0_ & mask) ? 0x80 : 0x7f;
     }
