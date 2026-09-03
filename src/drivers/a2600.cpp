@@ -165,6 +165,7 @@ void A2600::reset() {
     cpu_.set_halted(false);
     cpu_.reset();
     visible_y_ = 0;
+    prev_vsync_ = false;
     audio_.clear();
     framebuffer_.fill(0xFF000000);
     if (bank_count_ > 1) bank_ = bank_count_ - 1;
@@ -281,16 +282,17 @@ void A2600::write_byte(uint16_t address, uint8_t value) {
 }
 
 void A2600::run_frame() {
-    visible_y_ = 0;
     for (int line = 0; line < kScanlines; line++) {
-        tia_.set_hclock(0);
+        tia_.begin_line();
         tia_.clear_wsync();
         cpu_.set_halted(false);
         cpu_.run(kCyclesPerLine);
         tia_.clock_audio();
         tia_.emit_audio(kCyclesPerLine, kCpuClock, audio_);
 
-        if (tia_.vsync()) visible_y_ = 0;
+        const bool vsync = tia_.vsync();
+        if (vsync && !prev_vsync_) visible_y_ = 0;
+        prev_vsync_ = vsync;
         if (!tia_.blanked() && visible_y_ < kScreenHeight) {
             tia_.render_line(&framebuffer_[size_t(visible_y_) * kScreenWidth]);
             visible_y_++;

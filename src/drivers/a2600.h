@@ -87,6 +87,7 @@ private:
     uint8_t dips_ = 0x08;  // colour, amateur difficulty
 
     int visible_y_ = 0;
+    bool prev_vsync_ = false;
     std::array<uint32_t, kScreenWidth * kScreenHeight> framebuffer_{};
     std::vector<int16_t> audio_;
 };

@@ -7,8 +7,9 @@
 namespace dsp {
 
 // Atari TIA (NTSC): 160 visible colour clocks, 228 clocks/line, 262 lines,
-// two independent audio channels. Cycle-perfect mid-line sprite tricks are
-// approximated by sampling object state at the end of each scanline.
+// two independent audio channels. Register writes flush the current scanline
+// up to the current colour clock so 48-pixel score kernels (RESP/GRP mid-line)
+// show more than the last sprite copy.
 class Tia {
 public:
     static constexpr int kScreenWidth = 160;
@@ -34,9 +35,11 @@ public:
 
     void set_hclock(int color_clocks);
     void add_cpu_cycles(int cycles);
+    int hclock() const { return hclock_; }
 
+    void begin_line();
     // Draw the 160 visible pixels of the current line into `dest` and update
-    // collision latches. Blanked lines are filled with black.
+    // collision latches. Mid-line writes already flushed earlier clocks.
     void render_line(uint32_t* dest);
 
     // One HSYNC tick of the two audio channels, then emit 44100 Hz samples
@@ -63,8 +66,10 @@ private:
         uint8_t bit = 0;
     };
 
+    void flush();
     void apply_hmove();
     void reset_object(int index);
+    uint32_t sample_pixel(int clock);
     int player_pixel(int clock, int which) const;
     int missile_pixel(int clock, int which) const;
     int ball_pixel(int clock) const;
@@ -103,6 +108,9 @@ private:
 
     std::array<int, 5> pos_{};  // colour clocks, P0 P1 M0 M1 BL
     int hclock_ = 0;
+    int drawn_clock_ = 0;
+    std::array<uint32_t, kScreenWidth> line_{};
+    static constexpr int kRespDelay = 5;
 
     std::array<uint8_t, 8> cx_{};
     bool inpt4_ = false;

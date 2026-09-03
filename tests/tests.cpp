@@ -3237,6 +3237,23 @@ void test_tia_playfield_and_audio() {
     check(line[0] == dsp::Tia::ntsc_color(0x86), "PF0 lights the leftmost pixels");
     check(line[68] == dsp::Tia::ntsc_color(0x00), "the playfield gap is COLUBK");
 
+    tia.reset();
+    tia.begin_line();
+    tia.write(0x01, 0x00);
+    tia.write(0x09, 0x00);
+    tia.write(0x06, 0x1e);
+    tia.write(0x1b, 0xff);
+    tia.set_hclock(68 + 8);
+    tia.write(0x10, 0x00);  // RESP0
+    tia.set_hclock(68 + 40);
+    tia.write(0x1b, 0x00);  // GRP0 off for the rest of the line
+    tia.set_hclock(dsp::Tia::kColorClocksPerLine);
+    tia.render_line(line.data());
+    check(line[8 + 5] == dsp::Tia::ntsc_color(0x1e),
+          "TIA draws GRP0 after a mid-line RESP0");
+    check(line[80] == dsp::Tia::ntsc_color(0x00),
+          "TIA drops GRP0 after a later mid-line write");
+
     tia.write(0x15, 0x04);
     tia.write(0x17, 0x07);
     tia.write(0x19, 0x0f);
@@ -3296,6 +3313,7 @@ void test_a2600_rom_if_present() {
         return bool(probe);
     };
     const char* candidates[] = {
+        "/tmp/roms/Beamrider.zip",
         "/tmp/roms/combat.bin",
         "/tmp/roms/pitfall.bin",
         "/tmp/roms/adventure.bin",
@@ -3342,7 +3360,7 @@ void test_a2600_rom_if_present() {
     std::string error;
     check(machine.init(found, &error), "a cartridge from /tmp/roms loads");
     for (int frame = 0; frame < 120; frame++) machine.run_frame();
-    check(unique_pixels(machine) >= 2, "a real 2600 cart produces a framebuffer");
+    check(unique_pixels(machine) >= 4, "a real 2600 cart produces a framebuffer");
 }
 
 void test_sega_roms_if_present() {

@@ -53,6 +53,8 @@ void Tia::reset() {
     resmp_[0] = resmp_[1] = false;
     pos_.fill(0);
     hclock_ = 0;
+    drawn_clock_ = 0;
+    line_.fill(0xFF000000);
     cx_.fill(0);
     inpt4_ = inpt5_ = false;
     inpt4_latched_ = inpt5_latched_ = false;
@@ -73,10 +75,29 @@ void Tia::set_inpt5(bool pressed) {
     if (pressed) inpt5_latched_ = true;
 }
 
-void Tia::set_hclock(int color_clocks) { hclock_ = wrap_clock(color_clocks); }
+void Tia::set_hclock(int color_clocks) { hclock_ = color_clocks; }
 
 void Tia::add_cpu_cycles(int cycles) {
-    if (cycles > 0) hclock_ = wrap_clock(hclock_ + cycles * 3);
+    if (cycles > 0) hclock_ += cycles * 3;
+}
+
+void Tia::begin_line() {
+    hclock_ = 0;
+    drawn_clock_ = 0;
+    line_.fill(0xFF000000);
+}
+
+void Tia::flush() {
+    int target = hclock_;
+    if (target > kColorClocksPerLine) target = kColorClocksPerLine;
+    if (target <= drawn_clock_) return;
+    for (int clock = drawn_clock_; clock < target; clock++) {
+        if (clock < kHblankClocks) continue;
+        const int x = clock - kHblankClocks;
+        if (x >= kScreenWidth) break;
+        line_[size_t(x)] = sample_pixel(clock);
+    }
+    drawn_clock_ = target;
 }
 
 int Tia::player_scale(uint8_t nusiz) {
@@ -142,7 +163,7 @@ int Tia::player_pixel(int clock, int which) const {
     const int copies = copy_count(nusiz);
     const bool reflect = (refp_[which] & 0x08) != 0;
     for (int copy = 0; copy < copies; copy++) {
-        const int rel = clock - (pos_[which] + copy_offset(nusiz, copy));
+        const int rel = clock - (pos_[which] + kRespDelay + copy_offset(nusiz, copy));
         if (rel < 0 || rel >= 8 * scale) continue;
         int bit = rel / scale;
         if (reflect) bit = 7 - bit;
@@ -156,9 +177,10 @@ int Tia::missile_pixel(int clock, int which) const {
     const uint8_t nusiz = nusiz_[which];
     const int width = missile_width(nusiz);
     const int copies = copy_count(nusiz);
-    const int base = resmp_[which] ? pos_[which] + 4 * player_scale(nusiz) : pos_[2 + which];
+    const int base = resmp_[which] ? pos_[which] + 4 * player_scale(nusiz)
+                                   : pos_[2 + which];
     for (int copy = 0; copy < copies; copy++) {
-        const int rel = clock - (base + copy_offset(nusiz, copy));
+        const int rel = clock - (base + kRespDelay + copy_offset(nusiz, copy));
         if (rel >= 0 && rel < width) return 1;
     }
     return 0;
@@ -167,7 +189,7 @@ int Tia::missile_pixel(int clock, int which) const {
 int Tia::ball_pixel(int clock) const {
     if (!ball_enabled()) return 0;
     const int width = 1 << ((ctrlpf_ >> 4) & 3);
-    const int rel = clock - pos_[4];
+    const int rel = clock - (pos_[4] + kRespDelay);
     return (rel >= 0 && rel < width) ? 1 : 0;
 }
 
@@ -182,7 +204,10 @@ int Tia::playfield_pixel(int x) const {
 }
 
 void Tia::write(uint8_t reg, uint8_t value) {
-    switch (reg & 0x3f) {
+    const uint8_t r = uint8_t(reg & 0x3f);
+    if (r != 0x02 && r < 0x15) flush();
+    else if (r >= 0x1b && r <= 0x2c) flush();
+    switch (r) {
         case 0x00: vsync_ = (value & 0x02) != 0; break;
         case 0x01:
             vblank_ = (value & 0x02) != 0;
@@ -191,7 +216,11 @@ void Tia::write(uint8_t reg, uint8_t value) {
             if (!latch_inputs_) inpt4_latched_ = inpt5_latched_ = false;
             break;
         case 0x02: wsync_ = true; break;
-        case 0x03: hclock_ = 0; break;
+        case 0x03:
+            flush();
+            hclock_ = 0;
+            drawn_clock_ = 0;
+            break;
         case 0x04: nusiz_[0] = value; break;
         case 0x05: nusiz_[1] = value; break;
         case 0x06: colup_[0] = value; break;
@@ -252,12 +281,10 @@ uint8_t Tia::read(uint8_t reg) const {
     return dump_ports_ ? 0x00 : 0x80;
 }
 
-void Tia::render_line(uint32_t* dest) {
-    if (blanked()) {
-        std::fill(dest, dest + kScreenWidth, 0xFF000000);
-        return;
-    }
+uint32_t Tia::sample_pixel(int clock) {
+    if (blanked()) return 0xFF000000;
 
+    const int x = clock - kHblankClocks;
     const uint32_t bk = ntsc_color(colubk_);
     const uint32_t pf_color = ntsc_color(colupf_);
     const uint32_t p0_color = ntsc_color(colup_[0]);
@@ -265,49 +292,51 @@ void Tia::render_line(uint32_t* dest) {
     const bool pf_priority = (ctrlpf_ & 0x04) != 0;
     const bool score = (ctrlpf_ & 0x02) != 0;
 
-    if (resmp_[0]) pos_[2] = wrap_clock(pos_[0] + 4 * player_scale(nusiz_[0]));
-    if (resmp_[1]) pos_[3] = wrap_clock(pos_[1] + 4 * player_scale(nusiz_[1]));
+    if (resmp_[0]) pos_[2] = pos_[0] + 4 * player_scale(nusiz_[0]);
+    if (resmp_[1]) pos_[3] = pos_[1] + 4 * player_scale(nusiz_[1]);
 
-    for (int x = 0; x < kScreenWidth; x++) {
-        const int clock = kHblankClocks + x;
-        const int pf = playfield_pixel(x);
-        const int p0 = player_pixel(clock, 0);
-        const int p1 = player_pixel(clock, 1);
-        const int m0 = missile_pixel(clock, 0);
-        const int m1 = missile_pixel(clock, 1);
-        const int bl = ball_pixel(clock);
+    const int pf = playfield_pixel(x);
+    const int p0 = player_pixel(clock, 0);
+    const int p1 = player_pixel(clock, 1);
+    const int m0 = missile_pixel(clock, 0);
+    const int m1 = missile_pixel(clock, 1);
+    const int bl = ball_pixel(clock);
 
-        if (m0 && p0) cx_[0] |= 0x40;
-        if (m0 && p1) cx_[0] |= 0x80;
-        if (m1 && p1) cx_[1] |= 0x40;
-        if (m1 && p0) cx_[1] |= 0x80;
-        if (p0 && pf) cx_[2] |= 0x80;
-        if (p0 && bl) cx_[2] |= 0x40;
-        if (p1 && pf) cx_[3] |= 0x80;
-        if (p1 && bl) cx_[3] |= 0x40;
-        if (m0 && pf) cx_[4] |= 0x80;
-        if (m0 && bl) cx_[4] |= 0x40;
-        if (m1 && pf) cx_[5] |= 0x80;
-        if (m1 && bl) cx_[5] |= 0x40;
-        if (bl && pf) cx_[6] |= 0x80;
-        if (p0 && p1) cx_[7] |= 0x80;
-        if (m0 && m1) cx_[7] |= 0x40;
+    if (m0 && p0) cx_[0] |= 0x40;
+    if (m0 && p1) cx_[0] |= 0x80;
+    if (m1 && p1) cx_[1] |= 0x40;
+    if (m1 && p0) cx_[1] |= 0x80;
+    if (p0 && pf) cx_[2] |= 0x80;
+    if (p0 && bl) cx_[2] |= 0x40;
+    if (p1 && pf) cx_[3] |= 0x80;
+    if (p1 && bl) cx_[3] |= 0x40;
+    if (m0 && pf) cx_[4] |= 0x80;
+    if (m0 && bl) cx_[4] |= 0x40;
+    if (m1 && pf) cx_[5] |= 0x80;
+    if (m1 && bl) cx_[5] |= 0x40;
+    if (bl && pf) cx_[6] |= 0x80;
+    if (p0 && p1) cx_[7] |= 0x80;
+    if (m0 && m1) cx_[7] |= 0x40;
 
-        const uint32_t scored = score ? (x < 80 ? p0_color : p1_color) : pf_color;
-        uint32_t pixel = bk;
-        if (pf_priority) {
-            if (pf) pixel = scored;
-            else if (bl) pixel = pf_color;
-            else if (p0 || m0) pixel = p0_color;
-            else if (p1 || m1) pixel = p1_color;
-        } else {
-            if (p0 || m0) pixel = p0_color;
-            else if (p1 || m1) pixel = p1_color;
-            else if (pf) pixel = scored;
-            else if (bl) pixel = pf_color;
-        }
-        dest[x] = pixel;
+    const uint32_t scored = score ? (x < 80 ? p0_color : p1_color) : pf_color;
+    if (pf_priority) {
+        if (pf) return scored;
+        if (bl) return pf_color;
+        if (p0 || m0) return p0_color;
+        if (p1 || m1) return p1_color;
+    } else {
+        if (p0 || m0) return p0_color;
+        if (p1 || m1) return p1_color;
+        if (pf) return scored;
+        if (bl) return pf_color;
     }
+    return bk;
+}
+
+void Tia::render_line(uint32_t* dest) {
+    if (hclock_ < kColorClocksPerLine) hclock_ = kColorClocksPerLine;
+    flush();
+    std::copy(line_.begin(), line_.end(), dest);
 }
 
 void Tia::clock_channel(Channel& ch) {
