@@ -3286,16 +3286,19 @@ void test_neogeo_video() {
     check(((red >> 16) & 0xff) > ((red >> 8) & 0xff) && ((red >> 16) & 0xff) > (red & 0xff),
           "NeoGeo $0F00 is red-dominant");
 
-    // FIX tile: fill column bases so the 8x8 is a solid pen-1 block.
-    std::vector<uint8_t> sfix(32, 0);
+    // Tile 0 stays empty so unused FIX cells are transparent. Tile 1 is solid pen 1.
+    std::vector<uint8_t> sfix(64, 0);
     static constexpr int kColBase[4] = {0x10, 0x18, 0x00, 0x08};
     for (int y = 0; y < 8; y++) {
-        for (int c = 0; c < 4; c++) sfix[size_t(kColBase[c] + y)] = 0x11;
+        for (int c = 0; c < 4; c++) sfix[size_t(32 + kColBase[c] + y)] = 0x11;
     }
-    std::vector<uint8_t> cart_s(32, 0);
-    // Sprite tile: left 8 pixels pen 1 (plane 0 at +0x40), right 8 transparent.
+    std::vector<uint8_t> cart_s(64, 0);
+    // Sprite tile: all 16 pixels pen 1 (plane 0 on both 8px halves).
     std::vector<uint8_t> crom(128, 0);
-    for (int y = 0; y < 16; y++) crom[size_t(0x40 + (y << 2) + 0)] = 0xff;
+    for (int y = 0; y < 16; y++) {
+        crom[size_t(0x40 + (y << 2) + 0)] = 0xff;
+        crom[size_t(0x00 + (y << 2) + 0)] = 0xff;
+    }
 
     video.set_fix_roms(cart_s.data(), cart_s.size(), sfix.data(), sfix.size());
     video.set_sprite_rom(crom.data(), crom.size());
@@ -3304,7 +3307,7 @@ void test_neogeo_video() {
     video.write_palette(0x0002, 0x0f00);  // pal 0 pen 1 = red
     video.write_palette(0x1ffe, 0x8000);  // backdrop black
     // FIX cell (col 0, row 2) sits on framebuffer y=0.
-    video.set_vram(0x7000 + 2, 0x0000);
+    video.set_vram(0x7000 + 2, 0x0001);
     // Sprite 1: full zoom, top at hardware line 16, x=16, one tile.
     video.set_vram(0x8001, 0x0fff);
     video.set_vram(0x8201, uint16_t((0x1f0 << 7) | 1));
@@ -3319,7 +3322,7 @@ void test_neogeo_video() {
     check(fb[0] == red_px, "FIX column 0 / row 2 draws at the top-left");
     check(fb[16] == red_px, "full-size sprite x=16 draws the left half");
     check(fb[16 + 7] == red_px, "sprite left half is 8 pixels wide");
-    check(fb[16 + 8] != red_px, "sprite right half stays transparent");
+    check(fb[16 + 15] == red_px, "full-size sprite is 16 pixels wide");
 
     // xzoom $0 draws a single pixel (hardware table 0x0080).
     video.set_vram(0x8001, 0x00ff);
@@ -3355,25 +3358,31 @@ void test_neogeo_without_roms() {
 }
 
 void test_neogeo_roms_if_present() {
-    auto run_cart = [](const char* game, const char* zip, const char* label, int frames) {
+    auto run_cart = [](const char* game, const char* zip, const char* boot_label,
+                       const char* attract_label) {
         if (!std::filesystem::exists(zip)) return;
         dsp::NeoGeo machine(game);
         std::string error;
         if (!machine.init(zip, &error)) {
-            check(false, label);
+            check(false, boot_label);
             return;
         }
         check(machine.video().use_bios_fix(), "reset keeps SFIX until the BIOS swaps it");
-        for (int i = 0; i < frames; i++) machine.run_frame();
-        const int colors = unique_pixels(machine);
-        check(colors >= 8, label);
+        for (int i = 0; i < 240; i++) machine.run_frame();
+        check(unique_pixels(machine) >= 4, boot_label);
         check(machine.debug_pc() != 0, "NeoGeo 68000 left reset");
+        for (int i = 240; i < 900; i++) machine.run_frame();
+        check(unique_pixels(machine) >= 12, attract_label);
+        check((machine.debug_pc() & 0xff0000) != 0xc00000 || unique_pixels(machine) >= 12,
+              "attract eventually leaves the BIOS splash");
     };
-    run_cart("mslug", "/tmp/roms/mslug.zip", "Metal Slug boot is not a flat screen", 360);
+    run_cart("mslug", "/tmp/roms/mslug.zip", "Metal Slug POST is not a flat screen",
+             "Metal Slug attract uses a real palette");
     const char* soccer_zip = std::filesystem::exists("/tmp/roms/tws96.zip")
                                  ? "/tmp/roms/tws96.zip"
                                  : "/tmp/roms/twsoc96.zip";
-    run_cart("tws96", soccer_zip, "Tecmo World Soccer '96 boot is not a flat screen", 360);
+    run_cart("tws96", soccer_zip, "Tecmo World Soccer '96 POST is not a flat screen",
+             "Tecmo World Soccer '96 attract uses a real palette");
 }
 
 int unique_pixels(const dsp::Machine& machine) {
