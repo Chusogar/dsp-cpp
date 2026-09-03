@@ -52,6 +52,7 @@
 #include "drivers/skullxbo.h"
 #include "drivers/bublbobl.h"
 #include "drivers/ajax.h"
+#include "drivers/armedf_hw.h"
 #include "drivers/system16.h"
 #include "machine/fd1089.h"
 #include "machine/bagman_pal.h"
@@ -3223,6 +3224,16 @@ void test_ajax_without_roms() {
           "Ajax screen is 224x304 after 90° rotation");
 }
 
+void test_terraf_without_roms() {
+    dsp::ArmedfHw machine(dsp::ArmedfHw::Game::TerraForce);
+    std::string error = "unset";
+    check(!machine.init("/no/such/terraf.zip", &error), "Terra Force init fails without the ROM set");
+    check(error != "unset" && !error.empty(), "Terra Force reports why the set is missing");
+    check(std::strcmp(machine.title(), "Terra Force") == 0, "Terra Force title");
+    check(machine.screen_width() == 320 && machine.screen_height() == 240,
+          "Terra Force screen is 320x240");
+}
+
 int unique_pixels(const dsp::Machine& machine) {
     const uint32_t* fb = machine.framebuffer();
     const int n = machine.screen_width() * machine.screen_height();
@@ -3466,6 +3477,20 @@ void test_sega_roms_if_present() {
         std::vector<int16_t> audio;
         machine.drain_audio(audio);
         check(!audio.empty(), "Ajax drain_audio yields samples");
+    }
+
+    if (exists("/tmp/roms/terraf.zip")) {
+        dsp::ArmedfHw machine(dsp::ArmedfHw::Game::TerraForce);
+        std::string error;
+        check(machine.init("/tmp/roms/terraf.zip", &error), "Terra Force MAME set loads");
+        const uint32_t reset_pc = machine.debug_pc();
+        for (int frame = 0; frame < 900; frame++) machine.run_frame();
+        check(machine.debug_pc() != reset_pc, "Terra Force 68000 leaves the reset vector");
+        check(unique_pixels(machine) > 16, "Terra Force attract mode draws a colour picture");
+
+        std::vector<int16_t> audio;
+        machine.drain_audio(audio);
+        check(!audio.empty(), "Terra Force drain_audio yields samples");
     }
 
     if (exists("/tmp/roms/skullxbo.zip")) {
@@ -4421,6 +4446,7 @@ int main() {
     test_bublbobl_without_roms();
     test_asteroid_without_roms();
     test_ajax_without_roms();
+    test_terraf_without_roms();
     test_sega16_palette_banks();
     test_sega_roms_if_present();
     test_indy_coin_if_present();
