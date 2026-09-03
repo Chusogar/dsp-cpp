@@ -39,8 +39,7 @@ K051316::K051316(Callback cb, std::vector<uint8_t> rom, Bpp bpp)
 }
 
 void K051316::reset() {
-    wrap_ = true;
-    freeze_ = false;
+    wrap_ = false;
     control_.fill(0);
     ram_.fill(0);
     dirty_.fill(true);
@@ -65,7 +64,6 @@ void K051316::write(uint16_t address, uint8_t value) {
 }
 
 void K051316::control_w(uint8_t offset, uint8_t value) {
-    if (freeze_) return;
     control_[offset & 0x0f] = value;
 }
 
@@ -105,13 +103,12 @@ void K051316::draw(uint16_t* dest, int dest_w, int dest_h, int crop_x, int crop_
     if (!dest) return;
     if (layer_dirty_) rebuild_layer();
 
-    // MAME k051316 zoom_draw:
-    //   start_raw = 256 * int16(ctrl[0..1])     // 16.16-ish
-    //   inc_raw   = int16(ctrl[2..3])           // 8.8
-    //   start_raw -= (16+dy)*incyx_raw
-    //   start_raw -= (-7+dx)*incxx_raw
-    //   draw_roz(start_raw<<5, inc_raw<<5, ...) // 16.16 sampling
-    // Identity scale is ctrl=0x0800 (not 0x0100): 0x0800<<5 = 0x10000.
+    // MAME k051316_device::zoom_draw:
+    //   startx = 256 * int16(ctrl[0]<<8 | ctrl[1])
+    //   startx -= (16 + dy) * incyx
+    //   startx -= (89 + dx) * incxx
+    //   draw_roz(startx<<5, incxx<<5, ..., wrap)
+    // Identity scale is ctrl=0x0800: 0x0800<<5 = 0x10000 in 16.16.
     int32_t startx = int32_t(int16_t((uint16_t(control_[0]) << 8) | control_[1])) << 8;
     int32_t starty = int32_t(int16_t((uint16_t(control_[6]) << 8) | control_[7])) << 8;
     int32_t incxx = int32_t(int16_t((uint16_t(control_[0x2]) << 8) | control_[0x3]));
@@ -119,17 +116,15 @@ void K051316::draw(uint16_t* dest, int dest_w, int dest_h, int crop_x, int crop_
     int32_t incxy = int32_t(int16_t((uint16_t(control_[0x8]) << 8) | control_[0x9]));
     int32_t incyy = int32_t(int16_t((uint16_t(control_[0xa]) << 8) | control_[0xb]));
 
-    // Identity if never programmed (MAME 1.0 = 0x0800 in 8.8)
     if (incxx == 0 && incyy == 0 && incxy == 0 && incyx == 0) {
         incxx = 0x0800;
         incyy = 0x0800;
     }
 
-    const int dx = 0, dy = 0;
-    startx -= (16 + dy) * incyx;
-    starty -= (16 + dy) * incyy;
-    startx -= (-7 + dx) * incxx;
-    starty -= (-7 + dx) * incxy;
+    startx -= (16 + dy_) * incyx;
+    starty -= (16 + dy_) * incyy;
+    startx -= (89 + dx_) * incxx;
+    starty -= (89 + dx_) * incxy;
 
     // Convert to 16.16 for sampling (MAME draw_roz << 5)
     startx <<= 5;

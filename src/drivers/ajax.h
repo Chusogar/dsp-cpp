@@ -77,7 +77,6 @@ public:
         else for (int i = 0; i < 16; i++) out[i] = 0;
     }
     bool zoom_wrap() const { return k051316_ ? k051316_->wraparound() : false; }
-    bool zoom_frozen() const { return k051316_ ? k051316_->frozen() : false; }
 
     const char* title() const override { return "Ajax"; }
 

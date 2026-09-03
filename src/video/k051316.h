@@ -29,14 +29,11 @@ public:
     void write(uint16_t address, uint8_t value);
     void control_w(uint8_t offset, uint8_t value);
     void set_wraparound(bool enable) { wrap_ = enable; }
-    void freeze_controls(bool enable) {
-        freeze_ = enable;
-        if (enable) frozen_ctrl_ = control_;
-        else control_ = frozen_ctrl_; // no-op restore optional
-    }
-    void latch_and_freeze() { frozen_ctrl_ = control_; freeze_ = true; }
-    bool frozen() const { return freeze_; }
     bool wraparound() const { return wrap_; }
+    void set_offsets(int dx, int dy) {
+        dx_ = dx;
+        dy_ = dy;
+    }
     void control_snapshot(uint8_t out[16]) const {
         for (int i = 0; i < 16; i++) out[i] = control_[size_t(i)];
     }
@@ -67,9 +64,9 @@ private:
     std::array<bool, 0x400> dirty_{};
     std::vector<uint16_t> layer_;  // 512x512 pens
     bool layer_dirty_ = true;
-    bool wrap_ = true;
-    bool freeze_ = false;
-    std::array<uint8_t, 0x10> frozen_ctrl_{};
+    bool wrap_ = false;
+    int dx_ = 0;
+    int dy_ = 0;
 };
 
 }  // namespace dsp

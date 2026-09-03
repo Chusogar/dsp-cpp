@@ -429,7 +429,7 @@ void Ajax::update_video() {
 
     if (priority_) {
         std::fill(layer.begin(), layer.end(), 0);
-        k051316_->draw(layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+        k051316_->draw(layer.data(), kNativeWidth, kNativeHeight, 8, 16);
         composite(0x04);
         std::fill(layer.begin(), layer.end(), 0);
         k052109_->draw_layer(1, layer.data(), kNativeWidth, kNativeHeight, 112, 16);
@@ -439,10 +439,9 @@ void Ajax::update_video() {
         k052109_->draw_layer(1, layer.data(), kNativeWidth, kNativeHeight, 112, 16);
         composite(0x02);
         std::fill(layer.begin(), layer.end(), 0);
-        k051316_->draw(layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+        k051316_->draw(layer.data(), kNativeWidth, kNativeHeight, 8, 16);
         composite(0x04);
     }
-
 
     k051960_->draw_sprites_masked(pens_.data(), pri.data(), kNativeWidth, kNativeHeight, 112, 16);
     // Layer F always on top (MAME draws with priority 0 after sprites)
@@ -450,26 +449,6 @@ void Ajax::update_video() {
     k052109_->draw_layer(0, layer.data(), kNativeWidth, kNativeHeight, 112, 16);
     for (int i = 0; i < npix; i++) {
         if (layer[size_t(i)]) pens_[size_t(i)] = layer[size_t(i)];
-    }
-    // Auto-freeze ROZ when logo is axis-aligned AND actually visible on screen.
-    // Prefer the first upright pose with many zoom pens (settle), not later spins.
-    if (k051316_ && !k051316_->frozen()) {
-        uint8_t c[16];
-        k051316_->control_snapshot(c);
-        const int16_t iyx = int16_t((uint16_t(c[4]) << 8) | c[5]);
-        const int16_t ixy = int16_t((uint16_t(c[8]) << 8) | c[9]);
-        const int16_t ix  = int16_t((uint16_t(c[2]) << 8) | c[3]);
-        const int16_t sy  = int16_t((uint16_t(c[6]) << 8) | c[7]);
-        // Count zoom-range pens already in pens_ (post-composite this frame)
-        int zc = 0;
-        for (int i = 0; i < npix; i++) {
-            uint16_t p = pens_[size_t(i)] & 0x7ff;
-            if (p >= 768 && p < 1024) zc++;
-        }
-        // Upright, logo visible near top (sy>0), animation-scale range
-        if (iyx == 0 && ixy == 0 && ix > 0x1000 && ix < 0x2000 && sy > 0 && zc > 500) {
-            k051316_->latch_and_freeze();
-        }
     }
 
     // Rotate 90° CW: native 304×224 → 224×304
