@@ -371,6 +371,7 @@ void Galaxian::reset() {
     port_b_latch_ = 0;
     sound_cycles_ = 0;
     sound_mute_ = false;
+    discrete_.reset();
     scramble_prot_state_ = 0;
     scramble_prot_ = 0;
     audio_accumulator_ = 0;
@@ -586,6 +587,14 @@ void Galaxian::write_galaxian(uint16_t address, uint8_t value) {
         memory_[0x5800 + off] = value;
         return;
     }
+    if (address >= 0x6000 && address <= 0x67ff) {
+        write_discrete(address, value, 0x6004, 0x0000, 0x0000);
+        return;
+    }
+    if (address >= 0x6800 && address <= 0x6fff) {
+        write_discrete(address, value, 0x0000, 0x6800, 0x0000);
+        return;
+    }
     if (address >= 0x7000 && address <= 0x77ff) {
         switch (address & 7) {
             case 1:
@@ -598,6 +607,10 @@ void Galaxian::write_galaxian(uint16_t address, uint8_t value) {
             default:
                 break;
         }
+        return;
+    }
+    if (address >= 0x7800 && address <= 0x7fff) {
+        write_discrete(address, value, 0x0000, 0x0000, 0x7800);
     }
 }
 
@@ -662,6 +675,11 @@ void Galaxian::write_mooncrst(uint16_t address, uint8_t value) {
             gfx_bank_[size_t(bank)] = value;
             dirty_.fill(true);
         }
+        write_discrete(address, value, 0xa004, 0x0000, 0x0000);
+        return;
+    }
+    if (address >= 0xa800 && address <= 0xafff) {
+        write_discrete(address, value, 0x0000, 0xa800, 0x0000);
         return;
     }
     if (address >= 0xb000 && address <= 0xb7ff) {
@@ -676,6 +694,10 @@ void Galaxian::write_mooncrst(uint16_t address, uint8_t value) {
             default:
                 break;
         }
+        return;
+    }
+    if (address >= 0xb800 && address <= 0xbfff) {
+        write_discrete(address, value, 0x0000, 0x0000, 0xb800);
     }
 }
 
@@ -773,6 +795,21 @@ void Galaxian::write_byte(uint16_t address, uint8_t value) {
         case Game::Frogger: write_frogger(address, value); break;
         case Game::MoonCresta: write_mooncrst(address, value); break;
         default: write_galaxian(address, value); break;
+    }
+}
+
+void Galaxian::write_discrete(uint16_t address, uint8_t value, uint16_t lfo_base,
+                              uint16_t sound_base, uint16_t pitch_addr) {
+    if (lfo_base && address >= lfo_base && address < uint16_t(lfo_base + 4)) {
+        discrete_.lfo_freq_w(int(address - lfo_base), value);
+        return;
+    }
+    if (sound_base && (address & 0xf800) == (sound_base & 0xf800)) {
+        discrete_.sound_w(int(address & 7), value);
+        return;
+    }
+    if (pitch_addr && (address & 0xf800) == (pitch_addr & 0xf800)) {
+        discrete_.pitch_w(value);
     }
 }
 
@@ -890,7 +927,9 @@ void Galaxian::on_cycles(int cycles) {
     while (audio_accumulator_ >= kCpuClock) {
         audio_accumulator_ -= kCpuClock;
         int32_t sample = 0;
-        if (sound_present_ && !sound_mute_) {
+        if (uses_discrete_sound()) {
+            sample = discrete_.update();
+        } else if (sound_present_ && !sound_mute_) {
             sample = game_ == Game::Frogger ? ay0_.update() : (ay0_.update() + ay1_.update());
         }
         audio_.push_back(int16_t(std::clamp(sample, int32_t(-32768), int32_t(32767))));

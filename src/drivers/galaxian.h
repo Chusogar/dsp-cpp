@@ -3,6 +3,7 @@
 #include "core/machine.h"
 #include "cpu/z80.h"
 #include "sound/ay8910.h"
+#include "sound/galaxian_sound.h"
 #include "video/gfx.h"
 
 #include <array>
@@ -196,9 +197,16 @@ private:
 
     uint64_t sound_cycles_ = 0;
     bool sound_mute_ = false;
+    GalaxianSound discrete_;
 
     int64_t audio_accumulator_ = 0;
     std::vector<int16_t> audio_;
+
+    bool uses_discrete_sound() const {
+        return game_ == Game::Galaxian || game_ == Game::MoonCresta;
+    }
+    void write_discrete(uint16_t address, uint8_t value, uint16_t lfo_base, uint16_t sound_base,
+                        uint16_t pitch_addr);
 };
 
 }  // namespace dsp

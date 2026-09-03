@@ -53,14 +53,20 @@ void blend_pixel(uint32_t& dest, uint32_t color, int intensity) {
 
 }  // namespace
 
-StarWars::StarWars()
-    : main_cpu_(kCpuClock),
+const char* StarWars::title() const {
+    return game_ == Game::Empire ? "The Empire Strikes Back" : "Star Wars";
+}
+
+StarWars::StarWars(Game game)
+    : game_(game),
+      main_cpu_(kCpuClock),
       sound_cpu_(kCpuClock),
       pokey0_(kCpuClock, 0.20f),
       pokey1_(kCpuClock, 0.20f),
       pokey2_(kCpuClock, 0.20f),
       pokey3_(kCpuClock, 0.20f),
-      tms_(kMasterClock / 2 / 9) {
+      tms_(kMasterClock / 2 / 9),
+      slapstic_(101, nullptr) {
     framebuffer_.assign(size_t(kScreenWidth) * kScreenHeight, 0xff000000u);
 
     main_cpu_.set_memory_handlers([this](uint16_t a) { return main_read(a); },
@@ -97,7 +103,14 @@ StarWars::StarWars()
 bool StarWars::init(const std::string& rom_path, std::string* error) {
     RomLoader loader;
     if (!loader.open(rom_path, error)) return false;
+    const bool ok = (game_ == Game::Empire) ? load_esb(loader, error) : load_starwars(loader, error);
+    if (!ok) return false;
+    warnings_ = loader.warnings();
+    reset();
+    return true;
+}
 
+bool StarWars::load_starwars(RomLoader& loader, std::string* error) {
     auto load_at = [&](const RomEntry& entry, std::vector<uint8_t>& dest) -> bool {
         dest.assign(entry.length, 0);
         RomEntry single{entry.name, entry.length, 0, entry.crc};
@@ -132,9 +145,66 @@ bool StarWars::init(const std::string& rom_path, std::string* error) {
     std::vector<uint8_t> math_prom(0x1000, 0);
     if (!loader.load(kMathProms, math_prom, error)) return false;
     math_.init(math_prom.data());
+    return true;
+}
 
-    warnings_ = loader.warnings();
-    reset();
+bool StarWars::load_esb(RomLoader& loader, std::string* error) {
+    auto load_file = [&](const char* name, uint32_t length, uint32_t crc,
+                         std::vector<uint8_t>& dest) -> bool {
+        dest.assign(length, 0);
+        RomEntry single{name, length, 0, crc};
+        return loader.load({single}, dest, error);
+    };
+
+    std::fill(main_rom_.begin(), main_rom_.end(), 0);
+
+    std::vector<uint8_t> rom;
+    if (!load_file("136031-101.1f|136031.101|136031-101", 0x4000, 0xef1e3ae5, rom)) return false;
+    std::memcpy(main_rom_.data() + 0x6000, rom.data(), 0x2000);
+    std::memcpy(main_rom_.data() + 0x10000, rom.data() + 0x2000, 0x2000);
+
+    if (!load_file("136031-102.1jk|136031.102|136031-102", 0x4000, 0x62ce5c12, rom)) return false;
+    std::memcpy(main_rom_.data() + 0xa000, rom.data(), 0x2000);
+    std::memcpy(main_rom_.data() + 0x1c000, rom.data() + 0x2000, 0x2000);
+
+    if (!load_file("136031-203.1kl|136031.203|136031-203", 0x4000, 0x27b0889b, rom)) return false;
+    std::memcpy(main_rom_.data() + 0xc000, rom.data(), 0x2000);
+    std::memcpy(main_rom_.data() + 0x1e000, rom.data() + 0x2000, 0x2000);
+
+    if (!load_file("136031-104.1m|136031.104|136031-104", 0x4000, 0xfd5c725e, rom)) return false;
+    std::memcpy(main_rom_.data() + 0xe000, rom.data(), 0x2000);
+    std::memcpy(main_rom_.data() + 0x20000, rom.data() + 0x2000, 0x2000);
+
+    if (!load_file("136031-105.3u|136031.105|136031-105", 0x4000, 0xea9e4dce, rom)) return false;
+    std::memcpy(main_rom_.data() + 0x14000, rom.data(), 0x4000);
+
+    if (!load_file("136031-106.2u|136031.106|136031-106", 0x4000, 0x76d07f59, rom)) return false;
+    std::memcpy(main_rom_.data() + 0x18000, rom.data(), 0x4000);
+
+    if (!load_file("136031-111.1l|136031.111|136031-111", 0x1000, 0xb1f9bd12, rom)) return false;
+    std::copy(rom.begin(), rom.end(), vector_rom_.begin());
+
+    std::fill(sound_rom_.begin(), sound_rom_.end(), 0);
+    if (!load_file("136031-113.1jk|136031.113|136031-113", 0x4000, 0x24ae3815, rom)) return false;
+    std::memcpy(sound_rom_.data() + 0x4000, rom.data(), 0x2000);
+    std::memcpy(sound_rom_.data() + 0xc000, rom.data() + 0x2000, 0x2000);
+
+    if (!load_file("136031-112.1h|136031.112|136031-112", 0x4000, 0xca72d341, rom)) return false;
+    std::memcpy(sound_rom_.data() + 0x6000, rom.data(), 0x2000);
+    std::memcpy(sound_rom_.data() + 0xe000, rom.data() + 0x2000, 0x2000);
+
+    if (!load_file("136021-109.4b|136021.109|136021-109", 0x100, 0x82fc3eb2, rom)) return false;
+    avg_.set_prom(rom.data(), rom.size());
+
+    const std::vector<RomEntry> math = {
+        {"136031-110.7h|136031.110|136031-110", 0x400, 0x000, 0xb8d0f69d},
+        {"136031-109.7j|136031.109|136031-109", 0x400, 0x400, 0x6a2a4d98},
+        {"136031-108.7k|136031.108|136031-108", 0x400, 0x800, 0x6a76138f},
+        {"136031-107.7l|136031.107|136031-107", 0x400, 0xc00, 0xafbf6e01},
+    };
+    std::vector<uint8_t> math_prom(0x1000, 0);
+    if (!loader.load(math, math_prom, error)) return false;
+    math_.init(math_prom.data());
     return true;
 }
 
@@ -155,6 +225,8 @@ void StarWars::reset() {
     riot_.reset();
     avg_.reset();
     bank_ = 0;
+    bank2_ = 0;
+    slapstic_.reset();
     outlatch_ = 0;
     sound_latch_ = main_latch_ = 0;
     sound_pending_ = main_pending_ = false;
@@ -206,6 +278,16 @@ uint8_t StarWars::main_read(uint16_t address) {
     if (address >= 0x6000 && address <= 0x7fff) {
         const uint32_t base = bank_ ? 0x10000u : 0x6000u;
         return main_rom_[base + (address & 0x1fff)];
+    }
+    if (game_ == Game::Empire) {
+        if (address >= 0x8000 && address <= 0x9fff) {
+            const uint8_t bank = slapstic_.tweak(uint16_t(address & 0x1fff));
+            return main_rom_[0x14000 + uint32_t(bank & 3) * 0x2000 + (address & 0x1fff)];
+        }
+        if (address >= 0xa000) {
+            const uint32_t base = bank2_ ? 0x1c000u : 0xa000u;
+            return main_rom_[base + (address - 0xa000)];
+        }
     }
     if (address >= 0x8000) return main_rom_[address];
     return 0xff;
@@ -269,7 +351,10 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
 void StarWars::outlatch_w(int bit, bool value) {
     if (value) outlatch_ |= uint8_t(1u << bit);
     else outlatch_ = uint8_t(outlatch_ & ~(1u << bit));
-    if (bit == 4) bank_ = value ? 1 : 0;
+    if (bit == 4) {
+        bank_ = value ? 1 : 0;
+        bank2_ = bank_;
+    }
 }
 
 uint8_t StarWars::sound_read(uint16_t address) {

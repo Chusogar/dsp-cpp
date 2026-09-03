@@ -6,8 +6,10 @@
 #include <vector>
 
 #include "core/machine.h"
+#include "core/rom_loader.h"
 #include "cpu/m6809.h"
 #include "machine/mos6532.h"
+#include "machine/slapstic.h"
 #include "machine/starwars_math.h"
 #include "sound/pokey.h"
 #include "sound/tms5220.h"
@@ -15,9 +17,13 @@
 
 namespace dsp {
 
-// Atari Star Wars (1983): dual 6809, AVG vector display, mathbox, 4×POKEY + TMS5220.
+// Atari Star Wars (1983) and The Empire Strikes Back (1985): dual 6809,
+// AVG vector display, mathbox, 4×POKEY + TMS5220. ESB adds slapstic #101
+// over $8000-$9FFF and a second ROM bank at $A000-$FFFF.
 class StarWars : public Machine {
 public:
+    enum class Game { StarWars, Empire };
+
     static constexpr int kScreenWidth = 400;
     static constexpr int kScreenHeight = 300;
     static constexpr uint32_t kMasterClock = 12096000;
@@ -27,7 +33,7 @@ public:
     static constexpr double kFramesPerSecond = double(kClock3k) / 12.0 / 6.0;
     static constexpr int kSampleRate = 44100;
 
-    StarWars();
+    explicit StarWars(Game game = Game::StarWars);
 
     bool init(const std::string& rom_path, std::string* error) override;
     void reset() override;
@@ -44,7 +50,7 @@ public:
     void drain_audio(std::vector<int16_t>& out) override;
     int sample_rate() const override { return kSampleRate; }
 
-    const char* title() const override { return "Star Wars"; }
+    const char* title() const override;
 
     uint16_t debug_pc() const { return main_cpu_.pc(); }
     size_t debug_avg_lines() const { return avg_.lines().size(); }
@@ -62,7 +68,10 @@ private:
     void draw_line(int x0, int y0, int x1, int y1, uint32_t color, int intensity);
     uint8_t avg_read(uint16_t address) const;
     uint8_t adc_channel(int channel) const;
+    bool load_starwars(RomLoader& loader, std::string* error);
+    bool load_esb(RomLoader& loader, std::string* error);
 
+    Game game_;
     M6809 main_cpu_;
     M6809 sound_cpu_;
     Pokey pokey0_;
@@ -73,8 +82,9 @@ private:
     Mos6532 riot_;
     StarwarsMath math_;
     AvgStarwars avg_;
+    Slapstic slapstic_;
 
-    std::array<uint8_t, 0x12000> main_rom_{};
+    std::array<uint8_t, 0x22000> main_rom_{};
     std::array<uint8_t, 0x1000> vector_rom_{};
     std::array<uint8_t, 0x3000> vector_ram_{};
     std::array<uint8_t, 0x800> work_ram_{};
@@ -94,6 +104,7 @@ private:
     uint8_t adc_value_ = 0x80;
     int adc_channel_ = 0;
     uint8_t bank_ = 0;
+    uint8_t bank2_ = 0;
     uint8_t outlatch_ = 0;
     uint8_t sound_latch_ = 0;
     uint8_t main_latch_ = 0;

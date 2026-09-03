@@ -149,7 +149,7 @@ HangOn::HangOn(Game game)
       sound_cpu_(4000000),
       ym2203_(4000000, 0.3f, 0.3f),
       ym2151_(4000000),
-      pcm_(game == Game::HangOn ? 8000000u : 4000000u, game == Game::HangOn ? 1.3f : 1.0f),
+      pcm_(game == Game::Enduro ? 4000000u : 8000000u, game == Game::HangOn ? 1.3f : 1.0f),
       framebuffer_(kScreenWidth * kScreenHeight, 0) {
     use_fd1089_ = (game == Game::Enduro);
     use_ym2151_ = (game == Game::Enduro);
@@ -609,7 +609,9 @@ uint8_t HangOn::sound_read(uint16_t address) {
     }
     if (address <= 0x7fff) return sound_mem_[address];
     if (address >= 0xc000 && address <= 0xcfff) return sound_mem_[0xc000 + (address & 0x7ff)];
-    if (address >= 0xd000 && address <= 0xdfff) return ym2203_.status();
+    if (address >= 0xd000 && address <= 0xdfff) {
+        return (address & 1) ? ym2203_.read() : ym2203_.status();
+    }
     if (address >= 0xe000 && address <= 0xefff) return pcm_.read(address);
     return 0xff;
 }
@@ -710,7 +712,10 @@ void HangOn::run_frame() {
         for (int slice = 0; slice < cpu_sync_; slice++) {
             main_cpu_.run(main_cycles);
             sub_cpu_.run(main_cycles);
-            if (!z80_reset_) sound_cpu_.run(sound_cycles);
+            if (!z80_reset_)
+                sound_cpu_.run(sound_cycles);
+            else
+                on_sound_cycles(sound_cycles);
             if (mcu_) mcu_->run(mcu_cycles);
         }
     }

@@ -38,6 +38,7 @@
 #include "drivers/pv2000.h"
 #include "drivers/scv.h"
 #include "drivers/starwars.h"
+#include "drivers/galaxian.h"
 #include "drivers/asteroid.h"
 #include "drivers/c64.h"
 #include "machine/mos6566.h"
@@ -73,6 +74,8 @@
 #include "machine/starwars_math.h"
 #include "machine/sega_315_5195.h"
 #include "sound/ay8910.h"
+#include "sound/galaxian_sound.h"
+#include "sound/k053260.h"
 #include "sound/msm5205.h"
 #include "sound/nes_apu.h"
 #include "sound/okim6295.h"
@@ -2879,6 +2882,73 @@ void test_polepos_driver() {
     }
 }
 
+int audio_peak(const std::vector<int16_t>& audio) {
+    int peak = 0;
+    for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    return peak;
+}
+
+void test_k053260_pitch_and_sh1() {
+    std::vector<uint8_t> rom(256, 0);
+    for (int i = 0; i < 256; i++) rom[size_t(i)] = uint8_t(i);
+    dsp::K053260 chip(rom, 3579545);
+    chip.reset();
+
+    int sh1 = 0;
+    chip.set_sh1_callback([&](bool state) {
+        if (state) sh1++;
+    });
+    chip.tick(16 * 8);
+    check(sh1 >= 2, "K053260 SH1 pulses every 64 input clocks");
+
+    // MAME register map: pitch, length, start, volume — then key-on + mode.
+    chip.write(0x08, 0x00);  // pitch lo
+    chip.write(0x09, 0x08);  // pitch hi (enough to step every sample)
+    chip.write(0x0a, 0x20);  // length lo
+    chip.write(0x0b, 0x00);
+    chip.write(0x0c, 0x00);  // start
+    chip.write(0x0d, 0x00);
+    chip.write(0x0e, 0x00);
+    chip.write(0x0f, 0x7f);  // volume
+    chip.write(0x2c, 0x04);  // center pan
+    chip.write(0x2f, 0x02);  // sound enable
+    chip.write(0x28, 0x01);  // key on voice 0
+    check(chip.voice_playing(0), "K053260 keys on voice 0");
+
+    std::vector<int16_t> left(512, 0), right(512, 0);
+    chip.update(512, left.data(), right.data());
+    int peak = 0;
+    for (int16_t s : left) peak = std::max(peak, std::abs(int(s)));
+    check(peak > 100, "K053260 PCM voice produces audible samples");
+}
+
+void test_galaxian_discrete_tone() {
+    dsp::GalaxianSound snd;
+    snd.reset();
+    snd.pitch_w(0x80);
+    snd.sound_w(0, 1);  // FS1
+    snd.sound_w(5, 1);  // FIRE
+    bool heard = false;
+    for (int i = 0; i < 4000; i++) {
+        if (std::abs(int(snd.update())) > 200) {
+            heard = true;
+            break;
+        }
+    }
+    check(heard, "Galaxian discrete pitch/fire produces a tone");
+
+    snd.reset();
+    snd.sound_w(3, 1);  // HIT
+    heard = false;
+    for (int i = 0; i < 2000; i++) {
+        if (std::abs(int(snd.update())) > 200) {
+            heard = true;
+            break;
+        }
+    }
+    check(heard, "Galaxian discrete HIT produces noise");
+}
+
 void test_starwars_missing_roms() {
     dsp::StarWars machine;
     check(std::strcmp(machine.title(), "Star Wars") == 0, "Star Wars title");
@@ -2927,7 +2997,74 @@ void test_starwars_missing_roms() {
             if ((fb[i] & 0x00ffffffu) != 0) lit++;
         }
         check(lit > 100, "Star Wars attract draws visible vectors");
+        std::vector<int16_t> audio;
+        for (int i = 0; i < 180; i++) {
+            boot.run_frame();
+            boot.drain_audio(audio);
+        }
+        check(audio_peak(audio) > 200, "Star Wars attract produces POKEY/TMS audio");
     }
+}
+
+void test_esb_roms_if_present() {
+    dsp::StarWars machine(dsp::StarWars::Game::Empire);
+    check(std::strcmp(machine.title(), "The Empire Strikes Back") == 0, "ESB title");
+    std::string error = "unset";
+    check(!machine.init("/no/such/esb.zip", &error), "missing ESB ROMs fail init");
+
+    const char* rom = "/tmp/roms/esb.zip";
+    std::FILE* f = std::fopen(rom, "rb");
+    if (!f) return;
+    std::fclose(f);
+    dsp::StarWars boot(dsp::StarWars::Game::Empire);
+    error.clear();
+    check(boot.init(rom, &error), "ESB ROM set loads");
+    for (int i = 0; i < 200; i++) boot.run_frame();
+    check(boot.debug_pc() >= 0x6000, "ESB main CPU is executing ROM");
+    std::vector<int16_t> audio;
+    for (int i = 0; i < 180; i++) {
+        boot.run_frame();
+        boot.drain_audio(audio);
+    }
+    check(audio_peak(audio) > 200, "ESB attract produces POKEY/TMS audio");
+}
+
+void test_galaxian_family_sound_if_present() {
+    auto run = [](dsp::Galaxian::Game game, const char* path, const char* name) {
+        std::FILE* f = std::fopen(path, "rb");
+        if (!f) return;
+        std::fclose(f);
+        dsp::Galaxian machine(game);
+        std::string error;
+        check(machine.init(path, &error), (std::string(name) + " ROM set loads").c_str());
+        std::vector<int16_t> audio;
+        for (int i = 0; i < 300; i++) {
+            machine.run_frame();
+            machine.drain_audio(audio);
+        }
+        check(audio_peak(audio) > 200, (std::string(name) + " discrete sound is audible").c_str());
+    };
+    run(dsp::Galaxian::Game::Galaxian, "/tmp/roms/galaxian.zip", "Galaxian");
+    run(dsp::Galaxian::Game::MoonCresta, "/tmp/roms/mooncrst.zip", "Moon Cresta");
+}
+
+void test_hangon_family_sound_if_present() {
+    auto run = [](dsp::HangOn::Game game, const char* path, const char* name) {
+        std::FILE* f = std::fopen(path, "rb");
+        if (!f) return;
+        std::fclose(f);
+        dsp::HangOn machine(game);
+        std::string error;
+        check(machine.init(path, &error), (std::string(name) + " ROM set loads").c_str());
+        std::vector<int16_t> audio;
+        for (int i = 0; i < 360; i++) {
+            machine.run_frame();
+            machine.drain_audio(audio);
+        }
+        check(audio_peak(audio) > 100, (std::string(name) + " YM2203/PCM audio is audible").c_str());
+    };
+    run(dsp::HangOn::Game::HangOn, "/tmp/roms/hangon.zip", "Hang-On");
+    run(dsp::HangOn::Game::Sharrier, "/tmp/roms/sharrier.zip", "Space Harrier");
 }
 
 std::vector<uint8_t> t11_memory;
@@ -4577,7 +4714,12 @@ int main() {
     test_tms5220_stop_frame_ramp();
     test_exelv_dummy_bios();
     test_trdos_scl_and_beta();
+    test_k053260_pitch_and_sh1();
+    test_galaxian_discrete_tone();
     test_starwars_missing_roms();
+    test_esb_roms_if_present();
+    test_galaxian_family_sound_if_present();
+    test_hangon_family_sound_if_present();
     test_polepos_driver();
     test_atari_system1_missing_roms();
     test_t11_reset_and_moves();

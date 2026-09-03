@@ -74,6 +74,9 @@ bool Simpsons::init(const std::string& rom_path, std::string* error) {
         ym_irq_ = state;
         update_sound_irq();
     });
+    if (k053260_) {
+        k053260_->set_sh1_callback([this](bool state) { on_k053260_sh1(state); });
+    }
 
     reset();
     return true;
@@ -82,9 +85,7 @@ bool Simpsons::init(const std::string& rom_path, std::string* error) {
 void Simpsons::reset() {
     main_cpu_.reset();
     sound_cpu_.reset();
-    // MAME asserts NMI at reset; clear after a few cycles so IRQs can proceed
-    sound_cpu_.set_nmi(IrqLine::Assert);
-    nmi_timer_ = 200;  // auto-clear if sound never writes fa00
+    nmi_blocked_ = 0;
     ym2151_.reset();
     if (k053260_) k053260_->reset();
     if (k052109_) k052109_->reset();
@@ -201,13 +202,6 @@ void Simpsons::run_frame() {
         frame_main_ = (main_c + frame_main_) - int(main_c + frame_main_);
 
         sound_cpu_.run(int(snd_c + frame_snd_));
-        if (nmi_timer_ > 0) {
-            nmi_timer_ -= int(snd_c);
-            if (nmi_timer_ <= 0) {
-                nmi_timer_ = 0;
-                sound_cpu_.set_nmi(IrqLine::Clear);
-            }
-        }
         frame_snd_ = (snd_c + frame_snd_) - int(snd_c + frame_snd_);
     }
 
@@ -235,8 +229,19 @@ void Simpsons::update_sound_irq() {
 }
 
 void Simpsons::on_sound_cycles(int cycles) {
-    if (cycles > 0) ym2151_.run_timers(cycles);
+    if (cycles <= 0) return;
+    ym2151_.run_timers(cycles);
+    if (k053260_) k053260_->tick(cycles);
+    if (nmi_blocked_ > 0) {
+        nmi_blocked_ -= cycles;
+        if (nmi_blocked_ < 0) nmi_blocked_ = 0;
+    }
 }
+
+void Simpsons::on_k053260_sh1(bool state) {
+    if (state && nmi_blocked_ <= 0) sound_cpu_.set_nmi(IrqLine::Assert);
+}
+
 void Simpsons::mix_audio_line(int) {}
 
 void Simpsons::update_video() {
@@ -467,10 +472,9 @@ void Simpsons::sound_write(uint16_t address, uint8_t value) {
         return;
     }
     if (address == 0xfa00) {
-        // MAME: clear NMI on fa00 write; K053260 timer later re-asserts
-        // Pascal: assert then timer clears. Use clear so IRQ can run.
+        // Arm NMI: drop the line, then ignore SH1 for 4 Z80 cycles so HALT starts.
         sound_cpu_.set_nmi(IrqLine::Clear);
-        nmi_timer_ = 0;
+        nmi_blocked_ = 4;
         return;
     }
     if (address >= 0xfc00 && address <= 0xfc2f) {
