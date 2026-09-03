@@ -179,9 +179,11 @@ uint8_t Mcs51::iram_r(uint8_t pos) {
         case kAddrP3: {
             const size_t port = size_t((pos - kAddrP0) >> 4);
             if (rwm_) return sfr_[pos];
-            uint8_t result = 0xff;
+            // 8051 ports are open-drain with pull-ups: a read returns the
+            // latch unless an external callback drives pins low.
+            uint8_t result = uint8_t(sfr_[pos] | forced_input_[port]);
             if (port_read_[port]) {
-                result = uint8_t((sfr_[pos] | forced_input_[port]) & port_read_[port]());
+                result = uint8_t(result & port_read_[port]());
             }
             if (pos == kAddrP3) {
                 if (irq0_ != IrqLine::Clear) result &= 0xfb;

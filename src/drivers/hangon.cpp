@@ -143,7 +143,7 @@ HangOn::HangOn(Game game)
     : game_(game),
       main_clock_(game == Game::HangOn ? 25174800u / 4 : 10000000u),
       sound_clock_(4000000),
-      cpu_sync_(game == Game::Enduro ? 12 : 8),
+      cpu_sync_(game == Game::Enduro ? 12 : (game == Game::Sharrier ? 16 : 8)),
       main_cpu_(game == Game::HangOn ? 25174800u / 4 : 10000000u),
       sub_cpu_(game == Game::HangOn ? 25174800u / 4 : 10000000u),
       sound_cpu_(4000000),
@@ -332,7 +332,11 @@ void HangOn::reset() {
     pcm_.reset();
     ppi0_.reset();
     ppi1_.reset();
-    if (mcu_) mcu_->reset();
+    if (mcu_) {
+        mcu_->reset();
+        // Reach SETB EA ($022C) before the first vblank so INT0 is armed.
+        mcu_->run(25000);
+    }
     video_.reset();
     video_.screen_enabled = true;
     ram_.fill(0);
@@ -721,18 +725,24 @@ void HangOn::run_frame() {
         if (line == 224) {
             // Keep INT0 asserted for the whole vblank. A Hold pulse is
             // dropped if the 8751 has not yet set EX0 (MAME holds the line).
-            if (mcu_) mcu_->set_irq0_line(IrqLine::Assert);
-            else main_cpu_.set_irq(4, IrqLine::Hold);
+            if (mcu_) {
+                mcu_->set_irq0_line(IrqLine::Assert);
+                // Finish the vblank ISR (CLR P1.2 → 68K IRQ4) before the
+                // 68000 samples IPL, matching MAME's 10 ms perfect quantum.
+                mcu_->run(48);
+            } else {
+                main_cpu_.set_irq(4, IrqLine::Hold);
+            }
             update_video();
         }
         for (int slice = 0; slice < cpu_sync_; slice++) {
+            if (mcu_) mcu_->run(mcu_cycles);
             main_cpu_.run(main_cycles);
             sub_cpu_.run(main_cycles);
             if (!z80_reset_)
                 sound_cpu_.run(sound_cycles);
             else
                 on_sound_cycles(sound_cycles);
-            if (mcu_) mcu_->run(mcu_cycles);
         }
     }
 }

@@ -54,6 +54,9 @@ public:
     uint32_t debug_ppi_a_writes() const { return ppi_a_writes_; }
     uint16_t debug_mcu_pc() const { return mcu_ ? mcu_->pc() : uint16_t(0); }
     uint32_t debug_mcu_irqs() const { return mcu_irqs_; }
+    uint8_t debug_mcu_ie() const { return mcu_ ? mcu_->debug_sfr(0xa8) : uint8_t(0); }
+    uint8_t debug_mcu_tcon() const { return mcu_ ? mcu_->debug_sfr(0x88) : uint8_t(0); }
+    uint8_t debug_mcu_p1() const { return mcu_ ? mcu_->debug_sfr(0x90) : uint8_t(0); }
 
 private:
     bool is_sharrier_map() const { return game_ != Game::HangOn; }

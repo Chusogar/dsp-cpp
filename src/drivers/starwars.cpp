@@ -243,6 +243,10 @@ void StarWars::reset() {
     riot_pa_out_ = 0xff;
     tms_.strobe_ws_rs(0x03);
     std::fill(framebuffer_.begin(), framebuffer_.end(), 0xff000000u);
+    // Sound init posts $5A to the main latch. The 6809 handshake at $EFD1
+    // is a single attempt — if main_pending is still clear it resets the
+    // sound CPU and never retries.
+    catch_up_sound();
 }
 
 uint8_t StarWars::avg_read(uint16_t address) const {
@@ -269,6 +273,7 @@ uint8_t StarWars::main_read(uint16_t address) {
         return main_latch_;
     }
     if (address == 0x4401) {
+        if (!main_pending_) catch_up_sound();
         return uint8_t((sound_pending_ ? 0x80 : 0) | (main_pending_ ? 0x40 : 0));
     }
     if (address >= 0x4500 && address <= 0x45ff) return nvram_[address & 0xff];
@@ -336,6 +341,7 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
         main_pending_ = false;
         ++sound_resets_;
         sound_cpu_.reset();
+        catch_up_sound();
         return;
     }
     if (address >= 0x4700 && address <= 0x4707) {
@@ -350,6 +356,11 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
         math_.ram()[address & 0xfff] = value;
         return;
     }
+}
+
+void StarWars::catch_up_sound() {
+    // Enough cycles for reset → DP/S init → STA $0000,#$5A.
+    sound_cpu_.run(4096);
 }
 
 void StarWars::outlatch_w(int bit, bool value) {
@@ -438,8 +449,8 @@ void StarWars::run_frame() {
         // can ACK, so the handshake times out after a single command.
         while (remain > 0) {
             const int slice = std::min(remain, 64);
-            main_cpu_.run(slice);
             sound_cpu_.run(slice);
+            main_cpu_.run(slice);
             remain -= slice;
         }
     }

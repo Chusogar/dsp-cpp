@@ -1131,6 +1131,10 @@ void Galaxian::run_frame() {
         if (line == 248) cpu_.set_nmi(IrqLine::Clear);
     }
     update_video();
+    if (uses_discrete_sound()) {
+        const int target = AY8910::kSampleRate / 60;
+        while (int(audio_.size()) < target) audio_.push_back(discrete_.update());
+    }
 }
 
 void Galaxian::drain_audio(std::vector<int16_t>& out) {

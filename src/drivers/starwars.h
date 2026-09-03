@@ -72,6 +72,7 @@ private:
     void on_sound_cycles(int cycles);
     void quad_pokey_w(uint16_t offset, uint8_t data);
     void outlatch_w(int bit, bool value);
+    void catch_up_sound();
     void update_video();
     void draw_line(int x0, int y0, int x1, int y1, uint32_t color, int intensity);
     uint8_t avg_read(uint16_t address) const;
