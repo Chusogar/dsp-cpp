@@ -717,8 +717,11 @@ void HangOn::run_frame() {
     const int mcu_cycles =
         mcu_ ? int(double(mcu_->clock()) / kFramesPerSecond / (kScanlines * cpu_sync_) + 0.5) : 0;
     for (int line = 0; line < kScanlines; line++) {
+        if (line == 0 && mcu_) mcu_->set_irq0_line(IrqLine::Clear);
         if (line == 224) {
-            if (mcu_) mcu_->set_irq0_line(IrqLine::Hold);
+            // Keep INT0 asserted for the whole vblank. A Hold pulse is
+            // dropped if the 8751 has not yet set EX0 (MAME holds the line).
+            if (mcu_) mcu_->set_irq0_line(IrqLine::Assert);
             else main_cpu_.set_irq(4, IrqLine::Hold);
             update_video();
         }

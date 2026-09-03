@@ -161,18 +161,13 @@ const char* Galaxian::title() const {
 }
 
 void Galaxian::decrypt_mooncrst(std::vector<uint8_t>& rom) {
-    // MAME mooncrst_decode: both parities are bitswapped; XOR uses the
-    // pre-swap byte on odd addresses and the already-XORed byte on even ones.
+    // MAME galaxian_state::decode_mooncrst: XOR both parities, bitswap evens.
     for (size_t f = 0; f < rom.size() && f < 0x4000; ++f) {
-        const uint8_t x = rom[f];
-        if (f & 1) {
-            rom[f] = uint8_t(bitswap8_moon(x) ^ ((x & 0x02) ? 0x40 : 0) ^ ((x & 0x20) ? 0x04 : 0));
-        } else {
-            uint8_t c2 = x;
-            if (x & 0x02) c2 = uint8_t(c2 ^ 0x40);
-            if (x & 0x20) c2 = uint8_t(c2 ^ 0x04);
-            rom[f] = bitswap8_moon(c2);
-        }
+        uint8_t res = rom[f];
+        if (res & 0x02) res = uint8_t(res ^ 0x40);
+        if (res & 0x20) res = uint8_t(res ^ 0x04);
+        if ((f & 1) == 0) res = bitswap8_moon(res);
+        rom[f] = res;
     }
 }
 
@@ -296,7 +291,8 @@ bool Galaxian::load_roms(const std::string& rom_path, std::string* error) {
         std::vector<uint8_t> pal(0x20, 0);
         if (!loader.load(kMooncrstPal, pal, error)) return false;
         build_palette(pal);
-        dsw_b_ = 0x80;
+        dsw_b_ = 0x80;  // Moon Cresta IN1: English
+        dsw_c_ = 0x00;  // Moon Cresta IN2: 1C_1C / 1C_1C
     } else {
         std::vector<uint8_t> cpu_rom(0x4000, 0);
         if (!loader.load(kGalaxianCpu, cpu_rom, error)) return false;
