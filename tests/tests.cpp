@@ -2824,6 +2824,30 @@ void test_polepos_driver() {
             }
         }
         check(lit, "Pole Position attract produces non-black pixels");
+
+        // Title card (Fuji Speedway) must keep the Z8002s ticking so the road
+        // layer is a flat fill, not the old red/white barcode.
+        dsp::PolePos title(dsp::PolePos::Game::PolePosition);
+        check(title.init(rom, &error), "Pole Position title ROM set loads");
+        for (int i = 0; i < 360; i++) title.run_frame();
+        const uint32_t* tfb = title.framebuffer();
+        const int tn = title.screen_width() * title.screen_height();
+        int unique = 0;
+        uint32_t seen[64]{};
+        int seen_n = 0;
+        for (int i = 0; i < tn; i++) {
+            const uint32_t p = tfb[i] & 0x00ffffffu;
+            bool found = false;
+            for (int s = 0; s < seen_n; s++) {
+                if (seen[s] == p) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found && seen_n < 64) seen[seen_n++] = p;
+        }
+        unique = seen_n;
+        check(unique >= 5 && unique <= 20, "Pole Position title card uses a compact palette");
     }
 
     const char* rom2 = "/tmp/roms/polepos2.zip";
