@@ -1,7 +1,7 @@
 # dsp-cpp
 
 C++17 + SDL2 port of [dsp-emulator](https://github.com/leniad/dsp-emulator) (Free Pascal).
-Arcade: **Bagman**, **Mikie**, **Gauntlet**, **Mr. Do**, **Double Dragon** /
+Arcade: **Bagman**, **Mikie**, **Gauntlet**, **Mr. Do**, **Bubble Bobble**, **Double Dragon** /
 **Double Dragon II**, Taito SJ (**Elevator Action**, **Jungle King**), Irem M62
 (**Kung-Fu Master**, **Spelunker**, **Lode Runner**), SNK (**Ikari Warriors**,
 **Athena**, **TNK III**, **ASO**), Capcom **CPS1**, Irem **M72** (**R-Type**),
@@ -59,6 +59,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Double Dragon driver | `src/arcade/doubledragon_hw.pas` | Both variants: banked ROM, shared RAM, scroll, sprites, sound CPUs |
 | M6805/M68705 MCU | `src/cpu/m6805.pas` | MC68705P3 protection MCU of Elevator Action |
 | Taito SJ driver | `src/arcade/taitosj_hw.pas` | Main and sound Z80, four AY-3-8910, DAC, MCU handshake, three tile layers with per column scroll, sprites and PROM priorities |
+| Bubble Bobble driver | `src/arcade/bubblebobble_hw.pas` | Three Z80s, M6801U4 MCU (HD63701Y with 4K ROM at `$F000`), YM2203+YM3526, PROM-driven 8×8 sprites, 256×224 |
 | M6803 MCU | `src/cpu/m680x.pas` (`TCPU_M6803`) | Irem M62 sound CPU: 128 bytes of internal RAM, ports 1-4, no internal ROM |
 | Irem M62 driver | `src/arcade/m62_hw.pas` | Kung-Fu Master, Spelunker, Spelunker II, Lode Runner and Lode Runner II: Z80, M6803, two AY-3-8910, two MSM5205, tiles and multi-height sprites |
 | SNK driver | `src/arcade/snk_hw.pas` | Three Z80s, YM3526, Ikari/Athena/TNK III/ASO video (chars, tiles, 16x16 and 32x32 sprites, hardflags) |
@@ -341,6 +342,25 @@ Jungle King ROM set: `kn21-1.bin`, `kn22-1.bin`, `kn43.bin`, `kn24.bin`, `kn25.b
 
 Neither set has been run here with real ROMs yet: the driver is only checked against a
 synthetic set, so this hardware is still unverified.
+
+### Bubble Bobble
+
+Taito's Bubble Bobble board runs a 6 MHz main Z80, a 6 MHz sub Z80 that shares
+`$E000–$F7FF`, a 3 MHz sound Z80 with a YM2203 and a YM3526, and a 4 MHz
+M6801U4 MCU that feeds coins, DIPs and the main IRQ. Video is a single layer of
+8×8 4bpp tiles whose column layout is described by object RAM at `$DD00` and a
+256-byte PROM; the visible area is 256×224 at ~59.19 Hz.
+
+```bash
+./build/dsp --game bublbobl /path/to/bublbobl.zip
+```
+
+`--game` also accepts `bubblebobble`. DIP bank 0 is DSW A (default `$FE`: English,
+demo sounds on, 1C/1C) and bank 1 is DSW B (default `$FF`: normal difficulty,
+3 lives). Coins are active-high; the rest of the panel is active-low.
+
+ROM set (MAME `bublbobl`): `a78-06-1.51`, `a78-05-1.52`, `a78-08.37`, `a78-07.46`,
+`a78-01.17`, `a71-25.41`, and gfx `a78-09.12` … `a78-20.35`.
 
 ### Irem M72 (R-Type, Hammerin' Harry, R-Type II)
 
