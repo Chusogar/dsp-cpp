@@ -50,9 +50,6 @@ public:
     const char* title() const override { return "Bubble Bobble"; }
 
     uint16_t debug_main_pc() const { return main_cpu_.pc(); }
-    uint16_t debug_sub_pc() const { return sub_cpu_.pc(); }
-    uint16_t debug_sound_pc() const { return sound_cpu_.pc(); }
-    uint16_t debug_mcu_pc() const { return mcu_.pc(); }
     bool debug_video_enable() const { return video_enable_; }
 
 private:

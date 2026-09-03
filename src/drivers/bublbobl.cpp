@@ -127,7 +127,12 @@ bool BublBobl::load_roms(const std::string& rom_path, std::string* error) {
 }
 
 void BublBobl::decode_graphics(const std::vector<uint8_t>& gfx_rom) {
-    gfx_.decode(char_layout(), gfx_rom);
+    // convert_gfx(..., invert=true): each plane bit is flipped, so ROM 0
+    // becomes pen 15 (transparent). Empty object columns then do not cover
+    // the tiles that actually have pixels.
+    std::vector<uint8_t> inverted = gfx_rom;
+    for (uint8_t& value : inverted) value = uint8_t(~value);
+    gfx_.decode(char_layout(), inverted);
 }
 
 void BublBobl::reset() {

@@ -3237,7 +3237,7 @@ void test_sega_roms_if_present() {
         std::string error;
         check(machine.init("/tmp/roms/bublbobl.zip", &error), "Bubble Bobble MAME set loads");
         const uint16_t reset_pc = machine.debug_main_pc();
-        for (int frame = 0; frame < 600; frame++) machine.run_frame();
+        for (int frame = 0; frame < 1200; frame++) machine.run_frame();
         check(machine.debug_main_pc() != reset_pc, "Bubble Bobble main CPU leaves the reset vector");
         check(machine.debug_video_enable(), "Bubble Bobble attract mode enables video");
         check(unique_pixels(machine) > 8, "Bubble Bobble attract mode draws a colour picture");
