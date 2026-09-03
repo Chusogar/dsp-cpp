@@ -51,6 +51,7 @@
 #include "drivers/outrun.h"
 #include "drivers/skullxbo.h"
 #include "drivers/bublbobl.h"
+#include "drivers/ajax.h"
 #include "drivers/system16.h"
 #include "machine/fd1089.h"
 #include "machine/bagman_pal.h"
@@ -3212,6 +3213,16 @@ void test_asteroid_without_roms() {
           "Asteroids screen is 400x320");
 }
 
+void test_ajax_without_roms() {
+    dsp::Ajax machine;
+    std::string error = "unset";
+    check(!machine.init("/no/such/ajax.zip", &error), "Ajax init fails without the ROM set");
+    check(error != "unset" && !error.empty(), "Ajax reports why the set is missing");
+    check(std::strcmp(machine.title(), "Ajax") == 0, "Ajax title");
+    check(machine.screen_width() == 224 && machine.screen_height() == 304,
+          "Ajax screen is 224x304 after 90° rotation");
+}
+
 int unique_pixels(const dsp::Machine& machine) {
     const uint32_t* fb = machine.framebuffer();
     const int n = machine.screen_width() * machine.screen_height();
@@ -3440,6 +3451,21 @@ void test_sega_roms_if_present() {
         std::vector<int16_t> audio;
         machine.drain_audio(audio);
         check(!audio.empty(), "Bubble Bobble drain_audio yields samples");
+    }
+
+    if (exists("/tmp/roms/ajax.zip")) {
+        dsp::Ajax machine;
+        std::string error;
+        check(machine.init("/tmp/roms/ajax.zip", &error), "Ajax MAME set loads");
+        const uint16_t reset_pc = machine.main_pc();
+        for (int frame = 0; frame < 900; frame++) machine.run_frame();
+        check(machine.main_pc() != reset_pc, "Ajax main CPU leaves the reset vector");
+        check(machine.zoom_layer_nonzero() > 1000, "Ajax attract fills the K051316 logo layer");
+        check(unique_pixels(machine) > 16, "Ajax attract mode draws a colour picture");
+
+        std::vector<int16_t> audio;
+        machine.drain_audio(audio);
+        check(!audio.empty(), "Ajax drain_audio yields samples");
     }
 
     if (exists("/tmp/roms/skullxbo.zip")) {
@@ -4394,6 +4420,7 @@ int main() {
     test_skullxbo_without_roms();
     test_bublbobl_without_roms();
     test_asteroid_without_roms();
+    test_ajax_without_roms();
     test_sega16_palette_banks();
     test_sega_roms_if_present();
     test_indy_coin_if_present();

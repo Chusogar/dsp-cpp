@@ -9,7 +9,7 @@
 
 namespace dsp {
 
-// Konami 051316 zoom/ROZ chip, ported from k051316.pas (+ true affine sampling).
+// Konami 051316 zoom/ROZ chip (MAME k051316_device + tilemap_t::draw_roz).
 class K051316 {
 public:
     using Callback = std::function<void(uint16_t& code, uint16_t& color, uint16_t& priority_mask)>;
@@ -29,20 +29,19 @@ public:
     void write(uint16_t address, uint8_t value);
     void control_w(uint8_t offset, uint8_t value);
     void set_wraparound(bool enable) { wrap_ = enable; }
-    void freeze_controls(bool enable) {
-        freeze_ = enable;
-        if (enable) frozen_ctrl_ = control_;
-        else control_ = frozen_ctrl_; // no-op restore optional
-    }
-    void latch_and_freeze() { frozen_ctrl_ = control_; freeze_ = true; }
-    bool frozen() const { return freeze_; }
     bool wraparound() const { return wrap_; }
+    uint8_t ram_at(uint16_t address) const { return ram_[address & 0x7ff]; }
+    void set_offsets(int dx, int dy) {
+        dx_ = dx;
+        dy_ = dy;
+    }
     void control_snapshot(uint8_t out[16]) const {
         for (int i = 0; i < 16; i++) out[i] = control_[size_t(i)];
     }
     uint8_t rom_read(uint16_t address) const;
 
     // Draw zoom layer into dest (palette indices). Transparent pen 0 is skipped.
+    // crop_x/crop_y are the MAME cliprect origin (ajax 0.260 visarea is 108,16).
     void draw(uint16_t* dest, int dest_w, int dest_h, int crop_x, int crop_y);
 
     void clean_video_buffer();
@@ -67,9 +66,11 @@ private:
     std::array<bool, 0x400> dirty_{};
     std::vector<uint16_t> layer_;  // 512x512 pens
     bool layer_dirty_ = true;
-    bool wrap_ = true;
-    bool freeze_ = false;
-    std::array<uint8_t, 0x10> frozen_ctrl_{};
+    bool wrap_ = false;
+    bool flipx_enabled_ = false;
+    bool flipy_enabled_ = false;
+    int dx_ = 0;
+    int dy_ = 0;
 };
 
 }  // namespace dsp

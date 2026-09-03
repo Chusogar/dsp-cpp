@@ -1,6 +1,5 @@
 #include "drivers/ajax.h"
 
-#include <cstdio>
 #include <vector>
 #include <algorithm>
 #include <cstring>
@@ -134,7 +133,13 @@ void Ajax::run_frame() {
     const double snd_t = double(kSoundClock) / kFramesPerSecond / kScanlines;
 
     for (int line = 0; line < kScanlines; line++) {
-        if (line == 240) update_video();
+        if (line == 240) {
+            // MAME k052109 vblank IRQ → sub 6809 (M6809_IRQ_LINE).
+            if (k052109_ && k052109_->is_irq_enabled()) {
+                sub_cpu_.set_irq(IrqLine::Hold);
+            }
+            update_video();
+        }
 
         // Budget for this line = residual from previous over/under-run.
         // Guard against non-positive after heavy overrun (run at least 1).
@@ -403,6 +408,12 @@ void Ajax::update_video() {
     k052109_->draw_tiles();
     k051960_->update_sprites();  // DMA latch like MAME
 
+    // MAME 0.260 ajax: screen.set_raw(24 MHz/3, 528, 108, 412, 256, 16, 240).
+    // Visarea is 304×224 with origin (108,16). Tiles, sprites and K051316 all
+    // use that cliprect; dest[0,0] is visarea pixel (108,16). Pascal used 112.
+    constexpr int kCropX = 108;
+    constexpr int kCropY = 16;
+
     const int npix = kNativeWidth * kNativeHeight;
     pens_.assign(size_t(npix), 0);
     std::vector<uint8_t> pri(size_t(npix), 0);
@@ -424,52 +435,32 @@ void Ajax::update_video() {
     //   sprites with priority masks
     //   F (tilemap 0) on top
     std::fill(layer.begin(), layer.end(), 0);
-    k052109_->draw_layer(2, layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+    k052109_->draw_layer(2, layer.data(), kNativeWidth, kNativeHeight, kCropX, kCropY);
     composite(0x01);  // GFX_PMASK_1
 
     if (priority_) {
         std::fill(layer.begin(), layer.end(), 0);
-        k051316_->draw(layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+        k051316_->draw(layer.data(), kNativeWidth, kNativeHeight, kCropX, kCropY);
         composite(0x04);
         std::fill(layer.begin(), layer.end(), 0);
-        k052109_->draw_layer(1, layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+        k052109_->draw_layer(1, layer.data(), kNativeWidth, kNativeHeight, kCropX, kCropY);
         composite(0x02);
     } else {
         std::fill(layer.begin(), layer.end(), 0);
-        k052109_->draw_layer(1, layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+        k052109_->draw_layer(1, layer.data(), kNativeWidth, kNativeHeight, kCropX, kCropY);
         composite(0x02);
         std::fill(layer.begin(), layer.end(), 0);
-        k051316_->draw(layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+        k051316_->draw(layer.data(), kNativeWidth, kNativeHeight, kCropX, kCropY);
         composite(0x04);
     }
 
-
-    k051960_->draw_sprites_masked(pens_.data(), pri.data(), kNativeWidth, kNativeHeight, 112, 16);
+    k051960_->draw_sprites_masked(pens_.data(), pri.data(), kNativeWidth, kNativeHeight, kCropX,
+                                  kCropY);
     // Layer F always on top (MAME draws with priority 0 after sprites)
     std::fill(layer.begin(), layer.end(), 0);
-    k052109_->draw_layer(0, layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+    k052109_->draw_layer(0, layer.data(), kNativeWidth, kNativeHeight, kCropX, kCropY);
     for (int i = 0; i < npix; i++) {
         if (layer[size_t(i)]) pens_[size_t(i)] = layer[size_t(i)];
-    }
-    // Auto-freeze ROZ when logo is axis-aligned AND actually visible on screen.
-    // Prefer the first upright pose with many zoom pens (settle), not later spins.
-    if (k051316_ && !k051316_->frozen()) {
-        uint8_t c[16];
-        k051316_->control_snapshot(c);
-        const int16_t iyx = int16_t((uint16_t(c[4]) << 8) | c[5]);
-        const int16_t ixy = int16_t((uint16_t(c[8]) << 8) | c[9]);
-        const int16_t ix  = int16_t((uint16_t(c[2]) << 8) | c[3]);
-        const int16_t sy  = int16_t((uint16_t(c[6]) << 8) | c[7]);
-        // Count zoom-range pens already in pens_ (post-composite this frame)
-        int zc = 0;
-        for (int i = 0; i < npix; i++) {
-            uint16_t p = pens_[size_t(i)] & 0x7ff;
-            if (p >= 768 && p < 1024) zc++;
-        }
-        // Upright, logo visible near top (sy>0), animation-scale range
-        if (iyx == 0 && ixy == 0 && ix > 0x1000 && ix < 0x2000 && sy > 0 && zc > 500) {
-            k051316_->latch_and_freeze();
-        }
     }
 
     // Rotate 90° CW: native 304×224 → 224×304

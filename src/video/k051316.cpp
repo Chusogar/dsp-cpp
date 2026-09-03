@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <cstdio>
 
 namespace dsp {
 
@@ -39,8 +38,9 @@ K051316::K051316(Callback cb, std::vector<uint8_t> rom, Bpp bpp)
 }
 
 void K051316::reset() {
-    wrap_ = true;
-    freeze_ = false;
+    wrap_ = false;
+    flipx_enabled_ = false;
+    flipy_enabled_ = false;
     control_.fill(0);
     ram_.fill(0);
     dirty_.fill(true);
@@ -65,8 +65,20 @@ void K051316::write(uint16_t address, uint8_t value) {
 }
 
 void K051316::control_w(uint8_t offset, uint8_t value) {
-    if (freeze_) return;
-    control_[offset & 0x0f] = value;
+    offset &= 0x0f;
+    if (offset == 0x0e) {
+        // MAME: bit0 ROM readout (active low), bit1 tile X flip enable,
+        // bit2 tile Y flip enable when colour bits 6/7 are set.
+        const bool flipx = (value & 0x02) != 0;
+        const bool flipy = (value & 0x04) != 0;
+        if (flipx != flipx_enabled_ || flipy != flipy_enabled_) {
+            flipx_enabled_ = flipx;
+            flipy_enabled_ = flipy;
+            dirty_.fill(true);
+            layer_dirty_ = true;
+        }
+    }
+    control_[offset] = value;
 }
 
 uint8_t K051316::rom_read(uint16_t address) const {
@@ -84,15 +96,20 @@ void K051316::rebuild_layer() {
         const int tx = f % kMapW;
         const int ty = f / kMapW;
         uint16_t nchar = ram_[size_t(f)];
-        uint16_t color = ram_[size_t(f + 0x400)];
+        const uint8_t attr = ram_[size_t(f + 0x400)];
+        uint16_t color = attr;
         uint16_t pri = 0;
         if (callback_) callback_(nchar, color, pri);
         const uint8_t* pixels = gfx_.element(int(nchar & tile_mask_));
         const uint16_t color_base = uint16_t(color << color_shift_);
+        const bool flipx = flipx_enabled_ && (attr & 0x40) != 0;
+        const bool flipy = flipy_enabled_ && (attr & 0x80) != 0;
 
         for (int y = 0; y < kTile; y++) {
+            const int py = flipy ? (kTile - 1 - y) : y;
             for (int x = 0; x < kTile; x++) {
-                const uint8_t pen = pixels ? pixels[size_t(y * kTile + x)] : 0;
+                const int px = flipx ? (kTile - 1 - x) : x;
+                const uint8_t pen = pixels ? pixels[size_t(py * kTile + px)] : 0;
                 layer_[size_t((ty * kTile + y) * kLayerW + (tx * kTile + x))] =
                     pen ? uint16_t(color_base + pen) : 0;
             }
@@ -105,33 +122,20 @@ void K051316::draw(uint16_t* dest, int dest_w, int dest_h, int crop_x, int crop_
     if (!dest) return;
     if (layer_dirty_) rebuild_layer();
 
-    // MAME k051316 zoom_draw:
-    //   start_raw = 256 * int16(ctrl[0..1])     // 16.16-ish
-    //   inc_raw   = int16(ctrl[2..3])           // 8.8
-    //   start_raw -= (16+dy)*incyx_raw
-    //   start_raw -= (-7+dx)*incxx_raw
-    //   draw_roz(start_raw<<5, inc_raw<<5, ...) // 16.16 sampling
-    // Identity scale is ctrl=0x0800 (not 0x0100): 0x0800<<5 = 0x10000.
-    int32_t startx = int32_t(int16_t((uint16_t(control_[0]) << 8) | control_[1])) << 8;
-    int32_t starty = int32_t(int16_t((uint16_t(control_[6]) << 8) | control_[7])) << 8;
+    // MAME k051316_device::zoom_draw — startx/starty are u32 so the later
+    // <<5 and clip pre-advance wrap the same way as tilemap_t::draw_roz.
+    uint32_t startx = uint32_t(256 * int(int16_t((uint16_t(control_[0]) << 8) | control_[1])));
+    uint32_t starty = uint32_t(256 * int(int16_t((uint16_t(control_[6]) << 8) | control_[7])));
     int32_t incxx = int32_t(int16_t((uint16_t(control_[0x2]) << 8) | control_[0x3]));
     int32_t incyx = int32_t(int16_t((uint16_t(control_[0x4]) << 8) | control_[0x5]));
     int32_t incxy = int32_t(int16_t((uint16_t(control_[0x8]) << 8) | control_[0x9]));
     int32_t incyy = int32_t(int16_t((uint16_t(control_[0xa]) << 8) | control_[0xb]));
 
-    // Identity if never programmed (MAME 1.0 = 0x0800 in 8.8)
-    if (incxx == 0 && incyy == 0 && incxy == 0 && incyx == 0) {
-        incxx = 0x0800;
-        incyy = 0x0800;
-    }
+    startx -= uint32_t((16 + dy_) * incyx);
+    starty -= uint32_t((16 + dy_) * incyy);
+    startx -= uint32_t((89 + dx_) * incxx);
+    starty -= uint32_t((89 + dx_) * incxy);
 
-    const int dx = 0, dy = 0;
-    startx -= (16 + dy) * incyx;
-    starty -= (16 + dy) * incyy;
-    startx -= (-7 + dx) * incxx;
-    starty -= (-7 + dx) * incxy;
-
-    // Convert to 16.16 for sampling (MAME draw_roz << 5)
     startx <<= 5;
     starty <<= 5;
     incxx <<= 5;
@@ -139,25 +143,33 @@ void K051316::draw(uint16_t* dest, int dest_w, int dest_h, int crop_x, int crop_
     incxy <<= 5;
     incyy <<= 5;
 
+    // draw_roz_core: pre-advance by cliprect, then per pixel
+    //   srcx += screenx*incxx + screeny*incyx
+    //   srcy += screenx*incxy + screeny*incyy
+    // In-range test is unsigned: cx < (layer_w << 16).
+    constexpr uint32_t kWidthShifted = uint32_t(kLayerW) << 16;
+    constexpr uint32_t kHeightShifted = uint32_t(kLayerH) << 16;
+    startx += uint32_t(int32_t(crop_x) * incxx + int32_t(crop_y) * incyx);
+    starty += uint32_t(int32_t(crop_x) * incxy + int32_t(crop_y) * incyy);
+
     for (int sy = 0; sy < dest_h; sy++) {
-        int32_t cx = startx + int32_t(crop_y + sy) * incxy + int32_t(crop_x) * incxx;
-        int32_t cy = starty + int32_t(crop_y + sy) * incyy + int32_t(crop_x) * incyx;
+        uint32_t cx = startx;
+        uint32_t cy = starty;
         for (int sx = 0; sx < dest_w; sx++) {
-            int src_x = cx >> 16;
-            int src_y = cy >> 16;
             if (wrap_) {
-                src_x &= (kLayerW - 1);
-                src_y &= (kLayerH - 1);
-            } else if (src_x < 0 || src_x >= kLayerW || src_y < 0 || src_y >= kLayerH) {
-                cx += incxx;
-                cy += incyx;
-                continue;  // transparent outside bounds
+                const int src_x = int(cx >> 16) & (kLayerW - 1);
+                const int src_y = int(cy >> 16) & (kLayerH - 1);
+                const uint16_t pen = layer_[size_t(src_y * kLayerW + src_x)];
+                if (pen) dest[size_t(sy * dest_w + sx)] = pen;
+            } else if (cx < kWidthShifted && cy < kHeightShifted) {
+                const uint16_t pen = layer_[size_t((cy >> 16) * uint32_t(kLayerW) + (cx >> 16))];
+                if (pen) dest[size_t(sy * dest_w + sx)] = pen;
             }
-            const uint16_t pen = layer_[size_t(src_y * kLayerW + src_x)];
-            if (pen) dest[size_t(sy * dest_w + sx)] = pen;
-            cx += incxx;
-            cy += incyx;
+            cx += uint32_t(incxx);
+            cy += uint32_t(incxy);
         }
+        startx += uint32_t(incyx);
+        starty += uint32_t(incyy);
     }
 }
 
