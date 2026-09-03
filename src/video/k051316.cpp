@@ -122,30 +122,20 @@ void K051316::draw(uint16_t* dest, int dest_w, int dest_h, int crop_x, int crop_
     if (!dest) return;
     if (layer_dirty_) rebuild_layer();
 
-    // MAME k051316_device::zoom_draw:
-    //   startx = 256 * int16(ctrl[0]<<8 | ctrl[1])
-    //   startx -= (16 + dy) * incyx
-    //   startx -= (89 + dx) * incxx
-    //   draw_roz(startx<<5, incxx<<5, ..., wrap)
-    // Identity scale is ctrl=0x0800: 0x0800<<5 = 0x10000 in 16.16.
-    int32_t startx = int32_t(int16_t((uint16_t(control_[0]) << 8) | control_[1])) << 8;
-    int32_t starty = int32_t(int16_t((uint16_t(control_[6]) << 8) | control_[7])) << 8;
+    // MAME k051316_device::zoom_draw — startx/starty are u32 so the later
+    // <<5 and clip pre-advance wrap the same way as tilemap_t::draw_roz.
+    uint32_t startx = uint32_t(256 * int(int16_t((uint16_t(control_[0]) << 8) | control_[1])));
+    uint32_t starty = uint32_t(256 * int(int16_t((uint16_t(control_[6]) << 8) | control_[7])));
     int32_t incxx = int32_t(int16_t((uint16_t(control_[0x2]) << 8) | control_[0x3]));
     int32_t incyx = int32_t(int16_t((uint16_t(control_[0x4]) << 8) | control_[0x5]));
     int32_t incxy = int32_t(int16_t((uint16_t(control_[0x8]) << 8) | control_[0x9]));
     int32_t incyy = int32_t(int16_t((uint16_t(control_[0xa]) << 8) | control_[0xb]));
 
-    if (incxx == 0 && incyy == 0 && incxy == 0 && incyx == 0) {
-        incxx = 0x0800;
-        incyy = 0x0800;
-    }
+    startx -= uint32_t((16 + dy_) * incyx);
+    starty -= uint32_t((16 + dy_) * incyy);
+    startx -= uint32_t((89 + dx_) * incxx);
+    starty -= uint32_t((89 + dx_) * incxy);
 
-    startx -= (16 + dy_) * incyx;
-    starty -= (16 + dy_) * incyy;
-    startx -= (89 + dx_) * incxx;
-    starty -= (89 + dx_) * incxy;
-
-    // Convert to 16.16 for sampling (MAME draw_roz << 5)
     startx <<= 5;
     starty <<= 5;
     incxx <<= 5;
@@ -153,27 +143,33 @@ void K051316::draw(uint16_t* dest, int dest_w, int dest_h, int crop_x, int crop_
     incxy <<= 5;
     incyy <<= 5;
 
+    // draw_roz_core: pre-advance by cliprect, then per pixel
+    //   srcx += screenx*incxx + screeny*incyx
+    //   srcy += screenx*incxy + screeny*incyy
+    // In-range test is unsigned: cx < (layer_w << 16).
+    constexpr uint32_t kWidthShifted = uint32_t(kLayerW) << 16;
+    constexpr uint32_t kHeightShifted = uint32_t(kLayerH) << 16;
+    startx += uint32_t(int32_t(crop_x) * incxx + int32_t(crop_y) * incyx);
+    starty += uint32_t(int32_t(crop_x) * incxy + int32_t(crop_y) * incyy);
+
     for (int sy = 0; sy < dest_h; sy++) {
-        // MAME draw_roz_core: srcx += screenx*incxx + screeny*incyx
-        //                     srcy += screenx*incxy + screeny*incyy
-        int32_t cx = startx + int32_t(crop_x) * incxx + int32_t(crop_y + sy) * incyx;
-        int32_t cy = starty + int32_t(crop_x) * incxy + int32_t(crop_y + sy) * incyy;
+        uint32_t cx = startx;
+        uint32_t cy = starty;
         for (int sx = 0; sx < dest_w; sx++) {
-            int src_x = cx >> 16;
-            int src_y = cy >> 16;
             if (wrap_) {
-                src_x &= (kLayerW - 1);
-                src_y &= (kLayerH - 1);
-            } else if (src_x < 0 || src_x >= kLayerW || src_y < 0 || src_y >= kLayerH) {
-                cx += incxx;
-                cy += incxy;
-                continue;
+                const int src_x = int(cx >> 16) & (kLayerW - 1);
+                const int src_y = int(cy >> 16) & (kLayerH - 1);
+                const uint16_t pen = layer_[size_t(src_y * kLayerW + src_x)];
+                if (pen) dest[size_t(sy * dest_w + sx)] = pen;
+            } else if (cx < kWidthShifted && cy < kHeightShifted) {
+                const uint16_t pen = layer_[size_t((cy >> 16) * uint32_t(kLayerW) + (cx >> 16))];
+                if (pen) dest[size_t(sy * dest_w + sx)] = pen;
             }
-            const uint16_t pen = layer_[size_t(src_y * kLayerW + src_x)];
-            if (pen) dest[size_t(sy * dest_w + sx)] = pen;
-            cx += incxx;
-            cy += incxy;
+            cx += uint32_t(incxx);
+            cy += uint32_t(incxy);
         }
+        startx += uint32_t(incyx);
+        starty += uint32_t(incyy);
     }
 }
 

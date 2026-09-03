@@ -9,7 +9,7 @@
 
 namespace dsp {
 
-// Konami 051316 zoom/ROZ chip, ported from k051316.pas (+ true affine sampling).
+// Konami 051316 zoom/ROZ chip (MAME k051316_device + tilemap_t::draw_roz).
 class K051316 {
 public:
     using Callback = std::function<void(uint16_t& code, uint16_t& color, uint16_t& priority_mask)>;
@@ -41,6 +41,7 @@ public:
     uint8_t rom_read(uint16_t address) const;
 
     // Draw zoom layer into dest (palette indices). Transparent pen 0 is skipped.
+    // crop_x/crop_y are the MAME cliprect origin (ajax visarea is 8,16).
     void draw(uint16_t* dest, int dest_w, int dest_h, int crop_x, int crop_y);
 
     void clean_video_buffer();

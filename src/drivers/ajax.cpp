@@ -402,10 +402,9 @@ void Ajax::update_video() {
     k052109_->draw_tiles();
     k051960_->update_sprites();  // DMA latch like MAME
 
-    // Pascal actualiza_trozo_final(112,16,304,224). Zoom must use the same
-    // origin as tiles/sprites; MAME feeds both the screen cliprect. Cropping
-    // K051316 at the raw visarea (8,16) shifted the logo ~104px off the tiles.
-    constexpr int kCropX = 112;
+    // MAME ajax: screen.set_raw(..., 384, 8, 320, 264, 16, 240). Tiles, sprites
+    // and K051316 all use that cliprect. dest[0,0] is visarea pixel (8,16).
+    constexpr int kCropX = 8;
     constexpr int kCropY = 16;
 
     const int npix = kNativeWidth * kNativeHeight;
