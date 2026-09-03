@@ -68,6 +68,7 @@ add_executable(dsp
   src/video/huc6260.cpp
   src/video/huc6270.cpp
   src/video/neogeo_video.cpp
+  src/video/tia.cpp
   
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
@@ -193,6 +194,7 @@ add_executable(dsp
   src/machine/mos6526.cpp
   src/machine/mos6566.cpp
   src/drivers/atari_lynx.cpp
+  src/drivers/a2600.cpp
   src/drivers/pcengine.cpp
   
       
@@ -264,6 +266,7 @@ add_executable(dsp_tests
   src/video/sega16.cpp
   src/video/apple2_video.cpp
   src/video/neogeo_video.cpp
+  src/video/tia.cpp
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/via6522.cpp
@@ -314,6 +317,7 @@ add_executable(dsp_tests
   src/drivers/gameboy.cpp
   src/drivers/mcr.cpp
   src/drivers/atari_lynx.cpp
+  src/drivers/a2600.cpp
   src/drivers/scv.cpp
   src/drivers/pv2000.cpp
   src/drivers/exelv.cpp

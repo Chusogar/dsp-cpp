@@ -18,7 +18,7 @@ Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
 **MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**,
 **EXL-100** / **EXELTEL**. Consoles: NES, Game Boy / Game Boy
-Color, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
+Color, **Atari 2600**, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
 **Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
@@ -43,6 +43,8 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Amstrad CPC | `src/computer/amstrad_cpc.pas` | Gate Array wait-states (opcodes on a 4 T-state grid) |
 | Lynx Suzy / Mikey | new | Sprite blitter, math coprocessor, timers, LCD DMA, 4-channel sound |
 | Atari Lynx driver | new | 64 KiB DRAM, MAPCTL, LNX/LYX carts, 160×102 LCD |
+| TIA | new | NTSC 160×192 playfield/players/missiles/ball, collisions, two-channel audio |
+| Atari 2600 driver | new | 6507 + TIA + RIOT 6532, 2K/4K/F8/F6/F4(+Superchip) cartridges |
 | YM2151 FM, POKEY | `src/snd/fm_2151.pas`, `src/snd/pokey.pas` | Gauntlet sound board |
 | SLAPSTIC | `src/arcade/misc/slapstic.pas` | Types 101-108, bank switched protected ROM |
 | Atari motion objects | `src/arcade/misc/atari_mo.pas` | SLIP based sprite lists |
@@ -675,6 +677,25 @@ Point it at a MAME merged `tapper.zip`.
 ```
 
 Start is player 1 `1` / player 2 `2`, coin is `5`/`6`, Tapper pours with Ctrl/Space.
+### Atari 2600
+
+The VCS has no BIOS. A 6507 (6502 with a 13-bit bus and no IRQ/NMI pins) runs at
+1.193182 MHz beside the **TIA** (160×192 NTSC picture, two audio channels) and a
+MOS **6532** RIOT (128 bytes RAM, joystick ports, console switches, interval
+timer). Cartridges occupy `$1000–$1FFF`. 2K dumps are mirrored, 4K is mapped
+straight in, and 8K/16K/32K/64K images use the common F8/F6/F4/F0 hotspots.
+A 128-byte Superchip RAM window is enabled for `*sc*` names or dumps whose size
+is a power of two plus 128.
+
+```bash
+./build/dsp --game a2600 /path/to/game.bin
+./build/dsp --game vcs /path/to/game.a26 --screenshot a2600.bmp --frames 120
+```
+
+Player 1/2 sticks are the joysticks (active low on SWCHA). Fire is `button1`
+(INPT4/INPT5). Start is RESET, Select is SELECT. DIP bank 0 bit 3 is colour
+(default on); bits 6–7 are the P0/P1 difficulty switches.
+
 ### Atari Lynx
 
 The handheld is a 65C02 (G65SC02 inside **Mikey**) at 16 MHz with wait states, 64 KiB
@@ -848,7 +869,7 @@ src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556, AVG
 src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, 6532, Lynx, mathbox
 src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805, µPD7801, TMS7000, NEC V30, MCS-51
 src/sound/      AY-3-8910, SN76496, NES APU, SID, µPD1771C, QSound, TMS5220, Sega PCM
-src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556, V9938, AVG, Sega 16
+src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556, V9938, AVG, Sega 16, TIA
 src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, 6532, Lynx, mathbox, 315-5195, MSX FDC/RTC
 src/drivers/    the machines themselves (memory map, video, inputs)
 src/frontend/   SDL2 front end, driven through the core/machine.h interface
