@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -25,6 +26,7 @@
 #include "cpu/z80ctc.h"
 #include "drivers/amstrad_cpc.h"
 #include "drivers/atari_lynx.h"
+#include "drivers/a2600.h"
 #include "drivers/atari_system1.h"
 #include "drivers/atari_system2.h"
 #include "drivers/apple2.h"
@@ -84,6 +86,7 @@
 #include "video/tms3556.h"
 #include "video/sega_315_5313.h"
 #include "video/sega16.h"
+#include "video/tia.h"
 
 namespace {
 
@@ -3194,6 +3197,172 @@ int unique_pixels(const dsp::Machine& machine) {
     return int(colors.size());
 }
 
+// Classic 2600 kernel: 3 VSYNC, 37 VBLANK, 192 picture (COLUBK = line,
+// reflected playfield), 30 overscan, plus a TIA square wave on channel 0.
+std::vector<uint8_t> make_a2600_kernel_rom() {
+    static const uint8_t kCode[] = {
+        0x78, 0xD8, 0xA2, 0xFF, 0x9A, 0xA9, 0x00, 0x95, 0x00, 0xCA, 0xD0, 0xFB,
+        0xA9, 0x04, 0x85, 0x15, 0xA9, 0x1F, 0x85, 0x17, 0xA9, 0x0F, 0x85, 0x19,
+        0xA9, 0x86, 0x85, 0x08, 0xA9, 0x38, 0x85, 0x06, 0xA9, 0xF0, 0x85, 0x0D,
+        0xA9, 0xFF, 0x85, 0x0E, 0xA9, 0x0F, 0x85, 0x0F, 0xA9, 0x01, 0x85, 0x0A,
+        0xA9, 0xFF, 0x85, 0x1B, 0x85, 0x10, 0xA9, 0x02, 0x85, 0x00, 0x85, 0x02,
+        0x85, 0x02, 0x85, 0x02, 0xA9, 0x00, 0x85, 0x00, 0xA9, 0x02, 0x85, 0x01,
+        0xA2, 0x25, 0x85, 0x02, 0xCA, 0xD0, 0xFB, 0xA9, 0x00, 0x85, 0x01, 0xA2,
+        0x00, 0x86, 0x09, 0x85, 0x02, 0xE8, 0xE0, 0xC0, 0xD0, 0xF7, 0xA9, 0x02,
+        0x85, 0x01, 0xA2, 0x1E, 0x85, 0x02, 0xCA, 0xD0, 0xFB, 0x4C, 0x36, 0xF0,
+    };
+    std::vector<uint8_t> rom(4096, 0);
+    std::memcpy(rom.data(), kCode, sizeof(kCode));
+    rom[0xffc] = 0x00;
+    rom[0xffd] = 0xf0;
+    rom[0xffe] = 0x00;
+    rom[0xfff] = 0xf0;
+    return rom;
+}
+
+void test_tia_playfield_and_audio() {
+    dsp::Tia tia;
+    tia.reset();
+    tia.write(0x09, 0x00);
+    tia.write(0x08, 0x86);
+    tia.write(0x0d, 0xf0);
+    tia.write(0x0e, 0xff);
+    tia.write(0x0f, 0x0f);
+    tia.write(0x0a, 0x01);
+    tia.write(0x01, 0x00);
+    std::array<uint32_t, dsp::Tia::kScreenWidth> line{};
+    tia.render_line(line.data());
+    std::set<uint32_t> colors(line.begin(), line.end());
+    check(colors.size() >= 2, "TIA playfield uses COLUPF and COLUBK");
+    check(line[0] == dsp::Tia::ntsc_color(0x86), "PF0 lights the leftmost pixels");
+    check(line[68] == dsp::Tia::ntsc_color(0x00), "the playfield gap is COLUBK");
+
+    tia.reset();
+    tia.begin_line();
+    tia.write(0x01, 0x00);
+    tia.write(0x09, 0x00);
+    tia.write(0x06, 0x1e);
+    tia.write(0x1b, 0xff);
+    tia.set_hclock(68 + 8);
+    tia.write(0x10, 0x00);  // RESP0
+    tia.set_hclock(68 + 40);
+    tia.write(0x1b, 0x00);  // GRP0 off for the rest of the line
+    tia.set_hclock(dsp::Tia::kColorClocksPerLine);
+    tia.render_line(line.data());
+    check(line[8 + 5] == dsp::Tia::ntsc_color(0x1e),
+          "TIA draws GRP0 after a mid-line RESP0");
+    check(line[80] == dsp::Tia::ntsc_color(0x00),
+          "TIA drops GRP0 after a later mid-line write");
+
+    tia.write(0x15, 0x04);
+    tia.write(0x17, 0x07);
+    tia.write(0x19, 0x0f);
+    std::vector<int16_t> audio;
+    for (int i = 0; i < 400; i++) {
+        tia.clock_audio();
+        tia.emit_audio(dsp::Tia::kCpuCyclesPerLine, 1193181, audio);
+    }
+    int64_t energy = 0;
+    for (int16_t sample : audio) energy += int64_t(sample) * sample;
+    check(!audio.empty() && energy > 0, "TIA divide-by-2 tone produces energy");
+}
+
+void test_a2600_driver() {
+    dsp::A2600 machine;
+    check(std::strcmp(machine.title(), "Atari 2600") == 0, "Atari 2600 title");
+    check(machine.screen_width() == 160 && machine.screen_height() == 192,
+          "Atari 2600 visible area is 160x192");
+
+    std::string error;
+    check(!machine.init("", &error), "Atari 2600 init fails without a cartridge");
+    check(!machine.init("/no/such/a2600-cart.bin", &error),
+          "Atari 2600 init fails on a missing cartridge");
+
+    const std::vector<uint8_t> image = make_a2600_kernel_rom();
+    namespace fs = std::filesystem;
+    const fs::path dir = "/tmp/dsp-a2600-test-kernel";
+    fs::create_directories(dir);
+    const fs::path path = dir / "kernel.bin";
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(image.data()), std::streamsize(image.size()));
+    }
+    check(machine.init(path.string(), &error), "the 2600 driver loads a 4K .bin");
+    check((machine.debug_pc() & 0x1fff) == 0x1000, "6507 reset lands in the cart window");
+
+    for (int frame = 0; frame < 8; frame++) machine.run_frame();
+    check(unique_pixels(machine) > 8, "the 2600 kernel paints a colour picture");
+
+    const uint32_t* fb = machine.framebuffer();
+    int coloured = 0;
+    for (int i = 0; i < machine.screen_width() * machine.screen_height(); i++) {
+        if ((fb[i] & 0x00ffffff) != 0) coloured++;
+    }
+    check(coloured > 1000, "the 2600 kernel is not a black frame");
+
+    std::vector<int16_t> audio;
+    machine.drain_audio(audio);
+    int64_t energy = 0;
+    for (int16_t sample : audio) energy += int64_t(sample) * sample;
+    check(!audio.empty() && energy > 0, "the 2600 kernel drives TIA audio");
+}
+
+void test_a2600_rom_if_present() {
+    auto try_path = [](const char* path) {
+        std::ifstream probe(path);
+        return bool(probe);
+    };
+    const char* candidates[] = {
+        "/tmp/roms/Beamrider.zip",
+        "/tmp/roms/combat.bin",
+        "/tmp/roms/pitfall.bin",
+        "/tmp/roms/adventure.bin",
+        "/tmp/roms/pacman.bin",
+        "/tmp/roms/a2600.bin",
+        "/tmp/roms/vcs.bin",
+    };
+    const char* found = nullptr;
+    for (const char* path : candidates) {
+        if (try_path(path)) {
+            found = path;
+            break;
+        }
+    }
+    if (found == nullptr) {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        if (fs::is_directory("/tmp/roms", ec)) {
+            for (const auto& entry : fs::directory_iterator("/tmp/roms", ec)) {
+                if (!entry.is_regular_file(ec)) continue;
+                const auto name = entry.path().filename().string();
+                const auto lower = [&] {
+                    std::string s = name;
+                    for (char& ch : s) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+                    return s;
+                }();
+                if (lower.size() >= 4 &&
+                    (lower.compare(lower.size() - 4, 4, ".bin") == 0 ||
+                     lower.compare(lower.size() - 4, 4, ".a26") == 0)) {
+                    static std::string picked;
+                    picked = entry.path().string();
+                    found = picked.c_str();
+                    break;
+                }
+            }
+        }
+    }
+    if (found == nullptr) {
+        std::printf("skip: no Atari 2600 cartridge in /tmp/roms\n");
+        return;
+    }
+
+    dsp::A2600 machine;
+    std::string error;
+    check(machine.init(found, &error), "a cartridge from /tmp/roms loads");
+    for (int frame = 0; frame < 120; frame++) machine.run_frame();
+    check(unique_pixels(machine) >= 4, "a real 2600 cart produces a framebuffer");
+}
+
 void test_sega_roms_if_present() {
     auto exists = [](const char* path) {
         std::ifstream probe(path);
@@ -4096,6 +4265,9 @@ int main() {
     test_lynx_suzy_blit();
     test_atari_lynx_bars();
     test_atari_lynx_bios();
+    test_tia_playfield_and_audio();
+    test_a2600_driver();
+    test_a2600_rom_if_present();
     test_slapstic();
     test_ym2151();
     test_pokey();

@@ -71,6 +71,7 @@
 #include "drivers/gameboy.h"
 #include "drivers/nes.h"
 #include "drivers/atari_lynx.h"
+#include "drivers/a2600.h"
 #include "drivers/scv.h"
 #include "drivers/pcengine.h"
 
@@ -127,7 +128,8 @@ void print_supported_emulators() {
         "\n"
         "  Consoles:\n"
         "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp,\n"
-        "    pv1000, pv2000, coleco, sg1000, gb, nes, lynx, scv, pcengine, sgx\n"
+        "    pv1000, pv2000, coleco, sg1000, gb, nes, lynx, scv, pcengine, sgx,\n"
+        "    a2600, atari2600, vcs\n"
         "\n");
 }
 
@@ -491,6 +493,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "gb") return std::make_unique<dsp::GameBoy>();
 	if (game == "nes") return std::make_unique<dsp::Nes>();
 	if (game == "lynx") return std::make_unique<dsp::AtariLynx>();
+	if (game == "a2600" || game == "atari2600" || game == "vcs" || game == "2600") {
+	    return std::make_unique<dsp::A2600>();
+	}
 	if (game == "scv") return std::make_unique<dsp::Scv>();
 	
 	if (game == "pce" || game == "pcengine" || game == "tg16")
