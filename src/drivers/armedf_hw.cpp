@@ -99,7 +99,7 @@ const std::vector<RomEntry> kLegionSprites = {{"legion.1k", 0x10000, 0, 0xff5a0d
 
 ArmedfHw::ArmedfHw(Game game)
     : game_(game), main_cpu_(kMainClock), sound_cpu_(kSoundClock),
-      ym_(kSoundClock, game == Game::Legion ? YM3812::kYM3526 : YM3812::kYM3812, 0.4f) {
+      ym_(kSoundClock, game == Game::ArmedF ? YM3812::kYM3812 : YM3812::kYM3526, 0.4f) {
     if (game_ == Game::CrazyClimber2 || game_ == Game::Legion) {
         region_w_ = 288;
         region_h_ = 224;
@@ -708,7 +708,8 @@ void ArmedfHw::draw_text_layer() {
 }
 
 void ArmedfHw::draw_sprites(int priority) {
-    for (int f = 0; f < sprite_count_; f++) {
+    // MAME walks spriteram backwards so later entries lose to earlier ones.
+    for (int f = sprite_count_ - 1; f >= 0; f--) {
         const size_t base = size_t(f) * 4;
         const uint16_t w0 = sprite_buffer_[base + 0];
         if (int((w0 >> 12) & 3) != priority) continue;
@@ -719,7 +720,8 @@ void ArmedfHw::draw_sprites(int priority) {
         const uint16_t atrib = sprite_buffer_[base + 2];
         const int color = (atrib >> 8) & 0x1f;
         const int clut = atrib & 0x7f;
-        const int sx = sprite_buffer_[base + 3] & 0x1ff;
+        // MAME armedf_v.cpp draw_sprites: sx is the raw spriteram word (no 0x1ff mask).
+        const int sx = int(sprite_buffer_[base + 3]);
         const int sy = sprite_offset_ + 240 - int(w0 & 0x1ff);
 
         const uint8_t* px = sprites_gfx_.element(nchar);
@@ -740,6 +742,14 @@ void ArmedfHw::draw_sprites(int priority) {
 }
 
 void ArmedfHw::render_frame() {
+    // FBNeo (scroll_type 5, original terraf) re-reads FG scroll from the NB1414M4
+    // parameter block every frame. MAME only latches on the $7c000 bit14 0→1
+    // edge; the game updates $6800b..e continuously during the attract cinema.
+    if (uses_nb1414()) {
+        scroll_fg_x_ = uint16_t(ram_txt_[0xd] | (ram_txt_[0xe] << 8));
+        scroll_fg_y_ = uint16_t(ram_txt_[0xb] | (ram_txt_[0xc] << 8));
+    }
+
     std::fill(bg_canvas_.begin(), bg_canvas_.end(), 0u);
     std::fill(fg_canvas_.begin(), fg_canvas_.end(), 0u);
     if (fg_text_.size() != 512u * 256u) fg_text_.assign(512u * 256u, 0u);
