@@ -228,6 +228,8 @@ void StarWars::reset() {
     sound_latch_ = main_latch_ = 0;
     sound_pending_ = main_pending_ = false;
     sound_writes_ = 0;
+    main_writes_ = 0;
+    sound_resets_ = 0;
     analog_x_ = analog_y_ = 0x80;
     adc_value_ = 0x80;
     adc_channel_ = 0;
@@ -236,8 +238,8 @@ void StarWars::reset() {
     audio_.clear();
     in0_ = 0xff;
     in1_ = 0x3f;
-    // MAME defaults: demo sounds ON is bit 6 = 0 on both sets.
-    dsw0_ = (game_ == Game::Empire) ? uint8_t(0xb7) : uint8_t(0x96);
+    // MAME DSW0 defaults. Demo Sounds is inverted on ESB (bit 6 = 1 → ON).
+    dsw0_ = (game_ == Game::Empire) ? uint8_t(0xf3) : uint8_t(0x98);
     riot_pa_out_ = 0xff;
     tms_.strobe_ws_rs(0x03);
     std::fill(framebuffer_.begin(), framebuffer_.end(), 0xff000000u);
@@ -332,6 +334,7 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
     if (address == 0x46e0) {
         sound_pending_ = false;
         main_pending_ = false;
+        ++sound_resets_;
         sound_cpu_.reset();
         return;
     }
@@ -374,6 +377,7 @@ void StarWars::sound_write(uint16_t address, uint8_t value) {
     if (address <= 0x07ff) {
         main_latch_ = value;
         main_pending_ = true;
+        ++main_writes_;
         return;
     }
     if (address >= 0x1000 && address <= 0x107f) {
@@ -415,11 +419,12 @@ void StarWars::on_sound_cycles(int cycles) {
     pokey2_.run(cycles);
     pokey3_.run(cycles);
     riot_.tick(cycles);
+    tms_.tick(int((int64_t(cycles) * int64_t(tms_.clock()) + (kCpuClock / 2)) / kCpuClock));
     audio_accumulator_ += int64_t(cycles) * kSampleRate;
     while (audio_accumulator_ >= kCpuClock) {
         audio_accumulator_ -= kCpuClock;
         int32_t sample = pokey0_.update() + pokey1_.update() + pokey2_.update() + pokey3_.update();
-        sample += int32_t(tms_.update());
+        sample += int32_t(tms_.last_sample());
         audio_.push_back(int16_t(std::clamp(sample, int32_t(-32768), int32_t(32767))));
     }
 }
@@ -428,11 +433,11 @@ void StarWars::run_frame() {
     for (int irq = 0; irq < kIrqsPerFrame; irq++) {
         main_cpu_.set_irq(IrqLine::Assert);
         int remain = kIrqCycles;
-        // Latch handshakes need a short quantum (MAME uses 100 µs) so the
-        // 6809 sound IRQ sees PA7/PA6 in the same timeslice as the write.
+        // MAME boosts to a 100 µs quantum on every latch write. A long
+        // timeslice lets the main CPU spin on $4401 before the sound CPU
+        // can ACK, so the handshake times out after a single command.
         while (remain > 0) {
-            const int slice =
-                (sound_pending_ || main_pending_) ? std::min(remain, 64) : remain;
+            const int slice = std::min(remain, 64);
             main_cpu_.run(slice);
             sound_cpu_.run(slice);
             remain -= slice;

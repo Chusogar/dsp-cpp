@@ -116,6 +116,8 @@ public:
     uint16_t debug_pc() const { return cpu_.pc(); }
     bool debug_nmi_enable() const { return nmi_enable_; }
     uint8_t debug_mem(uint16_t address) { return read_byte(address); }
+    uint32_t debug_pitch_writes() const { return pitch_writes_; }
+    uint32_t debug_sound_writes() const { return sound_bit_writes_; }
 
 private:
     uint8_t read_byte(uint16_t address);
@@ -202,6 +204,8 @@ private:
     uint64_t sound_cycles_ = 0;
     bool sound_mute_ = false;
     GalaxianSound discrete_;
+    uint32_t pitch_writes_ = 0;
+    uint32_t sound_bit_writes_ = 0;
 
     int64_t audio_accumulator_ = 0;
     std::vector<int16_t> audio_;

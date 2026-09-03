@@ -52,6 +52,8 @@ public:
     uint8_t debug_sound_latch() const { return sound_latch_; }
     bool debug_z80_reset() const { return z80_reset_; }
     uint32_t debug_ppi_a_writes() const { return ppi_a_writes_; }
+    uint16_t debug_mcu_pc() const { return mcu_ ? mcu_->pc() : uint16_t(0); }
+    uint32_t debug_mcu_irqs() const { return mcu_irqs_; }
 
 private:
     bool is_sharrier_map() const { return game_ != Game::HangOn; }
@@ -120,6 +122,7 @@ private:
     bool z80_reset_ = false;
     int sprite_banks_ = 7;
     uint8_t i8751_addr_ = 0;
+    uint32_t mcu_irqs_ = 0;
     bool use_fd1089_ = false;
     bool use_ym2151_ = false;
     bool sharrier_road_ = false;

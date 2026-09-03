@@ -199,7 +199,10 @@ HangOn::HangOn(Game game)
         mcu_->set_port_write_handler(1, [this](uint8_t value) {
             i8751_addr_ = uint8_t(((value & 0x40) >> 2) | ((value & 0x38) >> 3));
             const uint8_t irq = uint8_t((~value) & 7);
-            if (irq != 0) main_cpu_.set_irq(irq, IrqLine::Hold);
+            if (irq != 0) {
+                ++mcu_irqs_;
+                main_cpu_.set_irq(irq, IrqLine::Hold);
+            }
         });
         mcu_->set_external_handlers(
             [this](uint16_t address) -> uint8_t {
@@ -342,6 +345,7 @@ void HangOn::reset() {
     control_res_ = 0;
     z80_reset_ = false;
     i8751_addr_ = 0;
+    mcu_irqs_ = 0;
     analog_x_ = 0x80;
     analog_y_ = 0x80;
     analog_gas_ = 0;

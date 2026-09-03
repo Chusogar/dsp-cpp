@@ -161,12 +161,18 @@ const char* Galaxian::title() const {
 }
 
 void Galaxian::decrypt_mooncrst(std::vector<uint8_t>& rom) {
+    // MAME mooncrst_decode: both parities are bitswapped; XOR uses the
+    // pre-swap byte on odd addresses and the already-XORed byte on even ones.
     for (size_t f = 0; f < rom.size() && f < 0x4000; ++f) {
-        uint8_t c1 = rom[f];
-        uint8_t c2 = c1;
-        if (c1 & 0x02) c2 = uint8_t(c2 ^ 0x40);
-        if (c1 & 0x20) c2 = uint8_t(c2 ^ 0x04);
-        rom[f] = (f & 1) == 0 ? bitswap8_moon(c2) : c2;
+        const uint8_t x = rom[f];
+        if (f & 1) {
+            rom[f] = uint8_t(bitswap8_moon(x) ^ ((x & 0x02) ? 0x40 : 0) ^ ((x & 0x20) ? 0x04 : 0));
+        } else {
+            uint8_t c2 = x;
+            if (x & 0x02) c2 = uint8_t(c2 ^ 0x40);
+            if (x & 0x20) c2 = uint8_t(c2 ^ 0x04);
+            rom[f] = bitswap8_moon(c2);
+        }
     }
 }
 
@@ -372,6 +378,8 @@ void Galaxian::reset() {
     sound_cycles_ = 0;
     sound_mute_ = false;
     discrete_.reset();
+    pitch_writes_ = 0;
+    sound_bit_writes_ = 0;
     scramble_prot_state_ = 0;
     scramble_prot_ = 0;
     audio_accumulator_ = 0;
@@ -806,10 +814,12 @@ void Galaxian::write_discrete(uint16_t address, uint8_t value, uint16_t lfo_base
     }
     if (sound_base && (address & 0xf800) == (sound_base & 0xf800)) {
         discrete_.sound_w(int(address & 7), value);
+        ++sound_bit_writes_;
         return;
     }
     if (pitch_addr && (address & 0xf800) == (pitch_addr & 0xf800)) {
         discrete_.pitch_w(value);
+        ++pitch_writes_;
     }
 }
 

@@ -198,11 +198,17 @@ void Simpsons::run_frame() {
             }
         }
 
-        main_cpu_.run(int(main_c + frame_main_));
-        frame_main_ = (main_c + frame_main_) - int(main_c + frame_main_);
-
-        sound_cpu_.run(int(snd_c + frame_snd_));
-        frame_snd_ = (snd_c + frame_snd_) - int(snd_c + frame_snd_);
+        // K053260 command ports need a short quantum so the Z80 can ACK
+        // before the Konami CPU times out in the same scanline.
+        constexpr int kSlices = 8;
+        const double main_slice = main_c / kSlices;
+        const double snd_slice = snd_c / kSlices;
+        for (int slice = 0; slice < kSlices; slice++) {
+            main_cpu_.run(int(main_slice + frame_main_));
+            frame_main_ = (main_slice + frame_main_) - int(main_slice + frame_main_);
+            sound_cpu_.run(int(snd_slice + frame_snd_));
+            frame_snd_ = (snd_slice + frame_snd_) - int(snd_slice + frame_snd_);
+        }
     }
 
     // Audio for one frame
@@ -239,7 +245,9 @@ void Simpsons::on_sound_cycles(int cycles) {
 }
 
 void Simpsons::on_k053260_sh1(bool state) {
-    if (state && nmi_blocked_ <= 0) sound_cpu_.set_nmi(IrqLine::Assert);
+    // SH1 is a pulse. Hold so take_nmi consumes it; $fa00 still blocks the
+    // next edge for 4 Z80 cycles so the HALT can start.
+    if (state && nmi_blocked_ <= 0) sound_cpu_.set_nmi(IrqLine::Hold);
 }
 
 void Simpsons::mix_audio_line(int) {}

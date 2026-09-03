@@ -56,7 +56,12 @@ public:
     uint16_t debug_sound_pc() const { return sound_cpu_.pc(); }
     size_t debug_avg_lines() const { return avg_.lines().size(); }
     bool debug_sound_pending() const { return sound_pending_; }
+    bool debug_main_pending() const { return main_pending_; }
     uint32_t debug_sound_writes() const { return sound_writes_; }
+    uint32_t debug_main_writes() const { return main_writes_; }
+    uint32_t debug_sound_resets() const { return sound_resets_; }
+    uint8_t debug_sound_latch() const { return sound_latch_; }
+    uint8_t debug_main_latch() const { return main_latch_; }
 
 private:
     uint8_t main_read(uint16_t address);
@@ -117,6 +122,8 @@ private:
     int64_t audio_accumulator_ = 0;
     uint8_t riot_pa_out_ = 0xff;
     uint32_t sound_writes_ = 0;
+    uint32_t main_writes_ = 0;
+    uint32_t sound_resets_ = 0;
 };
 
 }  // namespace dsp
