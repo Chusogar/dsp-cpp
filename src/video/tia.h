@@ -96,15 +96,15 @@ private:
     uint8_t enam_[2]{};
     uint8_t enabl_ = 0;
     uint8_t enabl_delay_ = 0;
-    uint8_t hmm_[5]{};  // P0 P1 M0 M1 BL
+    std::array<uint8_t, 5> hmm_{};  // P0 P1 M0 M1 BL
     bool vdelp_[2]{};
     bool vdelbl_ = false;
     bool resmp_[2]{};
 
-    int pos_[5]{};  // colour clocks, P0 P1 M0 M1 BL
+    std::array<int, 5> pos_{};  // colour clocks, P0 P1 M0 M1 BL
     int hclock_ = 0;
 
-    uint8_t cx_[8]{};
+    std::array<uint8_t, 8> cx_{};
     bool inpt4_ = false;
     bool inpt5_ = false;
     bool inpt4_latched_ = false;
