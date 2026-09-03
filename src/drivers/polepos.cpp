@@ -836,11 +836,11 @@ void PolePos::zoom_sprite(bool big, uint32_t code, uint32_t color, bool flipx, i
         for (int x = (big ? 0x40 : 0x20); x > 0; x--) {
             if (xx < 0x100) {
                 const int pen = src[(offs / 2) ^ offsxor];
-                if (pen != 0x0f) {
-                    const int dest_pen = coloroffs + pen;
-                    if ((pens_[size_t(dest_pen)] & 0xff) != 0x1f) {
-                        bitmap_[size_t(yy * kScreenWidth + xx)] = pen_rgb(dest_pen);
-                    }
+                const int dest_pen = coloroffs + pen;
+                // MAME transpen_mask(..., 0x1f): skip only pens that look up to 0x1f.
+                if (dest_pen >= 0 && dest_pen < int(pens_.size()) &&
+                    (pens_[size_t(dest_pen)] & 0xff) != 0x1f) {
+                    bitmap_[size_t(yy * kScreenWidth + xx)] = pen_rgb(dest_pen);
                 }
             }
             offs++;
@@ -893,9 +893,10 @@ void PolePos::draw_text() {
                 for (int x = 0; x < 8; x++) {
                     const int sx = col * 8 + x;
                     const uint8_t pixv = pix[y * 8 + x];
-                    if (pixv == 0) continue;
                     const int pen = color * 4 + pixv;
+                    if (pen < 0 || pen >= int(pens_.size())) continue;
                     const uint16_t rgb_index = pens_[size_t(pen)];
+                    // MAME configure_groups(..., 0x2f): only that lookup is transparent.
                     if (rgb_index == 0x2f) continue;
                     bitmap_[size_t(sy * kScreenWidth + sx)] = rgb_[rgb_index < 128 ? rgb_index : 0];
                 }
@@ -927,8 +928,17 @@ void PolePos::run_frame() {
         if (line == 240) {
             n51_.vblank(true);
             if (sub_irq_mask_) {
-                if (!sub1_reset_) sub1_.set_nvi(IrqLine::Assert);
-                if (!sub2_reset_) sub2_.set_nvi(IrqLine::Assert);
+                // Pulse NVI so a still-high pin still produces a 0→1 edge, then
+                // re-assert like MAME's scanline timer (which re-calls
+                // execute_set_input(ASSERT) every vblank).
+                if (!sub1_reset_) {
+                    sub1_.set_nvi(IrqLine::Clear);
+                    sub1_.set_nvi(IrqLine::Assert);
+                }
+                if (!sub2_reset_) {
+                    sub2_.set_nvi(IrqLine::Clear);
+                    sub2_.set_nvi(IrqLine::Assert);
+                }
             }
         } else if (line == 0) {
             n51_.vblank(false);

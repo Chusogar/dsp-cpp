@@ -104,9 +104,10 @@ void z8002_device::set_reset_line(IrqLine state) {
 
 void z8002_device::set_nvi(IrqLine state) {
     const int line = (state == IrqLine::Clear) ? CLEAR_LINE : ASSERT_LINE;
-    // MAME only calls execute_set_input when the line changes. Re-asserting an
-    // already-high NVI must not queue another request every vblank.
-    if (m_irq_state[NVI_LINE] == line) return;
+    // Match MAME z8002_device::execute_set_input: every ASSERT re-queues NVI
+    // when NVIE is set, even if the pin is already high. Pole Position leaves
+    // NVI asserted and relies on the vblank scanline callback to wake the
+    // Z8002s again each frame.
     m_irq_state[NVI_LINE] = line;
     if (line == CLEAR_LINE) {
         if (!(m_fcw & F_NVIE)) m_irq_req &= uint8_t(~Z8000_NVI);

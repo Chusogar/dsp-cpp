@@ -83,6 +83,12 @@ public:
     uint16_t debug_view_word(int index) const {
         return uint16_t((uint16_t(view_ram_[size_t(index * 2)]) << 8) | view_ram_[size_t(index * 2 + 1)]);
     }
+    uint16_t debug_road_word(int index) const {
+        return uint16_t((uint16_t(road_ram_[size_t(index * 2)]) << 8) | road_ram_[size_t(index * 2 + 1)]);
+    }
+    uint16_t debug_sprite_word(int index) const {
+        return uint16_t((uint16_t(sprite_ram_[size_t(index * 2)]) << 8) | sprite_ram_[size_t(index * 2 + 1)]);
+    }
     uint8_t debug_char_pixel(int code, int x, int y) const {
         const uint8_t* pix = chars_.element(code);
         return pix[y * 8 + x];
