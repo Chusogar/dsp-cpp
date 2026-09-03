@@ -46,6 +46,7 @@
 #include "drivers/tetris_atari_hw.h"
 #include "drivers/skullxbo.h"
 #include "drivers/gng.h"
+#include "drivers/bublbobl.h"
 
 // Computers
 #include "drivers/spectrum.h"
@@ -112,7 +113,7 @@ void print_supported_emulators() {
         "    neogeo, nam1975, maglord, mslug, kof94, kof95, kof97, kof98,\n"
 		"    pbobblen, turfmast, tws96\n"
         "    fatfury, samsho, aof, lastblad, bstars, whp,\n"
-        "    opwolf, pirates, genix\n"
+        "    opwolf, pirates, genix, bublbobl,\n"
 		"    terraf, armedf, cclimbr2, legion\n"
 		"    citycon, commando\n"
 		"    wwfsstar, atetris\n"
@@ -424,6 +425,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 
 	if (game == "skullxbo") return std::make_unique<dsp::Skullxbo>();
 	if (game == "gng") return std::make_unique<dsp::Gng>();
+	if (game == "bublbobl" || game == "bubblebobble" || game == "bublbobble") {
+	    return std::make_unique<dsp::BublBobl>();
+	}
 	
 
 	// computers

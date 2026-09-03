@@ -158,6 +158,7 @@ add_executable(dsp
   src/drivers/tetris_atari_hw.cpp
   src/drivers/skullxbo.cpp
   src/drivers/gng.cpp
+  src/drivers/bublbobl.cpp
 
   src/drivers/spectrum.cpp
   src/drivers/spectrum_128k.cpp
@@ -333,6 +334,7 @@ add_executable(dsp_tests
   src/drivers/pirates.cpp
   src/drivers/armedf_hw.cpp
   src/drivers/skullxbo.cpp
+  src/drivers/bublbobl.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

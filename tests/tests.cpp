@@ -47,6 +47,7 @@
 #include "drivers/hangon.h"
 #include "drivers/outrun.h"
 #include "drivers/skullxbo.h"
+#include "drivers/bublbobl.h"
 #include "drivers/system16.h"
 #include "machine/fd1089.h"
 #include "machine/bagman_pal.h"
@@ -3187,6 +3188,16 @@ void test_skullxbo_without_roms() {
           "Skull & Crossbones screen is 672x240");
 }
 
+void test_bublbobl_without_roms() {
+    dsp::BublBobl machine;
+    std::string error = "unset";
+    check(!machine.init("/no/such/bublbobl.zip", &error), "Bubble Bobble init fails without the ROM set");
+    check(error != "unset" && !error.empty(), "Bubble Bobble reports why the set is missing");
+    check(std::strcmp(machine.title(), "Bubble Bobble") == 0, "Bubble Bobble title");
+    check(machine.screen_width() == 256 && machine.screen_height() == 224,
+          "Bubble Bobble screen is 256x224");
+}
+
 int unique_pixels(const dsp::Machine& machine) {
     const uint32_t* fb = machine.framebuffer();
     const int n = machine.screen_width() * machine.screen_height();
@@ -3219,6 +3230,21 @@ void test_sega_roms_if_present() {
         }
         const bool road_table_fresh = identity_lines < 200;
         check(road_table_fresh, "OutRun swaps the freshly written road line table into the display");
+    }
+
+    if (exists("/tmp/roms/bublbobl.zip")) {
+        dsp::BublBobl machine;
+        std::string error;
+        check(machine.init("/tmp/roms/bublbobl.zip", &error), "Bubble Bobble MAME set loads");
+        const uint16_t reset_pc = machine.debug_main_pc();
+        for (int frame = 0; frame < 600; frame++) machine.run_frame();
+        check(machine.debug_main_pc() != reset_pc, "Bubble Bobble main CPU leaves the reset vector");
+        check(machine.debug_video_enable(), "Bubble Bobble attract mode enables video");
+        check(unique_pixels(machine) > 8, "Bubble Bobble attract mode draws a colour picture");
+
+        std::vector<int16_t> audio;
+        machine.drain_audio(audio);
+        check(!audio.empty(), "Bubble Bobble drain_audio yields samples");
     }
 
     if (exists("/tmp/roms/skullxbo.zip")) {
@@ -4168,6 +4194,7 @@ int main() {
     test_sega_pcm_and_mapper();
     test_sega_system16_missing_roms();
     test_skullxbo_without_roms();
+    test_bublbobl_without_roms();
     test_sega16_palette_banks();
     test_sega_roms_if_present();
     test_indy_coin_if_present();
