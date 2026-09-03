@@ -1,6 +1,5 @@
 #include "drivers/ajax.h"
 
-#include <cstdio>
 #include <vector>
 #include <algorithm>
 #include <cstring>
@@ -403,6 +402,12 @@ void Ajax::update_video() {
     k052109_->draw_tiles();
     k051960_->update_sprites();  // DMA latch like MAME
 
+    // Pascal actualiza_trozo_final(112,16,304,224). Zoom must use the same
+    // origin as tiles/sprites; MAME feeds both the screen cliprect. Cropping
+    // K051316 at the raw visarea (8,16) shifted the logo ~104px off the tiles.
+    constexpr int kCropX = 112;
+    constexpr int kCropY = 16;
+
     const int npix = kNativeWidth * kNativeHeight;
     pens_.assign(size_t(npix), 0);
     std::vector<uint8_t> pri(size_t(npix), 0);
@@ -424,29 +429,30 @@ void Ajax::update_video() {
     //   sprites with priority masks
     //   F (tilemap 0) on top
     std::fill(layer.begin(), layer.end(), 0);
-    k052109_->draw_layer(2, layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+    k052109_->draw_layer(2, layer.data(), kNativeWidth, kNativeHeight, kCropX, kCropY);
     composite(0x01);  // GFX_PMASK_1
 
     if (priority_) {
         std::fill(layer.begin(), layer.end(), 0);
-        k051316_->draw(layer.data(), kNativeWidth, kNativeHeight, 8, 16);
+        k051316_->draw(layer.data(), kNativeWidth, kNativeHeight, kCropX, kCropY);
         composite(0x04);
         std::fill(layer.begin(), layer.end(), 0);
-        k052109_->draw_layer(1, layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+        k052109_->draw_layer(1, layer.data(), kNativeWidth, kNativeHeight, kCropX, kCropY);
         composite(0x02);
     } else {
         std::fill(layer.begin(), layer.end(), 0);
-        k052109_->draw_layer(1, layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+        k052109_->draw_layer(1, layer.data(), kNativeWidth, kNativeHeight, kCropX, kCropY);
         composite(0x02);
         std::fill(layer.begin(), layer.end(), 0);
-        k051316_->draw(layer.data(), kNativeWidth, kNativeHeight, 8, 16);
+        k051316_->draw(layer.data(), kNativeWidth, kNativeHeight, kCropX, kCropY);
         composite(0x04);
     }
 
-    k051960_->draw_sprites_masked(pens_.data(), pri.data(), kNativeWidth, kNativeHeight, 112, 16);
+    k051960_->draw_sprites_masked(pens_.data(), pri.data(), kNativeWidth, kNativeHeight, kCropX,
+                                  kCropY);
     // Layer F always on top (MAME draws with priority 0 after sprites)
     std::fill(layer.begin(), layer.end(), 0);
-    k052109_->draw_layer(0, layer.data(), kNativeWidth, kNativeHeight, 112, 16);
+    k052109_->draw_layer(0, layer.data(), kNativeWidth, kNativeHeight, kCropX, kCropY);
     for (int i = 0; i < npix; i++) {
         if (layer[size_t(i)]) pens_[size_t(i)] = layer[size_t(i)];
     }

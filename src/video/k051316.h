@@ -30,6 +30,7 @@ public:
     void control_w(uint8_t offset, uint8_t value);
     void set_wraparound(bool enable) { wrap_ = enable; }
     bool wraparound() const { return wrap_; }
+    uint8_t ram_at(uint16_t address) const { return ram_[address & 0x7ff]; }
     void set_offsets(int dx, int dy) {
         dx_ = dx;
         dy_ = dy;
@@ -65,6 +66,8 @@ private:
     std::vector<uint16_t> layer_;  // 512x512 pens
     bool layer_dirty_ = true;
     bool wrap_ = false;
+    bool flipx_enabled_ = false;
+    bool flipy_enabled_ = false;
     int dx_ = 0;
     int dy_ = 0;
 };
