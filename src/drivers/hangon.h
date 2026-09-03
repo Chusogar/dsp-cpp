@@ -49,6 +49,9 @@ public:
 
     uint32_t debug_pc() const { return main_cpu_.pc(); }
     uint16_t debug_sound_pc() const { return sound_cpu_.pc(); }
+    uint8_t debug_sound_latch() const { return sound_latch_; }
+    bool debug_z80_reset() const { return z80_reset_; }
+    uint32_t debug_ppi_a_writes() const { return ppi_a_writes_; }
 
 private:
     bool is_sharrier_map() const { return game_ != Game::HangOn; }
@@ -104,6 +107,7 @@ private:
 
     uint8_t adc_select_ = 0;
     uint8_t sound_latch_ = 0;
+    uint32_t ppi_a_writes_ = 0;
     uint8_t control_res_ = 0;
     uint8_t analog_x_ = 0x80;
     uint8_t analog_y_ = 0x80;

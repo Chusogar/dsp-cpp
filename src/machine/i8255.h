@@ -23,7 +23,13 @@ public:
     uint8_t read(int port);
     void write(int port, uint8_t value);
 
+    // Mode 1/2 ACK on PC6 (active low). A falling edge raises /OBF (PC7).
+    void pc6_w(bool level);
+
 private:
+    int group_a_mode() const { return (control_ >> 5) & 3; }
+    void notify_pc();
+
     uint8_t control_ = 0x9b;
 
     uint8_t port_a_latch_ = 0xff;
@@ -37,6 +43,7 @@ private:
     PortWrite port_a_write_;
     PortWrite port_b_write_;
     PortWrite port_c_write_;
+    bool pc6_in_ = true;
 };
 
 } // namespace dsp

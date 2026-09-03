@@ -227,6 +227,7 @@ void StarWars::reset() {
     outlatch_ = 0;
     sound_latch_ = main_latch_ = 0;
     sound_pending_ = main_pending_ = false;
+    sound_writes_ = 0;
     analog_x_ = analog_y_ = 0x80;
     adc_value_ = 0x80;
     adc_channel_ = 0;
@@ -235,7 +236,8 @@ void StarWars::reset() {
     audio_.clear();
     in0_ = 0xff;
     in1_ = 0x3f;
-    dsw0_ = (game_ == Game::Empire) ? uint8_t(0xd8) : uint8_t(0x98);
+    // MAME defaults: demo sounds ON is bit 6 = 0 on both sets.
+    dsw0_ = (game_ == Game::Empire) ? uint8_t(0xb7) : uint8_t(0x96);
     riot_pa_out_ = 0xff;
     tms_.strobe_ws_rs(0x03);
     std::fill(framebuffer_.begin(), framebuffer_.end(), 0xff000000u);
@@ -299,6 +301,7 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
     if (address == 0x4400) {
         sound_latch_ = value;
         sound_pending_ = true;
+        ++sound_writes_;
         return;
     }
     if (address >= 0x4500 && address <= 0x45ff) {
@@ -424,8 +427,16 @@ void StarWars::on_sound_cycles(int cycles) {
 void StarWars::run_frame() {
     for (int irq = 0; irq < kIrqsPerFrame; irq++) {
         main_cpu_.set_irq(IrqLine::Assert);
-        main_cpu_.run(kIrqCycles);
-        sound_cpu_.run(kIrqCycles);
+        int remain = kIrqCycles;
+        // Latch handshakes need a short quantum (MAME uses 100 µs) so the
+        // 6809 sound IRQ sees PA7/PA6 in the same timeslice as the write.
+        while (remain > 0) {
+            const int slice =
+                (sound_pending_ || main_pending_) ? std::min(remain, 64) : remain;
+            main_cpu_.run(slice);
+            sound_cpu_.run(slice);
+            remain -= slice;
+        }
     }
     update_video();
 }

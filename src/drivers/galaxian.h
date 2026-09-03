@@ -114,6 +114,8 @@ public:
     const char* title() const override;
 
     uint16_t debug_pc() const { return cpu_.pc(); }
+    bool debug_nmi_enable() const { return nmi_enable_; }
+    uint8_t debug_mem(uint16_t address) { return read_byte(address); }
 
 private:
     uint8_t read_byte(uint16_t address);
@@ -190,7 +192,7 @@ private:
     uint8_t in2_ = 0xff;
     uint8_t dsw_a_ = 0;
     uint8_t dsw_b_ = 0;
-    uint8_t dsw_c_ = 0;
+    uint8_t dsw_c_ = 0x04;  // Galaxian IN2: 3 lives (MAME default)
 
     uint8_t sound_latch_ = 0;
     uint8_t port_b_latch_ = 0;

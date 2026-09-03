@@ -28,10 +28,27 @@ void I8255::reset()
     port_a_latch_ = 0xff;
     port_b_latch_ = 0xff;
     port_c_latch_ = 0xff;
+    pc6_in_ = true;
 
     if (port_a_write_) port_a_write_(port_a_latch_);
     if (port_b_write_) port_b_write_(port_b_latch_);
     if (port_c_write_) port_c_write_(port_c_latch_);
+}
+
+void I8255::notify_pc()
+{
+    if (port_c_write_) port_c_write_(port_c_latch_);
+}
+
+void I8255::pc6_w(bool level)
+{
+    const bool was = pc6_in_;
+    pc6_in_ = level;
+    // Falling ACK (mode 1 output / mode 2) marks the output buffer empty.
+    if (was && !level && group_a_mode() >= 1) {
+        port_c_latch_ |= 0x80;
+        notify_pc();
+    }
 }
 
 uint8_t I8255::read(int port)
@@ -66,6 +83,11 @@ void I8255::write(int port, uint8_t value)
 
             if (port_a_write_) {
                 port_a_write_(value);
+            }
+            // Mode 1 output / mode 2: writing port A lowers /OBF (PC7).
+            if (group_a_mode() >= 1) {
+                port_c_latch_ = uint8_t(port_c_latch_ & ~0x80);
+                notify_pc();
             }
             break;
 

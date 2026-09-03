@@ -172,7 +172,10 @@ HangOn::HangOn(Game game)
     });
     pcm_.set_bank(SegaPcm::kBank512);
     ppi0_.set_port_handlers(nullptr, nullptr, nullptr,
-                            [this](uint8_t value) { sound_latch_ = value; },
+                            [this](uint8_t value) {
+                                sound_latch_ = value;
+                                ++ppi_a_writes_;
+                            },
                             [this](uint8_t value) {
                                 z80_reset_ = (value & 0x20) == 0;
                                 if (z80_reset_) sound_cpu_.reset();
@@ -335,6 +338,7 @@ void HangOn::reset() {
     in0_ = 0xffff;
     adc_select_ = 0;
     sound_latch_ = 0;
+    ppi_a_writes_ = 0;
     control_res_ = 0;
     z80_reset_ = false;
     i8751_addr_ = 0;
@@ -635,7 +639,12 @@ void HangOn::sound_write(uint16_t address, uint8_t value) {
 uint8_t HangOn::sound_in(uint16_t port) {
     const uint8_t p = uint8_t(port);
     if (use_ym2151_ && p <= 0x3f && (p & 1)) return ym2151_.status();
-    if (p >= 0x40 && p <= 0x7f) return sound_latch_;
+    if (p >= 0x40 && p <= 0x7f) {
+        // PPI mode 2 ACK: the Z80 read strobes PC6 so /OBF (NMI) is released.
+        ppi0_.pc6_w(false);
+        ppi0_.pc6_w(true);
+        return sound_latch_;
+    }
     return 0xff;
 }
 

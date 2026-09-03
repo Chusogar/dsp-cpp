@@ -69,16 +69,22 @@ int16_t GalaxianSound::update() {
         pitch_div_ = uint8_t((pitch_div_ + 1) & 0x0f);
     }
 
-    // 74393: QA, QC, QD feed the mixer (MAME NODE_133).
+    // 74393: QA, QC, QD feed the mixer (MAME NODE_133). VOL1/VOL2 (4066
+    // switches) select which ladder legs reach the op-amp — this is the
+    // attract march / alien-hit oscillator, not just the FIRE path.
     int32_t tone = 0;
     if (pitch_div_ & 0x01) tone += 2800;
     if (pitch_div_ & 0x04) tone += 4200;
     if (pitch_div_ & 0x08) tone += 5600;
 
-    // The divider always runs; a quiet residual of that square leaks into the
-    // mixer even when FS1–3 are off. Attract writes pitch every beat, so this
-    // keeps the march audible if a title only hits $7800 / $b800.
-    int32_t bg = (pitch_ != 0xff) ? tone / 5 : 0;
+    int32_t melody = 0;
+    if (pitch_ != 0xff) {
+        if (vol1_) melody += tone;
+        if (vol2_) melody += tone * 2 / 3;
+        melody += tone / 6;
+    }
+
+    int32_t bg = melody;
     const int lfo_scale = 1 + int(lfo_);
     for (int i = 0; i < 3; i++) {
         const int hz = std::max(1, kLfoBaseHz[i] * lfo_scale);

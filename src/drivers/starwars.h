@@ -55,6 +55,8 @@ public:
     uint16_t debug_pc() const { return main_cpu_.pc(); }
     uint16_t debug_sound_pc() const { return sound_cpu_.pc(); }
     size_t debug_avg_lines() const { return avg_.lines().size(); }
+    bool debug_sound_pending() const { return sound_pending_; }
+    uint32_t debug_sound_writes() const { return sound_writes_; }
 
 private:
     uint8_t main_read(uint16_t address);
@@ -98,7 +100,7 @@ private:
 
     uint8_t in0_ = 0xff;
     uint8_t in1_ = 0xff;
-    uint8_t dsw0_ = 0x98;
+    uint8_t dsw0_ = 0x96;
     uint8_t dsw1_ = 0x02;
     uint8_t analog_x_ = 0x80;
     uint8_t analog_y_ = 0x80;
@@ -114,6 +116,7 @@ private:
     uint32_t prng_ = 0x1;
     int64_t audio_accumulator_ = 0;
     uint8_t riot_pa_out_ = 0xff;
+    uint32_t sound_writes_ = 0;
 };
 
 }  // namespace dsp
