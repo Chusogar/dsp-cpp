@@ -15,8 +15,11 @@ public:
     static constexpr int kScreenWidth = 320;
     static constexpr int kScreenHeight = 224;
     static constexpr int kScanlines = 264;
-    static constexpr int kVblankLine = 248;
+    // MAME NEOGEO_VBSTART: IRQ1 and the 224-line visarea end at line 240.
+    static constexpr int kVblankLine = 240;
+    static constexpr int kVisibleTop = 16;
     static constexpr int kSpriteCount = 381;
+    static constexpr int kSpritesPerLine = 96;
     static constexpr int kVramWords = 0x10000;
     static constexpr int kPaletteWords = 0x1000;
 
@@ -62,11 +65,6 @@ public:
     static uint32_t colour(uint16_t packed);
 
 private:
-    struct ZoomRow {
-        std::array<uint8_t, 16> draw{};
-        int pixels = 16;
-    };
-
     void write_vram(uint16_t value);
     uint16_t read_vram() const;
     uint16_t vram_offset() const;
@@ -76,11 +74,10 @@ private:
     const uint8_t* sprite_tile(int code) const;
     void draw_fix(uint32_t* framebuffer);
     void draw_sprites(uint32_t* framebuffer);
-    void draw_sprite_line(uint32_t* framebuffer, int sprite, int tile, int dest_x, int dest_y,
-                          int y_in_tile, int xzoom, bool flip_x, bool flip_y, int palette,
-                          int code);
-    void build_zoom_table();
+    void draw_sprite_pixels(uint32_t* framebuffer, int dest_y, int x, int src_y, int xzoom,
+                            bool flip_x, int palette, int code);
     void tick_timer();
+    static bool sprite_on_scanline(int scanline, int y, int rows);
 
     std::array<uint16_t, kVramWords> vram_{};
     std::array<std::array<uint16_t, kPaletteWords>, 2> palette_{};
@@ -116,9 +113,6 @@ private:
     int cart_fix_tiles_ = 0;
     int bios_fix_tiles_ = 0;
     int sprite_tiles_ = 0;
-
-    std::array<ZoomRow, 256> zoom_{};
-    std::array<ZoomRow, 16> xzoom_{};
 };
 
 }  // namespace dsp

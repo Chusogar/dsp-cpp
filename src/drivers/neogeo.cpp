@@ -171,6 +171,7 @@ std::string title_for(const std::string& game) {
         {"neoturfm", "Neo Turf Masters"},
         {"neoturmasters", "Neo Turf Masters"},
         {"neoturfmasters", "Neo Turf Masters"},
+        // MAME 0.260 parent is twsoc96; tws96.zip is not a 0.260 set name.
         {"tws96", "Tecmo World Soccer '96"},
         {"twsoc96", "Tecmo World Soccer '96"},
         {"tecmows96", "Tecmo World Soccer '96"},
@@ -475,7 +476,9 @@ void NeoGeo::reset() {
     rtc_clock_ = false;
     rtc_strobe_ = false;
     video_.reset();
-    video_.set_use_bios_fix(s_rom_.empty());  // cart S present → use cart FIX
+    // HC259 comes out of reset with every Q low: BIOS vectors, SFIX and SM1.
+    // The BIOS writes $3A001B when it hands the board to the cartridge.
+    video_.set_use_bios_fix(!sfix_.empty());
     ym_.reset();
     z80_.reset();
     m68k_.reset();
