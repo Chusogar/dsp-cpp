@@ -161,6 +161,22 @@ void test_z80_interrupt() {
     check(cpu.a == 0x42, "mode 1 interrupt vectors through 0x0038");
 }
 
+void test_z80_nmi_pulse() {
+    auto memory = make_memory();
+    dsp::Z80 cpu = make_cpu(memory);
+    // nop / nop ... NMI handler at $66 increments A
+    memory[0x0000] = 0x00;
+    memory[0x0066] = 0x3c;  // inc a
+    memory[0x0067] = 0xed;  // reti (treated as retn-ish; we just return)
+    memory[0x0068] = 0x45;
+    cpu.sp = 0xf000;
+    cpu.a = 0;
+    cpu.set_nmi(dsp::IrqLine::Assert);
+    cpu.set_nmi(dsp::IrqLine::Clear);  // pulse finished before the Z80 runs
+    cpu.run(20);
+    check(cpu.a == 1, "Z80 takes an NMI that was pulsed while it was not running");
+}
+
 int count_instruction_cycles(dsp::Z80& cpu, int at_least = 1) {
     int total = 0;
     cpu.set_cycle_handler([&](int cycles) { total += cycles; });
@@ -4633,6 +4649,7 @@ int main() {
     test_z80_arithmetic();
     test_z80_flags_and_blocks();
     test_z80_interrupt();
+    test_z80_nmi_pulse();
     test_z80_cpc_wait_states();
     test_z80_irq_cycle_align();
     test_amstrad_crtc_does_not_tear();

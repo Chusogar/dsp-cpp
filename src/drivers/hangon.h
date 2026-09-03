@@ -48,6 +48,7 @@ public:
     const char* title() const override;
 
     uint32_t debug_pc() const { return main_cpu_.pc(); }
+    uint16_t debug_sound_pc() const { return sound_cpu_.pc(); }
 
 private:
     bool is_sharrier_map() const { return game_ != Game::HangOn; }

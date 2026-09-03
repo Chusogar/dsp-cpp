@@ -79,23 +79,20 @@ StarWars::StarWars(Game game)
     riot_.set_irq_callback([this](IrqLine line) { sound_cpu_.set_irq(line); });
     riot_.set_pa(
         [this]() {
-            uint8_t value = 0x10;  // not self-test
-            if (!tms_.readyq()) value |= 0x04;
+            uint8_t value = 0x10;  // PA4 = not self-test
+            // MAME wires TMS /READY directly to PA2 (1 = busy).
+            if (tms_.readyq()) value |= 0x04;
             if (main_pending_) value |= 0x40;
             if (sound_pending_) value |= 0x80;
             return value;
         },
         [this](uint8_t value) {
             riot_pa_out_ = value;
-            // MAME: PA0=/WS, PA1=/RS (status read, not chip reset).
+            // MAME: PA0=/WS, PA1=/RS. Data is latched on PB; /WS commits it.
             tms_.strobe_ws_rs(uint8_t(value & 0x03));
         });
     riot_.set_pb([this]() { return tms_.status(); },
-                 [this](uint8_t value) {
-                     tms_.set_data_latch(value);
-                     // Commit on bus write (MAME data_w); /WS via PA still works.
-                     tms_.write_data(value);
-                 });
+                 [this](uint8_t value) { tms_.set_data_latch(value); });
 
     avg_.set_memory([this](uint16_t address) { return avg_read(address); });
 }
@@ -238,6 +235,7 @@ void StarWars::reset() {
     audio_.clear();
     in0_ = 0xff;
     in1_ = 0x3f;
+    dsw0_ = (game_ == Game::Empire) ? uint8_t(0xd8) : uint8_t(0x98);
     riot_pa_out_ = 0xff;
     tms_.strobe_ws_rs(0x03);
     std::fill(framebuffer_.begin(), framebuffer_.end(), 0xff000000u);

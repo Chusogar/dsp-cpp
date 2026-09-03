@@ -182,6 +182,7 @@ void Z80::reset() {
     irq_state_ = IrqLine::Clear;
     nmi_state_ = IrqLine::Clear;
     nmi_latched_ = false;
+    nmi_pending_ = false;
     irq_vector_ = 0xff;
 }
 
@@ -191,6 +192,9 @@ void Z80::set_irq(IrqLine state, uint8_t vector) {
 }
 
 void Z80::set_nmi(IrqLine state) {
+    // /NMI is falling-edge triggered. Keep a pulse that is raised and lowered
+    // again before the next run() so tightly-timed PPI handshakes are not lost.
+    if (state != IrqLine::Clear && nmi_state_ == IrqLine::Clear) nmi_pending_ = true;
     nmi_state_ = state;
     if (state == IrqLine::Clear) nmi_latched_ = false;
 }
@@ -491,6 +495,7 @@ int Z80::take_nmi() {
     pc_ = 0x0066;
     wz = pc_;
     r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
+    nmi_pending_ = false;
     if (nmi_state_ == IrqLine::Pulse || nmi_state_ == IrqLine::Hold) nmi_state_ = IrqLine::Clear;
     else nmi_latched_ = true;
     return 11;
@@ -540,7 +545,7 @@ int Z80::run(int cycles) {
     while (executed_ < cycles) {
         cycles_ = 0;
         if (!after_ei_) {
-            if (nmi_state_ != IrqLine::Clear) {
+            if (nmi_pending_ || nmi_state_ != IrqLine::Clear) {
                 cycles_ += take_nmi();
             } else if (irq_state_ != IrqLine::Clear) {
                 cycles_ += take_irq();

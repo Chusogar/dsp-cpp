@@ -53,6 +53,7 @@ public:
     const char* title() const override;
 
     uint16_t debug_pc() const { return main_cpu_.pc(); }
+    uint16_t debug_sound_pc() const { return sound_cpu_.pc(); }
     size_t debug_avg_lines() const { return avg_.lines().size(); }
 
 private:

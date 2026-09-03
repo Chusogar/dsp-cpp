@@ -143,7 +143,7 @@ HangOn::HangOn(Game game)
     : game_(game),
       main_clock_(game == Game::HangOn ? 25174800u / 4 : 10000000u),
       sound_clock_(4000000),
-      cpu_sync_(game == Game::Enduro ? 12 : 2),
+      cpu_sync_(game == Game::Enduro ? 12 : 8),
       main_cpu_(game == Game::HangOn ? 25174800u / 4 : 10000000u),
       sub_cpu_(game == Game::HangOn ? 25174800u / 4 : 10000000u),
       sound_cpu_(4000000),
@@ -378,7 +378,7 @@ void HangOn::set_dip_switch(int bank, uint8_t value) {
 }
 
 void HangOn::drain_audio(std::vector<int16_t>& out) {
-    out.swap(audio_);
+    out.insert(out.end(), audio_.begin(), audio_.end());
     audio_.clear();
 }
 

@@ -75,10 +75,13 @@ int16_t GalaxianSound::update() {
     if (pitch_div_ & 0x04) tone += 4200;
     if (pitch_div_ & 0x08) tone += 5600;
 
+    // The divider always runs; a quiet residual of that square leaks into the
+    // mixer even when FS1–3 are off. Attract writes pitch every beat, so this
+    // keeps the march audible if a title only hits $7800 / $b800.
+    int32_t bg = (pitch_ != 0xff) ? tone / 5 : 0;
     const int lfo_scale = 1 + int(lfo_);
-    int32_t bg = 0;
     for (int i = 0; i < 3; i++) {
-        const int hz = kLfoBaseHz[i] * lfo_scale;
+        const int hz = std::max(1, kLfoBaseHz[i] * lfo_scale);
         lfo_acc_[i] += uint32_t(hz);
         while (lfo_acc_[i] >= uint32_t(kSampleRate)) {
             lfo_acc_[i] -= uint32_t(kSampleRate);

@@ -113,6 +113,8 @@ public:
 
     const char* title() const override;
 
+    uint16_t debug_pc() const { return cpu_.pc(); }
+
 private:
     uint8_t read_byte(uint16_t address);
     void write_byte(uint16_t address, uint8_t value);

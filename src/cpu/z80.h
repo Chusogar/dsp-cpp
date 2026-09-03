@@ -151,9 +151,11 @@ private:
     bool after_ei_ = false;
     IrqLine irq_state_ = IrqLine::Clear;
     IrqLine nmi_state_ = IrqLine::Clear;
-    // A level asserted NMI is edge triggered: it fires once and stays latched
-    // until the line is released.
+    // A level-asserted NMI is edge triggered: it fires once and stays latched
+    // until the line is released. nmi_pending_ keeps a pulse that was asserted
+    // and cleared again before the Z80 could run (Hang-On PPI handshake).
     bool nmi_latched_ = false;
+    bool nmi_pending_ = false;
     uint8_t irq_vector_ = 0xff;
     uint16_t pc_ = 0;
 };
