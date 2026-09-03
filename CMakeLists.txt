@@ -63,6 +63,7 @@ add_executable(dsp
   src/video/deco_bac06.cpp
   src/video/nes_ppu.cpp
   src/video/avg_starwars.cpp
+  src/video/dvg.cpp
   src/video/sega16.cpp
   src/video/apple2_video.cpp
   src/video/huc6260.cpp
@@ -126,6 +127,7 @@ add_executable(dsp
   src/drivers/cps1.cpp
   src/drivers/m72.cpp
   src/drivers/starwars.cpp
+  src/drivers/asteroid.cpp
   src/drivers/polepos.cpp
   src/drivers/hangon.cpp
   src/drivers/system16.cpp
@@ -263,6 +265,7 @@ add_executable(dsp_tests
   src/video/v9938.cpp
   src/video/gb_ppu.cpp
   src/video/avg_starwars.cpp
+  src/video/dvg.cpp
   src/video/sega_315_5313.cpp
   src/video/sega16.cpp
   src/video/apple2_video.cpp
@@ -323,6 +326,7 @@ add_executable(dsp_tests
   src/drivers/pv2000.cpp
   src/drivers/exelv.cpp
   src/drivers/starwars.cpp
+  src/drivers/asteroid.cpp
   src/drivers/polepos.cpp
   src/drivers/atari_system1.cpp
   src/drivers/atari_system2.cpp

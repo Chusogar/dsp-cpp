@@ -22,6 +22,7 @@
 #include "drivers/cps1.h"
 #include "drivers/m72.h"
 #include "drivers/starwars.h"
+#include "drivers/asteroid.h"
 #include "drivers/polepos.h"
 #include "drivers/hangon.h"
 #include "drivers/system16.h"
@@ -92,7 +93,7 @@ void print_supported_emulators() {
         "\n"
         "  Arcade:\n"
         "    bagman, mikie, trackfld, gauntlet, mrdo, ddragon, ddragon2,\n"
-        "    elevator, junglek, indydoom, peter, marble, skullxbo, starwars, roadrunn,\n"
+        "    elevator, junglek, indydoom, peter, marble, skullxbo, starwars, asteroid, roadrunn,\n"
         "    paperboy, ssprint, apb, 720,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
 		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
@@ -200,6 +201,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "marble") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Marble);
 	if (game == "starwars" || game == "star-wars") {
 		return std::make_unique<dsp::StarWars>();
+	}
+	if (game == "asteroid" || game == "asteroids") {
+		return std::make_unique<dsp::Asteroid>();
 	}
 	if (game == "roadrunn" || game == "roadrunner") {
 		return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::RoadRunner);
