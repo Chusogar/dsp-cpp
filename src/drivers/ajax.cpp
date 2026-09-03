@@ -133,7 +133,13 @@ void Ajax::run_frame() {
     const double snd_t = double(kSoundClock) / kFramesPerSecond / kScanlines;
 
     for (int line = 0; line < kScanlines; line++) {
-        if (line == 240) update_video();
+        if (line == 240) {
+            // MAME k052109 vblank IRQ → sub 6809 (M6809_IRQ_LINE).
+            if (k052109_ && k052109_->is_irq_enabled()) {
+                sub_cpu_.set_irq(IrqLine::Hold);
+            }
+            update_video();
+        }
 
         // Budget for this line = residual from previous over/under-run.
         // Guard against non-positive after heavy overrun (run at least 1).
@@ -402,9 +408,10 @@ void Ajax::update_video() {
     k052109_->draw_tiles();
     k051960_->update_sprites();  // DMA latch like MAME
 
-    // MAME ajax: screen.set_raw(..., 384, 8, 320, 264, 16, 240). Tiles, sprites
-    // and K051316 all use that cliprect. dest[0,0] is visarea pixel (8,16).
-    constexpr int kCropX = 8;
+    // MAME 0.260 ajax: screen.set_raw(24 MHz/3, 528, 108, 412, 256, 16, 240).
+    // Visarea is 304×224 with origin (108,16). Tiles, sprites and K051316 all
+    // use that cliprect; dest[0,0] is visarea pixel (108,16). Pascal used 112.
+    constexpr int kCropX = 108;
     constexpr int kCropY = 16;
 
     const int npix = kNativeWidth * kNativeHeight;

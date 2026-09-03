@@ -18,7 +18,7 @@
 
 namespace dsp {
 
-// Ajax / Typhoon (Konami, 1987), ported from ajax_hw.pas.
+// Ajax / Typhoon (Konami, 1987), matching MAME 0.260 (konami/ajax.cpp).
 //
 // Main CPU: Konami-1 @ 12 MHz (ported from konami.pas). Sub CPU is HD6309E in
 // 6809 emulation mode → M6809 @ 3 MHz. Sound is Z80 + YM2151 + dual K007232.

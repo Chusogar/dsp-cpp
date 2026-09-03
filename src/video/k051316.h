@@ -41,7 +41,7 @@ public:
     uint8_t rom_read(uint16_t address) const;
 
     // Draw zoom layer into dest (palette indices). Transparent pen 0 is skipped.
-    // crop_x/crop_y are the MAME cliprect origin (ajax visarea is 8,16).
+    // crop_x/crop_y are the MAME cliprect origin (ajax 0.260 visarea is 108,16).
     void draw(uint16_t* dest, int dest_w, int dest_h, int crop_x, int crop_y);
 
     void clean_video_buffer();
