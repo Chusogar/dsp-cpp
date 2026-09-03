@@ -37,8 +37,8 @@ void decode_fix(const uint8_t* src, size_t size, std::vector<uint8_t>& dest, int
 }
 
 void decode_sprites(const uint8_t* src, size_t size, std::vector<uint8_t>& dest, int* tiles_out) {
-    // FBNeo NeoDecodeSprites layout: right half at +0, left at +0x40, LSB-first pixels.
-    // Plane map per half: bit0=b0, bit1=b2, bit2=b1, bit3=b3.
+    // MAME neosprite_optimized_device::optimize_helper: left 8px from +0x40,
+    // right 8px from +0, planes 0/1/2/3 at +0/+2/+1/+3 of each 4-byte row.
     const int tiles = int(size / 128);
     dest.assign(size_t(tiles) * kSprWidth * kSprHeight, 0);
     for (int t = 0; t < tiles; t++) {
@@ -48,10 +48,10 @@ void decode_sprites(const uint8_t* src, size_t size, std::vector<uint8_t>& dest,
             const int row = y << 2;
             for (int x = 0; x < 8; x++) {
                 uint8_t left = 0;
-                left |= uint8_t(((tile[64 + row + 0] >> x) & 1) << 0);
-                left |= uint8_t(((tile[64 + row + 2] >> x) & 1) << 1);
-                left |= uint8_t(((tile[64 + row + 1] >> x) & 1) << 2);
-                left |= uint8_t(((tile[64 + row + 3] >> x) & 1) << 3);
+                left |= uint8_t(((tile[0x40 + row + 0] >> x) & 1) << 0);
+                left |= uint8_t(((tile[0x40 + row + 2] >> x) & 1) << 1);
+                left |= uint8_t(((tile[0x40 + row + 1] >> x) & 1) << 2);
+                left |= uint8_t(((tile[0x40 + row + 3] >> x) & 1) << 3);
                 uint8_t right = 0;
                 right |= uint8_t(((tile[row + 0] >> x) & 1) << 0);
                 right |= uint8_t(((tile[row + 2] >> x) & 1) << 1);
@@ -65,9 +65,15 @@ void decode_sprites(const uint8_t* src, size_t size, std::vector<uint8_t>& dest,
     if (tiles_out) *tiles_out = tiles;
 }
 
+// Horizontal shrink bitmasks verified on hardware (MAME neogeo_spr.cpp).
+constexpr uint16_t kZoomXTables[16] = {
+    0x0080, 0x0880, 0x0888, 0x2888, 0x288a, 0x2a8a, 0x2aaa, 0xaaaa,
+    0xaaea, 0xbaea, 0xbaeb, 0xbbeb, 0xbbef, 0xfbef, 0xfbff, 0xffff,
+};
+
 }  // namespace
 
-NeoGeoVideo::NeoGeoVideo() { build_zoom_table(); }
+NeoGeoVideo::NeoGeoVideo() = default;
 
 void NeoGeoVideo::reset() {
     vram_.fill(0);
@@ -127,67 +133,12 @@ void NeoGeoVideo::set_sprite_rom(const uint8_t* data, size_t size) {
 
 void NeoGeoVideo::set_lo_rom(const uint8_t* data, size_t size) {
     lo_rom_.assign(data, data + size);
-    build_zoom_table();
 }
 
 void NeoGeoVideo::decode_graphics() {
     decode_fix(cart_fix_.data(), cart_fix_.size(), fix_pixels_, &cart_fix_tiles_);
     decode_fix(bios_fix_.data(), bios_fix_.size(), bios_fix_pixels_, &bios_fix_tiles_);
     decode_sprites(sprite_rom_.data(), sprite_rom_.size(), sprite_pixels_, &sprite_tiles_);
-}
-
-void NeoGeoVideo::build_zoom_table() {
-    // Vertical zoom: 000-lo.lo holds 256 tables of 256 bytes. For each zoom z the
-    // first 16 entries map output slots -> source line (0..15) or $FF to skip.
-    for (int z = 0; z < 256; z++) {
-        ZoomRow& row = zoom_[size_t(z)];
-        row.draw.fill(0);
-        row.pixels = 0;
-        if (lo_rom_.size() >= 0x10000) {
-            int drawn = 0;
-            for (int i = 0; i < 16; i++) {
-                const uint8_t src = lo_rom_[size_t((z << 8) | i)];
-                if (src < 16) {
-                    row.draw[size_t(i)] = uint8_t(src + 1);  // store src_line+1; 0 = skip
-                    drawn++;
-                }
-            }
-            row.pixels = drawn > 0 ? drawn : 0;
-        } else {
-            int pixels = ((z + 1) * 16) >> 8;
-            if (z == 0xff) pixels = 16;
-            row.pixels = pixels;
-            int acc = 0, drawn = 0;
-            for (int i = 0; i < 16 && drawn < pixels; i++) {
-                acc += pixels;
-                if (acc >= 16) {
-                    acc -= 16;
-                    row.draw[size_t(i)] = uint8_t(i + 1);
-                    drawn++;
-                }
-            }
-            if (drawn == 0 && z > 0) {
-                row.draw[0] = 1;
-                row.pixels = 1;
-            }
-        }
-    }
-    // Horizontal shrink is 4-bit: $0 draws 1 pixel, $F draws the full 16.
-    for (int z = 0; z < 16; z++) {
-        ZoomRow& row = xzoom_[size_t(z)];
-        row.draw.fill(0);
-        const int pixels = z + 1;
-        row.pixels = pixels;
-        int acc = 0, drawn = 0;
-        for (int i = 0; i < 16 && drawn < pixels; i++) {
-            acc += pixels;
-            if (acc >= 16) {
-                acc -= 16;
-                row.draw[size_t(i)] = 1;
-                drawn++;
-            }
-        }
-    }
 }
 
 void NeoGeoVideo::ack_irq(uint8_t mask) {
@@ -342,7 +293,7 @@ void NeoGeoVideo::draw_fix(uint32_t* framebuffer) {
             if (tile == nullptr) continue;
             const int dest_x = col * 8;
             // Visible area is internal lines 16..239 (224 lines).
-            const int dest_y = row * 8 - 16;
+            const int dest_y = row * 8 - kVisibleTop;
             for (int y = 0; y < 8; y++) {
                 const int py = dest_y + y;
                 if (py < 0 || py >= kScreenHeight) continue;
@@ -358,126 +309,133 @@ void NeoGeoVideo::draw_fix(uint32_t* framebuffer) {
     }
 }
 
-void NeoGeoVideo::draw_sprite_line(uint32_t* framebuffer, int /*sprite*/, int /*tile*/, int dest_x,
-                                   int dest_y, int y_in_tile, int xzoom, bool flip_x, bool flip_y,
-                                   int palette, int code) {
+bool NeoGeoVideo::sprite_on_scanline(int scanline, int y, int rows) {
+    return rows == 0 || rows >= 0x20 || ((scanline - y) & 0x1ff) < (rows * 0x10);
+}
+
+void NeoGeoVideo::draw_sprite_pixels(uint32_t* framebuffer, int dest_y, int x, int src_y, int xzoom,
+                                     bool flip_x, int palette, int code) {
     const uint8_t* tile = sprite_tile(code);
     if (tile == nullptr) return;
-    int src_y = flip_y ? (15 - y_in_tile) : y_in_tile;
     if (src_y < 0 || src_y > 15) return;
     if (dest_y < 0 || dest_y >= kScreenHeight) return;
     const auto& pal = palette_rgb_[size_t(palette_bank_)];
-    const ZoomRow& zoom = xzoom_[size_t(xzoom & 0x0f)];
     uint32_t* line = framebuffer + dest_y * kScreenWidth;
-    int x = dest_x;
-    for (int px = 0; px < 16; px++) {
-        if (!zoom.draw[size_t(px)]) continue;
-        const int src_x = flip_x ? (15 - px) : px;
-        const uint8_t pen = tile[src_y * 16 + src_x];
-        if (pen != 0 && x >= 0 && x < kScreenWidth) {
-            line[x] = pal[size_t(((palette & 0xff) << 4) | pen)];
+    uint16_t zoom_bits = kZoomXTables[xzoom & 0x0f];
+    int src_x = flip_x ? 15 : 0;
+    const int src_inc = flip_x ? -1 : 1;
+    if (x <= 0x1f0) {
+        int dest_x = x;
+        for (int i = 0; i < 16; i++) {
+            if (zoom_bits & 0x8000) {
+                if (dest_x >= 0 && dest_x < kScreenWidth) {
+                    const uint8_t pen = tile[src_y * 16 + src_x];
+                    if (pen != 0) {
+                        line[dest_x] = pal[size_t(((palette & 0xff) << 4) | pen)];
+                    }
+                }
+                dest_x++;
+            }
+            zoom_bits = uint16_t(zoom_bits << 1);
+            if (zoom_bits == 0) break;
+            src_x += src_inc;
         }
-        x++;
+        return;
+    }
+    // x in 0x1f1..0x1ff wraps onto the left edge of the visarea.
+    int wrapped = x;
+    int dest_x = 0;
+    for (int i = 0; i < 16; i++) {
+        if (zoom_bits & 0x8000) {
+            if (wrapped >= 0x200 && dest_x < kScreenWidth) {
+                const uint8_t pen = tile[src_y * 16 + src_x];
+                if (pen != 0) {
+                    line[dest_x] = pal[size_t(((palette & 0xff) << 4) | pen)];
+                }
+                dest_x++;
+            }
+            wrapped++;
+        }
+        zoom_bits = uint16_t(zoom_bits << 1);
+        if (zoom_bits == 0) break;
+        src_x += src_inc;
     }
 }
 
 void NeoGeoVideo::draw_sprites(uint32_t* framebuffer) {
-    int chain_x = 0;
-    int chain_xzoom = 0x0f;
-    int chain_y = 0;
-    int chain_size = 0;
-    int chain_yzoom = 0xff;
-    for (int sprite = 1; sprite < kSpriteCount; sprite++) {
-        const uint16_t scb3 = vram_[0x8200 + sprite];
-        const int size = scb3 & 0x3f;
-        const bool sticky = (scb3 & 0x40) != 0;
-        const uint16_t scb2 = vram_[0x8000 + sprite];
-        int yzoom = scb2 & 0xff;
-        int xzoom = (scb2 >> 8) & 0x0f;
-        int sx;
-        int sy;
-        int draw_size;
-        if (sticky) {
-            sx = chain_x;
-            xzoom = chain_xzoom;
-            sy = chain_y;
-            yzoom = chain_yzoom;
-            draw_size = chain_size;
-        } else {
-            // FBNeo: nBankYPos = (0x200 - (SCB3>>7)) & 0x1FF; screen row = nYPos - 0x10
-            sx = (vram_[0x8400 + sprite] >> 7) & 0x1ff;
-            if (sx >= 0x1e0) sx -= 0x200;
-            sy = int((0x200 - ((scb3 >> 7) & 0x1ff)) & 0x1ff);
-            draw_size = size;
-            chain_x = sx;
-            chain_xzoom = xzoom;
-            chain_y = sy;
-            chain_yzoom = yzoom;
-            chain_size = size;
-        }
-        if (draw_size == 0) continue;
+    // MAME neosprite_base_device::parse_sprites + draw_sprites, but evaluated
+    // per visible scanline instead of through the $8600/$8680 line lists.
+    for (int fy = 0; fy < kScreenHeight; fy++) {
+        const int scanline = fy + kVisibleTop;
+        int y = 0;
+        int x = 0;
+        int rows = 0;
+        int zoom_y = 0;
+        int zoom_x = 0;
+        int drawn = 0;
+        for (int sprite = 0; sprite < kSpriteCount; sprite++) {
+            const uint16_t y_control = vram_[0x8200 + sprite];
+            const uint16_t zoom_control = vram_[0x8000 + sprite];
+            if (y_control & 0x40) {
+                x = (x + zoom_x + 1) & 0x1ff;
+                zoom_x = (zoom_control >> 8) & 0x0f;
+            } else {
+                y = 0x200 - (y_control >> 7);
+                x = vram_[0x8400 + sprite] >> 7;
+                zoom_y = zoom_control & 0xff;
+                zoom_x = (zoom_control >> 8) & 0x0f;
+                rows = y_control & 0x3f;
+            }
+            if (rows == 0) continue;
+            if (!sprite_on_scanline(scanline, y, rows)) continue;
+            if (x >= 0x140 && x <= 0x1f0) {
+                if (++drawn >= kSpritesPerLine) break;
+                continue;
+            }
 
-        const uint16_t* scb1 = &vram_[sprite * 64];
-        const int strip_lines = draw_size * 16;
-        // Y-zoom via LO-ROM (FBNeo NeoZoomROM). For yzoom==0xFF the table is
-        // identity and we draw every source line of the strip. For smaller zoom
-        // values, only (yzoom+1) output slots are produced per 16-tile period.
-        const uint8_t* ytable = (lo_rom_.size() >= 0x10000)
-                                    ? lo_rom_.data() + (size_t(yzoom) << 8)
-                                    : nullptr;
-        int fb_y = int(sy & 0x1ff) - 16;  // FBNeo: nYPos - 0x10
+            int sprite_line = (scanline - y) & 0x1ff;
+            int zoom_line = sprite_line & 0xff;
+            bool invert = (sprite_line & 0x100) != 0;
+            if (invert) zoom_line ^= 0xff;
+            if (rows > 0x20) {
+                const int period = (zoom_y + 1) << 1;
+                if (period > 0) zoom_line %= period;
+                if (zoom_line > zoom_y) {
+                    zoom_line = ((zoom_y + 1) << 1) - 1 - zoom_line;
+                    invert = !invert;
+                }
+            }
 
-        auto plot_src_line = [&](int src_line, int dest_y) {
-            if (src_line < 0 || src_line >= strip_lines) return;
-            const int tile_index = src_line >> 4;
-            if (tile_index >= draw_size) return;
-            const int row = src_line & 15;
-            const uint16_t tile_lo = scb1[tile_index * 2];
-            const uint16_t attr = scb1[tile_index * 2 + 1];
+            int src_y;
+            int tile;
+            if (lo_rom_.size() >= 0x10000) {
+                const uint8_t entry = lo_rom_[size_t((zoom_y << 8) | zoom_line)];
+                src_y = entry & 0x0f;
+                tile = entry >> 4;
+            } else {
+                src_y = zoom_line & 0x0f;
+                tile = (zoom_line >> 4) & 0x1f;
+            }
+            if (invert) {
+                src_y ^= 0x0f;
+                tile ^= 0x1f;
+            }
+
+            const uint16_t tile_lo = vram_[sprite * 64 + tile * 2];
+            const uint16_t attr = vram_[sprite * 64 + tile * 2 + 1];
             int code = int(tile_lo) | (int(attr & 0x00f0) << 12);
-            // FBNeo auto-animation: bits 3 / 2, REPLACE
-            // Fix-layer auto-anim disabled: static HUD tiles use full 12-bit codes.
-            // (Sprite auto-anim is handled separately in draw_sprites.)
+            if ((lspc_mode_ & 0x08) == 0) {
+                if (attr & 0x0008) code = (code & ~0x07) | (auto_anim_ & 7);
+                else if (attr & 0x0004) code = (code & ~0x03) | (auto_anim_ & 3);
+            }
+            if (attr & 0x0002) src_y ^= 0x0f;
             const int palette = (attr >> 8) & 0xff;
             const bool flip_x = (attr & 0x0001) != 0;
-            const bool flip_y = (attr & 0x0002) != 0;
-            const int draw_row = flip_y ? (15 - row) : row;
-            draw_sprite_line(framebuffer, sprite, tile_index, sx, dest_y, draw_row, xzoom,
-                             flip_x, false, palette, code);
-        };
+            draw_sprite_pixels(framebuffer, fy, x, src_y, zoom_x, flip_x, palette, code);
 
-        if (ytable == nullptr || yzoom == 0xff) {
-            // Full height / no table: 1:1 source lines
-            for (int src_line = 0; src_line < strip_lines; src_line++) {
-                plot_src_line(src_line, fb_y);
-                fb_y++;
-            }
-        } else {
-            // Reduced zoom: for each group of the strip, emit (yzoom+1) lines
-            // using LO table entries as (tile<<4)|row selectors.
-            const int slots = yzoom + 1;
-            for (int base = 0; base < strip_lines; base += 16) {
-                for (int slot = 0; slot < slots; slot++) {
-                    const int entry = int(ytable[slot]);
-                    const int src_line = base + (entry & 0x0f) + ((entry >> 4) << 4);
-                    // entry high nibble selects tile relative to base's tile group
-                    const int rel_tile = (entry >> 4) & 0x0f;
-                    const int rel_row = entry & 0x0f;
-                    const int src = ((base >> 4) + rel_tile) * 16 + rel_row;
-                    plot_src_line(src, fb_y);
-                    fb_y++;
-                }
-                // Only one 16-tile zoom period is encoded in LO; for taller strips
-                // hardware repeats the period — step by slots worth of "output"
-                // matched to how many source tiles the table spans (typically 1).
-                if (slots <= 16) {
-                    // compressed single tile: advance one tile worth
-                    // actually advance is implicit via base += 16
-                }
-            }
+            drawn++;
+            if (drawn >= kSpritesPerLine) break;
         }
-        // Sticky chain: next column advances by drawn width (xzoom+1)
-        chain_x += (xzoom & 0x0f) + 1;
     }
 }
 
