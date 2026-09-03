@@ -343,6 +343,11 @@ add_executable(dsp_tests
   src/drivers/armedf_hw.cpp
   src/drivers/skullxbo.cpp
   src/drivers/bublbobl.cpp
+  src/drivers/ajax.cpp
+  src/video/k052109.cpp
+  src/video/k051960.cpp
+  src/video/k051316.cpp
+  src/sound/k007232.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)
