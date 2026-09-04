@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <initializer_list>
 
 #include "core/rom_loader.h"
 #include "machine/kabuki.h"
@@ -132,8 +133,18 @@ const std::array<Cps1::BankMap, 14> kBanks = {{
        {kScroll3, 0x6800, 0x7fff, 0}}}},
 }};
 
-const int kPt2X[32] = {4,  0,  12, 8,  20, 16, 28, 24, 36, 32, 44, 40, 52, 48, 60, 56,
-                       68, 64, 76, 72, 84, 80, 92, 88, 100, 96, 108, 104, 116, 112, 124, 120};
+std::vector<int> step_offsets(int count, int start, int stride) {
+    std::vector<int> out;
+    out.resize(size_t(count));
+    for (int i = 0; i < count; i++) out[size_t(i)] = start + i * stride;
+    return out;
+}
+
+std::vector<int> concat_offsets(std::initializer_list<std::vector<int>> parts) {
+    std::vector<int> out;
+    for (const auto& part : parts) out.insert(out.end(), part.begin(), part.end());
+    return out;
+}
 
 // gfx RAM is 0x18000 words. 0x17fff is not a contiguous bitmask (bit 15 is
 // clear), so `& 0x17fff` aliases 0xa000 to 0x2000 and breaks the palette.
@@ -206,6 +217,10 @@ bool load_64b_b(RomLoader& loader, const std::vector<RomEntry>& entries, std::ve
     return true;
 }
 
+// MAME cps1_layout8x8 / 8x8_2 / 16x16 / 32x32: raw 64-bit gfx ROM.
+// planes {24,16,8,0}, STEP8(0,1) x offsets. Plane 0 is the pen MSB (MAME
+// drawgfx). Do not run cps1_gfx_decode first — that path was for the older
+// packed-nibble layouts and garbles every 8x8 column.
 GfxLayout char_layout(int total, bool odd) {
     GfxLayout layout;
     layout.width = 8;
@@ -213,9 +228,9 @@ GfxLayout char_layout(int total, bool odd) {
     layout.total = total;
     layout.planes = 4;
     layout.char_increment = 64 * 8;
-    layout.plane_offsets = {0, 1, 2, 3};
-    layout.x_offsets.assign(kPt2X + (odd ? 8 : 0), kPt2X + (odd ? 16 : 8));
-    layout.y_offsets = {0 * 64, 1 * 64, 2 * 64, 3 * 64, 4 * 64, 5 * 64, 6 * 64, 7 * 64};
+    layout.plane_offsets = {24, 16, 8, 0};
+    layout.x_offsets = step_offsets(8, odd ? 32 : 0, 1);
+    layout.y_offsets = step_offsets(8, 0, 64);
     return layout;
 }
 
@@ -225,11 +240,10 @@ GfxLayout tile16_layout(int total) {
     layout.height = 16;
     layout.total = total;
     layout.planes = 4;
-    layout.char_increment = 128 * 8;
-    layout.plane_offsets = {0, 1, 2, 3};
-    layout.x_offsets.assign(kPt2X, kPt2X + 16);
-    layout.y_offsets = {0 * 64,  1 * 64,  2 * 64,  3 * 64,  4 * 64,  5 * 64,  6 * 64,  7 * 64,
-                        8 * 64,  9 * 64,  10 * 64, 11 * 64, 12 * 64, 13 * 64, 14 * 64, 15 * 64};
+    layout.char_increment = 4 * 16 * 16;
+    layout.plane_offsets = {24, 16, 8, 0};
+    layout.x_offsets = concat_offsets({step_offsets(8, 0, 1), step_offsets(8, 32, 1)});
+    layout.y_offsets = step_offsets(16, 0, 64);
     return layout;
 }
 
@@ -239,11 +253,11 @@ GfxLayout tile32_layout(int total) {
     layout.height = 32;
     layout.total = total;
     layout.planes = 4;
-    layout.char_increment = 512 * 8;
-    layout.plane_offsets = {0, 1, 2, 3};
-    layout.x_offsets.assign(kPt2X, kPt2X + 32);
-    layout.y_offsets.resize(32);
-    for (int i = 0; i < 32; i++) layout.y_offsets[size_t(i)] = i * 128;
+    layout.char_increment = 4 * 32 * 32;
+    layout.plane_offsets = {24, 16, 8, 0};
+    layout.x_offsets = concat_offsets({step_offsets(8, 0, 1), step_offsets(8, 32, 1),
+                                       step_offsets(8, 64, 1), step_offsets(8, 96, 1)});
+    layout.y_offsets = step_offsets(32, 0, 128);
     return layout;
 }
 
@@ -261,10 +275,10 @@ Cps1::Cps1(Game game)
         screen_height_ = kScreenWidth;
     }
     rom_.assign(0x100000, 0);
-    scroll1_.assign(448 * 248, 0);
+    scroll1_.assign(512 * 512, 0);
     scroll2_.assign(1024 * 1024, 0);
-    scroll3_.assign(480 * 320, 0);
-    priority_.assign(1024 * 1024, 0);
+    scroll3_.assign(2048 * 2048, 0);
+    priority_.assign(2048 * 2048, 0);
     composite_.assign(kWorkSize * kWorkSize, 0);
     framebuffer_.assign(size_t(screen_width_ * screen_height_), 0);
     qsnd_opcode_.assign(0x8000, 0);
@@ -338,6 +352,7 @@ void Cps1::reset() {
     sprites_pri_draw_ = false;
     rowscroll_ena_ = false;
     flip_screen_ = false;
+    video_control_ = 0;
     palette_dirty_.fill(1);
     pri_mask0_ = pri_mask1_ = pri_mask2_ = pri_mask3_ = 0;
     calc_mask(0, 0);
@@ -462,13 +477,14 @@ uint16_t Cps1::read_io(uint16_t dir) const {
 void Cps1::write_io(uint16_t dir, uint16_t value) {
     auto object_base = [](uint16_t val) { return uint32_t(val) * 256u - 0x900000u; };
     switch (dir) {
-        case 0x100: cps1_sprites_ = object_base(value) >> 1; break;
+        case 0x100: cps1_sprites_ = (object_base(value) & ~0x7ffu) >> 1; break;
         case 0x102: cps1_scroll1_ = (object_base(value) & ~0x3fffu); break;
         case 0x104: cps1_scroll2_ = (object_base(value) & ~0x3fffu); break;
         case 0x106: cps1_scroll3_ = (object_base(value) & ~0x3fffu); break;
-        case 0x108: cps1_rowscroll_ = object_base(value) >> 1; break;
+        case 0x108: cps1_rowscroll_ = (object_base(value) & ~0x7ffu) >> 1; break;
         case 0x10a:
-            cps1_pal_ = object_base(value) & 0x1ffff;
+            cps1_pal_ = object_base(value) & 0x3ffff;
+            cps1_pal_ &= ~0x3ffu;
             palette_dirty_.fill(1);
             pal_change_ = true;
             break;
@@ -484,6 +500,7 @@ void Cps1::write_io(uint16_t dir, uint16_t value) {
         case 0x11e: stars_y2_ = value; break;
         case 0x120: cps1_rowscrollstart_ = value & 0x7ff; break;
         case 0x122:
+            video_control_ = value;
             flip_screen_ = (value & 0x8000) != 0;
             rowscroll_ena_ = (value & 1) != 0;
             break;
@@ -734,14 +751,12 @@ void Cps1::blit_scrolled(const std::vector<uint32_t>& src, int src_w, int src_h,
 }
 
 void Cps1::blit_rowscroll() {
-    std::array<uint16_t, 0x400> rows{};
-    for (int i = 0; i < 0x400; i++) {
-        uint32_t index = vram_index(cps1_rowscroll_ + cps1_rowscrollstart_ + uint32_t(i));
-        rows[size_t(i)] = vram_[index];
-    }
+    // MAME: set_scrollx((i - (-scroll_y)) & 0x3ff, scroll_x + other[(i + offs) & 0x3ff])
+    // for i in 0..255, so bitmap line y uses other[(y + offs) & 0x3ff].
     for (int y = 0; y < kWorkSize; y++) {
         int sy = (y + int(scroll_y2_)) & 1023;
-        int xoff = int(scroll_x2_) + int(rows[size_t(y & 0x3ff)]);
+        uint32_t index = vram_index(cps1_rowscroll_ + ((uint32_t(y) + cps1_rowscrollstart_) & 0x3ff));
+        int xoff = int(scroll_x2_) + int(vram_[index]);
         for (int x = 0; x < kWorkSize; x++) {
             int sx = (x + xoff) & 1023;
             uint32_t pixel = scroll2_[size_t(sy * 1024 + sx)];
@@ -751,60 +766,66 @@ void Cps1::blit_rowscroll() {
 }
 
 void Cps1::draw_sprites() {
-    int last = 0xfe;
-    for (int f = 0; f <= 0xfe; f++) {
-        if (sprite_buffer_[size_t(f * 4 + 3)] == 0xff00) {
-            last = f;
+    int last = 0xff;
+    for (int f = 0; f <= 0xff; f++) {
+        if ((sprite_buffer_[size_t(f * 4 + 3)] & 0xff00) == 0xff00) {
+            last = f - 1;
             break;
         }
     }
+    auto blit_sprite = [&](int code, int pal_base, bool flipx, bool flipy, int x, int y) {
+        const uint8_t* pixels = tiles16_.element(code);
+        for (int row = 0; row < 16; row++) {
+            int sy = flipy ? 15 - row : row;
+            int dy_pix = (y + row) & 0x1ff;
+            for (int px = 0; px < 16; px++) {
+                int sx = flipx ? 15 - px : px;
+                uint8_t pen = pixels[sy * 16 + sx];
+                if (pen == 15) continue;
+                int dx_pix = (x + px) & 0x1ff;
+                composite_[size_t(dy_pix * kWorkSize + dx_pix)] =
+                    palette_[size_t((pal_base + pen) & 0xbff)];
+            }
+        }
+    };
     for (int f = last; f >= 0; f--) {
         int nchar = gfx_bank(kSprites, sprite_buffer_[size_t(f * 4 + 2)]);
         if (nchar < 0) continue;
         uint16_t color = sprite_buffer_[size_t(f * 4 + 3)];
-        int x = sprite_buffer_[size_t(f * 4 + 0)];
-        int y = sprite_buffer_[size_t(f * 4 + 1)];
+        int x = sprite_buffer_[size_t(f * 4 + 0)] & 0x1ff;
+        int y = sprite_buffer_[size_t(f * 4 + 1)] & 0x1ff;
         int pal_base = (color & 0x1f) << 4;
-        int rx = (color >> 8) & 0xf;
-        int ry = (color >> 12) & 0xf;
         bool flipx = (color & 0x20) != 0;
         bool flipy = (color & 0x40) != 0;
-        int dx = 16, dy = 16, dxx = -((rx + 1) << 4);
-        if (flipx) {
-            x += rx << 4;
-            dx = -16;
-            dxx = (rx + 1) << 4;
+        if ((color & 0xff00) == 0) {
+            blit_sprite(nchar, pal_base, flipx, flipy, x, y);
+            continue;
         }
-        if (flipy) {
-            y += ry << 4;
-            dy = -16;
-        }
-        for (int yy = 0; yy <= ry; yy++) {
-            for (int xx = 0; xx <= rx; xx++) {
-                int code = nchar + xx + (yy << 4);
-                const uint8_t* pixels = tiles16_.element(code);
-                for (int row = 0; row < 16; row++) {
-                    int sy = flipy ? 15 - row : row;
-                    int dy_pix = (y + row) & 0x1ff;
-                    for (int px = 0; px < 16; px++) {
-                        int sx = flipx ? 15 - px : px;
-                        uint8_t pen = pixels[sy * 16 + sx];
-                        if (pen == 15) continue;
-                        int dx_pix = (x + px) & 0x1ff;
-                        composite_[size_t(dy_pix * kWorkSize + dx_pix)] =
-                            palette_[size_t((pal_base + pen) & 0xbff)];
-                    }
+        int nx = ((color >> 8) & 0xf) + 1;
+        int ny = ((color >> 12) & 0xf) + 1;
+        for (int nys = 0; nys < ny; nys++) {
+            int sy = (y + nys * 16) & 0x1ff;
+            for (int nxs = 0; nxs < nx; nxs++) {
+                int sx = (x + nxs * 16) & 0x1ff;
+                int code;
+                if (flipy) {
+                    if (flipx)
+                        code = (nchar & ~0xf) + ((nchar + (nx - 1) - nxs) & 0xf) + 0x10 * (ny - 1 - nys);
+                    else
+                        code = (nchar & ~0xf) + ((nchar + nxs) & 0xf) + 0x10 * (ny - 1 - nys);
+                } else if (flipx) {
+                    code = (nchar & ~0xf) + ((nchar + (nx - 1) - nxs) & 0xf) + 0x10 * nys;
+                } else {
+                    code = (nchar & ~0xf) + ((nchar + nxs) & 0xf) + 0x10 * nys;
                 }
-                x += dx;
+                blit_sprite(code, pal_base, flipx, flipy, sx, sy);
             }
-            x += dxx;
-            y += dy;
         }
     }
-    if (sprites_pri_draw_) {
-        blit_scrolled(priority_, 1024, 1024, scroll_pri_x_, scroll_pri_y_);
-        sprites_pri_draw_ = false;
-    }
+        if (sprites_pri_draw_) {
+            blit_scrolled(priority_, 2048, 2048, scroll_pri_x_, scroll_pri_y_);
+            sprites_pri_draw_ = false;
+        }
 }
 
 void Cps1::draw_layer(int nlayer, bool sprite_next) {
@@ -816,40 +837,38 @@ void Cps1::draw_layer(int nlayer, bool sprite_next) {
     if (nlayer == 1 && (cps1_layer_ & b.mask_sc1) != 0) {
         std::fill(scroll1_.begin(), scroll1_.end(), 0);
         if (sprite_next) std::fill(priority_.begin(), priority_.end(), 0);
-        for (int f = 0; f <= 0x6c7; f++) {
-            int x = f % 56;
-            int y = f / 56;
-            int sx = x + ((scroll_x1_ & 0x1f8) / 8);
-            int sy = y + ((scroll_y1_ & 0x1f8) / 8);
-            int pos = (sy & 0x1f) + ((sx & 0x3f) << 5) + ((sy & 0x20) << 6);
-            uint32_t address = cps1_scroll1_ + uint32_t(pos * 4);
-            uint16_t atrib = vram_[vram_index_from_byte(address + 2)];
-            int nchar = gfx_bank(kScroll1, vram_[vram_index_from_byte(address)]);
-            if (nchar < 0) {
-                clear_tile(scroll1_, 448, 248, x * 8, y * 8, 8);
-                if (sprite_next) clear_tile(priority_, 1024, 1024, x * 8, y * 8, 8);
-                continue;
-            }
-            bool flipx = (atrib & 0x20) != 0;
-            bool flipy = (atrib & 0x40) != 0;
-            int color = ((atrib & 0x1f) + 0x20) << 4;
-            const GfxSet& gfx = ((pos & 0x20) != 0) ? chars1_ : chars0_;
-            draw_tile(gfx, scroll1_, 448, 248, x * 8, y * 8, nchar, color, flipx, flipy, nullptr);
-            if (sprite_next) {
-                int pant = (atrib & 0x180) >> 7;
-                draw_tile(gfx, priority_, 1024, 1024, x * 8, y * 8, nchar, color, flipx, flipy,
-                          trans_alt_[size_t(pant)].data());
+        for (int y = 0; y < 64; y++) {
+            for (int x = 0; x < 64; x++) {
+                int pos = (y & 0x1f) + ((x & 0x3f) << 5) + ((y & 0x20) << 6);
+                uint32_t address = cps1_scroll1_ + uint32_t(pos * 4);
+                uint16_t atrib = vram_[vram_index_from_byte(address + 2)];
+                int nchar = gfx_bank(kScroll1, vram_[vram_index_from_byte(address)]);
+                if (nchar < 0) {
+                    clear_tile(scroll1_, 512, 512, x * 8, y * 8, 8);
+                    if (sprite_next) clear_tile(priority_, 2048, 2048, x * 8, y * 8, 8);
+                    continue;
+                }
+                bool flipx = (atrib & 0x20) != 0;
+                bool flipy = (atrib & 0x40) != 0;
+                int color = ((atrib & 0x1f) + 0x20) << 4;
+                const GfxSet& gfx = ((pos & 0x20) != 0) ? chars1_ : chars0_;
+                draw_tile(gfx, scroll1_, 512, 512, x * 8, y * 8, nchar, color, flipx, flipy, nullptr);
+                if (sprite_next) {
+                    int pant = (atrib & 0x180) >> 7;
+                    draw_tile(gfx, priority_, 2048, 2048, x * 8, y * 8, nchar, color, flipx, flipy,
+                              trans_alt_[size_t(pant)].data());
+                }
             }
         }
         if (sprite_next) {
             sprites_pri_draw_ = true;
-            scroll_pri_x_ = scroll_x1_ & 7;
-            scroll_pri_y_ = scroll_y1_ & 7;
+            scroll_pri_x_ = scroll_x1_ & 0x1ff;
+            scroll_pri_y_ = scroll_y1_ & 0x1ff;
         }
-        blit_scrolled(scroll1_, 448, 248, scroll_x1_ & 7, scroll_y1_ & 7);
+        blit_scrolled(scroll1_, 512, 512, scroll_x1_ & 0x1ff, scroll_y1_ & 0x1ff);
         return;
     }
-    if (nlayer == 2 && (cps1_layer_ & b.mask_sc2) != 0) {
+    if (nlayer == 2 && (cps1_layer_ & b.mask_sc2) != 0 && (video_control_ & 4) != 0) {
         std::fill(scroll2_.begin(), scroll2_.end(), 0);
         if (sprite_next) std::fill(priority_.begin(), priority_.end(), 0);
         for (int f = 0; f <= 0xfff; f++) {
@@ -861,7 +880,7 @@ void Cps1::draw_layer(int nlayer, bool sprite_next) {
             int nchar = gfx_bank(kScroll2, vram_[vram_index_from_byte(address)]);
             if (nchar < 0) {
                 clear_tile(scroll2_, 1024, 1024, x * 16, y * 16, 16);
-                if (sprite_next) clear_tile(priority_, 1024, 1024, x * 16, y * 16, 16);
+                if (sprite_next) clear_tile(priority_, 2048, 2048, x * 16, y * 16, 16);
                 continue;
             }
             bool flipx = (atrib & 0x20) != 0;
@@ -871,7 +890,7 @@ void Cps1::draw_layer(int nlayer, bool sprite_next) {
                       nullptr);
             if (sprite_next) {
                 int pant = (atrib & 0x180) >> 7;
-                draw_tile(tiles16_, priority_, 1024, 1024, x * 16, y * 16, nchar, color, flipx, flipy,
+                draw_tile(tiles16_, priority_, 2048, 2048, x * 16, y * 16, nchar, color, flipx, flipy,
                           trans_alt_[size_t(pant)].data());
             }
         }
@@ -884,40 +903,38 @@ void Cps1::draw_layer(int nlayer, bool sprite_next) {
         else blit_rowscroll();
         return;
     }
-    if (nlayer == 3 && (cps1_layer_ & b.mask_sc3) != 0) {
+    if (nlayer == 3 && (cps1_layer_ & b.mask_sc3) != 0 && (video_control_ & 8) != 0) {
         std::fill(scroll3_.begin(), scroll3_.end(), 0);
         if (sprite_next) std::fill(priority_.begin(), priority_.end(), 0);
-        for (int f = 0; f <= 0x95; f++) {
-            int x = f % 15;
-            int y = f / 15;
-            int sx = x + ((scroll_x3_ & 0x7e0) / 32);
-            int sy = y + ((scroll_y3_ & 0x7e0) / 32);
-            int pos = (sy & 0x07) + ((sx & 0x3f) << 3) + ((sy & 0x38) << 6);
-            uint32_t address = cps1_scroll3_ + uint32_t(pos * 4);
-            uint16_t atrib = vram_[vram_index_from_byte(address + 2)];
-            int nchar = gfx_bank(kScroll3, vram_[vram_index_from_byte(address)]);
-            if (nchar < 0) {
-                clear_tile(scroll3_, 480, 320, x * 32, y * 32, 32);
-                if (sprite_next) clear_tile(priority_, 1024, 1024, x * 32, y * 32, 32);
-                continue;
-            }
-            bool flipx = (atrib & 0x20) != 0;
-            bool flipy = (atrib & 0x40) != 0;
-            int color = ((atrib & 0x1f) + 0x60) << 4;
-            draw_tile(tiles32_, scroll3_, 480, 320, x * 32, y * 32, nchar, color, flipx, flipy,
-                      nullptr);
-            if (sprite_next) {
-                int pant = (atrib & 0x180) >> 7;
-                draw_tile(tiles32_, priority_, 1024, 1024, x * 32, y * 32, nchar, color, flipx, flipy,
-                          trans_alt_[size_t(pant)].data());
+        for (int y = 0; y < 64; y++) {
+            for (int x = 0; x < 64; x++) {
+                int pos = (y & 0x07) + ((x & 0x3f) << 3) + ((y & 0x38) << 6);
+                uint32_t address = cps1_scroll3_ + uint32_t(pos * 4);
+                uint16_t atrib = vram_[vram_index_from_byte(address + 2)];
+                int nchar = gfx_bank(kScroll3, vram_[vram_index_from_byte(address)] & 0x3fff);
+                if (nchar < 0) {
+                    clear_tile(scroll3_, 2048, 2048, x * 32, y * 32, 32);
+                    if (sprite_next) clear_tile(priority_, 2048, 2048, x * 32, y * 32, 32);
+                    continue;
+                }
+                bool flipx = (atrib & 0x20) != 0;
+                bool flipy = (atrib & 0x40) != 0;
+                int color = ((atrib & 0x1f) + 0x60) << 4;
+                draw_tile(tiles32_, scroll3_, 2048, 2048, x * 32, y * 32, nchar, color, flipx, flipy,
+                          nullptr);
+                if (sprite_next) {
+                    int pant = (atrib & 0x180) >> 7;
+                    draw_tile(tiles32_, priority_, 2048, 2048, x * 32, y * 32, nchar, color, flipx,
+                              flipy, trans_alt_[size_t(pant)].data());
+                }
             }
         }
         if (sprite_next) {
             sprites_pri_draw_ = true;
-            scroll_pri_x_ = scroll_x3_ & 0x1f;
-            scroll_pri_y_ = scroll_y3_ & 0x1f;
+            scroll_pri_x_ = scroll_x3_ & 0x7ff;
+            scroll_pri_y_ = scroll_y3_ & 0x7ff;
         }
-        blit_scrolled(scroll3_, 480, 320, scroll_x3_ & 0x1f, scroll_y3_ & 0x1f);
+        blit_scrolled(scroll3_, 2048, 2048, scroll_x3_ & 0x7ff, scroll_y3_ & 0x7ff);
     }
 }
 
@@ -1635,7 +1652,6 @@ bool Cps1::load_roms(const std::string& rom_path, std::string* error) {
     if (!oki.empty()) oki_.set_rom(std::move(oki));
     if (gfx.size() < gfx_size) gfx.resize(gfx_size, 0);
     if (gfx.size() > gfx_size) gfx.resize(gfx_size);
-    cps1_gfx_decode(gfx);
     decode_graphics(gfx, chars, tiles16, tiles32);
     warnings_ = loader.warnings();
     return true;

@@ -62,6 +62,7 @@
 #include "drivers/arcade/bublbobl.h"
 #include "drivers/arcade/ajax.h"
 #include "drivers/arcade/armedf_hw.h"
+#include "drivers/arcade/cps1.h"
 #include "drivers/arcade/system16.h"
 #include "machine/fd1089.h"
 #include "machine/bagman_pal.h"
@@ -415,6 +416,24 @@ void test_gfx_decode() {
     // lands at the bottom left; the old top-right (colour 2) is the new top-left.
     check(pixels[7 * 8] == 3, "ccw rotation moves the top left pixel to the bottom left");
     check(pixels[0] == 2, "ccw rotation moves the old top right pixel to the top left");
+
+    // MAME CPS1: plane 0 is the pen LSB, bits are still taken MSB-first.
+    std::vector<uint8_t> cps_rom(8, 0);
+    cps_rom[3] = 0x80;  // plane offset 24, x=0, y=0 → byte 3 bit 7
+    dsp::GfxLayout cps;
+    cps.width = 8;
+    cps.height = 1;
+    cps.total = 1;
+    cps.planes = 4;
+    cps.char_increment = 64;
+    cps.lsb_first = true;
+    cps.plane_offsets = {24, 16, 8, 0};
+    cps.x_offsets = {0, 1, 2, 3, 4, 5, 6, 7};
+    cps.y_offsets = {0};
+    dsp::GfxSet cps_gfx;
+    cps_gfx.decode(cps, cps_rom);
+    check(cps_gfx.element(0)[0] == 1, "CPS1 plane 0 is the pen LSB");
+    check(cps_gfx.element(0)[1] == 0, "CPS1 neighbouring pixel stays empty");
 }
 
 void test_palette_weights() {
@@ -3259,6 +3278,52 @@ void test_ajax_without_roms() {
           "Ajax screen is 224x304 after 90° rotation");
 }
 
+void test_cps1_without_roms() {
+    dsp::Cps1 missing(dsp::Cps1::Game::Sf2);
+    check(std::strcmp(missing.title(), "Street Fighter II") == 0, "Street Fighter II title");
+    check(missing.screen_width() == 384 && missing.screen_height() == 224,
+          "CPS1 screen is 384x224");
+    std::string error = "unset";
+    check(!missing.init("/no/such/sf2.zip", &error), "missing Street Fighter II ROMs fail init");
+    check(error != "unset" && !error.empty(), "Street Fighter II reports why the set is missing");
+
+    dsp::Cps1 fight(dsp::Cps1::Game::Ffight);
+    check(std::strcmp(fight.title(), "Final Fight") == 0, "Final Fight title");
+}
+
+void test_cps1_roms_if_present() {
+    const char* rom = "/tmp/roms/sf2.zip";
+    if (!std::filesystem::exists(rom)) {
+        std::printf("skip: no /tmp/roms/sf2.zip\n");
+        return;
+    }
+    dsp::Cps1 machine(dsp::Cps1::Game::Sf2);
+    std::string error;
+    check(machine.init(rom, &error), "Street Fighter II MAME set loads");
+    check(machine.debug_pc() != 0, "Street Fighter II 68000 left reset");
+    const uint8_t* letter_s = machine.debug_char0(0x14053);
+    check(letter_s[0] == 15 && letter_s[7] == 15, "SF2 8x8 S has rounded top corners");
+    int top_bar = 0;
+    for (int x = 1; x < 7; x++) {
+        if (letter_s[x] != 15) top_bar++;
+    }
+    check(top_bar >= 5, "SF2 8x8 S has a solid top bar");
+    check(letter_s[2 * 8 + 3] == 15 && letter_s[2 * 8 + 4] == 15,
+          "SF2 8x8 S is hollow in the upper middle");
+    for (int i = 0; i < 180; i++) machine.run_frame();
+    check(unique_pixels(machine) >= 4, "Street Fighter II POST is not a flat screen");
+    check(machine.debug_pc() != 0, "Street Fighter II is executing after POST");
+    for (int i = 180; i < 900; i++) machine.run_frame();
+    const int colours = unique_pixels(machine);
+    check(colours >= 24, "Street Fighter II attract uses a real palette");
+    const uint32_t* fb = machine.framebuffer();
+    int lit = 0;
+    for (int i = 0; i < machine.screen_width() * machine.screen_height(); i++) {
+        if ((fb[i] & 0x00ffffffu) != 0) lit++;
+    }
+    check(lit > 1000, "Street Fighter II attract paints the visible area");
+}
+
 void test_terraf_without_roms() {
     dsp::ArmedfHw machine(dsp::ArmedfHw::Game::TerraForce);
     std::string error = "unset";
@@ -5576,6 +5641,8 @@ int main() {
     test_bublbobl_without_roms();
     test_asteroid_without_roms();
     test_ajax_without_roms();
+    test_cps1_without_roms();
+    test_cps1_roms_if_present();
     test_terraf_without_roms();
     test_neogeo_video();
     test_neogeo_without_roms();

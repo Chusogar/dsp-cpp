@@ -39,7 +39,8 @@ void GfxSet::decode_elements(const GfxLayout& layout, const std::vector<uint8_t>
                     uint8_t bit = get_bit(rom, layout.plane_offsets[size_t(plane)] +
                                                    layout.y_offsets[size_t(y)] +
                                                    layout.x_offsets[size_t(x)] + base);
-                    value = uint8_t(value | (bit << (layout.planes - 1 - plane)));
+                    const int shift = layout.lsb_first ? plane : (layout.planes - 1 - plane);
+                    value = uint8_t(value | (bit << shift));
                 }
                 pixels_[index++] = value;
             }
