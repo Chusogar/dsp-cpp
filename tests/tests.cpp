@@ -4804,22 +4804,32 @@ void test_ql_magnetic_scrolls_if_present() {
     write_ql_ppm("/tmp/ql-qxl-copyright.ppm", boot);
 
     hold_ql_key(boot, dsp::Key::F1, 10);
-    for (int i = 0; i < 400; i++) boot.run_frame();
+    for (int i = 0; i < 800; i++) boot.run_frame();
+    write_ql_ppm("/tmp/ql-qxl-basic.ppm", boot);
     type_ql(boot, "lrun win1_boot\n");
 
-    int lit = 0;
-    for (int i = 0; i < 4000; i++) {
-        boot.run_frame();
-        lit = count_lit_pixels(boot);
-        if (i == 800 || i == 2000) write_ql_ppm("/tmp/ql-qxl-boot.ppm", boot);
-    }
+    for (int i = 0; i < 4000; i++) boot.run_frame();
     write_ql_ppm("/tmp/ql-qxl-boot.ppm", boot);
-    check(lit > 80, "LRUN win1_boot paints after opening the QXL");
+    check(count_ql_argb(boot, 0xff00ff00) > 80,
+          "win1_boot loads Toolkit II from the QXL and prints in green");
 
     hold_ql_key(boot, dsp::Key::M, 12);
-    for (int i = 0; i < 2500; i++) boot.run_frame();
+    bool saw_menu = false;
+    for (int i = 0; i < 2500; i++) {
+        boot.run_frame();
+        const int red = count_ql_argb(boot, 0xffff0000);
+        const int green = count_ql_argb(boot, 0xff00ff00);
+        const int white = count_ql_argb(boot, 0xffffffff);
+        // mgboot CLS's a 512x200 red window; title text is white, border is green.
+        // The SuperBASIC desktop has a huge white #1 window, so keep white bounded.
+        if (red > 40000 && green > 150 && white > 400 && white < 12000) {
+            for (int extra = 0; extra < 40; extra++) boot.run_frame();
+            saw_menu = true;
+            break;
+        }
+    }
     write_ql_ppm("/tmp/ql-qxl-menu.ppm", boot);
-    check(count_lit_pixels(boot) > 200, "Magnetic Scrolls updates the screen after M");
+    check(saw_menu, "M opens the Magnetic Scrolls adventure menu");
 }
 
 void write_st_ppm(const std::string& path, const dsp::AtariSt& machine) {

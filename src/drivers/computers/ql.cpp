@@ -70,8 +70,6 @@ bool load_pair(RomLoader& loader, const std::vector<RomEntry>& low,
 }
 
 constexpr uint32_t kWinTrapPort = 0x1bf00;
-constexpr uint32_t kExtRamBase = 0x40000;
-constexpr uint32_t kExtRamSize = 0x80000;
 
 constexpr int kErrBo = -5;
 constexpr int kErrNf = -7;
@@ -90,7 +88,6 @@ constexpr uint32_t kFsMname = 0x16;
 }  // namespace
 
 SinclairQl::SinclairQl() : cpu_(kCpuClock), ipc_(kIpcClock, Mcs48::Chip::I8749) {
-    ext_ram_.assign(kExtRamSize, 0);
     cpu_.set_memory_handlers([this](uint32_t a) { return read_word(a); },
                              [this](uint32_t a, uint16_t v) { write_word(a, v); });
     cpu_.set_byte_handlers([this](uint32_t a) { return read_byte(a); },
@@ -178,7 +175,6 @@ void SinclairQl::reset() {
     mdv_stall_ = 0;
     mdv1_.reset();
     mdv2_.reset();
-    std::fill(ext_ram_.begin(), ext_ram_.end(), uint8_t(0));
     rtc_frames_ = 0;
     flash_frames_ = 0;
     audio_acc_ = 0;
@@ -268,9 +264,6 @@ uint8_t SinclairQl::read_byte(uint32_t address) {
         return zx8302_.mdv_track_r(address & 1);
     }
     if (address >= 0x20000 && address < 0x40000) return video_.ram_r(address - 0x20000);
-    if (address >= kExtRamBase && address < kExtRamBase + ext_ram_.size()) {
-        return ext_ram_[address - kExtRamBase];
-    }
     return 0;
 }
 
@@ -307,10 +300,6 @@ void SinclairQl::write_byte(uint32_t address, uint8_t value) {
     }
     if (address >= 0x20000 && address < 0x40000) {
         video_.ram_w(address - 0x20000, value);
-        return;
-    }
-    if (address >= kExtRamBase && address < kExtRamBase + ext_ram_.size()) {
-        ext_ram_[address - kExtRamBase] = value;
     }
 }
 

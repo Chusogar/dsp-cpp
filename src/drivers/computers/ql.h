@@ -88,7 +88,6 @@ private:
     QlWin win_;
 
     std::array<uint8_t, 0x10000> rom_{};
-    std::vector<uint8_t> ext_ram_{};
     std::array<uint32_t, kWidth * kHeight> framebuffer_{};
     std::array<uint8_t, 8> keys_{};
     MachineInputs inputs_{};
