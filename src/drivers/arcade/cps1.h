@@ -120,6 +120,9 @@ public:
         return sprite_buffer_[size_t(index) & 0x3ff];
     }
     uint16_t debug_vram_word(uint32_t word) const { return vram_[word % 0x18000]; }
+    const uint8_t* debug_char0(int code) const { return chars0_.element(code); }
+    const uint8_t* debug_char1(int code) const { return chars1_.element(code); }
+    const uint8_t* debug_tile16(int code) const { return tiles16_.element(code); }
 
 private:
     bool uses_qsound() const { return game_ == Game::Dino || game_ == Game::Punisher; }

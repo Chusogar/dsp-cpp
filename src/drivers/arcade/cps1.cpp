@@ -218,9 +218,9 @@ bool load_64b_b(RomLoader& loader, const std::vector<RomEntry>& entries, std::ve
 }
 
 // MAME cps1_layout8x8 / 8x8_2 / 16x16 / 32x32: raw 64-bit gfx ROM.
-// planes {24,16,8,0}, STEP8(0,1) x offsets, plane 0 = LSB of the pen.
-// Do not run cps1_gfx_decode first — that path was for the older packed-nibble
-// layouts and garbles every 8x8 column.
+// planes {24,16,8,0}, STEP8(0,1) x offsets. Plane 0 is the pen MSB (MAME
+// drawgfx). Do not run cps1_gfx_decode first — that path was for the older
+// packed-nibble layouts and garbles every 8x8 column.
 GfxLayout char_layout(int total, bool odd) {
     GfxLayout layout;
     layout.width = 8;
@@ -228,7 +228,6 @@ GfxLayout char_layout(int total, bool odd) {
     layout.total = total;
     layout.planes = 4;
     layout.char_increment = 64 * 8;
-    layout.lsb_first = true;
     layout.plane_offsets = {24, 16, 8, 0};
     layout.x_offsets = step_offsets(8, odd ? 32 : 0, 1);
     layout.y_offsets = step_offsets(8, 0, 64);
@@ -242,7 +241,6 @@ GfxLayout tile16_layout(int total) {
     layout.total = total;
     layout.planes = 4;
     layout.char_increment = 4 * 16 * 16;
-    layout.lsb_first = true;
     layout.plane_offsets = {24, 16, 8, 0};
     layout.x_offsets = concat_offsets({step_offsets(8, 0, 1), step_offsets(8, 32, 1)});
     layout.y_offsets = step_offsets(16, 0, 64);
@@ -256,7 +254,6 @@ GfxLayout tile32_layout(int total) {
     layout.total = total;
     layout.planes = 4;
     layout.char_increment = 4 * 32 * 32;
-    layout.lsb_first = true;
     layout.plane_offsets = {24, 16, 8, 0};
     layout.x_offsets = concat_offsets({step_offsets(8, 0, 1), step_offsets(8, 32, 1),
                                        step_offsets(8, 64, 1), step_offsets(8, 96, 1)});

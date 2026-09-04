@@ -3301,6 +3301,15 @@ void test_cps1_roms_if_present() {
     std::string error;
     check(machine.init(rom, &error), "Street Fighter II MAME set loads");
     check(machine.debug_pc() != 0, "Street Fighter II 68000 left reset");
+    const uint8_t* letter_s = machine.debug_char0(0x14053);
+    check(letter_s[0] == 15 && letter_s[7] == 15, "SF2 8x8 S has rounded top corners");
+    int top_bar = 0;
+    for (int x = 1; x < 7; x++) {
+        if (letter_s[x] != 15) top_bar++;
+    }
+    check(top_bar >= 5, "SF2 8x8 S has a solid top bar");
+    check(letter_s[2 * 8 + 3] == 15 && letter_s[2 * 8 + 4] == 15,
+          "SF2 8x8 S is hollow in the upper middle");
     for (int i = 0; i < 180; i++) machine.run_frame();
     check(unique_pixels(machine) >= 4, "Street Fighter II POST is not a flat screen");
     check(machine.debug_pc() != 0, "Street Fighter II is executing after POST");
