@@ -9,6 +9,7 @@
 #include "cpu/m68000.h"
 #include "cpu/mcs48.h"
 #include "machine/ql_mdv.h"
+#include "machine/ql_win.h"
 #include "machine/zx8302.h"
 #include "video/zx8301.h"
 
@@ -51,6 +52,8 @@ public:
     bool mdv2_selected() const { return mdv2_.selected(); }
     bool mdv1_motor() const { return mdv1_.motor(); }
     bool mdv2_motor() const { return mdv2_.motor(); }
+    bool win_loaded() const { return win_.loaded(); }
+    size_t win_file_count() const { return win_.files().size(); }
 
 private:
     uint8_t read_byte(uint32_t address);
@@ -66,6 +69,15 @@ private:
     uint8_t ipc_port_in(uint16_t port) const;
     void update_mdv_gap();
     void tick_mdv_bits();
+    void win_trap(uint16_t cmd);
+    void win_open();
+    void win_io();
+    void set_d0(int err);
+    uint32_t chan_pos();
+    void set_chan_pos(uint32_t pos);
+    const QlWinFile* chan_file();
+    std::string chan_name();
+    void copy_to_guest(uint32_t dest, const uint8_t* src, uint32_t n);
 
     M68000 cpu_;
     Mcs48 ipc_;
@@ -73,6 +85,7 @@ private:
     Zx8302 zx8302_;
     QlMicrodrive mdv1_;
     QlMicrodrive mdv2_;
+    QlWin win_;
 
     std::array<uint8_t, 0x10000> rom_{};
     std::array<uint32_t, kWidth * kHeight> framebuffer_{};

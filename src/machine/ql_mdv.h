@@ -65,5 +65,8 @@ private:
 
 // Build / parse cartridge images (QLAY .mdv and ZIP-based .qlpak).
 bool load_ql_cartridge(const std::string& path, std::vector<uint8_t>& qlay, std::string* error);
+bool make_ql_listing_cartridge(const std::string& medium, const std::string& filename,
+                               const std::string& listing, std::vector<uint8_t>& qlay,
+                               std::string* error);
 
 }  // namespace dsp
