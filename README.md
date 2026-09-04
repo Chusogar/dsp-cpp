@@ -168,6 +168,7 @@ holding the individual files:
 ./build/dsp --game msx2 --disk game.dsk /path/to/msx2-roms/
 ./build/dsp --game apple2 /path/to/apple2p.zip
 ./build/dsp --game apple2e --disk game.dsk /path/to/apple2e.zip
+./build/dsp --game st --disk game.st /path/to/st.zip
 ./build/dsp --game asteroid /path/to/asteroid.zip
 ./build/dsp --game starwars /path/to/starwars.zip
 ./build/dsp --game polepos /path/to/polepos.zip
@@ -208,7 +209,7 @@ Options:
 --tape FILE        tape/cart: Spectrum/CPC/C64 (.tap/.tzx/.cdt/.prg/.t64),
                    EXL-100 / EXELTEL cartridge, or PV-2000 cart (.bin/.rom)
 --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, MSX2 .dsk, Apple II .dsk/.do/.po/.nib,
-                   Pentagon/Scorpion .trd/.scl
+                   Pentagon/Scorpion .trd/.scl, Sinclair QL .mdv/.qlpak, Atari ST .st/.msa
 ```
 
 ### Atari System 1 (Indiana Jones, Marble Madness, Peter Pack Rat, Road Runner)

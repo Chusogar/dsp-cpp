@@ -519,7 +519,7 @@ void M68000::group_0(uint16_t instruction) {
                 cc.z = (d[orig].l & mask) == 0;
             } else if ((dir >> 3) == 1) {  // movep.w memory to register
                 cycles_ += 16;
-                const uint32_t address = a[orig].l + fetch_word();
+                const uint32_t address = a[orig].l + uint32_t(int32_t(int16_t(fetch_word())));
                 d[dest].l = (d[dest].l & 0xffff0000u) | (uint32_t(getbyte(address)) << 8) |
                             getbyte(address + 2);
             } else {
@@ -538,7 +538,7 @@ void M68000::group_0(uint16_t instruction) {
                 d[orig].l ^= mask;
             } else if ((dir >> 3) == 1) {  // movep.l memory to register
                 cycles_ += 24;
-                const uint32_t address = a[orig].l + fetch_word();
+                const uint32_t address = a[orig].l + uint32_t(int32_t(int16_t(fetch_word())));
                 d[dest].l = (uint32_t(getbyte(address)) << 24) |
                             (uint32_t(getbyte(address + 2)) << 16) |
                             (uint32_t(getbyte(address + 4)) << 8) | getbyte(address + 6);
@@ -560,7 +560,7 @@ void M68000::group_0(uint16_t instruction) {
                 d[orig].l &= ~mask;
             } else if ((dir >> 3) == 1) {  // movep.w register to memory
                 cycles_ += 16;
-                const uint32_t address = a[orig].l + fetch_word();
+                const uint32_t address = a[orig].l + uint32_t(int32_t(int16_t(fetch_word())));
                 putbyte(address, uint8_t(d[dest].l >> 8));
                 putbyte(address + 2, d[dest].l0());
             } else {
@@ -2525,6 +2525,20 @@ void M68000::group_3(uint16_t instruction) {
     }
 }
 
+void M68000::group_a(uint16_t instruction) {  // line 1010 emulator (Atari ST Line-A)
+    (void)instruction;
+    cycles_ += 34;
+    const uint16_t flags = get_flags();
+    set_flags(uint16_t(flags | 0x2000));
+    cc.t = false;
+    a[7].l -= 6;
+    putword(a[7].l, flags);
+    putword(a[7].l + 2, ppc_.wh());
+    putword(a[7].l + 4, ppc_.wl());
+    pc_.set_wh(getword(0x0a * 4));
+    pc_.set_wl(getword((0x0a * 4) + 2));
+}
+
 void M68000::group_f(uint16_t instruction) {  // line 1111 emulator
     (void)instruction;
     cycles_ += 4;
@@ -2606,6 +2620,7 @@ int M68000::run(int cycles) {
             case 0x7: group_7(instruction); break;
             case 0x8: group_8(instruction); break;
             case 0x9: group_9(instruction); break;
+            case 0xa: group_a(instruction); break;
             case 0xb: group_b(instruction); break;
             case 0xc: group_c(instruction); break;
             case 0xd: group_d(instruction); break;

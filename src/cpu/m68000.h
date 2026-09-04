@@ -120,6 +120,7 @@ private:
     void group_7(uint16_t instruction);
     void group_8(uint16_t instruction);
     void group_9(uint16_t instruction);
+    void group_a(uint16_t instruction);
     void group_b(uint16_t instruction);
     void group_c(uint16_t instruction);
     void group_d(uint16_t instruction);

@@ -55,6 +55,9 @@ void StFloppy::reset() {
     fdc_data_ = 0;
     fdc_status_ = 0;
     fdc_irq_ = false;
+    fdc_busy_ = false;
+    motor_on_ = false;
+    irq_delay_ = 0;
     dma_error_ = false;
     psg_a_ = 0xff;
 }
@@ -178,7 +181,30 @@ uint16_t StFloppy::dma_status() const {
     return v;
 }
 
-void StFloppy::dma_mode_w(uint16_t value) { dma_mode_ = value; }
+void StFloppy::dma_mode_w(uint16_t value) {
+    // Toggling the DMA read/write bit (8) resets the DMA status, as TOS does
+    // with the $90 / $190 pair before a transfer.
+    if ((dma_mode_ ^ value) & 0x100) dma_error_ = false;
+    dma_mode_ = value;
+}
+
+void StFloppy::tick(int cycles) {
+    if (irq_delay_ <= 0) return;
+    irq_delay_ -= cycles;
+    if (irq_delay_ <= 0) {
+        irq_delay_ = 0;
+        fdc_busy_ = false;
+        fdc_irq_ = true;
+    }
+}
+
+int StFloppy::selected_drive() const {
+    if ((psg_a_ & 2) == 0) return 0;
+    if ((psg_a_ & 4) == 0) return 1;
+    return -1;
+}
+
+int StFloppy::selected_side() const { return (psg_a_ & 1) ? 0 : 1; }
 
 void StFloppy::dma_addr_w(int which, uint8_t value) {
     if (which == 0) dma_addr_ = (dma_addr_ & 0x00ffff) | (uint32_t(value) << 16);
@@ -213,21 +239,32 @@ void StFloppy::dma_data_w(uint16_t value) {
     else fdc_data_ = uint8_t(value);
 }
 
-uint8_t StFloppy::fdc_status() const {
+uint8_t StFloppy::fdc_status() {
     uint8_t v = fdc_status_;
-    const bool selected = ((psg_a_ >> 1) & 1) == 0 || ((psg_a_ >> 2) & 1) == 0;
-    if (!loaded_ || !selected) v |= 0x80;  // not ready
-    if (fdc_track_ == 0) v |= 0x04;        // track 0
+    if (fdc_busy_) v |= 0x01;
+    if (fdc_track_ == 0) v |= 0x04;
+    if (motor_on_) v |= 0x80;  // WD1772: bit 7 is Motor On, not Not Ready
+    // Reading the status register clears INTRQ on a real 1772.
+    fdc_irq_ = false;
     return v;
+}
+
+void StFloppy::finish_command() {
+    // ~1 ms at 8 MHz so TOS can arm the MFP before the falling GPIP5 edge.
+    fdc_busy_ = true;
+    fdc_irq_ = false;
+    irq_delay_ = 8000;
 }
 
 void StFloppy::fdc_command(uint8_t cmd) {
     fdc_irq_ = false;
+    irq_delay_ = 0;
     dma_error_ = false;
     fdc_status_ = 0;
+    motor_on_ = true;
     const uint8_t type = uint8_t(cmd & 0xf0);
     if (type < 0x80) {
-        // Type I: restore / seek / step.
+        // Type I: restore / seek / step. Both drives exist; only A has media.
         if (type == 0x00) fdc_track_ = 0;
         else if (type == 0x10) fdc_track_ = fdc_data_;
         else if (type == 0x40 || type == 0x60) {
@@ -235,10 +272,12 @@ void StFloppy::fdc_command(uint8_t cmd) {
         } else if (type == 0x20 || type == 0x50 || type == 0x70) {
             if (fdc_track_ > 0) fdc_track_--;
         }
-        fdc_irq_ = true;
+        finish_command();
         return;
     }
     if (type == 0xd0) {
+        fdc_busy_ = false;
+        irq_delay_ = 0;
         fdc_irq_ = (cmd & 8) != 0;
         return;
     }
@@ -251,23 +290,48 @@ void StFloppy::fdc_command(uint8_t cmd) {
         return;
     }
     if (type == 0xc0) {
-        // Read address: 6-byte ID field through DMA if a count is set.
-        fdc_data_ = fdc_track_;
-        fdc_irq_ = true;
+        do_read_address();
+        return;
+    }
+    if (type == 0xe0) {
+        // Read track: TOS probes with this; treat as a successful dummy.
+        finish_command();
         return;
     }
     fdc_status_ = 0x10;  // RNF
-    fdc_irq_ = true;
+    finish_command();
+}
+
+void StFloppy::do_read_address() {
+    if (selected_drive() != 0 || !loaded_) {
+        fdc_status_ = 0x10;
+        finish_command();
+        return;
+    }
+    const uint8_t id[6] = {fdc_track_, uint8_t(selected_side()), fdc_sector_, 2, 0, 0};
+    fdc_data_ = id[0];
+    if (dma_count_ && ram_ != nullptr && dma_addr_ + 6 <= ram_size_) {
+        std::memcpy(ram_ + dma_addr_, id, 6);
+        dma_addr_ += 6;
+        dma_count_--;
+    }
+    finish_command();
 }
 
 void StFloppy::do_dma_read() {
-    const int side = (psg_a_ & 1) ? 1 : 0;
+    const int side = selected_side();
+    if (selected_drive() != 0 || !loaded_) {
+        dma_error_ = true;
+        fdc_status_ = 0x10;
+        finish_command();
+        return;
+    }
     while (dma_count_) {
         const uint8_t* src = sector(fdc_track_, side, fdc_sector_);
         if (!src || ram_ == nullptr || dma_addr_ + kSectorSize > ram_size_) {
             dma_error_ = true;
             fdc_status_ = 0x10;
-            fdc_irq_ = true;
+            finish_command();
             return;
         }
         std::memcpy(ram_ + dma_addr_, src, kSectorSize);
@@ -279,17 +343,23 @@ void StFloppy::do_dma_read() {
             break;
         }
     }
-    fdc_irq_ = true;
+    finish_command();
 }
 
 void StFloppy::do_dma_write() {
-    const int side = (psg_a_ & 1) ? 1 : 0;
+    const int side = selected_side();
+    if (selected_drive() != 0 || !loaded_) {
+        dma_error_ = true;
+        fdc_status_ = 0x10;
+        finish_command();
+        return;
+    }
     while (dma_count_) {
         uint8_t* dest = sector(fdc_track_, side, fdc_sector_);
         if (!dest || ram_ == nullptr || dma_addr_ + kSectorSize > ram_size_) {
             dma_error_ = true;
             fdc_status_ = 0x10;
-            fdc_irq_ = true;
+            finish_command();
             return;
         }
         std::memcpy(dest, ram_ + dma_addr_, kSectorSize);
@@ -301,7 +371,7 @@ void StFloppy::do_dma_write() {
             break;
         }
     }
-    fdc_irq_ = true;
+    finish_command();
 }
 
 }  // namespace dsp

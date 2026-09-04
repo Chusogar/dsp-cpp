@@ -65,6 +65,7 @@ private:
     void ikbd_push(uint8_t value);
     void ikbd_byte(uint8_t value);
     void ikbd_keys(const MachineInputs& inputs);
+    void service_acia();
 
     M68000 cpu_;
     AY8910 psg_;
@@ -88,10 +89,16 @@ private:
 
     uint8_t acia_control_ = 0;
     std::deque<uint8_t> ikbd_rx_;
+    struct IkbdByte {
+        uint8_t value = 0;
+        int cycles = 0;
+    };
+    std::deque<IkbdByte> ikbd_pending_;
     uint8_t ikbd_cmd_ = 0;
     int ikbd_reset_step_ = 0;
     int last_pointer_x_ = 0;
     int last_pointer_y_ = 0;
+    uint32_t video_count_ = 0;
 
     int64_t mfp_acc_ = 0;
     int64_t audio_acc_ = 0;

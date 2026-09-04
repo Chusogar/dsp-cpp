@@ -32,6 +32,9 @@ public:
 
     bool irq() const { return fdc_irq_; }
 
+    // Advance WD1772 command delay so INTRQ rises after TOS has armed the MFP.
+    void tick(int cycles);
+
     // Destination RAM for DMA. The driver passes a pointer into ST RAM.
     void set_ram(uint8_t* ram, uint32_t size) {
         ram_ = ram;
@@ -42,10 +45,14 @@ public:
     uint8_t* sector(int track, int side, int sector);
 
 private:
-    uint8_t fdc_status() const;
+    uint8_t fdc_status();
     void fdc_command(uint8_t cmd);
+    void finish_command();
     void do_dma_read();
     void do_dma_write();
+    void do_read_address();
+    int selected_drive() const;
+    int selected_side() const;
     bool decode_geometry(size_t bytes);
     bool load_st(const uint8_t* data, size_t size, std::string* error);
     bool load_msa(const uint8_t* data, size_t size, std::string* error);
@@ -68,10 +75,10 @@ private:
     uint8_t fdc_data_ = 0;
     uint8_t fdc_status_ = 0;
     bool fdc_irq_ = false;
+    bool fdc_busy_ = false;
+    bool motor_on_ = false;
+    int irq_delay_ = 0;
     bool dma_error_ = false;
 };
-
-bool load_st_floppy_file(const std::string& path, std::vector<uint8_t>& image, int* tracks,
-                         int* sides, int* spt, std::string* error);
 
 }  // namespace dsp

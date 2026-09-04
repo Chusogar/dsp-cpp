@@ -65,7 +65,11 @@ AtariSt::AtariSt() : cpu_(kCpuClock), psg_(2000000, 1.2f) {
         floppy_.reset();
         psg_.reset();
         ikbd_rx_.clear();
+        ikbd_pending_.clear();
         ikbd_reset_step_ = 0;
+        mfp_.set_gpip_bit(7, 1);
+        mfp_.set_gpip_bit(5, 1);
+        mfp_.set_gpip_bit(4, 1);
     });
     cpu_.set_irq_acknowledge([this](int level) {
         if (level == 6) return mfp_.irq_ack();
@@ -109,8 +113,10 @@ void AtariSt::reset() {
     psg_port_a_ = 0xff;
     acia_control_ = 0;
     ikbd_rx_.clear();
+    ikbd_pending_.clear();
     ikbd_cmd_ = 0;
     ikbd_reset_step_ = 0;
+    video_count_ = 0;
     keys_down_.fill(false);
     mfp_acc_ = 0;
     audio_acc_ = 0;
@@ -133,7 +139,16 @@ bool AtariSt::load_media(const std::string& path, std::string* error) {
 }
 
 void AtariSt::ikbd_push(uint8_t value) {
-    ikbd_rx_.push_back(value);
+    // ~1 ms at 8 MHz. The 6850 has a one-byte buffer; extra bytes wait until
+    // TOS reads RDR so GPIP4 can rise and fall again (MFP is edge triggered).
+    ikbd_pending_.push_back({value, 8000});
+}
+
+void AtariSt::service_acia() {
+    if (!ikbd_rx_.empty()) return;
+    if (ikbd_pending_.empty() || ikbd_pending_.front().cycles > 0) return;
+    ikbd_rx_.push_back(ikbd_pending_.front().value);
+    ikbd_pending_.pop_front();
     mfp_.set_gpip_bit(4, 0);
 }
 
@@ -189,6 +204,7 @@ uint8_t AtariSt::acia_read_data() {
     const uint8_t v = ikbd_rx_.front();
     ikbd_rx_.pop_front();
     if (ikbd_rx_.empty()) mfp_.set_gpip_bit(4, 1);
+    service_acia();
     return v;
 }
 
@@ -196,6 +212,7 @@ void AtariSt::acia_write_control(uint8_t value) {
     acia_control_ = value;
     if ((value & 3) == 3) {
         ikbd_rx_.clear();
+        ikbd_pending_.clear();
         ikbd_reset_step_ = 0;
         mfp_.set_gpip_bit(4, 1);
     }
@@ -209,6 +226,10 @@ void AtariSt::update_irqs() {
 }
 
 void AtariSt::on_cpu_cycles(int cycles) {
+    floppy_.tick(cycles);
+    for (IkbdByte& b : ikbd_pending_) b.cycles -= cycles;
+    service_acia();
+    update_irqs();
     mfp_acc_ += int64_t(cycles) * Mc68901::kClock;
     while (mfp_acc_ >= int64_t(kCpuClock)) {
         mfp_acc_ -= int64_t(kCpuClock);
@@ -236,13 +257,21 @@ uint8_t AtariSt::read_byte(uint32_t address) {
             case 0xff8001: return memcfg_;
             case 0xff8201: return video_hi_;
             case 0xff8203: return video_mid_;
-            case 0xff8205: return uint8_t(video_hi_);
-            case 0xff8207: return video_mid_;
-            case 0xff8209: return video_lo_;
+            case 0xff8205: return uint8_t(video_count_ >> 16);
+            case 0xff8207: return uint8_t(video_count_ >> 8);
+            case 0xff8209: return uint8_t(video_count_);
             case 0xff820a: return sync_mode_;
             case 0xff8260: return resolution_;
-            case 0xff8604: return uint8_t(floppy_.dma_data_r() >> 8);
-            case 0xff8605: return uint8_t(floppy_.dma_data_r());
+            case 0xff8604: {
+                const uint16_t v = floppy_.dma_data_r();
+                update_irqs();
+                return uint8_t(v >> 8);
+            }
+            case 0xff8605: {
+                const uint16_t v = floppy_.dma_data_r();
+                update_irqs();
+                return uint8_t(v);
+            }
             case 0xff8606: return uint8_t(floppy_.dma_status() >> 8);
             case 0xff8607: return uint8_t(floppy_.dma_status());
             case 0xff8609: return floppy_.dma_addr_r(0);
@@ -331,7 +360,11 @@ uint16_t AtariSt::read_word(uint32_t address) {
         const uint32_t o = address - 0xfc0000;
         return uint16_t((rom_[o] << 8) | rom_[o + 1]);
     }
-    if (address == 0xff8604) return floppy_.dma_data_r();
+    if (address == 0xff8604) {
+        const uint16_t v = floppy_.dma_data_r();
+        update_irqs();
+        return v;
+    }
     if (address == 0xff8606) return floppy_.dma_status();
     if (address == 0xff8800) return uint16_t(psg_.read() << 8);
     return uint16_t((read_byte(address) << 8) | read_byte(address + 1));
@@ -442,8 +475,16 @@ void AtariSt::render() {
 }
 
 void AtariSt::run_frame() {
+    const uint32_t vbase =
+        (uint32_t(video_hi_) << 16) | (uint32_t(video_mid_) << 8) | video_lo_;
+    const int pitch = (resolution_ & 3) == 2 ? 80 : 160;
     cpu_.set_irq(4, IrqLine::Hold);  // VBL
     for (int line = 0; line < kLines; line++) {
+        if (line >= 63 && line < 263) {
+            video_count_ = vbase + uint32_t(line - 63) * uint32_t(pitch);
+        } else {
+            video_count_ = vbase;
+        }
         cpu_.run(kCyclesPerLine);
         update_irqs();
     }

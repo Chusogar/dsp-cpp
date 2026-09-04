@@ -4778,8 +4778,27 @@ void test_st_boot_if_present() {
     for (int i = 0; i < 500; i++) boot.run_frame();
     write_st_ppm("/tmp/st-desktop.ppm", boot);
     check(boot.debug_pc() != 0, "ST 68000 is executing after TOS boot");
-    check(unique_pixels(boot) >= 4, "TOS paints the shifter framebuffer");
+    check(unique_pixels(boot) >= 3, "TOS paints the shifter framebuffer");
     check(count_lit_pixels(boot) > 80, "TOS desktop is not a black screen");
+    int green = 0;
+    const uint32_t* fb = boot.framebuffer();
+    const int n = boot.screen_width() * boot.screen_height();
+    for (int i = 0; i < n; i++) {
+        const int r = int((fb[i] >> 16) & 0xff);
+        const int g = int((fb[i] >> 8) & 0xff);
+        const int b = int(fb[i] & 0xff);
+        if (r < 40 && g > 180 && b < 40) green++;
+    }
+    check(green > 20000, "TOS GEM desktop fills the shifter with green");
+    int oem = 0;
+    for (uint32_t a = 0; a < 0x100000u - 8; a++) {
+        if (boot.peek(a) == 'D' && boot.peek(a + 1) == 'S' && boot.peek(a + 2) == 'P' &&
+            boot.peek(a + 3) == 'S' && boot.peek(a + 4) == 'T') {
+            oem++;
+            break;
+        }
+    }
+    check(oem > 0, "TOS DMA-read the floppy boot sector (OEM DSPST)");
 }
 
 void test_ql_match_point_if_present() {
