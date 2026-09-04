@@ -5515,6 +5515,8 @@ void test_mac_boot_if_present() {
     check(!boot.overlay(), "VIA PA4 cleared the ROM overlay so RAM sits at 0");
     check(unique_pixels(boot) >= 2, "Mac framebuffer is not a single colour");
     check(mac_has_floppy_icon(boot), "ROM paints the flashing floppy icon on the grey desktop");
+    check((boot.peek(0x0b22) & 0xc0) == 0xc0,
+          "Plus ROM sets HWCfgFlags SCSI bits ($420000 is not a ROM mirror)");
 
     const std::string disk = "/tmp/roms/mac-system.dsk";
     write_mac_lk_disk(disk);
@@ -5530,6 +5532,21 @@ void test_mac_boot_if_present() {
     check(happy.floppy_loaded(), "boot disk stays in the drive");
     check(saw_motor, "Sony driver spins the IWM motor to search for D5 AA marks");
     check(mac_has_floppy_icon(happy), "the disk / question-mark icon stays on screen with a floppy inserted");
+
+    const char* hd = "/tmp/macdisks/System7_0_1.img";
+    std::FILE* hf = std::fopen(hd, "rb");
+    if (!hf) return;
+    std::fclose(hf);
+
+    dsp::MacPlus sys7;
+    check(sys7.init(rom, &error), "Mac Plus ROM reloads for System 7.0.1");
+    check(sys7.load_media(hd, &error), "System7_0_1.img mounts as a SCSI hard disk");
+    check(sys7.scsi_loaded() && sys7.scsi_blocks() >= 20480, "the HFS volume is a 10MB SCSI disk");
+    check(!sys7.floppy_loaded(), "a hard disk image does not sit in the Sony drive");
+    for (int i = 0; i < 1800; i++) sys7.run_frame();
+    write_mac_ppm("/tmp/macplus-system7.ppm", sys7);
+    check(sys7.scsi_xfer_bytes() >= 512, "the Plus ROM SCSI Manager reads the System 7 boot blocks");
+    check(unique_pixels(sys7) >= 2, "System 7 boot paints the Macintosh screen");
 }
 
 void test_ql_match_point_if_present() {

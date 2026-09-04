@@ -9,11 +9,13 @@
 #include "cpu/m68000.h"
 #include "machine/iwm.h"
 #include "machine/mac_rtc.h"
+#include "machine/ncr5380_hdd.h"
 #include "machine/via6522.h"
 
 namespace dsp {
 
-// Macintosh Plus: 68000, 128K ROM, 1MB RAM, 512×342 1bpp, IWM 800K floppy.
+// Macintosh Plus: 68000, 128K ROM, 1MB RAM, 512×342 1bpp, IWM 800K floppy,
+// NCR 5380 SCSI hard disk at $580000.
 class MacPlus : public Machine {
 public:
     static constexpr uint32_t kCpuClock = 7833600;
@@ -58,6 +60,12 @@ public:
     void poke(uint32_t address, uint8_t value) { write_byte(address, value); }
     bool overlay() const { return overlay_; }
     bool floppy_loaded() const { return iwm_.loaded(); }
+    bool scsi_loaded() const { return scsi_.loaded(); }
+    uint32_t scsi_blocks() const { return scsi_.blocks(); }
+    uint8_t last_scsi_cmd() const { return scsi_.last_cmd(); }
+    uint32_t scsi_xfer_bytes() const { return scsi_.xfer_bytes(); }
+    uint32_t scsi_accesses() const { return scsi_.access_count(); }
+    Ncr5380Hdd& scsi() { return scsi_; }
     int floppy_track() const { return iwm_.track(); }
     uint8_t last_kbd_cmd() const { return kbd_cmd_; }
     uint8_t last_kbd_reply() const { return kbd_reply_; }
@@ -87,6 +95,7 @@ private:
     Via6522 via_;
     Iwm iwm_;
     MacRtc rtc_;
+    Ncr5380Hdd scsi_;
 
     std::vector<uint8_t> ram_;
     std::vector<uint8_t> rom_;

@@ -96,11 +96,16 @@ void MacPlus::reset() {
     via_.reset();
     iwm_.reset();
     rtc_.reset();
+    scsi_.reset();
     cpu_.reset();
 }
 
 bool MacPlus::load_media(const std::string& path, std::string* error) {
-    return iwm_.load_file(path, error);
+    std::string floppy_error;
+    if (iwm_.load_file(path, &floppy_error)) return true;
+    if (scsi_.load_file(path, error)) return true;
+    if (error && error->empty()) *error = floppy_error;
+    return false;
 }
 
 void MacPlus::update_irqs() {
@@ -233,8 +238,14 @@ uint8_t MacPlus::read_byte(uint32_t address) {
         if (overlay_) return rom_[address & (kRomSize - 1)];
         return ram_at(address);
     }
-    if (address < 0x500000) return rom_[address & (kRomSize - 1)];
-    if (address >= 0x580000 && address < 0x600000) return 0xff;
+    // 128K Plus ROMs decode A17 onto /OE: $420000 is open bus, $440000 still
+    // hits ROM[0]. The ROM compares those two longs and only sets HWCfgFlags
+    // (SCSI present) when they differ — a 512KE mirrors the ROM and has no SCSI.
+    if (address < 0x500000) {
+        if (address & 0x20000) return 0xff;
+        return rom_[address & (kRomSize - 1)];
+    }
+    if (address >= 0x580000 && address < 0x600000) return scsi_.read(address);
     if (address >= 0x600000 && address < 0x800000) return ram_at(address);
     if (address >= 0x800000 && address < 0xa00000) return scc_read(address);
     if (address >= 0xc00000 && address < 0xe00000) return iwm_.read(uint8_t((address >> 9) & 0x0f));
@@ -250,7 +261,10 @@ void MacPlus::write_byte(uint32_t address, uint8_t value) {
         ram_at(address, value);
         return;
     }
-    if (address >= 0x580000 && address < 0x600000) return;
+    if (address >= 0x580000 && address < 0x600000) {
+        scsi_.write(address, value);
+        return;
+    }
     if (address >= 0x600000 && address < 0x800000) {
         ram_at(address, value);
         return;
@@ -271,6 +285,10 @@ void MacPlus::write_byte(uint32_t address, uint8_t value) {
 
 uint16_t MacPlus::read_word(uint32_t address) {
     address &= 0xfffffe;
+    if (address >= 0x580000 && address < 0x600000) {
+        const uint8_t v = scsi_.read(address);
+        return uint16_t((uint16_t(v) << 8) | v);
+    }
     if (address >= 0xc00000 && address < 0xe00000) {
         const uint8_t v = iwm_.read(uint8_t((address >> 9) & 0x0f));
         return uint16_t((uint16_t(v) << 8) | v);
@@ -288,6 +306,10 @@ uint16_t MacPlus::read_word(uint32_t address) {
 
 void MacPlus::write_word(uint32_t address, uint16_t value) {
     address &= 0xfffffe;
+    if (address >= 0x580000 && address < 0x600000) {
+        scsi_.write(address | 1u, uint8_t(value));
+        return;
+    }
     if (address >= 0xc00000 && address < 0xe00000) {
         iwm_.write(uint8_t((address >> 9) & 0x0f), uint8_t(value));
         return;
