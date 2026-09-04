@@ -115,8 +115,10 @@ add_executable(dsp
   src/machine/ql_mdv.cpp
   src/machine/mc68901.cpp
   src/machine/st_floppy.cpp
-
-    
+  src/machine/cia8520.cpp
+  src/machine/amiga_adf.cpp
+  src/machine/amiga_chipset.cpp
+ 
   src/drivers/arcade/bagman.cpp
   src/drivers/arcade/mikie.cpp
   src/drivers/arcade/gauntlet.cpp
@@ -182,6 +184,7 @@ add_executable(dsp
   src/drivers/computers/exelv.cpp
   src/drivers/computers/ql.cpp
   src/drivers/computers/atari_st.cpp
+  src/drivers/computers/amiga.cpp
     
   src/drivers/consoles/sms.cpp
   src/machine/sega_vdp.cpp
@@ -322,6 +325,9 @@ add_executable(dsp_tests
   src/machine/ql_mdv.cpp
   src/machine/mc68901.cpp
   src/machine/st_floppy.cpp
+  src/machine/cia8520.cpp
+  src/machine/amiga_adf.cpp
+  src/machine/amiga_chipset.cpp
   src/machine/konami_decrypt.cpp
   src/machine/nb1414_m4.cpp
   src/drivers/computers/spectrum.cpp
@@ -339,6 +345,7 @@ add_executable(dsp_tests
   src/drivers/computers/exelv.cpp
   src/drivers/computers/ql.cpp
   src/drivers/computers/atari_st.cpp
+  src/drivers/computers/amiga.cpp
   src/drivers/arcade/starwars.cpp
   src/drivers/arcade/asteroid.cpp
   src/drivers/arcade/polepos.cpp

@@ -35,6 +35,8 @@
 #include "machine/ql_mdv.h"
 #include "drivers/computers/atari_st.h"
 #include "machine/st_floppy.h"
+#include "drivers/computers/amiga.h"
+#include "machine/amiga_adf.h"
 #include "drivers/consoles/gameboy.h"
 #include "drivers/arcade/mcr.h"
 #include "drivers/computers/msx2.h"
@@ -4842,6 +4844,135 @@ void test_st_north_south_if_present() {
     check(green < 20000, "North & South left the GEM desktop");
 }
 
+void write_amiga_ppm(const std::string& path, const dsp::Amiga500& machine) {
+    std::ofstream out(path, std::ios::binary);
+    const int w = machine.screen_width();
+    const int h = machine.screen_height();
+    out << "P6\n" << w << " " << h << "\n255\n";
+    const uint32_t* fb = machine.framebuffer();
+    for (int i = 0; i < w * h; i++) {
+        const uint32_t p = fb[i];
+        const char rgb[3] = {char((p >> 16) & 0xff), char((p >> 8) & 0xff), char(p & 0xff)};
+        out.write(rgb, 3);
+    }
+}
+
+void test_amiga_missing_roms() {
+    dsp::Amiga500 machine;
+    std::string error = "unset";
+    check(std::strcmp(machine.title(), "Commodore Amiga 500") == 0, "Amiga title");
+    check(machine.screen_width() == 320 && machine.screen_height() == 256, "Amiga PAL 320x256");
+    check(!machine.init("/no/such/a500.zip", &error), "missing Kickstart fails init");
+}
+
+void test_amiga_adf_format() {
+    std::string error;
+    const std::string path = "/tmp/amiga-dsptest.adf";
+    check(dsp::AmigaAdf::write_color_boot(path, 0x0F00, &error), "wrote an 880K ADF");
+    dsp::AmigaAdf disk;
+    check(disk.load_file(path, &error), "ADF loads");
+    check(disk.tracks() == 80 && disk.sides() == 2 && disk.spt() == 11, "880K ADF is 80x2x11");
+    check(disk.sector(0, 0, 0) != nullptr && std::memcmp(disk.sector(0, 0, 0), "DOS", 3) == 0,
+          "bootblock DOS ident");
+    check(disk.sector(0, 0, 0)[12 + 24] == 0x31 && disk.sector(0, 0, 0)[12 + 25] == 0x7C &&
+              disk.sector(0, 0, 0)[12 + 26] == 0x0F && disk.sector(0, 0, 0)[12 + 27] == 0x00 &&
+              disk.sector(0, 0, 0)[12 + 28] == 0x01 && disk.sector(0, 0, 0)[12 + 29] == 0x80,
+          "bootblock COLOR00 immediate is move.w #$0F00,$180(a0)");
+    const std::vector<uint16_t> mfm = disk.encode_track(0, 0);
+    check(mfm.size() == 6334, "encoded track is 12668 MFM bytes");
+    int syncs = 0;
+    for (uint16_t w : mfm)
+        if (w == 0x4489) syncs++;
+    check(syncs >= 22, "each of 11 sectors has two 0x4489 sync words");
+
+    auto mfm_long = [&](int w) {
+        return (uint32_t(mfm[size_t(w)]) << 16) | mfm[size_t(w + 1)];
+    };
+    auto decode_pair = [](uint32_t odd, uint32_t even) {
+        return ((odd & 0x55555555u) << 1) | (even & 0x55555555u);
+    };
+    const int hp = 167;  // first header MFM long (165 gap + two 4489)
+    check(decode_pair(mfm_long(hp), mfm_long(hp + 2)) == 0xFF00000Bu,
+          "header info is a consecutive odd/even MFM pair");
+    const int data = hp + 28;  // 10 header longs + 2 checksum pairs
+    check(decode_pair(mfm_long(data), mfm_long(data + 256)) == 0x444F5300u,
+          "sector data is odd-plane then even-plane (512+512)");
+
+    dsp::Amiga500 machine;
+    check(machine.load_media(path, &error), "Amiga attaches an ADF before Kickstart is loaded");
+    check(machine.floppy_loaded(), "Amiga reports the floppy");
+
+    // CIA-B motor latch + 3.5" DD GetUnitID (RDY low while selected with motor off).
+    // Load PRB with /SEL and /MTR high before making the port an output so the
+    // motor is not latched on by a $00→output glitch.
+    machine.ciab().write(1, 0xFF);
+    machine.ciab().write(3, 0xFF);
+    check(!machine.floppy_selected() && !machine.floppy_motor(), "DF0 idle is deselected, motor off");
+    machine.ciab().write(1, 0x7F);
+    machine.ciab().write(1, 0x77);  // /SEL0 low, /MTR low → latch motor on
+    check(machine.floppy_selected() && machine.floppy_motor(), "select while /MTR low latches the motor");
+    machine.ciab().write(1, 0xFF);
+    check(!machine.floppy_selected() && machine.floppy_motor(), "deselect does not stop a latched motor");
+    machine.ciab().write(1, 0xF7);  // select with /MTR high → latch motor off (ID probe)
+    check(machine.floppy_selected() && !machine.floppy_motor(), "select while /MTR high latches motor off");
+    check((machine.ciaa().read(0) & 0x20) == 0, "GetUnitID bit-bang sees /RDY low (3.5\" DD id 0)");
+    machine.ciab().write(1, 0xF5);  // selected, /STEP high, DIR=0 (towards spindle)
+    machine.ciab().write(1, 0xF4);  // falling /STEP, DIR=0
+    check(machine.floppy_cyl() == 1, "DIR=0 steps toward the spindle (higher cylinders)");
+    machine.ciab().write(1, 0xF7);  // /STEP high, DIR=1 (towards track 0)
+    machine.ciab().write(1, 0xF6);  // falling /STEP, DIR=1
+    check(!machine.floppy_cyl(), "DIR=1 steps toward track 0");
+    check((machine.ciaa().read(0) & 0x04) != 0, "a step pulse clears /CHNG");
+}
+
+void test_amiga_kickstart_if_present() {
+    const char* rom = "/tmp/roms/a500.zip";
+    std::FILE* f = std::fopen(rom, "rb");
+    if (!f) return;
+    std::fclose(f);
+
+    dsp::Amiga500 boot;
+    std::string error;
+    check(boot.init(rom, &error), "Kickstart 1.3/1.2 loads");
+    check(boot.debug_pc() == 0x00FC00D2, "Kickstart 1.3 reset PC is $FC00D2");
+    for (int i = 0; i < 60; i++) boot.run_frame();
+    write_amiga_ppm("/tmp/amiga-insert-disk.ppm", boot);
+    check(!boot.overlay(), "Kickstart cleared CIA-A OVL (ROM overlay off)");
+    check((boot.debug_pc() & 0xFF0000) == 0xFC0000, "68000 is executing Kickstart ROM");
+    check(boot.color00() != 0, "Kickstart programmed Denise COLOR00");
+    check(count_lit_pixels(boot) > 80, "Kickstart paints the Denise framebuffer");
+    check((boot.intena() & 0x4000) != 0, "Kickstart enabled Paula INTEN");
+}
+
+void test_amiga_bootblock_if_present() {
+    const char* rom = "/tmp/roms/a500.zip";
+    std::FILE* f = std::fopen(rom, "rb");
+    if (!f) return;
+    std::fclose(f);
+
+    std::string error;
+    const std::string disk = "/tmp/amiga-red.adf";
+    check(dsp::AmigaAdf::write_color_boot(disk, 0x0F00, &error), "wrote COLOR00-red boot ADF");
+
+    dsp::Amiga500 boot;
+    check(boot.init(rom, &error), "Kickstart loads for bootblock test");
+    check(boot.load_media(disk, &error), "red boot ADF mounts in DF0");
+    check(boot.floppy_loaded() && boot.floppy_tracks() == 80 && boot.floppy_spt() == 11,
+          "DF0 is an 880K 80x2x11 ADF");
+    bool saw_motor = false;
+    for (int i = 0; i < 220; i++) {
+        boot.run_frame();
+        if (boot.floppy_motor()) saw_motor = true;
+        if (boot.color00() == 0x0F00) break;
+    }
+    write_amiga_ppm("/tmp/amiga-bootblock-red.ppm", boot);
+    check(!boot.overlay(), "Kickstart overlay is off with a floppy in DF0");
+    check(boot.prb_writes() > 4, "Kickstart bit-banged CIA-B PRB for DF0");
+    check(saw_motor, "trackdisk latched the DF0 motor");
+    check(boot.color00() == 0x0F00, "synthetic bootblock painted Denise COLOR00 red");
+    check((boot.debug_pc() & 0xFF0000) != 0xFC0000, "bootblock is running in chip RAM, not Kickstart");
+}
+
 void test_ql_match_point_if_present() {
     const char* rom = "/tmp/roms/ql.zip";
     const char* match = "/tmp/ql/Match Point (1985)(Psion).mdv";
@@ -5140,6 +5271,10 @@ int main() {
     test_st_floppy_formats();
     test_st_boot_if_present();
     test_st_north_south_if_present();
+    test_amiga_missing_roms();
+    test_amiga_adf_format();
+    test_amiga_kickstart_if_present();
+    test_amiga_bootblock_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
