@@ -49,6 +49,18 @@ public:
     bool mdv2_loaded() const { return mdv2_.loaded(); }
     bool mdv1_selected() const { return mdv1_.selected(); }
     bool mdv2_selected() const { return mdv2_.selected(); }
+    bool mdv1_motor() const { return mdv1_.motor(); }
+    bool mdv2_motor() const { return mdv2_.motor(); }
+    uint8_t debug_status() const { return zx8302_.status_r(); }
+    int debug_mdv_controls() const { return mdv_control_writes_; }
+    int debug_mdv_reads() const { return mdv_track_reads_; }
+    int debug_mdv_rx() const { return zx8302_.mdv_rx_bytes(); }
+    uint8_t debug_mdv_byte(int track) const { return zx8302_.mdv_last(track); }
+    uint16_t debug_mdv_first() const { return zx8302_.mdv_first_pair(); }
+    int debug_mdv_syncs() const { return zx8302_.mdv_syncs(); }
+    uint8_t debug_mdv_last_ctrl() const { return mdv_last_ctrl_; }
+    int debug_mdv_read_log_n() const { return mdv_read_log_n_; }
+    uint8_t debug_mdv_read_log(int i) const { return mdv_read_log_[size_t(i & 63)]; }
 
 private:
     uint8_t read_byte(uint32_t address);
@@ -86,6 +98,12 @@ private:
     int64_t ipc_cycle_acc_ = 0;
     int64_t baud_acc_ = 0;
     int64_t mdv_acc_ = 0;
+    int mdv_stall_ = 0;
+    int mdv_control_writes_ = 0;
+    int mdv_track_reads_ = 0;
+    uint8_t mdv_last_ctrl_ = 0;
+    std::array<uint8_t, 64> mdv_read_log_{};
+    int mdv_read_log_n_ = 0;
     int rtc_frames_ = 0;
     int flash_frames_ = 0;
     int64_t audio_acc_ = 0;

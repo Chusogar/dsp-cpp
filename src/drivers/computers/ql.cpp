@@ -109,6 +109,9 @@ SinclairQl::SinclairQl() : cpu_(kCpuClock), ipc_(kIpcClock, Mcs48::Chip::I8749) 
     });
     mdv1_.set_tx_pop([this]() { return zx8302_.mdv_tx_pop(); });
     mdv2_.set_tx_pop([this]() { return zx8302_.mdv_tx_pop(); });
+    zx8302_.set_mdv_burst_callback([this]() {
+        for (int i = 0; i < 8; i++) tick_mdv_bits();
+    });
 }
 
 bool SinclairQl::init(const std::string& rom_path, std::string* error) {
@@ -152,6 +155,9 @@ void SinclairQl::reset() {
     ipc_cycle_acc_ = 0;
     baud_acc_ = 0;
     mdv_acc_ = 0;
+    mdv_stall_ = 0;
+    mdv_control_writes_ = 0;
+    mdv_track_reads_ = 0;
     mdv1_.reset();
     mdv2_.reset();
     rtc_frames_ = 0;
@@ -225,7 +231,12 @@ uint8_t SinclairQl::read_byte(uint32_t address) {
     if (address >= 0x18000 && address <= 0x18003) return zx8302_.rtc_r(address & 3);
     if (address == 0x18020) return zx8302_.status_r();
     if (address == 0x18021) return zx8302_.irq_status_r();
-    if (address >= 0x18022 && address <= 0x18023) return zx8302_.mdv_track_r(address & 1);
+    if (address >= 0x18022 && address <= 0x18023) {
+        const uint8_t data = zx8302_.mdv_track_r(address & 1);
+        if (mdv_read_log_n_ < 64) mdv_read_log_[size_t(mdv_read_log_n_++)] = data;
+        mdv_track_reads_++;
+        return data;
+    }
     if (address >= 0x20000 && address < 0x40000) return video_.ram_r(address - 0x20000);
     return 0;
 }
@@ -246,6 +257,8 @@ void SinclairQl::write_byte(uint32_t address, uint8_t value) {
         return;
     }
     if (address == 0x18020) {
+        mdv_control_writes_++;
+        mdv_last_ctrl_ = value;
         zx8302_.mdv_control_w(value);
         return;
     }
@@ -309,8 +322,20 @@ void SinclairQl::update_mdv_gap() {
 
 void SinclairQl::tick_mdv_bits() {
     const bool running = mdv1_.motor() || mdv2_.motor();
-    if (running) {
-        update_mdv_gap();
+    if (!running) return;
+    update_mdv_gap();
+    // JS SuperBASIC only polls RX-full for ~20 instructions (~320 cycles)
+    // between pairs. A free-running 100 kHz stream is 600 cycles/pair, so
+    // hold the unread pair briefly. Do not skip to the next gap: the ROM
+    // re-arms SEARCH between a block header and its data preamble.
+    if (zx8302_.mdv_delivering() && zx8302_.mdv_rx_full()) {
+        if (++mdv_stall_ < 80) return;
+    } else {
+        mdv_stall_ = 0;
+    }
+    const bool data = (mdv1_.selected() && mdv1_.gap() == 0) ||
+                      (mdv2_.selected() && mdv2_.gap() == 0);
+    if (data) {
         zx8302_.mdv_raw1_w(mdv1_.data1() | mdv2_.data1());
         zx8302_.mdv_raw2_w(mdv1_.data2() | mdv2_.data2());
     }

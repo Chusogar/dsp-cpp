@@ -37,6 +37,7 @@ public:
     bool selected() const { return comms_out_; }
     bool motor() const { return motor_; }
     int comms_out() const { return comms_out_ ? 1 : 0; }
+    int tape_pair() const { return pair_; }
 
     void tick_bit();
     int data1() const;

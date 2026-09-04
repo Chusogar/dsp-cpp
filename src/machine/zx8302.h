@@ -29,6 +29,7 @@ public:
     void set_mdselck_callback(LineCallback cb) { mdselck_cb_ = std::move(cb); }
     void set_mdrdw_callback(LineCallback cb) { mdrdw_cb_ = std::move(cb); }
     void set_erase_callback(LineCallback cb) { erase_cb_ = std::move(cb); }
+    void set_mdv_burst_callback(std::function<void()> cb) { mdv_burst_cb_ = std::move(cb); }
 
     uint8_t rtc_r(uint32_t offset) const;
     void rtc_w(uint8_t value);
@@ -55,6 +56,12 @@ public:
     bool ipc_busy() const { return ipc_busy_; }
     uint8_t irq() const { return irq_; }
     uint8_t status() const { return status_; }
+    int mdv_rx_bytes() const { return mdv_rx_bytes_; }
+    uint8_t mdv_last(int track) const { return mdv_data_[track & 1]; }
+    uint16_t mdv_first_pair() const { return mdv_first_pair_; }
+    int mdv_syncs() const { return mdv_syncs_; }
+    bool mdv_rx_full() const { return (status_ & kStatusRxFull) != 0; }
+    bool mdv_delivering() const { return mdv_sync_ == kMdvDeliver; }
 
 private:
     enum IpcPhase { kStart, kData, kStop };
@@ -71,6 +78,7 @@ private:
     LineCallback mdselck_cb_;
     LineCallback mdrdw_cb_;
     LineCallback erase_cb_;
+    std::function<void()> mdv_burst_cb_;
 
     uint8_t idr_ = 1;
     uint8_t tcr_ = 0;
@@ -84,6 +92,10 @@ private:
     int mdv_sync_ = kMdvIdle;
     uint8_t mdv_tx_[2]{};
     int mdv_tx_count_ = 0;
+    int mdv_rx_bytes_ = 0;
+    uint16_t mdv_first_pair_ = 0;
+    int mdv_syncs_ = 0;
+    uint8_t mdv_ctrl_ = 0;
 
     int comdata_from_ipc_ = 1;
     int comdata_to_cpu_ = 1;
