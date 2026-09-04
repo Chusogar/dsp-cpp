@@ -86,7 +86,7 @@ private:
     std::array<uint16_t, 0x4000> ram_{};
     std::array<uint8_t, 0x800> eeprom_{};
     std::array<uint16_t, 0x20> vad_control_{};
-    std::array<uint16_t, 0x200> palette_ram_{};
+    std::array<uint16_t, 0x400> palette_ram_{};
     std::array<uint32_t, 0x400> palette_{};
 
     GfxSet playfield_gfx_;

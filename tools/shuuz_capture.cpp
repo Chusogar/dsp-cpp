@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
     }
     std::printf("loaded %s pc=%06x\n", machine.title(), machine.debug_pc());
 
-    const int frames[] = {30, 180, 400, 700, 1000, 1500};
+    const int frames[] = {400, 800, 1000, 1500, 1800, 2200};
     int at = 0;
     dsp::MachineInputs idle;
     machine.set_inputs(idle);

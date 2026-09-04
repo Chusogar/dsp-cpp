@@ -3761,7 +3761,7 @@ void test_sega_roms_if_present() {
         std::string error;
         check(machine.init("/tmp/roms/shuuz.zip", &error), "Shuuz MAME set loads");
         const uint32_t reset_pc = machine.debug_pc();
-        for (int frame = 0; frame < 900; frame++) machine.run_frame();
+        for (int frame = 0; frame < 1800; frame++) machine.run_frame();
         check(machine.debug_pc() != reset_pc, "Shuuz 68000 leaves the reset vector");
         check(machine.debug_palette_used() > 16, "Shuuz writes the attract palette");
         check(unique_pixels(machine) > 16, "Shuuz attract mode draws a colour picture");

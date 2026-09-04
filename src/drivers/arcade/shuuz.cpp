@@ -278,17 +278,14 @@ void Shuuz::main_write(uint32_t address, uint16_t value) {
 }
 
 void Shuuz::set_palette(int index, uint16_t value) {
+    index &= 0x3ff;
     palette_ram_[size_t(index)] = value;
     const uint8_t intensity = uint8_t((value >> 15) & 1);
     const uint8_t red = pal6bit(uint8_t(((value >> 9) & 0x3e) | intensity));
     const uint8_t green = pal6bit(uint8_t(((value >> 4) & 0x3e) | intensity));
     const uint8_t blue = pal6bit(uint8_t(((value << 1) & 0x3e) | intensity));
-    const uint32_t colour =
+    palette_[size_t(index)] =
         0xff000000u | (uint32_t(red) << 16) | (uint32_t(green) << 8) | uint32_t(blue);
-    palette_[size_t(index)] = colour;
-    // Motion-object pen 1 is a shadow: hardware ORs 0x200 onto the playfield.
-    palette_[size_t(index) + 0x200] = 0xff000000u | (uint32_t(red / 2) << 16) |
-                                      (uint32_t(green / 2) << 8) | uint32_t(blue / 2);
 }
 
 uint16_t Shuuz::vad_control_read(int offset) {
