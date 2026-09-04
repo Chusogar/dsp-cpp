@@ -24,38 +24,39 @@
 #include "cpu/upd7801.h"
 #include "cpu/z80.h"
 #include "cpu/z80ctc.h"
-#include "drivers/amstrad_cpc.h"
-#include "drivers/atari_lynx.h"
-#include "drivers/a2600.h"
-#include "drivers/atari_system1.h"
-#include "drivers/atari_system2.h"
-#include "drivers/apple2.h"
-#include "drivers/exelv.h"
-#include "drivers/gameboy.h"
-#include "drivers/mcr.h"
-#include "drivers/msx2.h"
-#include "drivers/nes.h"
-#include "drivers/pv2000.h"
-#include "drivers/scv.h"
-#include "drivers/starwars.h"
-#include "drivers/asteroid.h"
-#include "drivers/c64.h"
+#include "drivers/computers/amstrad_cpc.h"
+#include "drivers/consoles/atari_lynx.h"
+#include "drivers/consoles/a2600.h"
+#include "drivers/arcade/atari_system1.h"
+#include "drivers/arcade/atari_system2.h"
+#include "drivers/computers/apple2.h"
+#include "drivers/computers/exelv.h"
+#include "drivers/computers/ql.h"
+#include "drivers/consoles/gameboy.h"
+#include "drivers/arcade/mcr.h"
+#include "drivers/computers/msx2.h"
+#include "drivers/consoles/nes.h"
+#include "drivers/consoles/pv2000.h"
+#include "drivers/consoles/scv.h"
+#include "drivers/arcade/starwars.h"
+#include "drivers/arcade/asteroid.h"
+#include "drivers/computers/c64.h"
 #include "machine/mos6566.h"
-#include "drivers/neogeo.h"
-#include "drivers/polepos.h"
+#include "drivers/arcade/neogeo.h"
+#include "drivers/arcade/polepos.h"
 #include "video/neogeo_video.h"
 #include "cpu/mb88xx.h"
 #include "cpu/z8002.h"
-#include "drivers/spectrum.h"
-#include "drivers/zx_clone.h"
-#include "drivers/genesis.h"
-#include "drivers/hangon.h"
-#include "drivers/outrun.h"
-#include "drivers/skullxbo.h"
-#include "drivers/bublbobl.h"
-#include "drivers/ajax.h"
-#include "drivers/armedf_hw.h"
-#include "drivers/system16.h"
+#include "drivers/computers/spectrum.h"
+#include "drivers/computers/zx_clone.h"
+#include "drivers/consoles/genesis.h"
+#include "drivers/arcade/hangon.h"
+#include "drivers/arcade/outrun.h"
+#include "drivers/arcade/skullxbo.h"
+#include "drivers/arcade/bublbobl.h"
+#include "drivers/arcade/ajax.h"
+#include "drivers/arcade/armedf_hw.h"
+#include "drivers/arcade/system16.h"
 #include "machine/fd1089.h"
 #include "machine/bagman_pal.h"
 #include "machine/beta128.h"
@@ -4365,6 +4366,31 @@ void test_diskii_encode_roundtrip() {
     check(disk.nibble_pos() != pos, "Disk II advances after the CPU consumes the nibble");
 }
 
+void test_ql_missing_roms() {
+    dsp::SinclairQl machine;
+    std::string error = "unset";
+    check(std::strcmp(machine.title(), "Sinclair QL") == 0, "QL title");
+    check(machine.screen_width() == 512 && machine.screen_height() == 256, "QL 512x256 ZX8301");
+    check(!machine.init("/no/such/ql.zip", &error), "missing QL ROMs fail init");
+    check(error.find("not found") != std::string::npos || error.size() > 3,
+          "init reports why the QL ROM set is missing");
+}
+
+void test_ql_roms_if_present() {
+    const char* rom = "/tmp/roms/ql.zip";
+    std::FILE* f = std::fopen(rom, "rb");
+    if (!f) return;
+    std::fclose(f);
+    dsp::SinclairQl boot;
+    std::string error;
+    check(boot.init(rom, &error), "QL JS ROM set loads");
+    check(boot.debug_pc() != 0, "QL 68008 starts from the JS reset vector");
+    for (int i = 0; i < 300; i++) boot.run_frame();
+    check(boot.debug_pc() >= 0x20000 || boot.debug_pc() < 0xc000,
+          "QL SuperBASIC is executing ROM or RAM after boot");
+    check(count_lit_pixels(boot) > 80, "QL attract/copyright paints the ZX8301 screen");
+}
+
 void test_apple2_missing_roms_and_dummy() {
     dsp::Apple2 machine;
     std::string error;
@@ -4614,6 +4640,8 @@ int main() {
     test_diskii_encode_roundtrip();
     test_apple2_missing_roms_and_dummy();
     test_apple2_roms_if_present();
+    test_ql_missing_roms();
+    test_ql_roms_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

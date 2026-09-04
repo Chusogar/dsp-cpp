@@ -1,7 +1,7 @@
 #include <cstdio>
 #include <cstring>
 
-#include "drivers/spectrum.h"
+#include "drivers/computers/spectrum.h"
 
 using namespace dsp;
 

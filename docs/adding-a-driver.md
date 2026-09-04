@@ -10,9 +10,10 @@ The fastest way to start is the template:
 python3 tools/new_driver.py galaxian --class Galaxian --title "Galaxian"
 ```
 
-It writes `src/drivers/galaxian.h` and `src/drivers/galaxian.cpp` from
-`docs/templates/`, and prints the two lines you still have to paste into
-`CMakeLists.txt` and `src/main.cpp`.
+It writes `src/drivers/arcade/galaxian.h` and `src/drivers/arcade/galaxian.cpp`
+from `docs/templates/` (use `--kind computers` or `--kind consoles` for those
+trees), and prints the two lines you still have to paste into `CMakeLists.txt`
+and `src/main.cpp`.
 
 ## 1. Read the Pascal driver
 
@@ -110,7 +111,7 @@ front end stops stealing `P` for pause.
 ```cmake
 add_executable(dsp
   ...
-  src/drivers/galaxian.cpp
+  src/drivers/arcade/galaxian.cpp
 )
 ```
 

@@ -913,7 +913,9 @@ src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805, µPD7801, TMS7000, NE
 src/sound/      AY-3-8910, SN76496, NES APU, SID, µPD1771C, QSound, TMS5220, Sega PCM
 src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556, V9938, AVG, Sega 16, TIA
 src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, 6532, Lynx, mathbox, 315-5195, MSX FDC/RTC
-src/drivers/    the machines themselves (memory map, video, inputs)
+src/drivers/arcade/     arcade machines
+src/drivers/computers/  home computers (Spectrum, QL, C64, …)
+src/drivers/consoles/   consoles (NES, Genesis, A2600, …)
 src/frontend/   SDL2 front end, driven through the core/machine.h interface
 src/core/       ROM loader (directory or zip) and the Machine interface
 ```

@@ -46,6 +46,11 @@ Mcs48::Mcs48(uint32_t clock, Chip chip) : clock_(clock / 15), chip_(chip) {
             ram_mask_ = 0x7f;
             feature_mask_ = kUpi41Feature;
             break;
+        case Chip::I8749:
+            rom_mask_ = 0x7ff;
+            ram_mask_ = 0x7f;
+            feature_mask_ = kMcs48Feature;
+            break;
     }
 }
 

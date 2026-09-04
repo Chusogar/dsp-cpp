@@ -66,6 +66,7 @@ add_executable(dsp
   src/video/dvg.cpp
   src/video/sega16.cpp
   src/video/apple2_video.cpp
+  src/video/zx8301.cpp
   src/video/huc6260.cpp
   src/video/huc6270.cpp
   src/video/neogeo_video.cpp
@@ -110,46 +111,47 @@ add_executable(dsp
   src/machine/konami_decrypt.cpp
   src/machine/tc0140syt.cpp
   src/machine/opwolf_cchip.cpp
+  src/machine/zx8302.cpp
 
     
-  src/drivers/bagman.cpp
-  src/drivers/mikie.cpp
-  src/drivers/gauntlet.cpp
-  src/drivers/doubledragon.cpp
-  src/drivers/taitosj.cpp
-  src/drivers/mrdo.cpp
-  src/drivers/atari_system1.cpp
-  src/drivers/atari_system2.cpp
-  src/drivers/mcr.cpp
-  src/drivers/dec0.cpp
-  src/drivers/m62.cpp
-  src/drivers/snk.cpp
-  src/drivers/cps1.cpp
-  src/drivers/m72.cpp
-  src/drivers/starwars.cpp
-  src/drivers/asteroid.cpp
-  src/drivers/polepos.cpp
-  src/drivers/hangon.cpp
-  src/drivers/system16.cpp
-  src/drivers/outrun.cpp
-  src/drivers/galaxian.cpp
-  src/drivers/vicdual.cpp
-  src/drivers/sega_system1.cpp
-  src/drivers/neogeo.cpp
-  src/drivers/opwolf.cpp
-  src/drivers/trackfld.cpp
-  src/drivers/pirates.cpp
-  src/drivers/armedf_hw.cpp
+  src/drivers/arcade/bagman.cpp
+  src/drivers/arcade/mikie.cpp
+  src/drivers/arcade/gauntlet.cpp
+  src/drivers/arcade/doubledragon.cpp
+  src/drivers/arcade/taitosj.cpp
+  src/drivers/arcade/mrdo.cpp
+  src/drivers/arcade/atari_system1.cpp
+  src/drivers/arcade/atari_system2.cpp
+  src/drivers/arcade/mcr.cpp
+  src/drivers/arcade/dec0.cpp
+  src/drivers/arcade/m62.cpp
+  src/drivers/arcade/snk.cpp
+  src/drivers/arcade/cps1.cpp
+  src/drivers/arcade/m72.cpp
+  src/drivers/arcade/starwars.cpp
+  src/drivers/arcade/asteroid.cpp
+  src/drivers/arcade/polepos.cpp
+  src/drivers/arcade/hangon.cpp
+  src/drivers/arcade/system16.cpp
+  src/drivers/arcade/outrun.cpp
+  src/drivers/arcade/galaxian.cpp
+  src/drivers/arcade/vicdual.cpp
+  src/drivers/arcade/sega_system1.cpp
+  src/drivers/arcade/neogeo.cpp
+  src/drivers/arcade/opwolf.cpp
+  src/drivers/arcade/trackfld.cpp
+  src/drivers/arcade/pirates.cpp
+  src/drivers/arcade/armedf_hw.cpp
   src/machine/nb1414_m4.cpp
-  src/drivers/wwfsstar.cpp
-  src/drivers/citycon.cpp
-  src/drivers/commando.cpp
-  src/drivers/galaga_hw.cpp
-  src/drivers/shadow_warriors_hw.cpp
-  src/drivers/actfancer.cpp
-  src/drivers/ajax.cpp
-  src/drivers/aliens.cpp
-  src/drivers/simpsons.cpp
+  src/drivers/arcade/wwfsstar.cpp
+  src/drivers/arcade/citycon.cpp
+  src/drivers/arcade/commando.cpp
+  src/drivers/arcade/galaga_hw.cpp
+  src/drivers/arcade/shadow_warriors_hw.cpp
+  src/drivers/arcade/actfancer.cpp
+  src/drivers/arcade/ajax.cpp
+  src/drivers/arcade/aliens.cpp
+  src/drivers/arcade/simpsons.cpp
   src/video/k052109.cpp
   src/video/k051960.cpp
   src/video/k051316.cpp
@@ -158,47 +160,48 @@ add_executable(dsp
   src/sound/k053260.cpp
   src/machine/eeprom_er5911.cpp
   src/sound/k007232.cpp
-  src/drivers/tetris_atari_hw.cpp
-  src/drivers/skullxbo.cpp
-  src/drivers/gng.cpp
-  src/drivers/bublbobl.cpp
+  src/drivers/arcade/tetris_atari_hw.cpp
+  src/drivers/arcade/skullxbo.cpp
+  src/drivers/arcade/gng.cpp
+  src/drivers/arcade/bublbobl.cpp
 
-  src/drivers/spectrum.cpp
-  src/drivers/spectrum_128k.cpp
-  src/drivers/spectrum_3.cpp
-  src/drivers/zx_clone.cpp
-  src/drivers/amstrad_cpc.cpp
-  src/drivers/msx1.cpp
-  src/drivers/msx2.cpp
+  src/drivers/computers/spectrum.cpp
+  src/drivers/computers/spectrum_128k.cpp
+  src/drivers/computers/spectrum_3.cpp
+  src/drivers/computers/zx_clone.cpp
+  src/drivers/computers/amstrad_cpc.cpp
+  src/drivers/computers/msx1.cpp
+  src/drivers/computers/msx2.cpp
   src/sound/sid.cpp
   src/sound/sid6581.cpp
-  src/drivers/c64.cpp
-  src/drivers/apple2.cpp
-  src/drivers/exelv.cpp
+  src/drivers/computers/c64.cpp
+  src/drivers/computers/apple2.cpp
+  src/drivers/computers/exelv.cpp
+  src/drivers/computers/ql.cpp
     
-  src/drivers/sms.cpp
+  src/drivers/consoles/sms.cpp
   src/machine/sega_vdp.cpp
   src/video/sega_315_5313.cpp
   src/sound/ym2612.cpp
-  src/drivers/genesis.cpp
-  src/drivers/gamegear.cpp
-  src/drivers/pv1000.cpp
-  src/drivers/pv2000.cpp
-  src/drivers/colecovision.cpp
+  src/drivers/consoles/genesis.cpp
+  src/drivers/consoles/gamegear.cpp
+  src/drivers/consoles/pv1000.cpp
+  src/drivers/consoles/pv2000.cpp
+  src/drivers/consoles/colecovision.cpp
   src/machine/i2cmem.cpp
-  src/drivers/sg1000.cpp
-  src/drivers/gameboy.cpp
+  src/drivers/consoles/sg1000.cpp
+  src/drivers/consoles/gameboy.cpp
   src/machine/gb_mapper.cpp
   src/sound/gb_apu.cpp
   src/video/gb_ppu.cpp
   src/machine/nes_mapper.cpp
-  src/drivers/nes.cpp
-  src/drivers/scv.cpp
+  src/drivers/consoles/nes.cpp
+  src/drivers/consoles/scv.cpp
   src/machine/mos6526.cpp
   src/machine/mos6566.cpp
-  src/drivers/atari_lynx.cpp
-  src/drivers/a2600.cpp
-  src/drivers/pcengine.cpp
+  src/drivers/consoles/atari_lynx.cpp
+  src/drivers/consoles/a2600.cpp
+  src/drivers/consoles/pcengine.cpp
   
       
   src/core/rom_loader.cpp
@@ -269,6 +272,7 @@ add_executable(dsp_tests
   src/video/sega_315_5313.cpp
   src/video/sega16.cpp
   src/video/apple2_video.cpp
+  src/video/zx8301.cpp
   src/video/neogeo_video.cpp
   src/video/tia.cpp
   src/machine/bagman_pal.cpp
@@ -310,40 +314,42 @@ add_executable(dsp_tests
   src/machine/c64_tape.cpp
   src/machine/tc0140syt.cpp
   src/machine/opwolf_cchip.cpp
+  src/machine/zx8302.cpp
   src/machine/konami_decrypt.cpp
   src/machine/nb1414_m4.cpp
-  src/drivers/spectrum.cpp
-  src/drivers/amstrad_cpc.cpp
-  src/drivers/msx2.cpp
-  src/drivers/nes.cpp
-  src/drivers/c64.cpp
-  src/drivers/apple2.cpp
-  src/drivers/gameboy.cpp
-  src/drivers/mcr.cpp
-  src/drivers/atari_lynx.cpp
-  src/drivers/a2600.cpp
-  src/drivers/scv.cpp
-  src/drivers/pv2000.cpp
-  src/drivers/exelv.cpp
-  src/drivers/starwars.cpp
-  src/drivers/asteroid.cpp
-  src/drivers/polepos.cpp
-  src/drivers/atari_system1.cpp
-  src/drivers/atari_system2.cpp
-  src/drivers/zx_clone.cpp
-  src/drivers/genesis.cpp
-  src/drivers/outrun.cpp
-  src/drivers/hangon.cpp
-  src/drivers/system16.cpp
-  src/drivers/pcengine.cpp
-  src/drivers/neogeo.cpp
-  src/drivers/opwolf.cpp
-  src/drivers/trackfld.cpp
-  src/drivers/pirates.cpp
-  src/drivers/armedf_hw.cpp
-  src/drivers/skullxbo.cpp
-  src/drivers/bublbobl.cpp
-  src/drivers/ajax.cpp
+  src/drivers/computers/spectrum.cpp
+  src/drivers/computers/amstrad_cpc.cpp
+  src/drivers/computers/msx2.cpp
+  src/drivers/consoles/nes.cpp
+  src/drivers/computers/c64.cpp
+  src/drivers/computers/apple2.cpp
+  src/drivers/consoles/gameboy.cpp
+  src/drivers/arcade/mcr.cpp
+  src/drivers/consoles/atari_lynx.cpp
+  src/drivers/consoles/a2600.cpp
+  src/drivers/consoles/scv.cpp
+  src/drivers/consoles/pv2000.cpp
+  src/drivers/computers/exelv.cpp
+  src/drivers/computers/ql.cpp
+  src/drivers/arcade/starwars.cpp
+  src/drivers/arcade/asteroid.cpp
+  src/drivers/arcade/polepos.cpp
+  src/drivers/arcade/atari_system1.cpp
+  src/drivers/arcade/atari_system2.cpp
+  src/drivers/computers/zx_clone.cpp
+  src/drivers/consoles/genesis.cpp
+  src/drivers/arcade/outrun.cpp
+  src/drivers/arcade/hangon.cpp
+  src/drivers/arcade/system16.cpp
+  src/drivers/consoles/pcengine.cpp
+  src/drivers/arcade/neogeo.cpp
+  src/drivers/arcade/opwolf.cpp
+  src/drivers/arcade/trackfld.cpp
+  src/drivers/arcade/pirates.cpp
+  src/drivers/arcade/armedf_hw.cpp
+  src/drivers/arcade/skullxbo.cpp
+  src/drivers/arcade/bublbobl.cpp
+  src/drivers/arcade/ajax.cpp
   src/video/k052109.cpp
   src/video/k051960.cpp
   src/video/k051316.cpp
@@ -357,7 +363,7 @@ add_test(NAME dsp_tests COMMAND dsp_tests)
 
 add_executable(tapper_capture
   tools/tapper_capture.cpp
-  src/drivers/mcr.cpp
+  src/drivers/arcade/mcr.cpp
   src/cpu/z80.cpp
   src/cpu/z80ctc.cpp
   src/sound/ay8910.cpp

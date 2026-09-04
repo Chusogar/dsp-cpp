@@ -1,4 +1,4 @@
-#include "drivers/{{FILE}}.h"
+#include "drivers/{{KIND}}/{{FILE}}.h"
 
 #include "core/rom_loader.h"
 
