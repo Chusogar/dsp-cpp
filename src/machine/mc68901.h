@@ -32,7 +32,6 @@ public:
 private:
     void update_irq();
     void raise(int channel);
-    void update_irq();
 
     struct Timer {
         uint8_t control = 0;
