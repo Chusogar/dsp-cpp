@@ -30,11 +30,17 @@ public:
 
     void control(uint8_t value) { write_port(0, value); }
     void write(uint8_t value) { write_port(1, value); }
-    uint8_t status() const { return opn_.status(); }
+    uint8_t status() const {
+        uint8_t value = opn_.status();
+        if (tb_latched_) value |= 0x02;
+        return value;
+    }
+    uint8_t debug_reg(uint8_t address) const { return regs_[address]; }
     uint8_t read();
 
     // Generates the next mixed sample (sample rate is kSampleRate).
     int32_t update();
+    void run_timers(int cycles);
 
 private:
     void write_port(int port, uint8_t value);
@@ -43,6 +49,9 @@ private:
     AY8910 ay_;
     uint8_t regs_[256] = {};
     float amplitude_;
+    bool external_timers_ = false;
+    int32_t forced_tb_ = 0;
+    bool tb_latched_ = false;
 };
 
 }  // namespace dsp

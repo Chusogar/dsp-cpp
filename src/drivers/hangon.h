@@ -48,6 +48,18 @@ public:
     const char* title() const override;
 
     uint32_t debug_pc() const { return main_cpu_.pc(); }
+    uint16_t debug_sound_pc() const { return sound_cpu_.pc(); }
+    uint8_t debug_sound_latch() const { return sound_latch_; }
+    bool debug_z80_reset() const { return z80_reset_; }
+    uint32_t debug_ppi_a_writes() const { return ppi_a_writes_; }
+    uint16_t debug_mcu_pc() const { return mcu_ ? mcu_->pc() : uint16_t(0); }
+    uint32_t debug_mcu_irqs() const { return mcu_irqs_; }
+    uint8_t debug_mcu_ie() const { return mcu_ ? mcu_->debug_sfr(0xa8) : uint8_t(0); }
+    uint8_t debug_mcu_tcon() const { return mcu_ ? mcu_->debug_sfr(0x88) : uint8_t(0); }
+    uint8_t debug_mcu_p1() const { return mcu_ ? mcu_->debug_sfr(0x90) : uint8_t(0); }
+    uint8_t debug_ym_status() const { return ym2203_.status(); }
+    uint8_t debug_ym_reg(uint8_t address) const { return ym2203_.debug_reg(address); }
+    uint8_t debug_sound_ram(uint16_t address) const { return sound_mem_[address]; }
 
 private:
     bool is_sharrier_map() const { return game_ != Game::HangOn; }
@@ -103,6 +115,7 @@ private:
 
     uint8_t adc_select_ = 0;
     uint8_t sound_latch_ = 0;
+    uint32_t ppi_a_writes_ = 0;
     uint8_t control_res_ = 0;
     uint8_t analog_x_ = 0x80;
     uint8_t analog_y_ = 0x80;
@@ -112,9 +125,11 @@ private:
     uint16_t in0_ = 0xffff;
     uint16_t dsw_a_ = 0xffff;
     uint16_t dsw_b_ = 0xfffe;
-    bool z80_reset_ = false;
+    bool z80_reset_ = true;
+    int z80_nmi_holdoff_ = 0;
     int sprite_banks_ = 7;
     uint8_t i8751_addr_ = 0;
+    uint32_t mcu_irqs_ = 0;
     bool use_fd1089_ = false;
     bool use_ym2151_ = false;
     bool sharrier_road_ = false;

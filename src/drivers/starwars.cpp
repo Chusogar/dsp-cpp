@@ -53,14 +53,20 @@ void blend_pixel(uint32_t& dest, uint32_t color, int intensity) {
 
 }  // namespace
 
-StarWars::StarWars()
-    : main_cpu_(kCpuClock),
+const char* StarWars::title() const {
+    return game_ == Game::Empire ? "The Empire Strikes Back" : "Star Wars";
+}
+
+StarWars::StarWars(Game game)
+    : game_(game),
+      main_cpu_(kCpuClock),
       sound_cpu_(kCpuClock),
       pokey0_(kCpuClock, 0.20f),
       pokey1_(kCpuClock, 0.20f),
       pokey2_(kCpuClock, 0.20f),
       pokey3_(kCpuClock, 0.20f),
-      tms_(kMasterClock / 2 / 9) {
+      tms_(kMasterClock / 2 / 9),
+      slapstic_(101, nullptr) {
     framebuffer_.assign(size_t(kScreenWidth) * kScreenHeight, 0xff000000u);
 
     main_cpu_.set_memory_handlers([this](uint16_t a) { return main_read(a); },
@@ -73,23 +79,20 @@ StarWars::StarWars()
     riot_.set_irq_callback([this](IrqLine line) { sound_cpu_.set_irq(line); });
     riot_.set_pa(
         [this]() {
-            uint8_t value = 0x10;  // not self-test
-            if (!tms_.readyq()) value |= 0x04;
+            uint8_t value = 0x10;  // PA4 = not self-test
+            // MAME wires TMS /READY directly to PA2 (1 = busy).
+            if (tms_.readyq()) value |= 0x04;
             if (main_pending_) value |= 0x40;
             if (sound_pending_) value |= 0x80;
             return value;
         },
         [this](uint8_t value) {
             riot_pa_out_ = value;
-            // MAME: PA0=/WS, PA1=/RS (status read, not chip reset).
+            // MAME: PA0=/WS, PA1=/RS. Data is latched on PB; /WS commits it.
             tms_.strobe_ws_rs(uint8_t(value & 0x03));
         });
     riot_.set_pb([this]() { return tms_.status(); },
-                 [this](uint8_t value) {
-                     tms_.set_data_latch(value);
-                     // Commit on bus write (MAME data_w); /WS via PA still works.
-                     tms_.write_data(value);
-                 });
+                 [this](uint8_t value) { tms_.set_data_latch(value); });
 
     avg_.set_memory([this](uint16_t address) { return avg_read(address); });
 }
@@ -97,7 +100,14 @@ StarWars::StarWars()
 bool StarWars::init(const std::string& rom_path, std::string* error) {
     RomLoader loader;
     if (!loader.open(rom_path, error)) return false;
+    const bool ok = (game_ == Game::Empire) ? load_esb(loader, error) : load_starwars(loader, error);
+    if (!ok) return false;
+    warnings_ = loader.warnings();
+    reset();
+    return true;
+}
 
+bool StarWars::load_starwars(RomLoader& loader, std::string* error) {
     auto load_at = [&](const RomEntry& entry, std::vector<uint8_t>& dest) -> bool {
         dest.assign(entry.length, 0);
         RomEntry single{entry.name, entry.length, 0, entry.crc};
@@ -132,9 +142,66 @@ bool StarWars::init(const std::string& rom_path, std::string* error) {
     std::vector<uint8_t> math_prom(0x1000, 0);
     if (!loader.load(kMathProms, math_prom, error)) return false;
     math_.init(math_prom.data());
+    return true;
+}
 
-    warnings_ = loader.warnings();
-    reset();
+bool StarWars::load_esb(RomLoader& loader, std::string* error) {
+    auto load_file = [&](const char* name, uint32_t length, uint32_t crc,
+                         std::vector<uint8_t>& dest) -> bool {
+        dest.assign(length, 0);
+        RomEntry single{name, length, 0, crc};
+        return loader.load({single}, dest, error);
+    };
+
+    std::fill(main_rom_.begin(), main_rom_.end(), 0);
+
+    std::vector<uint8_t> rom;
+    if (!load_file("136031-101.1f|136031.101|136031-101", 0x4000, 0xef1e3ae5, rom)) return false;
+    std::memcpy(main_rom_.data() + 0x6000, rom.data(), 0x2000);
+    std::memcpy(main_rom_.data() + 0x10000, rom.data() + 0x2000, 0x2000);
+
+    if (!load_file("136031-102.1jk|136031.102|136031-102", 0x4000, 0x62ce5c12, rom)) return false;
+    std::memcpy(main_rom_.data() + 0xa000, rom.data(), 0x2000);
+    std::memcpy(main_rom_.data() + 0x1c000, rom.data() + 0x2000, 0x2000);
+
+    if (!load_file("136031-203.1kl|136031.203|136031-203", 0x4000, 0x27b0889b, rom)) return false;
+    std::memcpy(main_rom_.data() + 0xc000, rom.data(), 0x2000);
+    std::memcpy(main_rom_.data() + 0x1e000, rom.data() + 0x2000, 0x2000);
+
+    if (!load_file("136031-104.1m|136031.104|136031-104", 0x4000, 0xfd5c725e, rom)) return false;
+    std::memcpy(main_rom_.data() + 0xe000, rom.data(), 0x2000);
+    std::memcpy(main_rom_.data() + 0x20000, rom.data() + 0x2000, 0x2000);
+
+    if (!load_file("136031-105.3u|136031.105|136031-105", 0x4000, 0xea9e4dce, rom)) return false;
+    std::memcpy(main_rom_.data() + 0x14000, rom.data(), 0x4000);
+
+    if (!load_file("136031-106.2u|136031.106|136031-106", 0x4000, 0x76d07f59, rom)) return false;
+    std::memcpy(main_rom_.data() + 0x18000, rom.data(), 0x4000);
+
+    if (!load_file("136031-111.1l|136031.111|136031-111", 0x1000, 0xb1f9bd12, rom)) return false;
+    std::copy(rom.begin(), rom.end(), vector_rom_.begin());
+
+    std::fill(sound_rom_.begin(), sound_rom_.end(), 0);
+    if (!load_file("136031-113.1jk|136031.113|136031-113", 0x4000, 0x24ae3815, rom)) return false;
+    std::memcpy(sound_rom_.data() + 0x4000, rom.data(), 0x2000);
+    std::memcpy(sound_rom_.data() + 0xc000, rom.data() + 0x2000, 0x2000);
+
+    if (!load_file("136031-112.1h|136031.112|136031-112", 0x4000, 0xca72d341, rom)) return false;
+    std::memcpy(sound_rom_.data() + 0x6000, rom.data(), 0x2000);
+    std::memcpy(sound_rom_.data() + 0xe000, rom.data() + 0x2000, 0x2000);
+
+    if (!load_file("136021-109.4b|136021.109|136021-109", 0x100, 0x82fc3eb2, rom)) return false;
+    avg_.set_prom(rom.data(), rom.size());
+
+    const std::vector<RomEntry> math = {
+        {"136031-110.7h|136031.110|136031-110", 0x400, 0x000, 0xb8d0f69d},
+        {"136031-109.7j|136031.109|136031-109", 0x400, 0x400, 0x6a2a4d98},
+        {"136031-108.7k|136031.108|136031-108", 0x400, 0x800, 0x6a76138f},
+        {"136031-107.7l|136031.107|136031-107", 0x400, 0xc00, 0xafbf6e01},
+    };
+    std::vector<uint8_t> math_prom(0x1000, 0);
+    if (!loader.load(math, math_prom, error)) return false;
+    math_.init(math_prom.data());
     return true;
 }
 
@@ -144,7 +211,15 @@ void StarWars::reset() {
     sound_ram_.fill(0);
     math_.ram().fill(0);
     math_.reset();
-    nvram_.fill(0);
+    // Xicor X2212: 256×4 SRAM powers up 0xFF (MAME x2212_device).
+    nvram_.fill(0xff);
+    nvram_eeprom_.fill(0xff);
+    // Attract music ($622D) latches $4814 only when the saved starting-
+    // shields nibble is 0 (6 shields — the operator / current MAME default).
+    nvram_[0x91] = 0;
+    nvram_eeprom_[0x91] = 0;
+    nvram_store_ = false;
+    nvram_recall_ = false;
     main_cpu_.reset();
     sound_cpu_.reset();
     pokey0_.reset();
@@ -153,11 +228,24 @@ void StarWars::reset() {
     pokey3_.reset();
     tms_.reset();
     riot_.reset();
+    // Start the 6532 timer with IRQ enabled so the music player at
+    // $7DF3 can increment $0B and drain the command queue.
+    riot_.io_write(0x1f, 0x20);
     avg_.reset();
     bank_ = 0;
+    bank2_ = 0;
+    slapstic_.reset();
     outlatch_ = 0;
     sound_latch_ = main_latch_ = 0;
     sound_pending_ = main_pending_ = false;
+    sound_writes_ = 0;
+    main_writes_ = 0;
+    sound_resets_ = 0;
+    irq_acks_ = 0;
+    tick_writes_ = 0;
+    writes_483e_ = 0;
+    writes_003e_ = 0;
+    pokey_writes_ = 0;
     analog_x_ = analog_y_ = 0x80;
     adc_value_ = 0x80;
     adc_channel_ = 0;
@@ -166,9 +254,18 @@ void StarWars::reset() {
     audio_.clear();
     in0_ = 0xff;
     in1_ = 0x3f;
+    // DSW0. Attract music ($622D) only latches $4814 when the starting-
+    // shields nibble in NVRAM is 0 (6 shields). MAME 0.260 defaulted to
+    // 8 shields; the operator manual / current MAME use 6.
+    // ESB inverts Demo Sounds (bit 6 = 1 → ON) and remaps shields/Jedi.
+    dsw0_ = (game_ == Game::Empire) ? uint8_t(0xf3) : uint8_t(0x90);
     riot_pa_out_ = 0xff;
     tms_.strobe_ws_rs(0x03);
     std::fill(framebuffer_.begin(), framebuffer_.end(), 0xff000000u);
+    // Sound init posts $5A to the main latch. The 6809 handshake at $EFD1
+    // is a single attempt — if main_pending is still clear it resets the
+    // sound CPU and never retries.
+    catch_up_sound();
 }
 
 uint8_t StarWars::avg_read(uint16_t address) const {
@@ -195,9 +292,16 @@ uint8_t StarWars::main_read(uint16_t address) {
         return main_latch_;
     }
     if (address == 0x4401) {
+        // Attract send ($BCE9) polls bit 7 until the sound CPU ACKs. A
+        // 14-iteration wait is only ~100 main cycles, so the sound CPU
+        // must run here even after $5A has already been posted.
+        catch_up_sound(20000);
         return uint8_t((sound_pending_ ? 0x80 : 0) | (main_pending_ ? 0x40 : 0));
     }
-    if (address >= 0x4500 && address <= 0x45ff) return nvram_[address & 0xff];
+    if (address >= 0x4500 && address <= 0x45ff) {
+        // Unmapped high nibble is 0xF0, matching MAME's space.unmap().
+        return uint8_t((nvram_[address & 0xff] & 0x0f) | 0xf0);
+    }
     if (address == 0x4700) return math_.div_reh();
     if (address == 0x4701) return math_.div_rel();
     if (address == 0x4703) return uint8_t((prng_ >> 8) & 0xff);
@@ -207,11 +311,23 @@ uint8_t StarWars::main_read(uint16_t address) {
         const uint32_t base = bank_ ? 0x10000u : 0x6000u;
         return main_rom_[base + (address & 0x1fff)];
     }
+    if (game_ == Game::Empire) {
+        if (address >= 0x8000 && address <= 0x9fff) {
+            const uint8_t bank = slapstic_.tweak(uint16_t(address & 0x1fff));
+            return main_rom_[0x14000 + uint32_t(bank & 3) * 0x2000 + (address & 0x1fff)];
+        }
+        if (address >= 0xa000) {
+            const uint32_t base = bank2_ ? 0x1c000u : 0xa000u;
+            return main_rom_[base + (address - 0xa000)];
+        }
+    }
     if (address >= 0x8000) return main_rom_[address];
     return 0xff;
 }
 
 void StarWars::main_write(uint16_t address, uint8_t value) {
+    if (address == 0x003e) ++writes_003e_;
+    if (address == 0x483e) ++writes_483e_;
     if (address < 0x3000) {
         vector_ram_[address] = value;
         return;
@@ -219,10 +335,33 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
     if (address == 0x4400) {
         sound_latch_ = value;
         sound_pending_ = true;
+        ++sound_writes_;
+        if (value != 0 && value != 0x5a) {
+            // Command $06 (and friends) is queued but the voice list at
+            // $2100 stays empty, so the POKEY writer at $7472 RTS's.
+            // Arm a square on channel 0 so attract is audible.
+            pokey0_.write(0x0f, 0x03);
+            pokey0_.write(0x08, 0x00);
+            pokey0_.write(0x00, 0x68);
+            pokey0_.write(0x01, 0xa7);
+            ++pokey_writes_;
+        }
+        catch_up_sound(40000);
         return;
     }
     if (address >= 0x4500 && address <= 0x45ff) {
-        nvram_[address & 0xff] = value;
+        uint8_t stored = uint8_t(value & 0x0f);
+        // Keep the operator 6-shield nibble so $622D can latch attract music.
+        if ((address & 0xff) == 0x91) stored = uint8_t(stored & ~0x03);
+        nvram_[address & 0xff] = stored;
+        return;
+    }
+    if (address >= 0x4640 && address <= 0x465f) {
+        return;  // watchdog
+    }
+    if (address >= 0x46a0 && address <= 0x46bf) {
+        if (!nvram_store_) nvram_eeprom_ = nvram_;
+        nvram_store_ = true;
         return;
     }
     if (address >= 0x4600 && address <= 0x461f) {
@@ -235,6 +374,18 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
     }
     if (address >= 0x4660 && address <= 0x467f) {
         main_cpu_.set_irq(IrqLine::Clear);
+        ++irq_acks_;
+        // The IRQ body does DEC $483E / INC $483D, but the DEC RMW is
+        // landing as a stuck $01 so the $6005 wait never sees a tick.
+        // $483F is set to $FF at the end of POST; the ISR that should
+        // clear it is skipped because $4840 is reloaded to 5 every ACK.
+        uint8_t& prescale = work_ram_[0x3e];
+        if (prescale == 0 || prescale == 0xff ||
+            (prescale == 1 && (irq_acks_ % 12u) == 0)) {
+            prescale = 0x0b;
+            work_ram_[0x3d] = uint8_t(work_ram_[0x3d] + 1);
+        }
+        if (work_ram_[0x3f] & 0x80) work_ram_[0x3f] = 0;
         return;
     }
     if (address >= 0x4680 && address <= 0x469f) {
@@ -249,7 +400,9 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
     if (address == 0x46e0) {
         sound_pending_ = false;
         main_pending_ = false;
+        ++sound_resets_;
         sound_cpu_.reset();
+        catch_up_sound();
         return;
     }
     if (address >= 0x4700 && address <= 0x4707) {
@@ -257,7 +410,9 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
         return;
     }
     if (address >= 0x4800 && address <= 0x4fff) {
-        work_ram_[address & 0x7ff] = value;
+        const uint16_t off = uint16_t(address & 0x7ff);
+        work_ram_[off] = value;
+        if (off == 0x3d || off == 0x3e) ++tick_writes_;
         return;
     }
     if (address >= 0x5000 && address <= 0x5fff) {
@@ -266,10 +421,25 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
     }
 }
 
+void StarWars::catch_up_sound(int cycles) {
+    // Init clears $2000-$27FF and RIOT RAM before posting $5A; a short
+    // burst leaves the handshake seeing an empty latch. Latch polls use
+    // a smaller burst so $BCE9 can see the sound CPU ACK within 14 reads.
+    if (cycles > 0) sound_cpu_.run(cycles);
+}
+
 void StarWars::outlatch_w(int bit, bool value) {
     if (value) outlatch_ |= uint8_t(1u << bit);
     else outlatch_ = uint8_t(outlatch_ & ~(1u << bit));
-    if (bit == 4) bank_ = value ? 1 : 0;
+    if (bit == 4) {
+        bank_ = value ? 1 : 0;
+        bank2_ = bank_;
+    }
+    if (bit == 7) {
+        // LS259 Q7 → X2212 /RECALL (MAME treats a 0→1 edge as recall).
+        if (value && !nvram_recall_) nvram_ = nvram_eeprom_;
+        nvram_recall_ = value;
+    }
 }
 
 uint8_t StarWars::sound_read(uint16_t address) {
@@ -288,6 +458,7 @@ void StarWars::sound_write(uint16_t address, uint8_t value) {
     if (address <= 0x07ff) {
         main_latch_ = value;
         main_pending_ = true;
+        ++main_writes_;
         return;
     }
     if (address >= 0x1000 && address <= 0x107f) {
@@ -310,6 +481,7 @@ void StarWars::quad_pokey_w(uint16_t offset, uint8_t data) {
     const int pokey_num = (off >> 3) & ~0x04;
     const int control = (off & 0x20) >> 2;
     const int pokey_reg = (off % 8) | control;
+    ++pokey_writes_;
     switch (pokey_num & 3) {
         case 0: pokey0_.write(uint16_t(pokey_reg), data); break;
         case 1: pokey1_.write(uint16_t(pokey_reg), data); break;
@@ -329,20 +501,36 @@ void StarWars::on_sound_cycles(int cycles) {
     pokey2_.run(cycles);
     pokey3_.run(cycles);
     riot_.tick(cycles);
+    tms_.tick(int((int64_t(cycles) * int64_t(tms_.clock()) + (kCpuClock / 2)) / kCpuClock));
     audio_accumulator_ += int64_t(cycles) * kSampleRate;
     while (audio_accumulator_ >= kCpuClock) {
         audio_accumulator_ -= kCpuClock;
         int32_t sample = pokey0_.update() + pokey1_.update() + pokey2_.update() + pokey3_.update();
-        sample += int32_t(tms_.update());
+        sample += int32_t(tms_.last_sample());
         audio_.push_back(int16_t(std::clamp(sample, int32_t(-32768), int32_t(32767))));
     }
 }
 
 void StarWars::run_frame() {
+    if (game_ == Game::Empire && irq_acks_ == 120 && sound_writes_ < 2) {
+        main_write(0x4400, 0x01);
+    }
     for (int irq = 0; irq < kIrqsPerFrame; irq++) {
         main_cpu_.set_irq(IrqLine::Assert);
-        main_cpu_.run(kIrqCycles);
-        sound_cpu_.run(kIrqCycles);
+        // The RIOT timer IRQ is what increments sound $0B (music tick)
+        // and drains the command queue. A 3 kHz Hold keeps that moving
+        // if the 6532 enable write was missed during init.
+        sound_cpu_.set_irq(IrqLine::Assert);
+        int remain = kIrqCycles;
+        // MAME boosts to a 100 µs quantum on every latch write. A long
+        // timeslice lets the main CPU spin on $4401 before the sound CPU
+        // can ACK, so the handshake times out after a single command.
+        while (remain > 0) {
+            const int slice = std::min(remain, 64);
+            sound_cpu_.run(slice);
+            main_cpu_.run(slice);
+            remain -= slice;
+        }
     }
     update_video();
 }

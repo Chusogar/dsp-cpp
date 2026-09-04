@@ -40,6 +40,8 @@ public:
 
     uint32_t clock() const { return clock_; }
     uint16_t pc() const { return pc_; }
+    uint8_t debug_cc() const { return get_cc(); }
+    IrqLine debug_irq_state() const { return irq_state_; }
 
     // Registers, public to keep debugging and driver hooks simple.
     uint8_t a = 0, b = 0, dp = 0;

@@ -114,6 +114,9 @@ public:
 
     void internal_timer_a(Channel& csm_channel);
     void internal_timer_b();
+    // Advance the OPN timers by `cycles` of the chip clock (used when the
+    // Z80 polls the overflow flag in a tight loop between mixer samples).
+    void advance_timers(int cycles, Channel& csm_channel);
     void timer_a_over();
     void timer_b_over();
 

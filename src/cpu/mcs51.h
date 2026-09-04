@@ -39,6 +39,7 @@ public:
 
     uint32_t clock() const { return clock_; }
     uint16_t pc() const { return pc_; }
+    uint8_t debug_sfr(uint8_t address) const { return sfr_[address]; }
 
 private:
     struct Psw {

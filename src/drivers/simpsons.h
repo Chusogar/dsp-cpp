@@ -86,10 +86,11 @@ private:
     uint8_t bank2000_bank_ = 0;
     uint8_t rom_bank1_ = 0;
     uint8_t sound_bank_ = 0;
-    int nmi_timer_ = 0;  // cycles until NMI clear
+    int nmi_blocked_ = 0;  // sound cycles that ignore SH1 after $fa00
     bool ym_irq_ = false;
     bool main_snd_irq_ = false;
     void update_sound_irq();
+    void on_k053260_sh1(bool state);
     bool firq_enabled_ = false;
 
     uint8_t in0_ = 0xff, in1_ = 0xff, in2_ = 0xff;

@@ -19,6 +19,9 @@ void YM2203::set_port_handlers(AY8910::PortRead port_a_read, AY8910::PortRead po
 }
 
 void YM2203::reset() {
+    external_timers_ = false;
+    forced_tb_ = 0;
+    tb_latched_ = false;
     opn_.prescaler_w(0, 1);
     ay_.reset();
     opn_.irq_mask_set(0x03);
@@ -41,6 +44,7 @@ void YM2203::write_port(int port, uint8_t value) {
     }
     const uint8_t address = opn_.address();
     regs_[address] = value;
+    if (address == 0x27 && (value & 0x02) == 0) tb_latched_ = false;
     if ((address & 0xf0) == 0x00) {
         ay_.write(value);
     } else if ((address & 0xf0) == 0x20) {
@@ -83,9 +87,28 @@ int32_t YM2203::update() {
     int32_t out = ay_.update() + int32_t(float(fm) * amplitude_);
     out = std::max(-0x7fff, std::min(0x7fff, out));
 
-    opn_.internal_timer_a(ch2);
-    opn_.internal_timer_b();
+    if (!external_timers_) {
+        opn_.internal_timer_a(ch2);
+        opn_.internal_timer_b();
+    }
     return out;
+}
+
+void YM2203::run_timers(int cycles) {
+    external_timers_ = true;
+    if (cycles > 0 && (regs_[0x27] & 0x02) != 0) {
+        // Integer backup for timer B: Space Harrier's $0D33 poll
+        // can miss a floating-point countdown that never quite
+        // underflows when the Z80 feeds 20-cycle slices.
+        forced_tb_ += cycles;
+        const int period = std::max(1, (256 - int(regs_[0x26])) * 16) * 72;
+        if (forced_tb_ >= period) {
+            forced_tb_ -= period;
+            tb_latched_ = true;
+            opn_.timer_b_over();
+        }
+    }
+    opn_.advance_timers(cycles, opn_.channel(2));
 }
 
 }  // namespace dsp

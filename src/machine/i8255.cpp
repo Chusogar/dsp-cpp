@@ -23,15 +23,31 @@ void I8255::set_port_handlers(
 
 void I8255::reset()
 {
+    // Intel 8255 / MAME: RESET forces control $9B (all inputs) and clears
+    // the output latches. Callbacks stay quiet until a port is programmed
+    // as an output — Hang-On / Space Harrier use PB5 as Z80 /RESET, so
+    // driving $FF here would release the sound CPU before the 68K is ready.
     control_ = 0x9b;
+    port_a_latch_ = 0;
+    port_b_latch_ = 0;
+    port_c_latch_ = 0;
+    pc6_in_ = true;
+}
 
-    port_a_latch_ = 0xff;
-    port_b_latch_ = 0xff;
-    port_c_latch_ = 0xff;
-
-    if (port_a_write_) port_a_write_(port_a_latch_);
-    if (port_b_write_) port_b_write_(port_b_latch_);
+void I8255::notify_pc()
+{
     if (port_c_write_) port_c_write_(port_c_latch_);
+}
+
+void I8255::pc6_w(bool level)
+{
+    const bool was = pc6_in_;
+    pc6_in_ = level;
+    // Falling ACK (mode 1 output / mode 2) marks the output buffer empty.
+    if (was && !level && group_a_mode() >= 1) {
+        port_c_latch_ |= 0x80;
+        notify_pc();
+    }
 }
 
 uint8_t I8255::read(int port)
@@ -66,6 +82,11 @@ void I8255::write(int port, uint8_t value)
 
             if (port_a_write_) {
                 port_a_write_(value);
+            }
+            // Mode 1 output / mode 2: writing port A lowers /OBF (PC7).
+            if (group_a_mode() >= 1) {
+                port_c_latch_ = uint8_t(port_c_latch_ & ~0x80);
+                notify_pc();
             }
             break;
 

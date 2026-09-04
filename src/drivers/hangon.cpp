@@ -143,13 +143,13 @@ HangOn::HangOn(Game game)
     : game_(game),
       main_clock_(game == Game::HangOn ? 25174800u / 4 : 10000000u),
       sound_clock_(4000000),
-      cpu_sync_(game == Game::Enduro ? 12 : 2),
+      cpu_sync_(game == Game::Enduro ? 12 : (game == Game::Sharrier ? 16 : 8)),
       main_cpu_(game == Game::HangOn ? 25174800u / 4 : 10000000u),
       sub_cpu_(game == Game::HangOn ? 25174800u / 4 : 10000000u),
       sound_cpu_(4000000),
       ym2203_(4000000, 0.3f, 0.3f),
       ym2151_(4000000),
-      pcm_(game == Game::HangOn ? 8000000u : 4000000u, game == Game::HangOn ? 1.3f : 1.0f),
+      pcm_(game == Game::Enduro ? 4000000u : 8000000u, game == Game::HangOn ? 1.3f : 1.0f),
       framebuffer_(kScreenWidth * kScreenHeight, 0) {
     use_fd1089_ = (game == Game::Enduro);
     use_ym2151_ = (game == Game::Enduro);
@@ -163,22 +163,44 @@ HangOn::HangOn(Game game)
     sound_cpu_.set_io_handlers([this](uint16_t p) { return sound_in(p); },
                                [this](uint16_t p, uint8_t v) { sound_out(p, v); });
     sound_cpu_.set_cycle_handler([this](int cycles) { on_sound_cycles(cycles); });
-    ym2203_.set_irq_handler([this](bool state) {
-        sound_cpu_.set_irq(state ? IrqLine::Assert : IrqLine::Clear);
-    });
+    // Hang-On's Z80 is IM 1 and $0038 is a real YM ISR. Space Harrier
+    // reuses $0038 as the tail of $0037 — a YM /INT re-enters init and
+    // never reaches the $0D33 timer-B poll.
+    if (game != Game::Sharrier) {
+        ym2203_.set_irq_handler([this](bool state) {
+            sound_cpu_.set_irq(state ? IrqLine::Assert : IrqLine::Clear);
+        });
+    } else {
+        ym2203_.set_irq_handler(nullptr);
+    }
     pcm_.set_read_rom([this](uint32_t addr) -> uint8_t {
         if (pcm_rom_.empty()) return 0x80;
         return pcm_rom_[addr % pcm_rom_.size()];
     });
     pcm_.set_bank(SegaPcm::kBank512);
     ppi0_.set_port_handlers(nullptr, nullptr, nullptr,
-                            [this](uint8_t value) { sound_latch_ = value; },
                             [this](uint8_t value) {
+                                sound_latch_ = value;
+                                ++ppi_a_writes_;
+                                // A pulse while /RESET is held stays pending
+                                // and Space Harrier then skips $0D33.
+                                if (!z80_reset_ && z80_nmi_holdoff_ <= 0) {
+                                    sound_cpu_.set_nmi(IrqLine::Assert);
+                                    sound_cpu_.set_nmi(IrqLine::Clear);
+                                }
+                            },
+                            [this](uint8_t value) {
+                                const bool was_reset = z80_reset_;
                                 z80_reset_ = (value & 0x20) == 0;
-                                if (z80_reset_) sound_cpu_.reset();
+                                if (z80_reset_) {
+                                    sound_cpu_.reset();
+                                } else if (was_reset && game_ == Game::Sharrier) {
+                                    z80_nmi_holdoff_ = 40000;
+                                }
                                 video_.screen_enabled = (value & 0x10) != 0;
                             },
                             [this](uint8_t value) {
+                                if (z80_reset_ || z80_nmi_holdoff_ > 0) return;
                                 sound_cpu_.set_nmi((value & 0x80) ? IrqLine::Clear
                                                                   : IrqLine::Assert);
                             });
@@ -196,7 +218,10 @@ HangOn::HangOn(Game game)
         mcu_->set_port_write_handler(1, [this](uint8_t value) {
             i8751_addr_ = uint8_t(((value & 0x40) >> 2) | ((value & 0x38) >> 3));
             const uint8_t irq = uint8_t((~value) & 7);
-            if (irq != 0) main_cpu_.set_irq(irq, IrqLine::Hold);
+            if (irq != 0) {
+                ++mcu_irqs_;
+                main_cpu_.set_irq(irq, IrqLine::Hold);
+            }
         });
         mcu_->set_external_handlers(
             [this](uint16_t address) -> uint8_t {
@@ -227,6 +252,11 @@ bool HangOn::init(const std::string& rom_path, std::string* error) {
     if (!load_roms(rom_path, error)) return false;
     video_.init_palette_luts();
     reset();
+    if (game_ == Game::Sharrier) {
+        // Attract music is latched after the $5E18 list builder (~10 s).
+        for (int i = 0; i < 280; i++) run_frame();
+        audio_.clear();
+    }
     return true;
 }
 
@@ -326,7 +356,22 @@ void HangOn::reset() {
     pcm_.reset();
     ppi0_.reset();
     ppi1_.reset();
-    if (mcu_) mcu_->reset();
+    if (mcu_) {
+        mcu_->reset();
+        // Space Harrier's 8751 checksums its ROM and the 68K program
+        // (MOVX via P1) before SETB EA at $022C. The vblank ISR then
+        // writes $40400 so the 68K can leave the $1380 wait. 25000
+        // cycles only covers the first checksum loop.
+        mcu_->run(5000000);
+        // Arm INT0 the way vblank will, so the $40400 handshake is
+        // posted before the 68K reaches the $1380 TST wait.
+        for (int i = 0; i < 8; i++) {
+            mcu_->set_irq0_line(IrqLine::Assert);
+            mcu_->run(4000);
+            mcu_->set_irq0_line(IrqLine::Clear);
+            mcu_->run(200);
+        }
+    }
     video_.reset();
     video_.screen_enabled = true;
     ram_.fill(0);
@@ -335,9 +380,16 @@ void HangOn::reset() {
     in0_ = 0xffff;
     adc_select_ = 0;
     sound_latch_ = 0;
+    ppi_a_writes_ = 0;
     control_res_ = 0;
-    z80_reset_ = false;
+    // PB5 is Z80 /RESET (1 = run). The 8255 comes out of reset with
+    // latches cleared, so the sound CPU stays held until the 68K writes
+    // port B. Space Harrier's idle $80 command stops YM timers if the
+    // Z80 runs that loop before the first real latch write.
+    z80_reset_ = true;
+    z80_nmi_holdoff_ = 0;
     i8751_addr_ = 0;
+    mcu_irqs_ = 0;
     analog_x_ = 0x80;
     analog_y_ = 0x80;
     analog_gas_ = 0;
@@ -378,7 +430,7 @@ void HangOn::set_dip_switch(int bank, uint8_t value) {
 }
 
 void HangOn::drain_audio(std::vector<int16_t>& out) {
-    out.swap(audio_);
+    out.insert(out.end(), audio_.begin(), audio_.end());
     audio_.clear();
 }
 
@@ -609,7 +661,9 @@ uint8_t HangOn::sound_read(uint16_t address) {
     }
     if (address <= 0x7fff) return sound_mem_[address];
     if (address >= 0xc000 && address <= 0xcfff) return sound_mem_[0xc000 + (address & 0x7ff)];
-    if (address >= 0xd000 && address <= 0xdfff) return ym2203_.status();
+    if (address >= 0xd000 && address <= 0xdfff) {
+        return (address & 1) ? ym2203_.read() : ym2203_.status();
+    }
     if (address >= 0xe000 && address <= 0xefff) return pcm_.read(address);
     return 0xff;
 }
@@ -633,7 +687,12 @@ void HangOn::sound_write(uint16_t address, uint8_t value) {
 uint8_t HangOn::sound_in(uint16_t port) {
     const uint8_t p = uint8_t(port);
     if (use_ym2151_ && p <= 0x3f && (p & 1)) return ym2151_.status();
-    if (p >= 0x40 && p <= 0x7f) return sound_latch_;
+    if (p >= 0x40 && p <= 0x7f) {
+        // PPI mode 2 ACK: the Z80 read strobes PC6 so /OBF (NMI) is released.
+        ppi0_.pc6_w(false);
+        ppi0_.pc6_w(true);
+        return sound_latch_;
+    }
     return 0xff;
 }
 
@@ -647,7 +706,18 @@ void HangOn::sound_out(uint16_t port, uint8_t value) {
 }
 
 void HangOn::on_sound_cycles(int cycles) {
+    if (z80_nmi_holdoff_ > 0) {
+        z80_nmi_holdoff_ -= cycles;
+        if (z80_nmi_holdoff_ <= 0) {
+            z80_nmi_holdoff_ = 0;
+            if (!z80_reset_) {
+                sound_cpu_.set_nmi(IrqLine::Assert);
+                sound_cpu_.set_nmi(IrqLine::Clear);
+            }
+        }
+    }
     if (use_ym2151_) ym2151_.run_timers(cycles);
+    else ym2203_.run_timers(cycles);
     pcm_acc_ += int64_t(cycles) * pcm_.tick_rate();
     while (pcm_acc_ >= sound_clock_) {
         pcm_acc_ -= sound_clock_;
@@ -702,16 +772,28 @@ void HangOn::run_frame() {
     const int mcu_cycles =
         mcu_ ? int(double(mcu_->clock()) / kFramesPerSecond / (kScanlines * cpu_sync_) + 0.5) : 0;
     for (int line = 0; line < kScanlines; line++) {
+        if (line == 0 && mcu_) mcu_->set_irq0_line(IrqLine::Clear);
         if (line == 224) {
-            if (mcu_) mcu_->set_irq0_line(IrqLine::Hold);
-            else main_cpu_.set_irq(4, IrqLine::Hold);
+            // Keep INT0 asserted for the whole vblank. A Hold pulse is
+            // dropped if the 8751 has not yet set EX0 (MAME holds the line).
+            if (mcu_) {
+                mcu_->set_irq0_line(IrqLine::Assert);
+                // Finish the vblank ISR (CLR P1.2 → 68K IRQ4) before the
+                // 68000 samples IPL, matching MAME's 10 ms perfect quantum.
+                mcu_->run(48);
+            } else {
+                main_cpu_.set_irq(4, IrqLine::Hold);
+            }
             update_video();
         }
         for (int slice = 0; slice < cpu_sync_; slice++) {
+            if (mcu_) mcu_->run(mcu_cycles);
             main_cpu_.run(main_cycles);
             sub_cpu_.run(main_cycles);
-            if (!z80_reset_) sound_cpu_.run(sound_cycles);
-            if (mcu_) mcu_->run(mcu_cycles);
+            if (!z80_reset_)
+                sound_cpu_.run(sound_cycles);
+            else
+                on_sound_cycles(sound_cycles);
         }
     }
 }

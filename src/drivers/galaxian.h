@@ -3,6 +3,7 @@
 #include "core/machine.h"
 #include "cpu/z80.h"
 #include "sound/ay8910.h"
+#include "sound/galaxian_sound.h"
 #include "video/gfx.h"
 
 #include <array>
@@ -112,6 +113,14 @@ public:
 
     const char* title() const override;
 
+    uint16_t debug_pc() const { return cpu_.pc(); }
+    bool debug_nmi_enable() const { return nmi_enable_; }
+    uint8_t debug_mem(uint16_t address) { return read_byte(address); }
+    uint32_t debug_pitch_writes() const { return pitch_writes_; }
+    uint32_t debug_sound_writes() const { return sound_bit_writes_; }
+    uint8_t debug_discrete_pitch() const { return discrete_.debug_pitch(); }
+    uint8_t debug_discrete_fs() const { return discrete_.debug_fs(); }
+
 private:
     uint8_t read_byte(uint16_t address);
     void write_byte(uint16_t address, uint8_t value);
@@ -187,7 +196,7 @@ private:
     uint8_t in2_ = 0xff;
     uint8_t dsw_a_ = 0;
     uint8_t dsw_b_ = 0;
-    uint8_t dsw_c_ = 0;
+    uint8_t dsw_c_ = 0x04;  // Galaxian IN2: 3 lives (MAME default)
 
     uint8_t sound_latch_ = 0;
     uint8_t port_b_latch_ = 0;
@@ -196,9 +205,18 @@ private:
 
     uint64_t sound_cycles_ = 0;
     bool sound_mute_ = false;
+    GalaxianSound discrete_;
+    uint32_t pitch_writes_ = 0;
+    uint32_t sound_bit_writes_ = 0;
 
     int64_t audio_accumulator_ = 0;
     std::vector<int16_t> audio_;
+
+    bool uses_discrete_sound() const {
+        return game_ == Game::Galaxian || game_ == Game::MoonCresta;
+    }
+    void write_discrete(uint16_t address, uint8_t value, uint16_t lfo_base, uint16_t sound_base,
+                        uint16_t pitch_addr);
 };
 
 }  // namespace dsp

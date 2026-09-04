@@ -74,6 +74,9 @@ bool Simpsons::init(const std::string& rom_path, std::string* error) {
         ym_irq_ = state;
         update_sound_irq();
     });
+    if (k053260_) {
+        k053260_->set_sh1_callback([this](bool state) { on_k053260_sh1(state); });
+    }
 
     reset();
     return true;
@@ -82,9 +85,7 @@ bool Simpsons::init(const std::string& rom_path, std::string* error) {
 void Simpsons::reset() {
     main_cpu_.reset();
     sound_cpu_.reset();
-    // MAME asserts NMI at reset; clear after a few cycles so IRQs can proceed
-    sound_cpu_.set_nmi(IrqLine::Assert);
-    nmi_timer_ = 200;  // auto-clear if sound never writes fa00
+    nmi_blocked_ = 0;
     ym2151_.reset();
     if (k053260_) k053260_->reset();
     if (k052109_) k052109_->reset();
@@ -197,18 +198,17 @@ void Simpsons::run_frame() {
             }
         }
 
-        main_cpu_.run(int(main_c + frame_main_));
-        frame_main_ = (main_c + frame_main_) - int(main_c + frame_main_);
-
-        sound_cpu_.run(int(snd_c + frame_snd_));
-        if (nmi_timer_ > 0) {
-            nmi_timer_ -= int(snd_c);
-            if (nmi_timer_ <= 0) {
-                nmi_timer_ = 0;
-                sound_cpu_.set_nmi(IrqLine::Clear);
-            }
+        // K053260 command ports need a short quantum so the Z80 can ACK
+        // before the Konami CPU times out in the same scanline.
+        constexpr int kSlices = 8;
+        const double main_slice = main_c / kSlices;
+        const double snd_slice = snd_c / kSlices;
+        for (int slice = 0; slice < kSlices; slice++) {
+            main_cpu_.run(int(main_slice + frame_main_));
+            frame_main_ = (main_slice + frame_main_) - int(main_slice + frame_main_);
+            sound_cpu_.run(int(snd_slice + frame_snd_));
+            frame_snd_ = (snd_slice + frame_snd_) - int(snd_slice + frame_snd_);
         }
-        frame_snd_ = (snd_c + frame_snd_) - int(snd_c + frame_snd_);
     }
 
     // Audio for one frame
@@ -235,8 +235,21 @@ void Simpsons::update_sound_irq() {
 }
 
 void Simpsons::on_sound_cycles(int cycles) {
-    if (cycles > 0) ym2151_.run_timers(cycles);
+    if (cycles <= 0) return;
+    ym2151_.run_timers(cycles);
+    if (k053260_) k053260_->tick(cycles);
+    if (nmi_blocked_ > 0) {
+        nmi_blocked_ -= cycles;
+        if (nmi_blocked_ < 0) nmi_blocked_ = 0;
+    }
 }
+
+void Simpsons::on_k053260_sh1(bool state) {
+    // SH1 is a pulse. Hold so take_nmi consumes it; $fa00 still blocks the
+    // next edge for 4 Z80 cycles so the HALT can start.
+    if (state && nmi_blocked_ <= 0) sound_cpu_.set_nmi(IrqLine::Hold);
+}
+
 void Simpsons::mix_audio_line(int) {}
 
 void Simpsons::update_video() {
@@ -467,10 +480,9 @@ void Simpsons::sound_write(uint16_t address, uint8_t value) {
         return;
     }
     if (address == 0xfa00) {
-        // MAME: clear NMI on fa00 write; K053260 timer later re-asserts
-        // Pascal: assert then timer clears. Use clear so IRQ can run.
+        // Arm NMI: drop the line, then ignore SH1 for 4 Z80 cycles so HALT starts.
         sound_cpu_.set_nmi(IrqLine::Clear);
-        nmi_timer_ = 0;
+        nmi_blocked_ = 4;
         return;
     }
     if (address >= 0xfc00 && address <= 0xfc2f) {

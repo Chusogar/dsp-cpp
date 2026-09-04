@@ -6,8 +6,10 @@
 #include <vector>
 
 #include "core/machine.h"
+#include "core/rom_loader.h"
 #include "cpu/m6809.h"
 #include "machine/mos6532.h"
+#include "machine/slapstic.h"
 #include "machine/starwars_math.h"
 #include "sound/pokey.h"
 #include "sound/tms5220.h"
@@ -15,9 +17,13 @@
 
 namespace dsp {
 
-// Atari Star Wars (1983): dual 6809, AVG vector display, mathbox, 4×POKEY + TMS5220.
+// Atari Star Wars (1983) and The Empire Strikes Back (1985): dual 6809,
+// AVG vector display, mathbox, 4×POKEY + TMS5220. ESB adds slapstic #101
+// over $8000-$9FFF and a second ROM bank at $A000-$FFFF.
 class StarWars : public Machine {
 public:
+    enum class Game { StarWars, Empire };
+
     static constexpr int kScreenWidth = 400;
     static constexpr int kScreenHeight = 300;
     static constexpr uint32_t kMasterClock = 12096000;
@@ -27,7 +33,7 @@ public:
     static constexpr double kFramesPerSecond = double(kClock3k) / 12.0 / 6.0;
     static constexpr int kSampleRate = 44100;
 
-    StarWars();
+    explicit StarWars(Game game = Game::StarWars);
 
     bool init(const std::string& rom_path, std::string* error) override;
     void reset() override;
@@ -44,10 +50,28 @@ public:
     void drain_audio(std::vector<int16_t>& out) override;
     int sample_rate() const override { return kSampleRate; }
 
-    const char* title() const override { return "Star Wars"; }
+    const char* title() const override;
 
     uint16_t debug_pc() const { return main_cpu_.pc(); }
+    uint16_t debug_sound_pc() const { return sound_cpu_.pc(); }
     size_t debug_avg_lines() const { return avg_.lines().size(); }
+    bool debug_sound_pending() const { return sound_pending_; }
+    bool debug_main_pending() const { return main_pending_; }
+    uint32_t debug_sound_writes() const { return sound_writes_; }
+    uint32_t debug_main_writes() const { return main_writes_; }
+    uint32_t debug_sound_resets() const { return sound_resets_; }
+    uint8_t debug_sound_latch() const { return sound_latch_; }
+    uint8_t debug_main_latch() const { return main_latch_; }
+    uint8_t debug_work(uint16_t offset) const { return work_ram_[offset & 0x7ff]; }
+    uint8_t debug_nvram(uint8_t offset) const { return uint8_t((nvram_[offset] & 0x0f) | 0xf0); }
+    uint8_t debug_dsw0() const { return dsw0_; }
+    uint8_t debug_cc() const { return main_cpu_.debug_cc(); }
+    uint8_t debug_dp() const { return main_cpu_.dp; }
+    uint32_t debug_irq_acks() const { return irq_acks_; }
+    uint32_t debug_tick_writes() const { return tick_writes_; }
+    uint32_t debug_3e_hi() const { return writes_483e_; }
+    uint32_t debug_3e_lo() const { return writes_003e_; }
+    uint32_t debug_pokey_writes() const { return pokey_writes_; }
 
 private:
     uint8_t main_read(uint16_t address);
@@ -58,11 +82,15 @@ private:
     void on_sound_cycles(int cycles);
     void quad_pokey_w(uint16_t offset, uint8_t data);
     void outlatch_w(int bit, bool value);
+    void catch_up_sound(int cycles = 80000);
     void update_video();
     void draw_line(int x0, int y0, int x1, int y1, uint32_t color, int intensity);
     uint8_t avg_read(uint16_t address) const;
     uint8_t adc_channel(int channel) const;
+    bool load_starwars(RomLoader& loader, std::string* error);
+    bool load_esb(RomLoader& loader, std::string* error);
 
+    Game game_;
     M6809 main_cpu_;
     M6809 sound_cpu_;
     Pokey pokey0_;
@@ -73,27 +101,32 @@ private:
     Mos6532 riot_;
     StarwarsMath math_;
     AvgStarwars avg_;
+    Slapstic slapstic_;
 
-    std::array<uint8_t, 0x12000> main_rom_{};
+    std::array<uint8_t, 0x22000> main_rom_{};
     std::array<uint8_t, 0x1000> vector_rom_{};
     std::array<uint8_t, 0x3000> vector_ram_{};
     std::array<uint8_t, 0x800> work_ram_{};
     std::array<uint8_t, 0x800> sound_ram_{};
     std::array<uint8_t, 0x10000> sound_rom_{};
     std::array<uint8_t, 0x100> nvram_{};
+    std::array<uint8_t, 0x100> nvram_eeprom_{};
+    bool nvram_store_ = false;
+    bool nvram_recall_ = false;
 
     std::vector<uint32_t> framebuffer_;
     std::vector<int16_t> audio_;
 
     uint8_t in0_ = 0xff;
     uint8_t in1_ = 0xff;
-    uint8_t dsw0_ = 0x98;
+    uint8_t dsw0_ = 0x94;
     uint8_t dsw1_ = 0x02;
     uint8_t analog_x_ = 0x80;
     uint8_t analog_y_ = 0x80;
     uint8_t adc_value_ = 0x80;
     int adc_channel_ = 0;
     uint8_t bank_ = 0;
+    uint8_t bank2_ = 0;
     uint8_t outlatch_ = 0;
     uint8_t sound_latch_ = 0;
     uint8_t main_latch_ = 0;
@@ -102,6 +135,14 @@ private:
     uint32_t prng_ = 0x1;
     int64_t audio_accumulator_ = 0;
     uint8_t riot_pa_out_ = 0xff;
+    uint32_t sound_writes_ = 0;
+    uint32_t main_writes_ = 0;
+    uint32_t sound_resets_ = 0;
+    uint32_t irq_acks_ = 0;
+    uint32_t tick_writes_ = 0;
+    uint32_t writes_483e_ = 0;
+    uint32_t writes_003e_ = 0;
+    uint32_t pokey_writes_ = 0;
 };
 
 }  // namespace dsp

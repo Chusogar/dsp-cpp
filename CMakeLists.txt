@@ -156,6 +156,7 @@ add_executable(dsp
   src/video/k053251.cpp
   src/video/k053246.cpp
   src/sound/k053260.cpp
+  src/sound/galaxian_sound.cpp
   src/machine/eeprom_er5911.cpp
   src/sound/k007232.cpp
   src/drivers/tetris_atari_hw.cpp
@@ -348,6 +349,9 @@ add_executable(dsp_tests
   src/video/k051960.cpp
   src/video/k051316.cpp
   src/sound/k007232.cpp
+  src/sound/k053260.cpp
+  src/sound/galaxian_sound.cpp
+  src/drivers/galaxian.cpp
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)

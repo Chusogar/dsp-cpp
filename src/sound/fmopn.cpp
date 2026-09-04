@@ -394,12 +394,17 @@ void OpnCore::set_timers(int value) {
 }
 
 void OpnCore::timer_a_over() {
-    if ((mode_ & 0x04) != 0) status_set(0x01);
+    // Overflow always latches the status bit. Register $27 bits 2/3 only
+    // gate the IRQ pin — firmware (Space Harrier) polls the flag without
+    // necessarily enabling the interrupt.
+    status_ = uint8_t(status_ | 0x01);
+    if ((mode_ & 0x04) != 0) status_set(0);
     tac_ = double(1024 - ta_);
 }
 
 void OpnCore::timer_b_over() {
-    if ((mode_ & 0x08) != 0) status_set(0x02);
+    status_ = uint8_t(status_ | 0x02);
+    if ((mode_ & 0x08) != 0) status_set(0);
     tbc_ = double((256 - tb_) << 4);
 }
 
@@ -415,6 +420,22 @@ void OpnCore::internal_timer_b() {
     if (tbc_ == 0.0) return;
     tbc_ -= freqbase_;
     if (tbc_ <= 0.0) timer_b_over();
+}
+
+void OpnCore::advance_timers(int cycles, Channel& csm_channel) {
+    if (cycles <= 0 || timer_prescaler_ <= 0) return;
+    const double step = double(cycles) / double(timer_prescaler_);
+    if (tac_ != 0.0) {
+        tac_ -= step;
+        if (tac_ <= 0.0) {
+            timer_a_over();
+            if ((mode_ & 0x80) != 0) csm_key_control(csm_channel);
+        }
+    }
+    if (tbc_ != 0.0) {
+        tbc_ -= step;
+        if (tbc_ <= 0.0) timer_b_over();
+    }
 }
 
 void OpnCore::write_mode(int reg, int value) {

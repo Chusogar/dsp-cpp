@@ -161,12 +161,13 @@ const char* Galaxian::title() const {
 }
 
 void Galaxian::decrypt_mooncrst(std::vector<uint8_t>& rom) {
+    // MAME galaxian_state::decode_mooncrst: XOR both parities, bitswap evens.
     for (size_t f = 0; f < rom.size() && f < 0x4000; ++f) {
-        uint8_t c1 = rom[f];
-        uint8_t c2 = c1;
-        if (c1 & 0x02) c2 = uint8_t(c2 ^ 0x40);
-        if (c1 & 0x20) c2 = uint8_t(c2 ^ 0x04);
-        rom[f] = (f & 1) == 0 ? bitswap8_moon(c2) : c2;
+        uint8_t res = rom[f];
+        if (res & 0x02) res = uint8_t(res ^ 0x40);
+        if (res & 0x20) res = uint8_t(res ^ 0x04);
+        if ((f & 1) == 0) res = bitswap8_moon(res);
+        rom[f] = res;
     }
 }
 
@@ -290,7 +291,8 @@ bool Galaxian::load_roms(const std::string& rom_path, std::string* error) {
         std::vector<uint8_t> pal(0x20, 0);
         if (!loader.load(kMooncrstPal, pal, error)) return false;
         build_palette(pal);
-        dsw_b_ = 0x80;
+        dsw_b_ = 0x80;  // Moon Cresta IN1: English
+        dsw_c_ = 0x00;  // Moon Cresta IN2: 1C_1C / 1C_1C
     } else {
         std::vector<uint8_t> cpu_rom(0x4000, 0);
         if (!loader.load(kGalaxianCpu, cpu_rom, error)) return false;
@@ -371,6 +373,9 @@ void Galaxian::reset() {
     port_b_latch_ = 0;
     sound_cycles_ = 0;
     sound_mute_ = false;
+    discrete_.reset();
+    pitch_writes_ = 0;
+    sound_bit_writes_ = 0;
     scramble_prot_state_ = 0;
     scramble_prot_ = 0;
     audio_accumulator_ = 0;
@@ -586,6 +591,14 @@ void Galaxian::write_galaxian(uint16_t address, uint8_t value) {
         memory_[0x5800 + off] = value;
         return;
     }
+    if (address >= 0x6000 && address <= 0x67ff) {
+        write_discrete(address, value, 0x6004, 0x0000, 0x0000);
+        return;
+    }
+    if (address >= 0x6800 && address <= 0x6fff) {
+        write_discrete(address, value, 0x0000, 0x6800, 0x0000);
+        return;
+    }
     if (address >= 0x7000 && address <= 0x77ff) {
         switch (address & 7) {
             case 1:
@@ -598,6 +611,10 @@ void Galaxian::write_galaxian(uint16_t address, uint8_t value) {
             default:
                 break;
         }
+        return;
+    }
+    if (address >= 0x7800 && address <= 0x7fff) {
+        write_discrete(address, value, 0x0000, 0x0000, 0x7800);
     }
 }
 
@@ -662,6 +679,11 @@ void Galaxian::write_mooncrst(uint16_t address, uint8_t value) {
             gfx_bank_[size_t(bank)] = value;
             dirty_.fill(true);
         }
+        write_discrete(address, value, 0xa004, 0x0000, 0x0000);
+        return;
+    }
+    if (address >= 0xa800 && address <= 0xafff) {
+        write_discrete(address, value, 0x0000, 0xa800, 0x0000);
         return;
     }
     if (address >= 0xb000 && address <= 0xb7ff) {
@@ -676,6 +698,10 @@ void Galaxian::write_mooncrst(uint16_t address, uint8_t value) {
             default:
                 break;
         }
+        return;
+    }
+    if (address >= 0xb800 && address <= 0xbfff) {
+        write_discrete(address, value, 0x0000, 0x0000, 0xb800);
     }
 }
 
@@ -773,6 +799,23 @@ void Galaxian::write_byte(uint16_t address, uint8_t value) {
         case Game::Frogger: write_frogger(address, value); break;
         case Game::MoonCresta: write_mooncrst(address, value); break;
         default: write_galaxian(address, value); break;
+    }
+}
+
+void Galaxian::write_discrete(uint16_t address, uint8_t value, uint16_t lfo_base,
+                              uint16_t sound_base, uint16_t pitch_addr) {
+    if (lfo_base && address >= lfo_base && address < uint16_t(lfo_base + 4)) {
+        discrete_.lfo_freq_w(int(address - lfo_base), value);
+        return;
+    }
+    if (sound_base && (address & 0xf800) == (sound_base & 0xf800)) {
+        discrete_.sound_w(int(address & 7), value);
+        ++sound_bit_writes_;
+        return;
+    }
+    if (pitch_addr && (address & 0xf800) == (pitch_addr & 0xf800)) {
+        discrete_.pitch_w(value);
+        ++pitch_writes_;
     }
 }
 
@@ -890,7 +933,9 @@ void Galaxian::on_cycles(int cycles) {
     while (audio_accumulator_ >= kCpuClock) {
         audio_accumulator_ -= kCpuClock;
         int32_t sample = 0;
-        if (sound_present_ && !sound_mute_) {
+        if (uses_discrete_sound()) {
+            sample = discrete_.update();
+        } else if (sound_present_ && !sound_mute_) {
             sample = game_ == Game::Frogger ? ay0_.update() : (ay0_.update() + ay1_.update());
         }
         audio_.push_back(int16_t(std::clamp(sample, int32_t(-32768), int32_t(32767))));
@@ -1081,11 +1126,23 @@ void Galaxian::run_frame() {
     const int cycles_per_line =
         int(double(kCpuClock) / (kFramesPerSecond * kScanlines) + 0.5);
     for (int line = 0; line < kScanlines; ++line) {
-        if (line == 248 && nmi_enable_) cpu_.set_nmi(IrqLine::Assert);
+        // MAME clocks the 6F flip-flop at vblank and leaves /NMI asserted
+        // until irq_enable_w clears it. A one-line pulse can drop the edge
+        // if the Z80 is mid-instruction when line 248 starts.
+        if (line == 248 && nmi_enable_) {
+            // /NMI is falling-edge triggered. Release the previous
+            // vblank level so the 6F clock produces a new edge even
+            // when the game leaves irq_enable high.
+            cpu_.set_nmi(IrqLine::Clear);
+            cpu_.set_nmi(IrqLine::Assert);
+        }
         cpu_.run(cycles_per_line);
-        if (line == 248) cpu_.set_nmi(IrqLine::Clear);
     }
     update_video();
+    if (uses_discrete_sound()) {
+        const int target = AY8910::kSampleRate / 60;
+        while (int(audio_.size()) < target) audio_.push_back(discrete_.update());
+    }
 }
 
 void Galaxian::drain_audio(std::vector<int16_t>& out) {
