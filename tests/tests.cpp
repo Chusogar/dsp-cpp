@@ -4604,6 +4604,16 @@ void write_ql_ppm(const std::string& path, const dsp::SinclairQl& machine) {
     }
 }
 
+int count_ql_argb(const dsp::SinclairQl& machine, uint32_t argb) {
+    const uint32_t* fb = machine.framebuffer();
+    const int n = machine.screen_width() * machine.screen_height();
+    int c = 0;
+    for (int i = 0; i < n; i++) {
+        if (fb[i] == argb) c++;
+    }
+    return c;
+}
+
 void test_ql_psion_chess_if_present() {
     const char* rom = "/tmp/roms/ql.zip";
     const char* chess = "/tmp/ql/PsionChess.qlpak";
@@ -4621,7 +4631,9 @@ void test_ql_psion_chess_if_present() {
     std::string error;
     check(boot.init(rom, &error), "QL ROM set loads for Psion Chess");
     check(boot.load_media(chess, &error), "PsionChess.qlpak mounts in mdv1");
-    check(boot.mdv1_loaded() && !boot.mdv2_loaded(), "chess uses a single cartridge in mdv1");
+    check(boot.mdv1_loaded() && !boot.mdv2_loaded(), "the first image occupies mdv1");
+    check(boot.load_media(chess, &error), "PsionChess.qlpak also mounts in mdv2");
+    check(boot.mdv2_loaded(), "the second image occupies mdv2");
 
     for (int i = 0; i < 220; i++) boot.run_frame();
     check(count_lit_pixels(boot) > 80, "QL reaches the F1/F2 copyright screen before chess");
@@ -4630,34 +4642,33 @@ void test_ql_psion_chess_if_present() {
     hold_ql_key(boot, dsp::Key::F1, 10);
 
     bool saw_logo = false;
-    bool saw_code = false;
-    int logo_at = -1;
-    int code_at = -1;
-    for (int i = 0; i < 2500; i++) {
+    bool saw_prompt = false;
+    for (int i = 0; i < 5000; i++) {
         boot.run_frame();
-        if (!saw_logo && boot.peek(0x25000) == 0x00 && boot.peek(0x25001) == 0xff &&
-            boot.peek(0x25002) == 0x00 && boot.peek(0x25003) == 0xff) {
+        // Logo bitmap leaves a 00 C0 word at offset 38; red CLS is 00 FF.
+        if (!saw_logo && boot.peek(0x25026) == 0x00 && boot.peek(0x25027) == 0xc0) {
             saw_logo = true;
-            logo_at = i;
-            write_ql_ppm("/tmp/ql-chess-logo.ppm", boot);
+            for (int extra = 0; extra < 400; extra++) boot.run_frame();
+            write_ql_ppm("/tmp/ql-chess-title.ppm", boot);
         }
-        if (!saw_code && boot.peek(0x2ce00) == 0x35 && boot.peek(0x2ce01) == 0x3e) {
-            saw_code = true;
-            code_at = i;
-            write_ql_ppm("/tmp/ql-chess-chessc.ppm", boot);
+        const int green = count_ql_argb(boot, 0xff00ff00);
+        const int red = count_ql_argb(boot, 0xffff0000);
+        if (saw_logo && green > 400 && red < 1000) {
+            saw_prompt = true;
+            write_ql_ppm("/tmp/ql-chess-mdv2-prompt.ppm", boot);
+            break;
         }
-        if (saw_logo && saw_code) break;
     }
-    write_ql_ppm("/tmp/ql-chess-after-load.ppm", boot);
-    check(saw_logo, "mdv1_boot LBYTES mdv1_logo into screen RAM at 151552");
-    check(saw_code, "mdv1_boot LBYTES mdv1_chessc at 184064");
-    (void)logo_at;
-    (void)code_at;
+    check(saw_logo, "mdv1_boot LBYTES mdv1_logo and paints QL CHESS");
+    check(saw_prompt, "Psion Chess asks for the master cartridge in mdv2");
 
-    for (int i = 0; i < 400; i++) boot.run_frame();
+    hold_ql_key(boot, dsp::Key::Space, 12);
+    for (int i = 0; i < 1500; i++) boot.run_frame();
     write_ql_ppm("/tmp/ql-chess-ingame.ppm", boot);
     const int lit = count_lit_pixels(boot);
-    check(lit > 200, "CALL into Psion Chess paints the ZX8301 screen");
+    const int green = count_ql_argb(boot, 0xff00ff00);
+    check(lit > 1000, "space starts Psion Chess from mdv2");
+    check(green < 20000, "chess leaves the green mdv2 prompt");
     check(lit < 120000, "chess is not a blank MODE 4 paper fill");
 }
 
