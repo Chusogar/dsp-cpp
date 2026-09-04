@@ -4589,6 +4589,8 @@ void test_ql_mdv_formats() {
     }
     check(saw_boot && saw_chessc && saw_logo, "PsionChess qlpak stores BOOT, CHESSC and LOGO");
     check(!saw_flp, "qlpak BASIC on a microdrive uses mdv1_ instead of flp1_");
+    check(std::memcmp(&qlay[14], "chess     ", 10) == 0,
+          "PsionChess keeps the copy-protected cartridge name");
 }
 
 void write_ql_ppm(const std::string& path, const dsp::SinclairQl& machine) {
@@ -4663,13 +4665,20 @@ void test_ql_psion_chess_if_present() {
     check(saw_prompt, "Psion Chess asks for the master cartridge in mdv2");
 
     hold_ql_key(boot, dsp::Key::Space, 12);
-    for (int i = 0; i < 1500; i++) boot.run_frame();
+    bool saw_board = false;
+    for (int i = 0; i < 2500; i++) {
+        boot.run_frame();
+        const int green_now = count_ql_argb(boot, 0xff00ff00);
+        const int white = count_ql_argb(boot, 0xffffffff);
+        if (green_now < 400 && white > 1500) {
+            saw_board = true;
+            break;
+        }
+    }
     write_ql_ppm("/tmp/ql-chess-ingame.ppm", boot);
-    const int lit = count_lit_pixels(boot);
-    const int green = count_ql_argb(boot, 0xff00ff00);
-    check(lit > 1000, "space starts Psion Chess from mdv2");
-    check(green < 20000, "chess leaves the green mdv2 prompt");
-    check(lit < 120000, "chess is not a blank MODE 4 paper fill");
+    check(saw_board, "space plus mdv2 starts the chess board");
+    check(count_lit_pixels(boot) > 1000, "the chess board paints the ZX8301 screen");
+    check(count_ql_argb(boot, 0xff00ff00) < 400, "chess leaves the green mdv2 prompt");
 }
 
 void test_ql_match_point_if_present() {

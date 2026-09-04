@@ -158,13 +158,12 @@ bool extract_zip_file(const std::vector<uint8_t>& zip, const ZipLocal& z, std::v
     return inflate_raw(&zip[z.data_off], z.comp, out);
 }
 
-void format_qlay(std::vector<uint8_t>& image, const char* medium) {
+void format_qlay(std::vector<uint8_t>& image, const char* medium, uint16_t rnd) {
     image.assign(kMdvImageBytes, 0);
     char name[10];
     std::memset(name, ' ', 10);
     const int n = int(std::min<size_t>(std::strlen(medium), 10));
     std::memcpy(name, medium, size_t(n));
-    const uint16_t rnd = 0x1234;
     for (int s = 0; s < kMdvSectors; s++) {
         uint8_t* sec = &image[size_t(s) * kMdvSectorBytes];
         sec[10] = 0xff;
@@ -319,7 +318,8 @@ bool add_ql_file(std::vector<uint8_t>& image, const std::string& name, const uin
 // Q-emuLator prepends "]!QDOS File Header" + reserved + length-in-words.
 // 15 words (30 bytes) store QDOS header bytes 4-13; 22 words (44 bytes)
 // add a 14-byte microdrive sector header used by copy-protection.
-bool strip_qemul_header(std::vector<uint8_t>& body, uint8_t& type, uint32_t& dataspace) {
+bool strip_qemul_header(std::vector<uint8_t>& body, uint8_t& type, uint32_t& dataspace,
+                        uint8_t* mdv_hdr) {
     const size_t ilen = std::strlen(kQdosInline);
     if (body.size() < 30 || std::memcmp(body.data(), kQdosInline, ilen) != 0) return false;
     const int words = body[19];
@@ -327,6 +327,7 @@ bool strip_qemul_header(std::vector<uint8_t>& body, uint8_t& type, uint32_t& dat
     if ((words != 15 && words != 22) || body.size() < size_t(total)) return false;
     type = body[21];
     dataspace = be32(body.data() + 22);
+    if (words == 22 && mdv_hdr) std::memcpy(mdv_hdr, body.data() + 30, 14);
     body.erase(body.begin(), body.begin() + total);
     return true;
 }
@@ -359,26 +360,45 @@ void rewrite_flp_to_mdv(std::vector<uint8_t>& body) {
 bool qlpak_to_qlay(const std::vector<uint8_t>& zip, std::vector<uint8_t>& qlay, std::string* error) {
     std::vector<ZipLocal> files;
     if (!parse_zip(zip, files, error)) return false;
-    format_qlay(qlay, "QLPAK");
-    int stored = 0;
-    for (const ZipLocal& z : files) {
-        if (z.name.empty() || z.name.back() == '/') continue;
-        std::vector<uint8_t> body;
-        if (!extract_zip_file(zip, z, body)) continue;
 
+    struct Packed {
+        std::string name;
+        std::vector<uint8_t> body;
         uint8_t type = 0;
         uint32_t dataspace = 0;
-        if (!strip_qemul_header(body, type, dataspace) && z.extra.size() >= 72) {
+    };
+    std::vector<Packed> packed;
+    char medium[11] = "QLPAK";
+    uint16_t rnd = 0x1234;
+    for (const ZipLocal& z : files) {
+        if (z.name.empty() || z.name.back() == '/') continue;
+        Packed p;
+        p.name = z.name;
+        if (!extract_zip_file(zip, z, p.body)) continue;
+
+        uint8_t mdv_hdr[14]{};
+        if (strip_qemul_header(p.body, p.type, p.dataspace, mdv_hdr)) {
+            if (mdv_hdr[2] != 0) {
+                std::memcpy(medium, mdv_hdr + 2, 10);
+                medium[10] = 0;
+                rnd = uint16_t(mdv_hdr[12] | (uint16_t(mdv_hdr[13]) << 8));
+            }
+        } else if (z.extra.size() >= 72) {
             const uint8_t* fh = z.extra.data() + 8;
-            type = fh[5];
-            dataspace = be32(fh + 6);
-            if (be32(fh) > 0 && be32(fh) <= uint32_t(body.size())) {
-                body.resize(be32(fh));
+            p.type = fh[5];
+            p.dataspace = be32(fh + 6);
+            if (be32(fh) > 0 && be32(fh) <= uint32_t(p.body.size())) {
+                p.body.resize(be32(fh));
             }
         }
-        rewrite_flp_to_mdv(body);
+        rewrite_flp_to_mdv(p.body);
+        packed.push_back(std::move(p));
+    }
+    format_qlay(qlay, medium, rnd);
 
-        if (!add_ql_file(qlay, z.name, body.data(), uint32_t(body.size()), type, dataspace)) {
+    int stored = 0;
+    for (const Packed& p : packed) {
+        if (!add_ql_file(qlay, p.name, p.body.data(), uint32_t(p.body.size()), p.type, p.dataspace)) {
             if (error) *error = "qlpak does not fit on a 255-sector cartridge";
             return false;
         }
