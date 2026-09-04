@@ -21,6 +21,7 @@ void YM2203::set_port_handlers(AY8910::PortRead port_a_read, AY8910::PortRead po
 void YM2203::reset() {
     external_timers_ = false;
     forced_tb_ = 0;
+    tb_latched_ = false;
     opn_.prescaler_w(0, 1);
     ay_.reset();
     opn_.irq_mask_set(0x03);
@@ -43,6 +44,7 @@ void YM2203::write_port(int port, uint8_t value) {
     }
     const uint8_t address = opn_.address();
     regs_[address] = value;
+    if (address == 0x27 && (value & 0x02) == 0) tb_latched_ = false;
     if ((address & 0xf0) == 0x00) {
         ay_.write(value);
     } else if ((address & 0xf0) == 0x20) {
@@ -102,6 +104,7 @@ void YM2203::run_timers(int cycles) {
         const int period = std::max(1, (256 - int(regs_[0x26])) * 16) * 72;
         if (forced_tb_ >= period) {
             forced_tb_ -= period;
+            tb_latched_ = true;
             opn_.timer_b_over();
         }
     }

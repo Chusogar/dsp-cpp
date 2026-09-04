@@ -30,7 +30,11 @@ public:
 
     void control(uint8_t value) { write_port(0, value); }
     void write(uint8_t value) { write_port(1, value); }
-    uint8_t status() const { return opn_.status(); }
+    uint8_t status() const {
+        uint8_t value = opn_.status();
+        if (tb_latched_) value |= 0x02;
+        return value;
+    }
     uint8_t debug_reg(uint8_t address) const { return regs_[address]; }
     uint8_t read();
 
@@ -47,6 +51,7 @@ private:
     float amplitude_;
     bool external_timers_ = false;
     int32_t forced_tb_ = 0;
+    bool tb_latched_ = false;
 };
 
 }  // namespace dsp

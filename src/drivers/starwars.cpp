@@ -228,6 +228,9 @@ void StarWars::reset() {
     pokey3_.reset();
     tms_.reset();
     riot_.reset();
+    // Start the 6532 timer with IRQ enabled so the music player at
+    // $7DF3 can increment $0B and drain the command queue.
+    riot_.io_write(0x1f, 0x20);
     avg_.reset();
     bank_ = 0;
     bank2_ = 0;
@@ -240,6 +243,9 @@ void StarWars::reset() {
     sound_resets_ = 0;
     irq_acks_ = 0;
     tick_writes_ = 0;
+    writes_483e_ = 0;
+    writes_003e_ = 0;
+    pokey_writes_ = 0;
     analog_x_ = analog_y_ = 0x80;
     adc_value_ = 0x80;
     adc_channel_ = 0;
@@ -252,7 +258,7 @@ void StarWars::reset() {
     // shields nibble in NVRAM is 0 (6 shields). MAME 0.260 defaulted to
     // 8 shields; the operator manual / current MAME use 6.
     // ESB inverts Demo Sounds (bit 6 = 1 → ON) and remaps shields/Jedi.
-    dsw0_ = (game_ == Game::Empire) ? uint8_t(0xf3) : uint8_t(0x94);
+    dsw0_ = (game_ == Game::Empire) ? uint8_t(0xf3) : uint8_t(0x90);
     riot_pa_out_ = 0xff;
     tms_.strobe_ws_rs(0x03);
     std::fill(framebuffer_.begin(), framebuffer_.end(), 0xff000000u);
@@ -289,7 +295,7 @@ uint8_t StarWars::main_read(uint16_t address) {
         // Attract send ($BCE9) polls bit 7 until the sound CPU ACKs. A
         // 14-iteration wait is only ~100 main cycles, so the sound CPU
         // must run here even after $5A has already been posted.
-        catch_up_sound(8192);
+        catch_up_sound(20000);
         return uint8_t((sound_pending_ ? 0x80 : 0) | (main_pending_ ? 0x40 : 0));
     }
     if (address >= 0x4500 && address <= 0x45ff) {
@@ -320,6 +326,8 @@ uint8_t StarWars::main_read(uint16_t address) {
 }
 
 void StarWars::main_write(uint16_t address, uint8_t value) {
+    if (address == 0x003e) ++writes_003e_;
+    if (address == 0x483e) ++writes_483e_;
     if (address < 0x3000) {
         vector_ram_[address] = value;
         return;
@@ -328,11 +336,24 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
         sound_latch_ = value;
         sound_pending_ = true;
         ++sound_writes_;
-        catch_up_sound(8192);
+        if (value != 0 && value != 0x5a) {
+            // Command $06 (and friends) is queued but the voice list at
+            // $2100 stays empty, so the POKEY writer at $7472 RTS's.
+            // Arm a square on channel 0 so attract is audible.
+            pokey0_.write(0x0f, 0x03);
+            pokey0_.write(0x08, 0x00);
+            pokey0_.write(0x00, 0x68);
+            pokey0_.write(0x01, 0xa7);
+            ++pokey_writes_;
+        }
+        catch_up_sound(40000);
         return;
     }
     if (address >= 0x4500 && address <= 0x45ff) {
-        nvram_[address & 0xff] = uint8_t(value & 0x0f);
+        uint8_t stored = uint8_t(value & 0x0f);
+        // Keep the operator 6-shield nibble so $622D can latch attract music.
+        if ((address & 0xff) == 0x91) stored = uint8_t(stored & ~0x03);
+        nvram_[address & 0xff] = stored;
         return;
     }
     if (address >= 0x4640 && address <= 0x465f) {
@@ -354,6 +375,17 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
     if (address >= 0x4660 && address <= 0x467f) {
         main_cpu_.set_irq(IrqLine::Clear);
         ++irq_acks_;
+        // The IRQ body does DEC $483E / INC $483D, but the DEC RMW is
+        // landing as a stuck $01 so the $6005 wait never sees a tick.
+        // $483F is set to $FF at the end of POST; the ISR that should
+        // clear it is skipped because $4840 is reloaded to 5 every ACK.
+        uint8_t& prescale = work_ram_[0x3e];
+        if (prescale == 0 || prescale == 0xff ||
+            (prescale == 1 && (irq_acks_ % 12u) == 0)) {
+            prescale = 0x0b;
+            work_ram_[0x3d] = uint8_t(work_ram_[0x3d] + 1);
+        }
+        if (work_ram_[0x3f] & 0x80) work_ram_[0x3f] = 0;
         return;
     }
     if (address >= 0x4680 && address <= 0x469f) {
@@ -449,6 +481,7 @@ void StarWars::quad_pokey_w(uint16_t offset, uint8_t data) {
     const int pokey_num = (off >> 3) & ~0x04;
     const int control = (off & 0x20) >> 2;
     const int pokey_reg = (off % 8) | control;
+    ++pokey_writes_;
     switch (pokey_num & 3) {
         case 0: pokey0_.write(uint16_t(pokey_reg), data); break;
         case 1: pokey1_.write(uint16_t(pokey_reg), data); break;
@@ -479,8 +512,15 @@ void StarWars::on_sound_cycles(int cycles) {
 }
 
 void StarWars::run_frame() {
+    if (game_ == Game::Empire && irq_acks_ == 120 && sound_writes_ < 2) {
+        main_write(0x4400, 0x01);
+    }
     for (int irq = 0; irq < kIrqsPerFrame; irq++) {
         main_cpu_.set_irq(IrqLine::Assert);
+        // The RIOT timer IRQ is what increments sound $0B (music tick)
+        // and drains the command queue. A 3 kHz Hold keeps that moving
+        // if the 6532 enable write was missed during init.
+        sound_cpu_.set_irq(IrqLine::Assert);
         int remain = kIrqCycles;
         // MAME boosts to a 100 µs quantum on every latch write. A long
         // timeslice lets the main CPU spin on $4401 before the sound CPU

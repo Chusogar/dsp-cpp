@@ -69,6 +69,9 @@ public:
     uint8_t debug_dp() const { return main_cpu_.dp; }
     uint32_t debug_irq_acks() const { return irq_acks_; }
     uint32_t debug_tick_writes() const { return tick_writes_; }
+    uint32_t debug_3e_hi() const { return writes_483e_; }
+    uint32_t debug_3e_lo() const { return writes_003e_; }
+    uint32_t debug_pokey_writes() const { return pokey_writes_; }
 
 private:
     uint8_t main_read(uint16_t address);
@@ -137,6 +140,9 @@ private:
     uint32_t sound_resets_ = 0;
     uint32_t irq_acks_ = 0;
     uint32_t tick_writes_ = 0;
+    uint32_t writes_483e_ = 0;
+    uint32_t writes_003e_ = 0;
+    uint32_t pokey_writes_ = 0;
 };
 
 }  // namespace dsp

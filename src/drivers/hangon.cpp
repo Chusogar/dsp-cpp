@@ -163,10 +163,16 @@ HangOn::HangOn(Game game)
     sound_cpu_.set_io_handlers([this](uint16_t p) { return sound_in(p); },
                                [this](uint16_t p, uint8_t v) { sound_out(p, v); });
     sound_cpu_.set_cycle_handler([this](int cycles) { on_sound_cycles(cycles); });
-    // Hang-On / Space Harrier poll YM status; Space Harrier is IM 1
-    // and $0038 is mid-init, not an ISR. Driving /INT re-enters $0037
-    // and stops timer B before the $0D33 poll can see it.
-    ym2203_.set_irq_handler(nullptr);
+    // Hang-On's Z80 is IM 1 and $0038 is a real YM ISR. Space Harrier
+    // reuses $0038 as the tail of $0037 — a YM /INT re-enters init and
+    // never reaches the $0D33 timer-B poll.
+    if (game != Game::Sharrier) {
+        ym2203_.set_irq_handler([this](bool state) {
+            sound_cpu_.set_irq(state ? IrqLine::Assert : IrqLine::Clear);
+        });
+    } else {
+        ym2203_.set_irq_handler(nullptr);
+    }
     pcm_.set_read_rom([this](uint32_t addr) -> uint8_t {
         if (pcm_rom_.empty()) return 0x80;
         return pcm_rom_[addr % pcm_rom_.size()];
@@ -176,10 +182,8 @@ HangOn::HangOn(Game game)
                             [this](uint8_t value) {
                                 sound_latch_ = value;
                                 ++ppi_a_writes_;
-                                // Do not latch NMI while the Z80 is held in
-                                // reset: Space Harrier's IM 1 vector sits
-                                // inside $0037, and a pending pulse skips
-                                // the YM2203 timer-B wait at $0D33.
+                                // A pulse while /RESET is held stays pending
+                                // and Space Harrier then skips $0D33.
                                 if (!z80_reset_ && z80_nmi_holdoff_ <= 0) {
                                     sound_cpu_.set_nmi(IrqLine::Assert);
                                     sound_cpu_.set_nmi(IrqLine::Clear);
@@ -190,9 +194,7 @@ HangOn::HangOn(Game game)
                                 z80_reset_ = (value & 0x20) == 0;
                                 if (z80_reset_) {
                                     sound_cpu_.reset();
-                                } else if (was_reset) {
-                                    // Finish YM timer-B init before PPI
-                                    // commands start stealing cycles.
+                                } else if (was_reset && game_ == Game::Sharrier) {
                                     z80_nmi_holdoff_ = 40000;
                                 }
                                 video_.screen_enabled = (value & 0x10) != 0;
@@ -250,6 +252,11 @@ bool HangOn::init(const std::string& rom_path, std::string* error) {
     if (!load_roms(rom_path, error)) return false;
     video_.init_palette_luts();
     reset();
+    if (game_ == Game::Sharrier) {
+        // Attract music is latched after the $5E18 list builder (~10 s).
+        for (int i = 0; i < 280; i++) run_frame();
+        audio_.clear();
+    }
     return true;
 }
 
