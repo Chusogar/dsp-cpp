@@ -46,7 +46,10 @@ public:
     bool uses_pointer() const override { return true; }
 
     uint32_t debug_pc() const { return cpu_.pc(); }
+    uint32_t debug_a(int r) const { return cpu_.a[size_t(r)].l; }
     uint8_t peek(uint32_t address) const { return const_cast<AtariSt*>(this)->read_byte(address); }
+    void poke(uint32_t address, uint8_t value) { write_byte(address, value); }
+    void poke_word(uint32_t address, uint16_t value) { write_word(address, value); }
     std::vector<uint8_t> ikbd_pending_bytes() const;
     bool floppy_loaded() const { return floppy_.loaded(); }
     int floppy_spt() const { return floppy_.spt(); }
@@ -70,6 +73,11 @@ private:
     void ikbd_mouse(const MachineInputs& inputs);
     void ikbd_mouse_packet(int dx, int dy, bool left, bool right);
     void service_acia();
+    uint16_t blit_get_word(uint32_t even_addr) const;
+    void blit_set_word(uint32_t even_addr, uint16_t value);
+    uint16_t blit_mem_read(uint32_t address) const;
+    void blit_mem_write(uint32_t address, uint16_t value);
+    void run_blitter();
 
     M68000 cpu_;
     AY8910 psg_;
@@ -108,6 +116,24 @@ private:
     bool last_pointer_b1_ = false;
     bool last_pointer_b2_ = false;
     uint32_t video_count_ = 0;
+
+    // Mega ST / STE blitter at $FF8A00. TOS 1.04 Line-A uses it once the
+    // probe succeeds (no bus error). Open-bus $FF left BUSY stuck on.
+    std::array<uint16_t, 16> blit_halftone_{};
+    int16_t blit_sxinc_ = 0;
+    int16_t blit_syinc_ = 0;
+    int16_t blit_dxinc_ = 0;
+    int16_t blit_dyinc_ = 0;
+    uint32_t blit_src_ = 0;
+    uint32_t blit_dst_ = 0;
+    uint16_t blit_emask_[3] = {0, 0, 0};
+    uint16_t blit_xcount_ = 0;
+    uint16_t blit_ycount_ = 0;
+    uint8_t blit_hop_ = 0;
+    uint8_t blit_op_ = 0;
+    uint8_t blit_ctrl_ = 0;
+    uint8_t blit_skew_ = 0;
+    bool blit_defer_start_ = false;
 
     int64_t mfp_acc_ = 0;
     int64_t audio_acc_ = 0;

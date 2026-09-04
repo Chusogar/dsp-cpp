@@ -121,6 +121,13 @@ void AtariSt::reset() {
     pointer_seen_ = false;
     last_pointer_b1_ = last_pointer_b2_ = false;
     video_count_ = 0;
+    blit_halftone_.fill(0);
+    blit_sxinc_ = blit_syinc_ = blit_dxinc_ = blit_dyinc_ = 0;
+    blit_src_ = blit_dst_ = 0;
+    blit_emask_[0] = blit_emask_[1] = blit_emask_[2] = 0;
+    blit_xcount_ = blit_ycount_ = 0;
+    blit_hop_ = blit_op_ = blit_ctrl_ = blit_skew_ = 0;
+    blit_defer_start_ = false;
     keys_down_.fill(false);
     mfp_acc_ = 0;
     audio_acc_ = 0;
@@ -265,7 +272,6 @@ uint8_t AtariSt::acia_read_data() {
     const uint8_t v = ikbd_rx_.front();
     ikbd_rx_.pop_front();
     if (ikbd_rx_.empty()) mfp_.set_gpip_bit(4, 1);
-    service_acia();
     return v;
 }
 
@@ -288,7 +294,7 @@ void AtariSt::update_irqs() {
 
 void AtariSt::on_cpu_cycles(int cycles) {
     floppy_.tick(cycles);
-    for (IkbdByte& b : ikbd_pending_) b.cycles -= cycles;
+    if (!ikbd_pending_.empty()) ikbd_pending_.front().cycles -= cycles;
     service_acia();
     update_irqs();
     mfp_acc_ += int64_t(cycles) * Mc68901::kClock;
@@ -354,6 +360,14 @@ uint8_t AtariSt::read_byte(uint32_t address) {
         if (address >= 0xfffa00 && address <= 0xfffa2f && (address & 1)) {
             return mfp_.read(int((address - 0xfffa01) >> 1));
         }
+        if (address >= 0xff8a00 && address <= 0xff8a3d) {
+            if (address == 0xff8a3a) return blit_hop_;
+            if (address == 0xff8a3b) return blit_op_;
+            if (address == 0xff8a3c) return blit_ctrl_;
+            if (address == 0xff8a3d) return blit_skew_;
+            const uint16_t w = blit_get_word(address & 0xfffffe);
+            return (address & 1) ? uint8_t(w) : uint8_t(w >> 8);
+        }
     }
     return 0xff;
 }
@@ -404,6 +418,31 @@ void AtariSt::write_byte(uint32_t address, uint8_t value) {
         }
         if (address >= 0xfffa00 && address <= 0xfffa2f && (address & 1)) {
             mfp_.write(int((address - 0xfffa01) >> 1), value);
+            return;
+        }
+        if (address >= 0xff8a00 && address <= 0xff8a3d) {
+            if (address == 0xff8a3a) {
+                blit_hop_ = uint8_t(value & 3);
+                return;
+            }
+            if (address == 0xff8a3b) {
+                blit_op_ = uint8_t(value & 15);
+                return;
+            }
+            if (address == 0xff8a3c) {
+                blit_ctrl_ = value;
+                if ((value & 0x80) && !blit_defer_start_) run_blitter();
+                return;
+            }
+            if (address == 0xff8a3d) {
+                blit_skew_ = value;
+                return;
+            }
+            const uint32_t even = address & 0xfffffe;
+            uint16_t w = blit_get_word(even);
+            if (address & 1) w = uint16_t((w & 0xff00) | value);
+            else w = uint16_t((w & 0x00ff) | (uint16_t(value) << 8));
+            blit_set_word(even, w);
             return;
         }
     }
@@ -457,8 +496,213 @@ void AtariSt::write_word(uint32_t address, uint16_t value) {
         palette_[size_t(address - 0xff8240) >> 1] = uint16_t(value & 0x0777);
         return;
     }
+    // A word write to $FF8A3C stores control then skew. Starting the blit on
+    // the first byte would run with the previous skew.
+    if (address == 0xff8a3c) {
+        blit_defer_start_ = true;
+        write_byte(address, uint8_t(value >> 8));
+        blit_defer_start_ = false;
+        write_byte(address + 1, uint8_t(value));
+        if (blit_ctrl_ & 0x80) run_blitter();
+        return;
+    }
     write_byte(address, uint8_t(value >> 8));
     write_byte(address + 1, uint8_t(value));
+}
+
+uint16_t AtariSt::blit_get_word(uint32_t even_addr) const {
+    even_addr &= 0xfffffe;
+    if (even_addr >= 0xff8a00 && even_addr < 0xff8a20) {
+        return blit_halftone_[size_t(even_addr - 0xff8a00) >> 1];
+    }
+    switch (even_addr) {
+        case 0xff8a20: return uint16_t(blit_sxinc_);
+        case 0xff8a22: return uint16_t(blit_syinc_);
+        case 0xff8a24: return uint16_t(blit_src_ >> 16);
+        case 0xff8a26: return uint16_t(blit_src_);
+        case 0xff8a28: return blit_emask_[0];
+        case 0xff8a2a: return blit_emask_[1];
+        case 0xff8a2c: return blit_emask_[2];
+        case 0xff8a2e: return uint16_t(blit_dxinc_);
+        case 0xff8a30: return uint16_t(blit_dyinc_);
+        case 0xff8a32: return uint16_t(blit_dst_ >> 16);
+        case 0xff8a34: return uint16_t(blit_dst_);
+        case 0xff8a36: return blit_xcount_;
+        case 0xff8a38: return blit_ycount_;
+        default: return 0;
+    }
+}
+
+void AtariSt::blit_set_word(uint32_t even_addr, uint16_t value) {
+    even_addr &= 0xfffffe;
+    if (even_addr >= 0xff8a00 && even_addr < 0xff8a20) {
+        blit_halftone_[size_t(even_addr - 0xff8a00) >> 1] = value;
+        return;
+    }
+    switch (even_addr) {
+        case 0xff8a20: blit_sxinc_ = int16_t(value); return;
+        case 0xff8a22: blit_syinc_ = int16_t(value); return;
+        case 0xff8a24: blit_src_ = (blit_src_ & 0xffff) | (uint32_t(value) << 16); return;
+        case 0xff8a26: blit_src_ = (blit_src_ & 0xffff0000u) | value; return;
+        case 0xff8a28: blit_emask_[0] = value; return;
+        case 0xff8a2a: blit_emask_[1] = value; return;
+        case 0xff8a2c: blit_emask_[2] = value; return;
+        case 0xff8a2e: blit_dxinc_ = int16_t(value); return;
+        case 0xff8a30: blit_dyinc_ = int16_t(value); return;
+        case 0xff8a32: blit_dst_ = (blit_dst_ & 0xffff) | (uint32_t(value) << 16); return;
+        case 0xff8a34: blit_dst_ = (blit_dst_ & 0xffff0000u) | value; return;
+        case 0xff8a36: blit_xcount_ = value; return;
+        case 0xff8a38: blit_ycount_ = value; return;
+        default: return;
+    }
+}
+
+uint16_t AtariSt::blit_mem_read(uint32_t address) const {
+    address &= 0xfffffe;
+    if (address + 1 < ram_.size()) {
+        return uint16_t((ram_[address] << 8) | ram_[address + 1]);
+    }
+    // Line-A text blits the system font out of TOS ($FC0000 / $E00000).
+    auto from_rom = [&](uint32_t base) -> uint16_t {
+        if (address >= base && address + 1 < base + rom_.size()) {
+            const uint32_t o = address - base;
+            return uint16_t((rom_[o] << 8) | rom_[o + 1]);
+        }
+        return 0;
+    };
+    if (address >= 0xfc0000) return from_rom(0xfc0000);
+    if (address >= 0xe00000) return from_rom(0xe00000);
+    return 0xffff;
+}
+
+void AtariSt::blit_mem_write(uint32_t address, uint16_t value) {
+    address &= 0xfffffe;
+    if (address + 1 < ram_.size()) {
+        ram_[address] = uint8_t(value >> 8);
+        ram_[address + 1] = uint8_t(value);
+    }
+}
+
+void AtariSt::run_blitter() {
+    // Line-A polls $FF8A3C bit 7. Finish the blit immediately so TOS never
+    // sits in `tst.b (a5); bmi.s` after opening a GEM window.
+    if (blit_ycount_ == 0) {
+        blit_ctrl_ = uint8_t(blit_ctrl_ & 0x3f);
+        return;
+    }
+
+    const int hop = blit_hop_ & 3;
+    const int op = blit_op_ & 15;
+    const int skew = blit_skew_ & 15;
+    const bool fxsr = (blit_skew_ & 0x80) != 0;
+    const bool nfsr = (blit_skew_ & 0x40) != 0;
+    const bool smudge = (blit_ctrl_ & 0x20) != 0;
+    int line = blit_ctrl_ & 15;
+
+    static const bool kOpSrc[16] = {false, true,  true,  true,  true,  false, true,  true,
+                                    true,  true,  false, true,  true,  true,  true,  false};
+    static const bool kOpDst[16] = {false, true,  true,  false, true,  true,  true,  true,
+                                    true,  true,  true,  true,  false, true,  true,  false};
+    const bool hop_src = (hop & 2) != 0 || (hop == 1 && smudge);
+    const bool need_src = kOpSrc[op] && hop_src;
+
+    uint32_t xspan = blit_xcount_ ? uint32_t(blit_xcount_) : 65536u;
+    uint32_t yleft = blit_ycount_;
+    uint32_t src = blit_src_ & 0xfffffe;
+    uint32_t dst = blit_dst_ & 0xfffffe;
+    uint32_t buffer = 0;
+    uint32_t words = 0;
+    constexpr uint32_t kMaxWords = 0x100000;
+
+    auto add_src = [&](int16_t inc) {
+        src = uint32_t(int32_t(src) + inc) & 0xfffffe;
+    };
+    auto add_dst = [&](int16_t inc) {
+        dst = uint32_t(int32_t(dst) + inc) & 0xfffffe;
+    };
+    auto fetch_src = [&]() {
+        if (blit_sxinc_ < 0) buffer >>= 16;
+        else buffer <<= 16;
+        const uint32_t w = blit_mem_read(src);
+        if (blit_sxinc_ < 0) buffer |= w << 16;
+        else buffer |= w;
+    };
+
+    while (yleft && words < kMaxWords) {
+        uint32_t xleft = xspan;
+        bool skip_src = false;
+        while (xleft && words < kMaxWords) {
+            const bool first = xleft == xspan;
+            const bool last = xleft == 1;
+            uint16_t mask = blit_emask_[1];
+            if (first || xspan == 1) mask = blit_emask_[0];
+            else if (last) mask = blit_emask_[2];
+
+            bool fetched = false;
+            if (need_src) {
+                if (first && fxsr) {
+                    fetch_src();
+                    add_src(blit_sxinc_);
+                }
+                if (!skip_src) {
+                    fetch_src();
+                    fetched = true;
+                }
+            }
+
+            const uint16_t srcw = uint16_t(buffer >> skew);
+            const uint16_t ht =
+                smudge ? blit_halftone_[size_t(srcw & 15)] : blit_halftone_[size_t(line)];
+            uint16_t hopv = 0xffff;
+            if (hop == 1) hopv = ht;
+            else if (hop == 2) hopv = srcw;
+            else if (hop == 3) hopv = uint16_t(srcw & ht);
+
+            const bool read_dst = kOpDst[op] || mask != 0xffff;
+            const uint16_t dstw = read_dst ? blit_mem_read(dst) : 0;
+            uint16_t lop = 0;
+            switch (op) {
+                case 0: lop = 0; break;
+                case 1: lop = uint16_t(hopv & dstw); break;
+                case 2: lop = uint16_t(hopv & ~dstw); break;
+                case 3: lop = hopv; break;
+                case 4: lop = uint16_t(~hopv & dstw); break;
+                case 5: lop = dstw; break;
+                case 6: lop = uint16_t(hopv ^ dstw); break;
+                case 7: lop = uint16_t(hopv | dstw); break;
+                case 8: lop = uint16_t(~hopv & ~dstw); break;
+                case 9: lop = uint16_t(~hopv ^ dstw); break;
+                case 10: lop = uint16_t(~dstw); break;
+                case 11: lop = uint16_t(hopv | ~dstw); break;
+                case 12: lop = uint16_t(~hopv); break;
+                case 13: lop = uint16_t(~hopv | dstw); break;
+                case 14: lop = uint16_t(~hopv | ~dstw); break;
+                default: lop = 0xffff; break;
+            }
+            blit_mem_write(dst, uint16_t((lop & mask) | (dstw & ~mask)));
+            words++;
+
+            if (xleft == 2 && nfsr) skip_src = true;
+            if (fetched) {
+                if (last || skip_src) add_src(blit_syinc_);
+                else add_src(blit_sxinc_);
+            }
+            if (last) {
+                add_dst(blit_dyinc_);
+                line = blit_dyinc_ >= 0 ? ((line + 1) & 15) : ((line - 1) & 15);
+            } else {
+                add_dst(blit_dxinc_);
+            }
+            xleft--;
+        }
+        yleft--;
+    }
+
+    blit_src_ = src;
+    blit_dst_ = dst;
+    blit_xcount_ = blit_xcount_ ? blit_xcount_ : uint16_t(xspan);
+    blit_ycount_ = 0;
+    blit_ctrl_ = uint8_t((blit_ctrl_ & 0x30) | (line & 15));
 }
 
 void AtariSt::render() {
