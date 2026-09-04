@@ -49,7 +49,10 @@ public:
     bool ca2() const { return out_ca2_; }
     bool cb2() const { return out_cb2_; }
 
+    uint8_t ddr_a() const { return ddr_a_; }
     uint8_t ddr_b() const { return ddr_b_; }
+    uint8_t ora() const { return out_a_; }
+    uint8_t orb() const { return out_b_; }
 
     uint8_t ifr() const { return ifr_; }
     uint8_t ier() const { return ier_; }
