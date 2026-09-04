@@ -70,6 +70,9 @@ public:
     bool floppy_motor() const { return motor_; }
     bool floppy_selected() const { return selected_; }
     int prb_writes() const { return prb_writes_; }
+    int floppy_step_in() const { return step_in_; }
+    int floppy_step_out() const { return step_out_; }
+    int floppy_max_cyl() const { return max_cyl_; }
 
 private:
     uint8_t read_byte(uint32_t address);
@@ -100,6 +103,9 @@ private:
     bool disk_changed_ = true;
     uint8_t prev_prb_ = 0xFF;
     int prb_writes_ = 0;
+    int step_in_ = 0;
+    int step_out_ = 0;
+    int max_cyl_ = 0;
     int cia_acc_ = 0;
     int index_div_ = 0;
     int64_t audio_acc_ = 0;

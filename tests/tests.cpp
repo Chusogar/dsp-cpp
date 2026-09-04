@@ -4916,11 +4916,12 @@ void test_amiga_adf_format() {
     machine.ciab().write(1, 0xF7);  // select with /MTR high → latch motor off (ID probe)
     check(machine.floppy_selected() && !machine.floppy_motor(), "select while /MTR high latches motor off");
     check((machine.ciaa().read(0) & 0x20) == 0, "GetUnitID bit-bang sees /RDY low (3.5\" DD id 0)");
-    machine.ciab().write(1, 0xFF);
-    machine.ciab().write(1, 0x77);
-    machine.ciab().write(1, 0xF7);
-    machine.ciab().write(1, 0xF4);  // falling /STEP, DIR=0 (toward track 0)
-    check(!machine.floppy_cyl(), "DIR=0 steps toward track 0");
+    machine.ciab().write(1, 0xF5);  // selected, /STEP high, DIR=0 (towards spindle)
+    machine.ciab().write(1, 0xF4);  // falling /STEP, DIR=0
+    check(machine.floppy_cyl() == 1, "DIR=0 steps toward the spindle (higher cylinders)");
+    machine.ciab().write(1, 0xF7);  // /STEP high, DIR=1 (towards track 0)
+    machine.ciab().write(1, 0xF6);  // falling /STEP, DIR=1
+    check(!machine.floppy_cyl(), "DIR=1 steps toward track 0");
     check((machine.ciaa().read(0) & 0x04) != 0, "a step pulse clears /CHNG");
 }
 

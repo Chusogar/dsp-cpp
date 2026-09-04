@@ -96,6 +96,9 @@ void Amiga500::reset() {
     disk_changed_ = true;
     prev_prb_ = 0xFF;
     prb_writes_ = 0;
+    step_in_ = 0;
+    step_out_ = 0;
+    max_cyl_ = 0;
     cia_acc_ = 0;
     index_div_ = 0;
     audio_acc_ = 0;
@@ -147,11 +150,15 @@ void Amiga500::cia_b_floppy(uint8_t prb) {
     }
     selected_ = sel0;
     if (selected_ && ((prev_prb_ & 1) != 0) && ((prb & 1) == 0)) {
+        // HRM: DSKDIREC 0 = towards the spindle (higher cylinders); 1 = towards track 0.
         if (prb & 2) {
-            if (cyl_ < 82) cyl_++;
-        } else {
             if (cyl_ > 0) cyl_--;
+            ++step_in_;
+        } else {
+            if (cyl_ < 82) cyl_++;
+            ++step_out_;
         }
+        if (cyl_ > max_cyl_) max_cyl_ = cyl_;
         if (floppy_.loaded()) disk_changed_ = false;
     }
     prev_prb_ = prb;
@@ -279,6 +286,7 @@ void Amiga500::run_frame() {
     for (int line = 0; line < kLines; line++) {
         chipset_.set_vpos(line);
         chipset_.copper_line(line);
+        chipset_.render_line(framebuffer_.data(), line);
         ciab_.tod_tick();  // CIA-B TOD is HSYNC
         cpu_.run(kCyclesPerLine);
         update_ipl();

@@ -348,8 +348,7 @@ void AmigaChipset::copper_line(int vpos) {
 }
 
 void AmigaChipset::sprite_dma_line(int vpos) {
-    const int v0 = (diwstrt_ >> 8) & 0xFF;
-    const int y = vpos - v0;
+    const int y = vpos - 0x2C;
     for (int s = 0; s < 8; s++) {
         auto& pt = sprpt_[size_t(s)];
         auto& pos = sprpos_[size_t(s)];
@@ -393,9 +392,9 @@ void AmigaChipset::copper_step_until_wait(int vpos) {
     if (copper_active_) return;
     copper_active_ = true;
     int nops = 0;
-    // A real scanline only has a few dozen copper slots. Running thousands of
-    // MOVEs lets an unfinished COP2 list (zeros) walk chip RAM and smash INTENA.
-    for (int n = 0; n < 32; n++) {
+    // ~113 copper slots fit in an OCS scanline. A 32-MOVE cap was cutting
+    // LoadView palettes in half (32 COLOR registers plus BPLxPT).
+    for (int n = 0; n < 80; n++) {
         const uint32_t pc = coppc_ & 0x000FFFFEu;
         const uint16_t w1 = chip_read(pc);
         const uint16_t w2 = chip_read(pc + 2);
@@ -434,7 +433,7 @@ void AmigaChipset::copper_step_until_wait(int vpos) {
         const int ve = ((w2 >> 8) & 0x7F) | 0x80;
         const int masked_v = vpos & ve;
         const int masked_wait = wait_v & ve;
-        if (masked_v < masked_wait && wait_v != 0xFF) {
+        if (masked_v < masked_wait) {
             coppc_ -= 4;
             copper_active_ = false;
             return;
@@ -660,34 +659,37 @@ void AmigaChipset::plot_sprites(uint32_t* framebuffer) const {
     }
 }
 
-void AmigaChipset::render(uint32_t* framebuffer) {
+void AmigaChipset::render_line(uint32_t* framebuffer, int vpos) {
+    const int y = vpos - 0x2C;
+    if (y < 0 || y >= kHeight) return;
     const int bpu = std::min(6, (bplcon0_ >> 12) & 7);
-    std::array<uint32_t, 6> pt = bplpt_;
-    const uint32_t bg = rgb(color_[0]);
+    const bool hires = (bplcon0_ & 0x8000) != 0;
     const bool planes = bpu > 0 && dma(kBplen);
-
-    for (int y = 0; y < kHeight; y++) {
-        for (int x = 0; x < kWidth; x++) {
-            if (!planes) {
-                framebuffer[y * kWidth + x] = bg;
-                continue;
-            }
-            const int bit = 15 - (x & 15);
-            const int word = x >> 4;
-            int idx = 0;
-            for (int p = 0; p < bpu; p++) {
-                const uint16_t w = chip_read(pt[size_t(p)] + uint32_t(word * 2));
-                if (w & (1u << bit)) idx |= 1 << p;
-            }
-            framebuffer[y * kWidth + x] = rgb(color_[size_t(idx & 31)]);
-        }
-        if (planes) {
-            for (int p = 0; p < bpu; p++) {
-                const int16_t mod = (p & 1) ? bpl2mod_ : bpl1mod_;
-                pt[size_t(p)] += uint32_t(40 + mod);
-            }
-        }
+    const uint32_t bg = rgb(color_[0]);
+    uint32_t* row = framebuffer + y * kWidth;
+    if (!planes) {
+        for (int x = 0; x < kWidth; x++) row[x] = bg;
+        return;
     }
+    for (int x = 0; x < kWidth; x++) {
+        const int hx = hires ? x * 2 : x;
+        const int bit = 15 - (hx & 15);
+        const int word = hx >> 4;
+        int idx = 0;
+        for (int p = 0; p < bpu; p++) {
+            const uint16_t w = chip_read(bplpt_[size_t(p)] + uint32_t(word * 2));
+            if (w & (1u << bit)) idx |= 1 << p;
+        }
+        row[x] = rgb(color_[size_t(idx & 31)]);
+    }
+    const int row_bytes = hires ? 80 : 40;
+    for (int p = 0; p < bpu; p++) {
+        const int16_t mod = (p & 1) ? bpl2mod_ : bpl1mod_;
+        bplpt_[size_t(p)] += uint32_t(row_bytes + mod);
+    }
+}
+
+void AmigaChipset::render(uint32_t* framebuffer) {
     plot_sprites(framebuffer);
 }
 

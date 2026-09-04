@@ -27,6 +27,7 @@ public:
     void begin_frame();
     void set_vpos(int vpos) { vpos_ = vpos; }
     void copper_line(int vpos);
+    void render_line(uint32_t* framebuffer, int vpos);
     void render(uint32_t* framebuffer);
 
     void set_ciaa_irq(bool v) { ciaa_irq_ = v; }
