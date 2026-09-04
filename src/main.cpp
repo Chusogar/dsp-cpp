@@ -61,6 +61,7 @@
 #include "drivers/exelv.h"
 #include "drivers/pentagon.h"
 #include "drivers/scorpion.h"
+#include "drivers/ql.h"
 
 // Consoles
 #include "drivers/sms.h"
@@ -126,7 +127,7 @@ void print_supported_emulators() {
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
         "    cpc464, cpc664, cpc6128, msx, msx2, nms8250, c64,\n"
-        "    apple2, apple2plus, apple2e, apple2ee, exl100, exeltel\n"
+        "    apple2, apple2plus, apple2e, apple2ee, exl100, exeltel, ql\n"
         "\n"
         "  Consoles:\n"
         "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp,\n"
@@ -477,6 +478,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	}
 	if (game == "exeltel") {
 	    return std::make_unique<dsp::Exelv>(dsp::Exelv::Model::Exeltel);
+	}
+	if (game == "ql" || game == "sinclairql" || game == "sinclair-ql") {
+	    return std::make_unique<dsp::SinclairQl>();
 	}
     	
 	// consoles

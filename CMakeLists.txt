@@ -66,6 +66,7 @@ add_executable(dsp
   src/video/dvg.cpp
   src/video/sega16.cpp
   src/video/apple2_video.cpp
+  src/video/zx8301.cpp
   src/video/huc6260.cpp
   src/video/huc6270.cpp
   src/video/neogeo_video.cpp
@@ -110,6 +111,7 @@ add_executable(dsp
   src/machine/konami_decrypt.cpp
   src/machine/tc0140syt.cpp
   src/machine/opwolf_cchip.cpp
+  src/machine/zx8302.cpp
 
     
   src/drivers/bagman.cpp
@@ -175,6 +177,7 @@ add_executable(dsp
   src/drivers/c64.cpp
   src/drivers/apple2.cpp
   src/drivers/exelv.cpp
+  src/drivers/ql.cpp
     
   src/drivers/sms.cpp
   src/machine/sega_vdp.cpp
@@ -269,6 +272,7 @@ add_executable(dsp_tests
   src/video/sega_315_5313.cpp
   src/video/sega16.cpp
   src/video/apple2_video.cpp
+  src/video/zx8301.cpp
   src/video/neogeo_video.cpp
   src/video/tia.cpp
   src/machine/bagman_pal.cpp
@@ -310,6 +314,7 @@ add_executable(dsp_tests
   src/machine/c64_tape.cpp
   src/machine/tc0140syt.cpp
   src/machine/opwolf_cchip.cpp
+  src/machine/zx8302.cpp
   src/machine/konami_decrypt.cpp
   src/machine/nb1414_m4.cpp
   src/drivers/spectrum.cpp
@@ -325,6 +330,7 @@ add_executable(dsp_tests
   src/drivers/scv.cpp
   src/drivers/pv2000.cpp
   src/drivers/exelv.cpp
+  src/drivers/ql.cpp
   src/drivers/starwars.cpp
   src/drivers/asteroid.cpp
   src/drivers/polepos.cpp

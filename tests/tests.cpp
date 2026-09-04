@@ -31,6 +31,7 @@
 #include "drivers/atari_system2.h"
 #include "drivers/apple2.h"
 #include "drivers/exelv.h"
+#include "drivers/ql.h"
 #include "drivers/gameboy.h"
 #include "drivers/mcr.h"
 #include "drivers/msx2.h"
@@ -4365,6 +4366,31 @@ void test_diskii_encode_roundtrip() {
     check(disk.nibble_pos() != pos, "Disk II advances after the CPU consumes the nibble");
 }
 
+void test_ql_missing_roms() {
+    dsp::SinclairQl machine;
+    std::string error = "unset";
+    check(std::strcmp(machine.title(), "Sinclair QL") == 0, "QL title");
+    check(machine.screen_width() == 512 && machine.screen_height() == 256, "QL 512x256 ZX8301");
+    check(!machine.init("/no/such/ql.zip", &error), "missing QL ROMs fail init");
+    check(error.find("not found") != std::string::npos || error.size() > 3,
+          "init reports why the QL ROM set is missing");
+}
+
+void test_ql_roms_if_present() {
+    const char* rom = "/tmp/roms/ql.zip";
+    std::FILE* f = std::fopen(rom, "rb");
+    if (!f) return;
+    std::fclose(f);
+    dsp::SinclairQl boot;
+    std::string error;
+    check(boot.init(rom, &error), "QL JS ROM set loads");
+    check(boot.debug_pc() != 0, "QL 68008 starts from the JS reset vector");
+    for (int i = 0; i < 300; i++) boot.run_frame();
+    check(boot.debug_pc() >= 0x20000 || boot.debug_pc() < 0xc000,
+          "QL SuperBASIC is executing ROM or RAM after boot");
+    check(count_lit_pixels(boot) > 80, "QL attract/copyright paints the ZX8301 screen");
+}
+
 void test_apple2_missing_roms_and_dummy() {
     dsp::Apple2 machine;
     std::string error;
@@ -4614,6 +4640,8 @@ int main() {
     test_diskii_encode_roundtrip();
     test_apple2_missing_roms_and_dummy();
     test_apple2_roms_if_present();
+    test_ql_missing_roms();
+    test_ql_roms_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

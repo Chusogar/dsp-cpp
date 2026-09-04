@@ -25,7 +25,7 @@ public:
     using ReadHandler = std::function<uint8_t(uint16_t)>;
     using WriteHandler = std::function<void(uint16_t, uint8_t)>;
 
-    enum class Chip : uint8_t { I8039 = 0, I8035 = 1, N7751 = 2, I8042 = 3 };
+    enum class Chip : uint8_t { I8039 = 0, I8035 = 1, N7751 = 2, I8042 = 3, I8749 = 4 };
 
     static constexpr size_t kRomSize = 0x800;
 
