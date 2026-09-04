@@ -33,6 +33,7 @@
 #include "drivers/computers/exelv.h"
 #include "drivers/computers/ql.h"
 #include "machine/ql_mdv.h"
+#include "machine/ql_win.h"
 #include "drivers/computers/atari_st.h"
 #include "machine/st_floppy.h"
 #include "drivers/computers/amiga.h"
@@ -4394,6 +4395,8 @@ void test_ql_roms_if_present() {
     check(boot.debug_pc() >= 0x20000 || boot.debug_pc() < 0xc000,
           "QL SuperBASIC is executing ROM or RAM after boot");
     check(count_lit_pixels(boot) > 80, "QL attract/copyright paints the ZX8301 screen");
+    check(boot.peek(0xc000) == 0x4a && boot.peek(0xc001) == 0xfb,
+          "QL maps the WIN plug-in ROM at $C000");
 }
 
 bool write_bytes(const std::string& path, const uint8_t* data, size_t size) {
@@ -4597,6 +4600,95 @@ void test_ql_mdv_formats() {
           "PsionChess keeps the copy-protected cartridge name");
 }
 
+void put_be16_test(std::vector<uint8_t>& b, size_t off, uint16_t v) {
+    b[off] = uint8_t(v >> 8);
+    b[off + 1] = uint8_t(v);
+}
+void put_be32_test(std::vector<uint8_t>& b, size_t off, uint32_t v) {
+    put_be16_test(b, off, uint16_t(v >> 16));
+    put_be16_test(b, off + 2, uint16_t(v));
+}
+
+std::vector<uint8_t> make_tiny_qxl() {
+    const uint32_t cs = 2048;
+    std::vector<uint8_t> img(cs * 4, 0);
+    img[0] = 'Q';
+    img[1] = 'L';
+    img[2] = 'W';
+    img[3] = 'A';
+    put_be16_test(img, 4, 4);
+    img[6] = 'T';
+    img[7] = 'E';
+    img[8] = 'S';
+    img[9] = 'T';
+    put_be16_test(img, 0x22, 4);
+    put_be16_test(img, 0x2a, 4);
+    put_be16_test(img, 0x34, 1);
+    put_be32_test(img, 0x36, 128);
+    uint8_t* dir = img.data() + cs;
+    put_be32_test(img, cs, 128);
+    uint8_t* e = dir + 64;
+    const char body[] = "HELLOQXL";
+    put_be32_test(img, cs + 64, uint32_t(sizeof(body) - 1 + 64));
+    e[0x0e] = 0;
+    e[0x0f] = 5;
+    std::memcpy(e + 0x10, "hello", 5);
+    put_be16_test(img, cs + 64 + 0x3a, 2);
+    std::memcpy(img.data() + 2 * cs + 64, body, sizeof(body) - 1);
+    return img;
+}
+
+void test_ql_win_formats() {
+    std::string error;
+    dsp::QlWin win;
+    check(!win.load_file("/no/such/qxl.win", &error), "missing QXL image is rejected");
+
+    const std::string junk = "/tmp/ql-junk.win";
+    const uint8_t trash[] = {'N', 'O', 'T', 'W', 'I', 'N', 1, 2, 3, 4};
+    check(write_bytes(junk, trash, sizeof(trash)), "wrote a junk .win");
+    error.clear();
+    check(!win.load_file(junk, &error), "short junk is not a QLWA volume");
+    check(error.find("QLWA") != std::string::npos || error.find("QXL") != std::string::npos,
+          "junk QXL reports QLWA");
+
+    const auto tiny = make_tiny_qxl();
+    const std::string tiny_path = "/tmp/ql-test.win";
+    check(write_bytes(tiny_path, tiny.data(), tiny.size()), "wrote a tiny QXL.WIN");
+    error.clear();
+    check(win.load_file(tiny_path, &error), "tiny QLWA volume parses");
+    check(win.loaded() && win.files().size() == 1, "tiny QXL stores one file");
+    check(win.find("hello") && win.find("HELLO"), "WIN lookup is case-insensitive");
+    check(win.find("hello")->data.size() == 8, "tiny QXL file skips the 64-byte cluster header");
+    check(std::memcmp(win.find("hello")->data.data(), "HELLOQXL", 8) == 0,
+          "tiny QXL file data follows the unused header");
+    check(win.find("") == &win.directory(), "empty WIN name opens the root directory");
+
+    dsp::SinclairQl machine;
+    error.clear();
+    check(machine.load_media(tiny_path, &error), "QL mounts a QXL.WIN as WIN1_");
+    check(machine.win_loaded() && machine.win_file_count() == 1, "the QXL occupies the WIN device");
+    check(machine.mdv1_loaded(), "a QXL also plants an mdv1 boot stub");
+    std::vector<uint8_t> qlay;
+    error.clear();
+    check(!dsp::load_ql_cartridge(tiny_path, qlay, &error),
+          "a QXL.WIN is not a microdrive cartridge");
+
+    const char* mag = "/tmp/ql/magnetic_qxl.win";
+    std::FILE* f = std::fopen(mag, "rb");
+    if (!f) return;
+    std::fclose(f);
+    dsp::QlWin mag_win;
+    error.clear();
+    check(mag_win.load_file(mag, &error), "Magnetic Scrolls QXL.WIN parses");
+    check(mag_win.files().size() >= 20, "Magnetic Scrolls QXL holds the adventure files");
+    check(mag_win.find("boot") && mag_win.find("mgboot") && mag_win.find("magnetic_exe"),
+          "Magnetic Scrolls QXL has boot, mgboot and magnetic_exe");
+    check(mag_win.find("sys_tk234_bin") || mag_win.find("sys_TK234_bin"),
+          "Magnetic Scrolls QXL has Toolkit II");
+    check(mag_win.find("pawn_mag") && mag_win.find("pawn_gfx"),
+          "Magnetic Scrolls QXL has The Pawn");
+}
+
 void write_ql_ppm(const std::string& path, const dsp::SinclairQl& machine) {
     std::ofstream out(path, std::ios::binary);
     const int w = machine.screen_width();
@@ -4683,6 +4775,51 @@ void test_ql_psion_chess_if_present() {
     write_ql_ppm("/tmp/ql-chess-ingame.ppm", boot);
     check(saw_board, "space plus mdv2 starts the chess board");
     check(count_lit_pixels(boot) > 5000, "the chess board paints the ZX8301 screen");
+}
+
+void test_ql_magnetic_scrolls_if_present() {
+    const char* rom = "/tmp/roms/ql.zip";
+    const char* mag = "/tmp/ql/magnetic_qxl.win";
+    std::FILE* rf = std::fopen(rom, "rb");
+    std::FILE* mf = std::fopen(mag, "rb");
+    if (!rf || !mf) {
+        if (rf) std::fclose(rf);
+        if (mf) std::fclose(mf);
+        return;
+    }
+    std::fclose(rf);
+    std::fclose(mf);
+
+    dsp::SinclairQl boot;
+    std::string error;
+    check(boot.init(rom, &error), "QL ROM set loads for Magnetic Scrolls");
+    check(boot.peek(0xc000) == 0x4a && boot.peek(0xc001) == 0xfb, "WIN ROM is present before QDOS starts");
+    check(boot.load_media(mag, &error), "Magnetic Scrolls QXL.WIN mounts as WIN1_");
+    check(boot.win_loaded(), "WIN volume is loaded");
+    check(boot.win_file_count() >= 20, "Magnetic Scrolls files are visible to WIN1_");
+    check(boot.mdv1_loaded(), "QXL boot stub occupies mdv1");
+
+    for (int i = 0; i < 220; i++) boot.run_frame();
+    check(count_lit_pixels(boot) > 80, "QL reaches the F1/F2 copyright screen before QXL boot");
+    write_ql_ppm("/tmp/ql-qxl-copyright.ppm", boot);
+
+    hold_ql_key(boot, dsp::Key::F1, 10);
+    for (int i = 0; i < 400; i++) boot.run_frame();
+    type_ql(boot, "lrun win1_boot\n");
+
+    int lit = 0;
+    for (int i = 0; i < 4000; i++) {
+        boot.run_frame();
+        lit = count_lit_pixels(boot);
+        if (i == 800 || i == 2000) write_ql_ppm("/tmp/ql-qxl-boot.ppm", boot);
+    }
+    write_ql_ppm("/tmp/ql-qxl-boot.ppm", boot);
+    check(lit > 80, "LRUN win1_boot paints after opening the QXL");
+
+    hold_ql_key(boot, dsp::Key::M, 12);
+    for (int i = 0; i < 2500; i++) boot.run_frame();
+    write_ql_ppm("/tmp/ql-qxl-menu.ppm", boot);
+    check(count_lit_pixels(boot) > 200, "Magnetic Scrolls updates the screen after M");
 }
 
 void write_st_ppm(const std::string& path, const dsp::AtariSt& machine) {
@@ -5449,8 +5586,10 @@ int main() {
     test_ql_missing_roms();
     test_ql_roms_if_present();
     test_ql_mdv_formats();
+    test_ql_win_formats();
     test_ql_match_point_if_present();
     test_ql_psion_chess_if_present();
+    test_ql_magnetic_scrolls_if_present();
     test_st_missing_roms();
     test_st_floppy_formats();
     test_st_ikbd_mouse();

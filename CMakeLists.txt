@@ -113,6 +113,7 @@ add_executable(dsp
   src/machine/opwolf_cchip.cpp
   src/machine/zx8302.cpp
   src/machine/ql_mdv.cpp
+  src/machine/ql_win.cpp
   src/machine/mc68901.cpp
   src/machine/st_floppy.cpp
   src/machine/cia8520.cpp
@@ -323,6 +324,7 @@ add_executable(dsp_tests
   src/machine/opwolf_cchip.cpp
   src/machine/zx8302.cpp
   src/machine/ql_mdv.cpp
+  src/machine/ql_win.cpp
   src/machine/mc68901.cpp
   src/machine/st_floppy.cpp
   src/machine/cia8520.cpp

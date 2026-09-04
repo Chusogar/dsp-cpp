@@ -538,4 +538,16 @@ bool load_ql_cartridge(const std::string& path, std::vector<uint8_t>& qlay, std:
     return false;
 }
 
+bool make_ql_listing_cartridge(const std::string& medium, const std::string& filename,
+                               const std::string& listing, std::vector<uint8_t>& qlay,
+                               std::string* error) {
+    format_qlay(qlay, medium.c_str(), 0x514c);
+    if (!add_ql_file(qlay, filename, reinterpret_cast<const uint8_t*>(listing.data()),
+                     uint32_t(listing.size()), 0, 0)) {
+        if (error) *error = "cannot store the SuperBASIC listing on a cartridge";
+        return false;
+    }
+    return true;
+}
+
 }  // namespace dsp

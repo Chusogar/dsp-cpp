@@ -69,9 +69,28 @@ bool load_pair(RomLoader& loader, const std::vector<RomEntry>& low,
     return loader.load(high, dest, &ignored);
 }
 
+constexpr uint32_t kWinTrapPort = 0x1bf00;
+constexpr uint32_t kExtRamBase = 0x40000;
+constexpr uint32_t kExtRamSize = 0x80000;
+
+constexpr int kErrBo = -5;
+constexpr int kErrNf = -7;
+constexpr int kErrEf = -10;
+constexpr int kErrNi = -19;
+
+constexpr uint32_t kFsAcces = 0x1c;
+constexpr uint32_t kFsFilnr = 0x1e;
+constexpr uint32_t kFsNblok = 0x20;
+constexpr uint32_t kFsNbyte = 0x22;
+constexpr uint32_t kFsEblok = 0x24;
+constexpr uint32_t kFsEbyte = 0x26;
+constexpr uint32_t kFsFname = 0x32;
+constexpr uint32_t kFsMname = 0x16;
+
 }  // namespace
 
 SinclairQl::SinclairQl() : cpu_(kCpuClock), ipc_(kIpcClock, Mcs48::Chip::I8749) {
+    ext_ram_.assign(kExtRamSize, 0);
     cpu_.set_memory_handlers([this](uint32_t a) { return read_word(a); },
                              [this](uint32_t a, uint16_t v) { write_word(a, v); });
     cpu_.set_byte_handlers([this](uint32_t a) { return read_byte(a); },
@@ -129,7 +148,8 @@ bool SinclairQl::init(const std::string& rom_path, std::string* error) {
         }
     }
     rom_.fill(0);
-    std::memcpy(rom_.data(), firmware.data(), std::min(firmware.size(), rom_.size()));
+    std::memcpy(rom_.data(), firmware.data(), std::min(firmware.size(), size_t(0xc000)));
+    install_ql_win_rom(rom_.data() + 0xc000);
 
     std::vector<uint8_t> ipc;
     if (!loader.load(kIpcRom, ipc, &ignored) || ipc.size() < 0x800) {
@@ -158,6 +178,7 @@ void SinclairQl::reset() {
     mdv_stall_ = 0;
     mdv1_.reset();
     mdv2_.reset();
+    std::fill(ext_ram_.begin(), ext_ram_.end(), uint8_t(0));
     rtc_frames_ = 0;
     flash_frames_ = 0;
     audio_acc_ = 0;
@@ -197,6 +218,20 @@ void SinclairQl::set_inputs(const MachineInputs& inputs) {
 void SinclairQl::set_dip_switch(int, uint8_t) {}
 
 bool SinclairQl::load_media(const std::string& path, std::string* error) {
+    if (is_ql_win_file(path)) {
+        if (win_.loaded()) {
+            if (error) *error = "a QXL/WIN volume is already mounted";
+            return false;
+        }
+        if (!win_.load_file(path, error)) return false;
+        if (!mdv1_.loaded()) {
+            std::vector<uint8_t> qlay;
+            if (make_ql_listing_cartridge("QXLBOOT", "boot", "100 LRUN win1_boot\n", qlay, nullptr)) {
+                mdv1_.load_image(qlay, nullptr);
+            }
+        }
+        return true;
+    }
     if (!mdv1_.loaded()) return mdv1_.load_file(path, error);
     if (!mdv2_.loaded()) return mdv2_.load_file(path, error);
     if (error) *error = "both QL microdrives already have a cartridge";
@@ -225,7 +260,7 @@ uint8_t SinclairQl::keyboard_rows() const {
 
 uint8_t SinclairQl::read_byte(uint32_t address) {
     address &= 0xfffff;
-    if (address < 0xc000) return rom_[address];
+    if (address < 0x10000) return rom_[address];
     if (address >= 0x18000 && address <= 0x18003) return zx8302_.rtc_r(address & 3);
     if (address == 0x18020) return zx8302_.status_r();
     if (address == 0x18021) return zx8302_.irq_status_r();
@@ -233,6 +268,9 @@ uint8_t SinclairQl::read_byte(uint32_t address) {
         return zx8302_.mdv_track_r(address & 1);
     }
     if (address >= 0x20000 && address < 0x40000) return video_.ram_r(address - 0x20000);
+    if (address >= kExtRamBase && address < kExtRamBase + ext_ram_.size()) {
+        return ext_ram_[address - kExtRamBase];
+    }
     return 0;
 }
 
@@ -269,6 +307,10 @@ void SinclairQl::write_byte(uint32_t address, uint8_t value) {
     }
     if (address >= 0x20000 && address < 0x40000) {
         video_.ram_w(address - 0x20000, value);
+        return;
+    }
+    if (address >= kExtRamBase && address < kExtRamBase + ext_ram_.size()) {
+        ext_ram_[address - kExtRamBase] = value;
     }
 }
 
@@ -277,6 +319,11 @@ uint16_t SinclairQl::read_word(uint32_t address) {
 }
 
 void SinclairQl::write_word(uint32_t address, uint16_t value) {
+    address &= 0xfffff;
+    if (address == kWinTrapPort) {
+        win_trap(value);
+        return;
+    }
     write_byte(address, uint8_t(value >> 8));
     write_byte(address + 1, uint8_t(value));
 }
@@ -369,6 +416,217 @@ uint8_t SinclairQl::ipc_port_in(uint16_t port) const {
     if (port == MCS48_PORT_BUS) return keyboard_rows();
     if (port == MCS48_PORT_T1) return uint8_t(baudx4_ & 1);
     return 0xff;
+}
+
+void SinclairQl::set_d0(int err) { cpu_.d[0].l = uint32_t(int32_t(err)); }
+
+void SinclairQl::copy_to_guest(uint32_t dest, const uint8_t* src, uint32_t n) {
+    for (uint32_t i = 0; i < n; i++) write_byte(dest + i, src[i]);
+}
+
+uint32_t SinclairQl::chan_pos() {
+    const uint32_t ch = cpu_.a[0].l;
+    return uint32_t(read_word(ch + kFsNblok)) * 512u + read_word(ch + kFsNbyte);
+}
+
+void SinclairQl::set_chan_pos(uint32_t pos) {
+    const uint32_t ch = cpu_.a[0].l;
+    write_word(ch + kFsNblok, uint16_t(pos / 512));
+    write_word(ch + kFsNbyte, uint16_t(pos % 512));
+}
+
+std::string SinclairQl::chan_name() {
+    const uint32_t ch = cpu_.a[0].l;
+    uint16_t nlen = read_word(ch + kFsFname);
+    if (nlen > 36) nlen = 36;
+    std::string name;
+    name.resize(nlen);
+    for (uint16_t i = 0; i < nlen; i++) name[i] = char(read_byte(ch + kFsFname + 2 + i));
+    return name;
+}
+
+const QlWinFile* SinclairQl::chan_file() {
+    const uint16_t id = read_word(cpu_.a[0].l + kFsFilnr);
+    if (id == 0) return &win_.directory();
+    if (id > win_.files().size()) return nullptr;
+    return &win_.files()[id - 1];
+}
+
+void SinclairQl::win_trap(uint16_t cmd) {
+    if (cmd == 1) {
+        win_open();
+        return;
+    }
+    if (cmd == 2) win_io();
+}
+
+void SinclairQl::win_open() {
+    if (!win_.loaded()) {
+        set_d0(kErrNf);
+        return;
+    }
+    const uint32_t ch = cpu_.a[0].l;
+    const uint32_t pd = cpu_.a[1].l;
+    const int mode = int(int8_t(read_byte(ch + kFsAcces)));
+    if (mode < 0 || mode == 2 || mode == 3) {
+        set_d0(kErrNi);
+        return;
+    }
+
+    const std::string name = chan_name();
+    const QlWinFile* file = nullptr;
+    uint16_t id = 0;
+    if (mode == 4 || name.empty()) {
+        file = &win_.directory();
+        id = 0;
+    } else {
+        file = win_.find(name);
+        if (!file) {
+            set_d0(kErrNf);
+            return;
+        }
+        for (size_t i = 0; i < win_.files().size(); i++) {
+            if (&win_.files()[i] == file) {
+                id = uint16_t(i + 1);
+                break;
+            }
+        }
+    }
+
+    const uint32_t len = file->logical_size();
+    write_word(ch + kFsFilnr, id);
+    write_word(ch + kFsNblok, 0);
+    write_word(ch + kFsNbyte, 0x40);
+    write_word(ch + kFsEblok, uint16_t(len / 512));
+    write_word(ch + kFsEbyte, uint16_t(len % 512));
+
+    const std::string& med = win_.medium_name();
+    const uint16_t mlen = uint16_t(std::min<size_t>(med.size(), 10));
+    write_word(pd + kFsMname, mlen);
+    for (int i = 0; i < 10; i++) {
+        const char c = i < int(med.size()) ? med[size_t(i)] : ' ';
+        write_byte(pd + kFsMname + 2 + uint32_t(i), uint8_t(c));
+    }
+    set_d0(0);
+}
+
+void SinclairQl::win_io() {
+    const uint8_t key = uint8_t(cpu_.d[0].l);
+    const QlWinFile* file = chan_file();
+    if (!file) {
+        set_d0(kErrNf);
+        return;
+    }
+    const uint32_t eof = file->logical_size();
+    uint32_t pos = chan_pos();
+
+    auto fetch = [&](uint32_t dest, uint32_t want, bool stop_nl) -> int {
+        uint32_t n = 0;
+        while (n < want && pos < eof) {
+            const uint8_t b = file->byte_at(pos++);
+            write_byte(dest++, b);
+            n++;
+            if (stop_nl && b == 0x0a) break;
+        }
+        set_chan_pos(pos);
+        cpu_.a[1].l = dest;
+        cpu_.d[1].l = n;
+        if (n == 0) return kErrEf;
+        return 0;
+    };
+
+    switch (key) {
+        case 0x00:  // IO.PEND
+            set_d0(pos >= eof ? kErrEf : 0);
+            return;
+        case 0x01: {  // IO.FBYTE
+            if (pos >= eof) {
+                set_d0(kErrEf);
+                return;
+            }
+            cpu_.d[1].l = file->byte_at(pos++);
+            set_chan_pos(pos);
+            set_d0(0);
+            return;
+        }
+        case 0x02:  // IO.FLINE
+            set_d0(fetch(cpu_.a[1].l, cpu_.d[2].wl(), true));
+            return;
+        case 0x03:  // IO.FSTRG
+            set_d0(fetch(cpu_.a[1].l, cpu_.d[2].wl(), false));
+            return;
+        case 0x40:  // FS.CHECK
+        case 0x41:  // FS.FLUSH
+            set_d0(0);
+            return;
+        case 0x42: {  // FS.POSAB
+            int32_t data_pos = int32_t(cpu_.d[1].l);
+            if (data_pos < 0) data_pos = 0;
+            uint32_t abs = uint32_t(data_pos) + 64;
+            int err = 0;
+            if (abs > eof) {
+                abs = eof;
+                err = kErrEf;
+            }
+            set_chan_pos(abs);
+            cpu_.d[1].l = abs > 64 ? abs - 64 : 0;
+            set_d0(err);
+            return;
+        }
+        case 0x43: {  // FS.POSRE
+            const int32_t cur = int32_t(pos > 64 ? pos - 64 : 0);
+            int32_t data_pos = cur + int32_t(cpu_.d[1].l);
+            if (data_pos < 0) data_pos = 0;
+            uint32_t abs = uint32_t(data_pos) + 64;
+            int err = 0;
+            if (abs > eof) {
+                abs = eof;
+                err = kErrEf;
+            }
+            set_chan_pos(abs);
+            cpu_.d[1].l = abs > 64 ? abs - 64 : 0;
+            set_d0(err);
+            return;
+        }
+        case 0x44:
+        case 0x45: {  // FS.MDINF
+            std::string med = win_.medium_name();
+            med.resize(10, ' ');
+            copy_to_guest(cpu_.a[1].l, reinterpret_cast<const uint8_t*>(med.data()), 10);
+            cpu_.a[1].l += 10;
+            const uint16_t empty = uint16_t(std::min<uint32_t>(win_.empty_sectors(), 0xffff));
+            const uint16_t total = uint16_t(std::min<uint32_t>(win_.total_sectors(), 0xffff));
+            cpu_.d[1].l = (uint32_t(empty) << 16) | total;
+            set_d0(0);
+            return;
+        }
+        case 0x47: {  // FS.HEADR
+            const uint16_t want = cpu_.d[2].wl();
+            if (want < 14) {
+                set_d0(kErrBo);
+                return;
+            }
+            const uint16_t n = uint16_t(std::min<uint32_t>(want, 64));
+            copy_to_guest(cpu_.a[1].l, file->header.data(), n);
+            cpu_.a[1].l += n;
+            cpu_.d[1].l = n;
+            set_d0(0);
+            return;
+        }
+        case 0x48: {  // FS.LOAD
+            uint32_t want = cpu_.d[2].l;
+            if (pos + want > eof) want = eof - pos;
+            uint32_t dest = cpu_.a[1].l;
+            for (uint32_t i = 0; i < want; i++) write_byte(dest + i, file->byte_at(pos + i));
+            cpu_.a[1].l = dest + want;
+            set_chan_pos(pos + want);
+            set_d0(0);
+            return;
+        }
+        default:
+            set_d0(kErrNi);
+            return;
+    }
 }
 
 }  // namespace dsp
