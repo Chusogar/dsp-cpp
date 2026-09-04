@@ -15,8 +15,10 @@ public:
     bool loaded() const { return loaded_; }
     uint32_t blocks() const { return blocks_; }
     uint8_t last_cmd() const { return last_cmd_; }
+    uint32_t last_lba() const { return last_lba_; }
     uint32_t xfer_bytes() const { return xfer_done_; }
     uint32_t access_count() const { return accesses_; }
+    const uint8_t* last_cdb() const { return cdb_; }
     uint8_t last_icr() const { return icr_; }
     uint8_t last_mode() const { return mode_; }
     bool selected() const { return bsy_; }
@@ -73,6 +75,7 @@ private:
     bool irq_ = false;
     bool aip_ = false;
     bool dma_ = false;
+    bool pending_req_ = false;
     uint8_t phase_ = kFree;
 
     uint8_t cdb_[12]{};
@@ -81,6 +84,7 @@ private:
     uint8_t status_ = 0;
     uint8_t message_ = 0;
     uint8_t last_cmd_ = 0;
+    uint32_t last_lba_ = 0;
 
     std::vector<uint8_t> xfer_;
     size_t xfer_pos_ = 0;

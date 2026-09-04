@@ -63,6 +63,7 @@ public:
     bool scsi_loaded() const { return scsi_.loaded(); }
     uint32_t scsi_blocks() const { return scsi_.blocks(); }
     uint8_t last_scsi_cmd() const { return scsi_.last_cmd(); }
+    uint32_t last_scsi_lba() const { return scsi_.last_lba(); }
     uint32_t scsi_xfer_bytes() const { return scsi_.xfer_bytes(); }
     uint32_t scsi_accesses() const { return scsi_.access_count(); }
     Ncr5380Hdd& scsi() { return scsi_; }
