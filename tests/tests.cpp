@@ -33,6 +33,8 @@
 #include "drivers/computers/exelv.h"
 #include "drivers/computers/ql.h"
 #include "machine/ql_mdv.h"
+#include "drivers/computers/atari_st.h"
+#include "machine/st_floppy.h"
 #include "drivers/consoles/gameboy.h"
 #include "drivers/arcade/mcr.h"
 #include "drivers/computers/msx2.h"
@@ -4681,6 +4683,165 @@ void test_ql_psion_chess_if_present() {
     check(count_lit_pixels(boot) > 5000, "the chess board paints the ZX8301 screen");
 }
 
+void write_st_ppm(const std::string& path, const dsp::AtariSt& machine) {
+    std::ofstream out(path, std::ios::binary);
+    const int w = machine.screen_width();
+    const int h = machine.screen_height();
+    out << "P6\n" << w << " " << h << "\n255\n";
+    const uint32_t* fb = machine.framebuffer();
+    for (int i = 0; i < w * h; i++) {
+        const uint32_t p = fb[i];
+        const char rgb[3] = {char((p >> 16) & 0xff), char((p >> 8) & 0xff), char(p & 0xff)};
+        out.write(rgb, 3);
+    }
+}
+
+bool make_st_720k(const std::string& path, const char* label) {
+    std::vector<uint8_t> img(80 * 2 * 9 * 512, 0);
+    uint8_t* b = img.data();
+    b[0] = 0xeb;
+    b[1] = 0x3c;
+    b[2] = 0x90;
+    std::memcpy(b + 3, "DSPST   ", 8);
+    b[11] = 0x00;
+    b[12] = 0x02;  // 512 bps
+    b[13] = 0x02;  // 2 sectors/cluster
+    b[14] = 0x01;
+    b[15] = 0x00;  // reserved
+    b[16] = 0x02;  // fats
+    b[17] = 0x70;
+    b[18] = 0x00;  // 112 root entries
+    b[19] = 0xa0;
+    b[20] = 0x05;  // 1440 sectors
+    b[21] = 0xf9;
+    b[22] = 0x03;
+    b[23] = 0x00;  // FAT size
+    b[24] = 0x09;
+    b[25] = 0x00;
+    b[26] = 0x02;
+    b[27] = 0x00;
+    // FAT #1 at sector 1
+    uint8_t* fat = b + 512;
+    fat[0] = 0xf9;
+    fat[1] = 0xff;
+    fat[2] = 0xff;
+    std::memcpy(b + 4 * 512, fat, 3);  // FAT #2 at sector 4
+    // Root dir at sector 7: volume label
+    uint8_t* dir = b + 7 * 512;
+    std::memset(dir, ' ', 11);
+    const int n = int(std::min<size_t>(std::strlen(label), 11));
+    std::memcpy(dir, label, size_t(n));
+    dir[11] = 0x08;
+    std::ofstream out(path, std::ios::binary);
+    if (!out) return false;
+    out.write(reinterpret_cast<const char*>(img.data()), std::streamsize(img.size()));
+    return bool(out);
+}
+
+void test_st_missing_roms() {
+    dsp::AtariSt machine;
+    std::string error = "unset";
+    check(std::strcmp(machine.title(), "Atari ST") == 0, "ST title");
+    check(machine.screen_width() == 640 && machine.screen_height() == 400, "ST 640x400 shifter");
+    check(!machine.init("/no/such/st.zip", &error), "missing ST TOS fails init");
+}
+
+void test_st_floppy_formats() {
+    std::string error;
+    const std::string path = "/tmp/st-dsptest.st";
+    check(make_st_720k(path, "DSPTEST"), "wrote a 720K .ST image");
+    dsp::StFloppy drive;
+    check(drive.load_file(path, &error), "ST floppy loads a .ST image");
+    check(drive.tracks() == 80 && drive.sides() == 2 && drive.spt() == 9,
+          "720K ST is 80x2x9");
+    check(drive.sector(0, 0, 1) != nullptr, "boot sector is present");
+    check(std::memcmp(drive.sector(0, 0, 1) + 3, "DSPST   ", 8) == 0, "BPB OEM name");
+
+    dsp::AtariSt machine;
+    check(machine.load_media(path, &error), "ST attaches a floppy before TOS is loaded");
+    check(machine.floppy_loaded(), "ST reports the floppy");
+}
+
+void test_st_boot_if_present() {
+    const char* rom = "/tmp/roms/st.zip";
+    std::FILE* f = std::fopen(rom, "rb");
+    if (!f) return;
+    std::fclose(f);
+
+    dsp::AtariSt boot;
+    std::string error;
+    check(boot.init(rom, &error), "ST TOS 1.04/1.02/1.00 loads");
+    const std::string disk = "/tmp/st-dsptest.st";
+    make_st_720k(disk, "DSPTEST");
+    check(boot.load_media(disk, &error), "ST mounts a 720K floppy in drive A");
+
+    for (int i = 0; i < 500; i++) boot.run_frame();
+    write_st_ppm("/tmp/st-desktop.ppm", boot);
+    check(boot.debug_pc() != 0, "ST 68000 is executing after TOS boot");
+    check(unique_pixels(boot) >= 3, "TOS paints the shifter framebuffer");
+    check(count_lit_pixels(boot) > 80, "TOS desktop is not a black screen");
+    int green = 0;
+    const uint32_t* fb = boot.framebuffer();
+    const int n = boot.screen_width() * boot.screen_height();
+    for (int i = 0; i < n; i++) {
+        const int r = int((fb[i] >> 16) & 0xff);
+        const int g = int((fb[i] >> 8) & 0xff);
+        const int b = int(fb[i] & 0xff);
+        if (r < 40 && g > 180 && b < 40) green++;
+    }
+    check(green > 20000, "TOS GEM desktop fills the shifter with green");
+    int oem = 0;
+    for (uint32_t a = 0; a < 0x100000u - 8; a++) {
+        if (boot.peek(a) == 'D' && boot.peek(a + 1) == 'S' && boot.peek(a + 2) == 'P' &&
+            boot.peek(a + 3) == 'S' && boot.peek(a + 4) == 'T') {
+            oem++;
+            break;
+        }
+    }
+    check(oem > 0, "TOS DMA-read the floppy boot sector (OEM DSPST)");
+}
+
+void test_st_north_south_if_present() {
+    const char* rom = "/tmp/roms/st.zip";
+    const char* disks[] = {"/tmp/st/northsouth.st", "/tmp/st/North & South.st", nullptr};
+    std::FILE* rf = std::fopen(rom, "rb");
+    if (!rf) return;
+    std::fclose(rf);
+    const char* disk = nullptr;
+    for (int i = 0; disks[i]; i++) {
+        std::FILE* df = std::fopen(disks[i], "rb");
+        if (df) {
+            std::fclose(df);
+            disk = disks[i];
+            break;
+        }
+    }
+    if (!disk) return;
+
+    dsp::AtariSt boot;
+    std::string error;
+    check(boot.init(rom, &error), "ST TOS loads for North & South");
+    check(boot.load_media(disk, &error), "North & South .ST mounts in drive A");
+    check(boot.floppy_tracks() == 82 && boot.floppy_spt() == 9,
+          "North & South is an 82-track 9-sector ST image");
+
+    for (int i = 0; i < 1000; i++) boot.run_frame();
+    write_st_ppm("/tmp/st-northsouth.ppm", boot);
+    check(unique_pixels(boot) >= 8, "North & South paints more than the TOS desktop");
+    int blue = 0, green = 0;
+    const uint32_t* fb = boot.framebuffer();
+    const int n = boot.screen_width() * boot.screen_height();
+    for (int i = 0; i < n; i++) {
+        const int r = int((fb[i] >> 16) & 0xff);
+        const int g = int((fb[i] >> 8) & 0xff);
+        const int b = int(fb[i] & 0xff);
+        if (b > 100 && b > r && b > g) blue++;
+        if (r < 40 && g > 180 && b < 40) green++;
+    }
+    check(blue > 20000, "North & South language screen is the blue sky title");
+    check(green < 20000, "North & South left the GEM desktop");
+}
+
 void test_ql_match_point_if_present() {
     const char* rom = "/tmp/roms/ql.zip";
     const char* match = "/tmp/ql/Match Point (1985)(Psion).mdv";
@@ -4975,6 +5136,10 @@ int main() {
     test_ql_mdv_formats();
     test_ql_match_point_if_present();
     test_ql_psion_chess_if_present();
+    test_st_missing_roms();
+    test_st_floppy_formats();
+    test_st_boot_if_present();
+    test_st_north_south_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

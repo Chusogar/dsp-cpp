@@ -113,6 +113,8 @@ add_executable(dsp
   src/machine/opwolf_cchip.cpp
   src/machine/zx8302.cpp
   src/machine/ql_mdv.cpp
+  src/machine/mc68901.cpp
+  src/machine/st_floppy.cpp
 
     
   src/drivers/arcade/bagman.cpp
@@ -179,6 +181,7 @@ add_executable(dsp
   src/drivers/computers/apple2.cpp
   src/drivers/computers/exelv.cpp
   src/drivers/computers/ql.cpp
+  src/drivers/computers/atari_st.cpp
     
   src/drivers/consoles/sms.cpp
   src/machine/sega_vdp.cpp
@@ -317,6 +320,8 @@ add_executable(dsp_tests
   src/machine/opwolf_cchip.cpp
   src/machine/zx8302.cpp
   src/machine/ql_mdv.cpp
+  src/machine/mc68901.cpp
+  src/machine/st_floppy.cpp
   src/machine/konami_decrypt.cpp
   src/machine/nb1414_m4.cpp
   src/drivers/computers/spectrum.cpp
@@ -333,6 +338,7 @@ add_executable(dsp_tests
   src/drivers/consoles/pv2000.cpp
   src/drivers/computers/exelv.cpp
   src/drivers/computers/ql.cpp
+  src/drivers/computers/atari_st.cpp
   src/drivers/arcade/starwars.cpp
   src/drivers/arcade/asteroid.cpp
   src/drivers/arcade/polepos.cpp
