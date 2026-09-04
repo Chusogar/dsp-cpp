@@ -168,6 +168,7 @@ add_executable(dsp
   src/sound/k007232.cpp
   src/drivers/arcade/tetris_atari_hw.cpp
   src/drivers/arcade/skullxbo.cpp
+  src/drivers/arcade/shuuz.cpp
   src/drivers/arcade/gng.cpp
   src/drivers/arcade/bublbobl.cpp
 
@@ -365,6 +366,7 @@ add_executable(dsp_tests
   src/drivers/arcade/pirates.cpp
   src/drivers/arcade/armedf_hw.cpp
   src/drivers/arcade/skullxbo.cpp
+  src/drivers/arcade/shuuz.cpp
   src/drivers/arcade/bublbobl.cpp
   src/drivers/arcade/ajax.cpp
   src/drivers/arcade/cps1.cpp
@@ -408,6 +410,19 @@ add_executable(cps1_capture
 target_include_directories(cps1_capture PRIVATE src)
 target_link_libraries(cps1_capture PRIVATE ZLIB::ZLIB)
 target_compile_options(cps1_capture PRIVATE -Wall -Wextra)
+
+add_executable(shuuz_capture
+  tools/shuuz_capture.cpp
+  src/drivers/arcade/shuuz.cpp
+  src/cpu/m68000.cpp
+  src/sound/okim6295.cpp
+  src/video/atari_mo.cpp
+  src/video/gfx.cpp
+  src/core/rom_loader.cpp
+)
+target_include_directories(shuuz_capture PRIVATE src)
+target_link_libraries(shuuz_capture PRIVATE ZLIB::ZLIB)
+target_compile_options(shuuz_capture PRIVATE -Wall -Wextra)
 
 # Optional harness for the Z80 instruction exerciser (binary not shipped here).
 add_executable(dsp_zexdoc EXCLUDE_FROM_ALL tools/zexdoc_runner.cpp src/cpu/z80.cpp)
