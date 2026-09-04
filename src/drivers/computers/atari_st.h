@@ -47,6 +47,7 @@ public:
 
     uint32_t debug_pc() const { return cpu_.pc(); }
     uint8_t peek(uint32_t address) const { return const_cast<AtariSt*>(this)->read_byte(address); }
+    std::vector<uint8_t> ikbd_pending_bytes() const;
     bool floppy_loaded() const { return floppy_.loaded(); }
     int floppy_spt() const { return floppy_.spt(); }
     int floppy_tracks() const { return floppy_.tracks(); }
@@ -66,6 +67,8 @@ private:
     void ikbd_push(uint8_t value);
     void ikbd_byte(uint8_t value);
     void ikbd_keys(const MachineInputs& inputs);
+    void ikbd_mouse(const MachineInputs& inputs);
+    void ikbd_mouse_packet(int dx, int dy, bool left, bool right);
     void service_acia();
 
     M68000 cpu_;
@@ -99,6 +102,11 @@ private:
     int ikbd_reset_step_ = 0;
     int last_pointer_x_ = 0;
     int last_pointer_y_ = 0;
+    int pointer_frac_x_ = 0;
+    int pointer_frac_y_ = 0;
+    bool pointer_seen_ = false;
+    bool last_pointer_b1_ = false;
+    bool last_pointer_b2_ = false;
     uint32_t video_count_ = 0;
 
     int64_t mfp_acc_ = 0;
