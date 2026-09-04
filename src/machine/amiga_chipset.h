@@ -45,6 +45,12 @@ public:
     uint32_t sprpt0() const { return sprpt_[0]; }
     uint16_t sprpos0() const { return sprpos_[0]; }
     uint16_t sprctl0() const { return sprctl_[0]; }
+    uint16_t dsklen() const { return dsklen_; }
+    uint32_t dskpt() const { return dskpt_; }
+    int disk_dma_count() const { return disk_dma_count_; }
+    int disk_dma_empty() const { return disk_dma_empty_; }
+    int blit_count() const { return blit_count_; }
+    uint16_t last_bltsize() const { return last_bltsize_; }
 
     bool dma_master() const { return (dmacon_ & 0x0200) != 0; }
 
@@ -73,6 +79,10 @@ private:
     uint16_t dsklen_ = 0;
     uint16_t dsksync_ = 0x4489;
     uint32_t dskpt_ = 0;
+    int disk_dma_count_ = 0;
+    int disk_dma_empty_ = 0;
+    int blit_count_ = 0;
+    uint16_t last_bltsize_ = 0;
     uint32_t cop1lc_ = 0, cop2lc_ = 0, coppc_ = 0;
     uint16_t diwstrt_ = 0x2C81, diwstop_ = 0xF4C1;
     uint16_t ddfstrt_ = 0x0038, ddfstop_ = 0x00D0;

@@ -42,7 +42,17 @@ void emit_long(std::vector<uint16_t>& mfm, uint32_t word) {
     mfm.push_back(uint16_t(word));
 }
 
-void encode_block(std::vector<uint16_t>& mfm, const uint32_t* data, int n, uint32_t* prev) {
+// Kickstart 1.3 trackdisk decodes the 5-long header as consecutive odd/even
+// MFM pairs, then blits the 512-byte payload with A/B planes $200 bytes apart
+// (all odd bits, then all even bits).
+void encode_pairs(std::vector<uint16_t>& mfm, const uint32_t* data, int n, uint32_t* prev) {
+    for (int i = 0; i < n; i++) {
+        emit_long(mfm, encode_clocks((data[i] >> 1) & 0x55555555u, prev));
+        emit_long(mfm, encode_clocks(data[i] & 0x55555555u, prev));
+    }
+}
+
+void encode_planes(std::vector<uint16_t>& mfm, const uint32_t* data, int n, uint32_t* prev) {
     for (int i = 0; i < n; i++) {
         emit_long(mfm, encode_clocks((data[i] >> 1) & 0x55555555u, prev));
     }
@@ -51,9 +61,14 @@ void encode_block(std::vector<uint16_t>& mfm, const uint32_t* data, int n, uint3
     }
 }
 
-uint32_t xor_block(const uint32_t* data, int n) {
+// Trackdisk XORs the 0x55555555-masked MFM longs (odd-block then even-block
+// data bits), not the decoded header/data longs.
+uint32_t mfm_data_xor(const uint32_t* data, int n) {
     uint32_t s = 0;
-    for (int i = 0; i < n; i++) s ^= data[i];
+    for (int i = 0; i < n; i++) {
+        s ^= (data[i] >> 1) & 0x55555555u;
+        s ^= data[i] & 0x55555555u;
+    }
     return s;
 }
 
@@ -141,7 +156,7 @@ std::vector<uint16_t> AmigaAdf::encode_track(int cyl, int side) const {
         header[0] = 0xFF000000u | (uint32_t(amiga_track) << 16) | (uint32_t(sec) << 8) |
                     uint32_t(kSectorsPerTrack - sec);
         header[1] = header[2] = header[3] = header[4] = 0;
-        const uint32_t hsum = xor_block(header, 5);
+        const uint32_t hsum = mfm_data_xor(header, 5);
 
         uint32_t data[128];
         const uint8_t* src = sector(cyl, side, sec);
@@ -150,12 +165,12 @@ std::vector<uint16_t> AmigaAdf::encode_track(int cyl, int side) const {
         } else {
             std::memset(data, 0, sizeof(data));
         }
-        const uint32_t dsum = xor_block(data, 128);
+        const uint32_t dsum = mfm_data_xor(data, 128);
 
-        encode_block(mfm, header, 5, &prev);
-        encode_block(mfm, &hsum, 1, &prev);
-        encode_block(mfm, &dsum, 1, &prev);
-        encode_block(mfm, data, 128, &prev);
+        encode_pairs(mfm, header, 5, &prev);
+        encode_pairs(mfm, &hsum, 1, &prev);
+        encode_pairs(mfm, &dsum, 1, &prev);
+        encode_planes(mfm, data, 128, &prev);
 
         mfm.push_back(0xAAAA);
         mfm.push_back(0xAAAA);
@@ -202,8 +217,10 @@ bool AmigaAdf::write_color_boot(const std::string& path, uint16_t color00, std::
         0x31, 0x7C, 0x7F, 0xFF, 0x00, 0x9C, 0x31, 0x7C, 0x7F, 0xFF, 0x00, 0x96,
         0x31, 0x7C, 0x00, 0x00, 0x01, 0x80, 0x60, 0xFE};
     std::memcpy(c, code, sizeof(code));
-    c[24] = uint8_t(color00 >> 8);
-    c[25] = uint8_t(color00);
+    // move.w #color,$180(a0) immediate is the third and fourth bytes of the
+    // last move (opcode 31 7C, then the color word, then displacement 01 80).
+    c[26] = uint8_t(color00 >> 8);
+    c[27] = uint8_t(color00);
     set_bootblock_checksum(bb);
 
     std::ofstream out(path, std::ios::binary);

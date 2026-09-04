@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
+#include <vector>
 
 namespace dsp {
 namespace {
@@ -47,6 +49,10 @@ void AmigaChipset::reset() {
     dsklen_ = 0;
     dsksync_ = 0x4489;
     dskpt_ = cop1lc_ = cop2lc_ = coppc_ = 0;
+    disk_dma_count_ = 0;
+    disk_dma_empty_ = 0;
+    blit_count_ = 0;
+    last_bltsize_ = 0;
     diwstrt_ = 0x2C81;
     diwstop_ = 0xF4C1;
     ddfstrt_ = 0x0038;
@@ -443,6 +449,8 @@ void AmigaChipset::copper_step_until_wait(int vpos) {
 }
 
 void AmigaChipset::blit() {
+    blit_count_++;
+    last_bltsize_ = bltsize_;
     int height = bltsize_ >> 6;
     int width = bltsize_ & 0x3F;
     if (height == 0) height = 1024;
@@ -459,8 +467,10 @@ void AmigaChipset::blit() {
     const uint8_t mt = uint8_t(bltcon0_);
     const bool line = (bltcon1_ & 1) != 0;
 
-    uint32_t apt = bltapt_, bpt = bltbpt_, cpt = bltcpt_, dpt = bltdpt_;
+    // Agnus blit pointers are word addresses; bit 0 is ignored.
+    uint32_t apt = bltapt_ & ~1u, bpt = bltbpt_ & ~1u, cpt = bltcpt_ & ~1u, dpt = bltdpt_ & ~1u;
     bzero_ = true;
+    std::vector<std::pair<uint32_t, uint16_t>> deferred;
 
     if (line) {
         // Line mode: plot `height` pixels along BLTAPT error-term DDA into D/C.
@@ -495,7 +505,6 @@ void AmigaChipset::blit() {
         bltbpt_ = bpt;
         bltcpt_ = cpt;
         bltdpt_ = dpt;
-        intreq_ = uint16_t(intreq_ | 0x0040);
         return;
     }
 
@@ -549,7 +558,7 @@ void AmigaChipset::blit() {
             const uint16_t d = minterm(a_shifted, b_shifted, c, mt);
             if (d) bzero_ = false;
             if (used) {
-                chip_write(dpt, d);
+                deferred.push_back({dpt, d});
                 dpt = uint32_t(int32_t(dpt) + delta);
             }
         }
@@ -558,14 +567,15 @@ void AmigaChipset::blit() {
         cpt = uint32_t(int32_t(cpt) + bltcmod_);
         dpt = uint32_t(int32_t(dpt) + bltdmod_);
     }
+    for (const auto& w : deferred) chip_write(w.first, w.second);
     bltapt_ = apt;
     bltbpt_ = bpt;
     bltcpt_ = cpt;
     bltdpt_ = dpt;
-    intreq_ = uint16_t(intreq_ | 0x0040);  // BLIT
 }
 
 void AmigaChipset::disk_dma() {
+    disk_dma_count_++;
     if (!track_mfm_) {
         intreq_ = uint16_t(intreq_ | 0x0002);
         dsklen_ = uint16_t(dsklen_ & 0x7FFF);
@@ -578,21 +588,19 @@ void AmigaChipset::disk_dma() {
     }
     std::vector<uint16_t> mfm = track_mfm_();
     if (mfm.empty()) {
+        disk_dma_empty_++;
         intreq_ = uint16_t(intreq_ | 0x0002);
         dsklen_ = uint16_t(dsklen_ & 0x7FFF);
         return;
     }
     int start = 0;
-    if (adkcon_ & 0x0400) {
-        start = -1;
+    if (adkcon_ & 0x0100) {
         for (int i = 0; i < int(mfm.size()); i++) {
             if (mfm[size_t(i)] == dsksync_) {
-                start = i;
                 intreq_ = uint16_t(intreq_ | 0x1000);
                 break;
             }
         }
-        if (start < 0) start = 0;
     }
     int words = dsklen_ & 0x3FFF;
     if (words == 0) words = 0x4000;

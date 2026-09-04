@@ -58,9 +58,18 @@ public:
     uint32_t sprpt0() const { return chipset_.sprpt0(); }
     uint16_t sprpos0() const { return chipset_.sprpos0(); }
     uint16_t sprctl0() const { return chipset_.sprctl0(); }
+    uint16_t dsklen() const { return chipset_.dsklen(); }
+    uint32_t dskpt() const { return chipset_.dskpt(); }
+    int disk_dma_count() const { return chipset_.disk_dma_count(); }
+    int disk_dma_empty() const { return chipset_.disk_dma_empty(); }
+    int blit_count() const { return chipset_.blit_count(); }
     bool floppy_loaded() const { return floppy_.loaded(); }
     int floppy_tracks() const { return floppy_.tracks(); }
     int floppy_spt() const { return floppy_.spt(); }
+    int floppy_cyl() const { return cyl_; }
+    bool floppy_motor() const { return motor_; }
+    bool floppy_selected() const { return selected_; }
+    int prb_writes() const { return prb_writes_; }
 
 private:
     uint8_t read_byte(uint32_t address);
@@ -90,6 +99,7 @@ private:
     bool selected_ = false;
     bool disk_changed_ = true;
     uint8_t prev_prb_ = 0xFF;
+    int prb_writes_ = 0;
     int cia_acc_ = 0;
     int index_div_ = 0;
     int64_t audio_acc_ = 0;
