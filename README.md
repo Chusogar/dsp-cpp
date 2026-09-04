@@ -17,7 +17,7 @@ Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 **Altered Beast**).
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
 **MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**,
-**EXL-100** / **EXELTEL**, **Sinclair QL**, **Atari ST**. Consoles: NES, Game Boy / Game Boy
+**EXL-100** / **EXELTEL**, **Sinclair QL**, **Atari ST**, **Commodore Amiga 500**. Consoles: NES, Game Boy / Game Boy
 Color, **Atari 2600**, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
 **Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
 
@@ -169,6 +169,7 @@ holding the individual files:
 ./build/dsp --game apple2 /path/to/apple2p.zip
 ./build/dsp --game apple2e --disk game.dsk /path/to/apple2e.zip
 ./build/dsp --game st --disk game.st /path/to/st.zip
+./build/dsp --game amiga --disk game.adf /path/to/a500.zip
 ./build/dsp --game asteroid /path/to/asteroid.zip
 ./build/dsp --game starwars /path/to/starwars.zip
 ./build/dsp --game polepos /path/to/polepos.zip
@@ -209,7 +210,8 @@ Options:
 --tape FILE        tape/cart: Spectrum/CPC/C64 (.tap/.tzx/.cdt/.prg/.t64),
                    EXL-100 / EXELTEL cartridge, or PV-2000 cart (.bin/.rom)
 --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, MSX2 .dsk, Apple II .dsk/.do/.po/.nib,
-                   Pentagon/Scorpion .trd/.scl, Sinclair QL .mdv/.qlpak, Atari ST .st/.msa
+                   Pentagon/Scorpion .trd/.scl, Sinclair QL .mdv/.qlpak, Atari ST .st/.msa,
+                   Commodore Amiga .adf
 ```
 
 ### Atari System 1 (Indiana Jones, Marble Madness, Peter Pack Rat, Road Runner)

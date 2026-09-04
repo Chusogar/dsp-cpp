@@ -35,6 +35,8 @@
 #include "machine/ql_mdv.h"
 #include "drivers/computers/atari_st.h"
 #include "machine/st_floppy.h"
+#include "drivers/computers/amiga.h"
+#include "machine/amiga_adf.h"
 #include "drivers/consoles/gameboy.h"
 #include "drivers/arcade/mcr.h"
 #include "drivers/computers/msx2.h"
@@ -4842,6 +4844,101 @@ void test_st_north_south_if_present() {
     check(green < 20000, "North & South left the GEM desktop");
 }
 
+void write_amiga_ppm(const std::string& path, const dsp::Amiga500& machine) {
+    std::ofstream out(path, std::ios::binary);
+    const int w = machine.screen_width();
+    const int h = machine.screen_height();
+    out << "P6\n" << w << " " << h << "\n255\n";
+    const uint32_t* fb = machine.framebuffer();
+    for (int i = 0; i < w * h; i++) {
+        const uint32_t p = fb[i];
+        const char rgb[3] = {char((p >> 16) & 0xff), char((p >> 8) & 0xff), char(p & 0xff)};
+        out.write(rgb, 3);
+    }
+}
+
+void test_amiga_missing_roms() {
+    dsp::Amiga500 machine;
+    std::string error = "unset";
+    check(std::strcmp(machine.title(), "Commodore Amiga 500") == 0, "Amiga title");
+    check(machine.screen_width() == 320 && machine.screen_height() == 256, "Amiga PAL 320x256");
+    check(!machine.init("/no/such/a500.zip", &error), "missing Kickstart fails init");
+}
+
+void test_amiga_adf_format() {
+    std::string error;
+    const std::string path = "/tmp/amiga-dsptest.adf";
+    check(dsp::AmigaAdf::write_color_boot(path, 0x0F00, &error), "wrote an 880K ADF");
+    dsp::AmigaAdf disk;
+    check(disk.load_file(path, &error), "ADF loads");
+    check(disk.tracks() == 80 && disk.sides() == 2 && disk.spt() == 11, "880K ADF is 80x2x11");
+    check(disk.sector(0, 0, 0) != nullptr && std::memcmp(disk.sector(0, 0, 0), "DOS", 3) == 0,
+          "bootblock DOS ident");
+    const std::vector<uint16_t> mfm = disk.encode_track(0, 0);
+    check(mfm.size() == 6334, "encoded track is 12668 MFM bytes");
+    int syncs = 0;
+    for (uint16_t w : mfm)
+        if (w == 0x4489) syncs++;
+    check(syncs >= 22, "each of 11 sectors has two 0x4489 sync words");
+
+    dsp::Amiga500 machine;
+    check(machine.load_media(path, &error), "Amiga attaches an ADF before Kickstart is loaded");
+    check(machine.floppy_loaded(), "Amiga reports the floppy");
+}
+
+void test_amiga_kickstart_if_present() {
+    const char* rom = "/tmp/roms/a500.zip";
+    std::FILE* f = std::fopen(rom, "rb");
+    if (!f) return;
+    std::fclose(f);
+
+    dsp::Amiga500 boot;
+    std::string error;
+    check(boot.init(rom, &error), "Kickstart 1.3/1.2 loads");
+    for (int i = 0; i < 250; i++) boot.run_frame();
+    write_amiga_ppm("/tmp/amiga-insert-disk.ppm", boot);
+    check(boot.debug_pc() != 0, "Amiga 68000 is executing after Kickstart boot");
+    check(unique_pixels(boot) >= 4, "Kickstart paints the Denise framebuffer");
+    check(count_lit_pixels(boot) > 80, "insert-disk screen is not black");
+    int orange = 0;
+    const uint32_t* fb = boot.framebuffer();
+    const int n = boot.screen_width() * boot.screen_height();
+    for (int i = 0; i < n; i++) {
+        const int r = int((fb[i] >> 16) & 0xff);
+        const int g = int((fb[i] >> 8) & 0xff);
+        const int b = int(fb[i] & 0xff);
+        if (r > 140 && g > 40 && g < 200 && b < 80) orange++;
+    }
+    check(orange > 100, "Kickstart insert-disk hand has orange/red pixels");
+}
+
+void test_amiga_bootblock_if_present() {
+    const char* rom = "/tmp/roms/a500.zip";
+    std::FILE* f = std::fopen(rom, "rb");
+    if (!f) return;
+    std::fclose(f);
+
+    std::string error;
+    const std::string disk = "/tmp/amiga-red.adf";
+    check(dsp::AmigaAdf::write_color_boot(disk, 0x0F00, &error), "wrote COLOR00-red boot ADF");
+
+    dsp::Amiga500 boot;
+    check(boot.init(rom, &error), "Kickstart loads for bootblock test");
+    check(boot.load_media(disk, &error), "red boot ADF mounts in DF0");
+    for (int i = 0; i < 400; i++) boot.run_frame();
+    write_amiga_ppm("/tmp/amiga-bootblock-red.ppm", boot);
+    int red = 0;
+    const uint32_t* fb = boot.framebuffer();
+    const int n = boot.screen_width() * boot.screen_height();
+    for (int i = 0; i < n; i++) {
+        const int r = int((fb[i] >> 16) & 0xff);
+        const int g = int((fb[i] >> 8) & 0xff);
+        const int b = int(fb[i] & 0xff);
+        if (r > 180 && g < 40 && b < 40) red++;
+    }
+    check(red > 10000, "bootblock set COLOR00 red after DSKDMA");
+}
+
 void test_ql_match_point_if_present() {
     const char* rom = "/tmp/roms/ql.zip";
     const char* match = "/tmp/ql/Match Point (1985)(Psion).mdv";
@@ -5140,6 +5237,10 @@ int main() {
     test_st_floppy_formats();
     test_st_boot_if_present();
     test_st_north_south_if_present();
+    test_amiga_missing_roms();
+    test_amiga_adf_format();
+    test_amiga_kickstart_if_present();
+    test_amiga_bootblock_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
