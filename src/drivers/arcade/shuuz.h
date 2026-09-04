@@ -51,6 +51,12 @@ public:
     uint32_t debug_pc() const { return main_cpu_.pc(); }
     int debug_palette_used() const;
     int debug_motion_object_pixels() const;
+    uint16_t debug_palette_word(int index) const { return palette_ram_[size_t(index) & 0x3ff]; }
+    uint32_t debug_palette_rgb(int index) const { return palette_[size_t(index) & 0x3ff]; }
+    uint16_t debug_pf_word(int index) const { return playfield_[size_t(index) & 0xfff]; }
+    uint16_t debug_pf_ext(int index) const { return playfield_ext_[size_t(index) & 0xfff]; }
+    int debug_pf_scrollx() const { return int(pf0_xscroll_raw_ + (pf1_xscroll_raw_ & 7)); }
+    int debug_pf_scrolly() const { return int(pf0_yscroll_); }
 
 private:
     uint16_t main_read(uint32_t address);

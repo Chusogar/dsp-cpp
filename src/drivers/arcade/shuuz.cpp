@@ -49,7 +49,9 @@ GfxLayout pfm_layout(uint32_t region_size) {
     layout.total = int(region_size / 2) / 16;
     layout.planes = 4;
     layout.char_increment = 16 * 8;
-    layout.lsb_first = true;
+    // Plane 0 is the MSB, like the other Atari ports in this tree. MAME lists
+    // these offsets LSB-first; treating them that way bit-reverses every pen
+    // (title horse becomes candy red, SHUUZ letters go grey).
     layout.plane_offsets = {0, 4, half_bits, half_bits + 4};
     layout.x_offsets = {0, 1, 2, 3, 8, 9, 10, 11};
     layout.y_offsets = {0 * 8, 2 * 8, 4 * 8, 6 * 8, 8 * 8, 10 * 8, 12 * 8, 14 * 8};
