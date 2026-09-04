@@ -46,6 +46,7 @@
 #include "drivers/arcade/shadow_warriors_hw.h"
 #include "drivers/arcade/tetris_atari_hw.h"
 #include "drivers/arcade/skullxbo.h"
+#include "drivers/arcade/shuuz.h"
 #include "drivers/arcade/gng.h"
 #include "drivers/arcade/bublbobl.h"
 
@@ -96,7 +97,7 @@ void print_supported_emulators() {
         "\n"
         "  Arcade:\n"
         "    bagman, mikie, trackfld, gauntlet, mrdo, ddragon, ddragon2,\n"
-        "    elevator, junglek, indydoom, peter, marble, skullxbo, starwars, asteroid, roadrunn,\n"
+        "    elevator, junglek, indydoom, peter, marble, skullxbo, shuuz, starwars, asteroid, roadrunn,\n"
         "    paperboy, ssprint, apb, 720,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
 		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
@@ -436,6 +437,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "atetris") { return std::make_unique<dsp::AtariTetris>(); }
 
 	if (game == "skullxbo") return std::make_unique<dsp::Skullxbo>();
+	if (game == "shuuz" || game == "shuzz") return std::make_unique<dsp::Shuuz>();
 	if (game == "gng") return std::make_unique<dsp::Gng>();
 	if (game == "bublbobl" || game == "bubblebobble" || game == "bublbobble") {
 	    return std::make_unique<dsp::BublBobl>();

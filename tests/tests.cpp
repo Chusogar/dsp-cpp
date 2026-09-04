@@ -59,6 +59,7 @@
 #include "drivers/arcade/hangon.h"
 #include "drivers/arcade/outrun.h"
 #include "drivers/arcade/skullxbo.h"
+#include "drivers/arcade/shuuz.h"
 #include "drivers/arcade/bublbobl.h"
 #include "drivers/arcade/ajax.h"
 #include "drivers/arcade/armedf_hw.h"
@@ -3248,6 +3249,16 @@ void test_skullxbo_without_roms() {
           "Skull & Crossbones screen is 672x240");
 }
 
+void test_shuuz_without_roms() {
+    dsp::Shuuz machine;
+    std::string error = "unset";
+    check(!machine.init("/no/such/shuuz.zip", &error), "Shuuz init fails without the ROM set");
+    check(error != "unset" && !error.empty(), "Shuuz reports why the set is missing");
+    check(std::strcmp(machine.title(), "Shuuz") == 0, "Shuuz title");
+    check(machine.screen_width() == 336 && machine.screen_height() == 240, "Shuuz screen is 336x240");
+    check(machine.uses_pointer(), "Shuuz aims with the trackball / pointer");
+}
+
 void test_bublbobl_without_roms() {
     dsp::BublBobl machine;
     std::string error = "unset";
@@ -3743,6 +3754,23 @@ void test_sega_roms_if_present() {
         for (int frame = 0; frame < 600; frame++) machine.run_frame();
         check(machine.debug_motion_object_pixels() > 0,
               "Skull & Crossbones keeps drawing motion objects after starting a game");
+    }
+
+    if (exists("/tmp/roms/shuuz.zip")) {
+        dsp::Shuuz machine;
+        std::string error;
+        check(machine.init("/tmp/roms/shuuz.zip", &error), "Shuuz MAME set loads");
+        const uint32_t reset_pc = machine.debug_pc();
+        for (int frame = 0; frame < 900; frame++) machine.run_frame();
+        check(machine.debug_pc() != reset_pc, "Shuuz 68000 leaves the reset vector");
+        check(machine.debug_palette_used() > 16, "Shuuz writes the attract palette");
+        check(unique_pixels(machine) > 16, "Shuuz attract mode draws a colour picture");
+        check(machine.debug_motion_object_pixels() > 0,
+              "Shuuz draws motion objects during attract mode");
+
+        std::vector<int16_t> audio;
+        machine.drain_audio(audio);
+        check(!audio.empty(), "Shuuz drain_audio yields samples");
     }
 
     if (exists("/tmp/roms/fantzone.zip")) {
@@ -5638,6 +5666,7 @@ int main() {
     test_sega_pcm_and_mapper();
     test_sega_system16_missing_roms();
     test_skullxbo_without_roms();
+    test_shuuz_without_roms();
     test_bublbobl_without_roms();
     test_asteroid_without_roms();
     test_ajax_without_roms();
