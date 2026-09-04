@@ -4514,13 +4514,19 @@ dsp::Key ql_letter(char c) {
 void type_ql(dsp::SinclairQl& machine, const char* text) {
     for (const char* p = text; *p; ++p) {
         dsp::MachineInputs inputs{};
+        if (*p == '_') {
+            // Shift must be down before the minus key or the IPC drops `_`.
+            inputs.keys[size_t(dsp::Key::LeftShift)] = true;
+            machine.set_inputs(inputs);
+            for (int i = 0; i < 6; i++) machine.run_frame();
+        }
         if (*p == '_') inputs.keys[size_t(dsp::Key::LeftShift)] = true;
         inputs.keys[size_t(ql_letter(*p))] = true;
         machine.set_inputs(inputs);
-        for (int i = 0; i < 4; i++) machine.run_frame();
+        for (int i = 0; i < 8; i++) machine.run_frame();
         inputs = {};
         machine.set_inputs(inputs);
-        for (int i = 0; i < 3; i++) machine.run_frame();
+        for (int i = 0; i < 5; i++) machine.run_frame();
     }
 }
 

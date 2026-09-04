@@ -56,10 +56,6 @@ public:
     bool ipc_busy() const { return ipc_busy_; }
     uint8_t irq() const { return irq_; }
     uint8_t status() const { return status_; }
-    int mdv_rx_bytes() const { return mdv_rx_bytes_; }
-    uint8_t mdv_last(int track) const { return mdv_data_[track & 1]; }
-    uint16_t mdv_first_pair() const { return mdv_first_pair_; }
-    int mdv_syncs() const { return mdv_syncs_; }
     bool mdv_rx_full() const { return (status_ & kStatusRxFull) != 0; }
     bool mdv_delivering() const { return mdv_sync_ == kMdvDeliver; }
 
@@ -92,9 +88,6 @@ private:
     int mdv_sync_ = kMdvIdle;
     uint8_t mdv_tx_[2]{};
     int mdv_tx_count_ = 0;
-    int mdv_rx_bytes_ = 0;
-    uint16_t mdv_first_pair_ = 0;
-    int mdv_syncs_ = 0;
     uint8_t mdv_ctrl_ = 0;
 
     int comdata_from_ipc_ = 1;

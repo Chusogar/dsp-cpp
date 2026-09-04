@@ -26,9 +26,6 @@ void Zx8302::reset() {
     mdv_tx_[0] = 0;
     mdv_tx_[1] = 0;
     mdv_tx_count_ = 0;
-    mdv_rx_bytes_ = 0;
-    mdv_first_pair_ = 0;
-    mdv_syncs_ = 0;
     mdv_ctrl_ = 0;
     comdata_from_ipc_ = 1;
     comdata_to_cpu_ = 1;
@@ -150,7 +147,6 @@ void Zx8302::mdv_raw2_w(int state) {
         if (mdv_shift_[0] == 0xff && mdv_shift_[1] == 0xff) {
             mdv_sync_ = kMdvDeliver;
             mdv_bit_count_ = 0;
-            mdv_syncs_++;
         }
         return;
     }
@@ -160,21 +156,16 @@ void Zx8302::mdv_raw2_w(int state) {
     mdv_data_[0] = mdv_shift_[0];
     mdv_data_[1] = mdv_shift_[1];
     status_ = uint8_t(status_ | kStatusRxFull);
-    mdv_rx_bytes_++;
-    if (mdv_rx_bytes_ == 1) {
-        mdv_first_pair_ = uint16_t((uint16_t(mdv_data_[0]) << 8) | mdv_data_[1]);
-    }
 }
 
 void Zx8302::mdv_gap_w(int state) {
     const bool was = (status_ & kStatusMdvGap) != 0;
     if (state) {
         status_ = uint8_t(status_ | kStatusMdvGap);
-        if (!was) {
-            mdv_sync_ = kMdvIdle;
-            status_ = uint8_t(status_ & ~kStatusRxFull);
-            if (irq_mask_ & 0x20) trigger(kIntGap);
-        }
+        // Do not drop RX or leave DELIVER here. The last pair of a record
+        // is assembled on the pair before the gap; JS still has to read it.
+        // SEARCH is re-armed by the next MDSELCK write after wait_gap.
+        if (!was && (irq_mask_ & 0x20)) trigger(kIntGap);
     } else {
         status_ = uint8_t(status_ & ~kStatusMdvGap);
     }
@@ -185,7 +176,7 @@ uint8_t Zx8302::mdv_track_r(uint32_t offset) {
     const uint8_t data = mdv_data_[track];
     if (track == 1) {
         status_ = uint8_t(status_ & ~kStatusRxFull);
-        // JS polls RX-full for only ~16 instructions between the two
+        // JS polls RX-full for only ~20 instructions between the two
         // tracks of a pair and the next pair. At 100 kHz that window is
         // 600 CPU cycles, so present the next pair as soon as this one
         // is consumed.

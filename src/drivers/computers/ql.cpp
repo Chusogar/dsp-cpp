@@ -156,8 +156,6 @@ void SinclairQl::reset() {
     baud_acc_ = 0;
     mdv_acc_ = 0;
     mdv_stall_ = 0;
-    mdv_control_writes_ = 0;
-    mdv_track_reads_ = 0;
     mdv1_.reset();
     mdv2_.reset();
     rtc_frames_ = 0;
@@ -232,10 +230,7 @@ uint8_t SinclairQl::read_byte(uint32_t address) {
     if (address == 0x18020) return zx8302_.status_r();
     if (address == 0x18021) return zx8302_.irq_status_r();
     if (address >= 0x18022 && address <= 0x18023) {
-        const uint8_t data = zx8302_.mdv_track_r(address & 1);
-        if (mdv_read_log_n_ < 64) mdv_read_log_[size_t(mdv_read_log_n_++)] = data;
-        mdv_track_reads_++;
-        return data;
+        return zx8302_.mdv_track_r(address & 1);
     }
     if (address >= 0x20000 && address < 0x40000) return video_.ram_r(address - 0x20000);
     return 0;
@@ -257,8 +252,6 @@ void SinclairQl::write_byte(uint32_t address, uint8_t value) {
         return;
     }
     if (address == 0x18020) {
-        mdv_control_writes_++;
-        mdv_last_ctrl_ = value;
         zx8302_.mdv_control_w(value);
         return;
     }
