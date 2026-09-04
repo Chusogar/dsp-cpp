@@ -112,7 +112,7 @@ private:
 
     uint8_t in0_ = 0xff;
     uint8_t in1_ = 0xff;
-    uint8_t dsw0_ = 0x96;
+    uint8_t dsw0_ = 0x94;
     uint8_t dsw1_ = 0x02;
     uint8_t analog_x_ = 0x80;
     uint8_t analog_y_ = 0x80;

@@ -242,9 +242,11 @@ void StarWars::reset() {
     audio_.clear();
     in0_ = 0xff;
     in1_ = 0x3f;
-    // MAME DSW0 defaults (starwars / esb). Demo Sounds is bit 6 = 0 → ON
-    // on both sets; ESB only remaps shields and Jedi-letter bits.
-    dsw0_ = (game_ == Game::Empire) ? uint8_t(0xb7) : uint8_t(0x96);
+    // DSW0. Attract music ($622D) only latches $4814 when the starting-
+    // shields nibble in NVRAM is 0 (6 shields). MAME 0.260 defaulted to
+    // 8 shields; the operator manual / current MAME use 6.
+    // ESB inverts Demo Sounds (bit 6 = 1 → ON) and remaps shields/Jedi.
+    dsw0_ = (game_ == Game::Empire) ? uint8_t(0xf3) : uint8_t(0x94);
     riot_pa_out_ = 0xff;
     tms_.strobe_ws_rs(0x03);
     std::fill(framebuffer_.begin(), framebuffer_.end(), 0xff000000u);
