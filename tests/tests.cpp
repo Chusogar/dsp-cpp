@@ -4591,6 +4591,76 @@ void test_ql_mdv_formats() {
     check(!saw_flp, "qlpak BASIC on a microdrive uses mdv1_ instead of flp1_");
 }
 
+void write_ql_ppm(const std::string& path, const dsp::SinclairQl& machine) {
+    std::ofstream out(path, std::ios::binary);
+    const int w = machine.screen_width();
+    const int h = machine.screen_height();
+    out << "P6\n" << w << " " << h << "\n255\n";
+    const uint32_t* fb = machine.framebuffer();
+    for (int i = 0; i < w * h; i++) {
+        const uint32_t p = fb[i];
+        const char rgb[3] = {char((p >> 16) & 0xff), char((p >> 8) & 0xff), char(p & 0xff)};
+        out.write(rgb, 3);
+    }
+}
+
+void test_ql_psion_chess_if_present() {
+    const char* rom = "/tmp/roms/ql.zip";
+    const char* chess = "/tmp/ql/PsionChess.qlpak";
+    std::FILE* rf = std::fopen(rom, "rb");
+    std::FILE* cf = std::fopen(chess, "rb");
+    if (!rf || !cf) {
+        if (rf) std::fclose(rf);
+        if (cf) std::fclose(cf);
+        return;
+    }
+    std::fclose(rf);
+    std::fclose(cf);
+
+    dsp::SinclairQl boot;
+    std::string error;
+    check(boot.init(rom, &error), "QL ROM set loads for Psion Chess");
+    check(boot.load_media(chess, &error), "PsionChess.qlpak mounts in mdv1");
+    check(boot.mdv1_loaded() && !boot.mdv2_loaded(), "chess uses a single cartridge in mdv1");
+
+    for (int i = 0; i < 220; i++) boot.run_frame();
+    check(count_lit_pixels(boot) > 80, "QL reaches the F1/F2 copyright screen before chess");
+    write_ql_ppm("/tmp/ql-chess-copyright.ppm", boot);
+
+    hold_ql_key(boot, dsp::Key::F1, 10);
+
+    bool saw_logo = false;
+    bool saw_code = false;
+    int logo_at = -1;
+    int code_at = -1;
+    for (int i = 0; i < 2500; i++) {
+        boot.run_frame();
+        if (!saw_logo && boot.peek(0x25000) == 0x00 && boot.peek(0x25001) == 0xff &&
+            boot.peek(0x25002) == 0x00 && boot.peek(0x25003) == 0xff) {
+            saw_logo = true;
+            logo_at = i;
+            write_ql_ppm("/tmp/ql-chess-logo.ppm", boot);
+        }
+        if (!saw_code && boot.peek(0x2ce00) == 0x35 && boot.peek(0x2ce01) == 0x3e) {
+            saw_code = true;
+            code_at = i;
+            write_ql_ppm("/tmp/ql-chess-chessc.ppm", boot);
+        }
+        if (saw_logo && saw_code) break;
+    }
+    write_ql_ppm("/tmp/ql-chess-after-load.ppm", boot);
+    check(saw_logo, "mdv1_boot LBYTES mdv1_logo into screen RAM at 151552");
+    check(saw_code, "mdv1_boot LBYTES mdv1_chessc at 184064");
+    (void)logo_at;
+    (void)code_at;
+
+    for (int i = 0; i < 400; i++) boot.run_frame();
+    write_ql_ppm("/tmp/ql-chess-ingame.ppm", boot);
+    const int lit = count_lit_pixels(boot);
+    check(lit > 200, "CALL into Psion Chess paints the ZX8301 screen");
+    check(lit < 120000, "chess is not a blank MODE 4 paper fill");
+}
+
 void test_ql_match_point_if_present() {
     const char* rom = "/tmp/roms/ql.zip";
     const char* match = "/tmp/ql/Match Point (1985)(Psion).mdv";
@@ -4884,6 +4954,7 @@ int main() {
     test_ql_roms_if_present();
     test_ql_mdv_formats();
     test_ql_match_point_if_present();
+    test_ql_psion_chess_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
