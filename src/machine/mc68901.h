@@ -21,6 +21,8 @@ public:
 
     // Advance by `ticks` of the 2.4576 MHz MFP clock.
     void tick(int ticks);
+    // Timer B event-count mode is clocked by HBL (DE) on the ST.
+    void pulse_tb();
 
     void set_gpip_bit(int bit, int value);
     uint8_t gpip() const { return gpip_; }

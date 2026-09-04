@@ -485,6 +485,7 @@ void AtariSt::run_frame() {
         } else {
             video_count_ = vbase;
         }
+        mfp_.pulse_tb();
         cpu_.run(kCyclesPerLine);
         update_irqs();
     }

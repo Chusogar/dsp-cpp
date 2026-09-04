@@ -76,6 +76,7 @@ int Mc68901::irq_ack() {
 }
 
 void Mc68901::tick_timer(Timer& t, int ticks) {
+    if ((t.control & 0x0f) == 8) return;  // event count is not clocked by the MFP crystal
     const int mode = t.control & 7;
     const int scale = kPrescale[mode];
     if (scale == 0 || t.data == 0) return;
@@ -97,6 +98,17 @@ void Mc68901::tick(int ticks) {
     tick_timer(tb_, ticks);
     tick_timer(tc_, ticks);
     tick_timer(td_, ticks);
+}
+
+void Mc68901::pulse_tb() {
+    if ((tb_.control & 0x0f) != 8) return;
+    if (tb_.data == 0) return;
+    if (tb_.count == 0) tb_.count = tb_.data;
+    tb_.count--;
+    if (tb_.count == 0) {
+        tb_.count = tb_.data;
+        raise(tb_.channel);
+    }
 }
 
 uint8_t Mc68901::read(int offset) {

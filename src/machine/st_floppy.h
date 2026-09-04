@@ -79,6 +79,7 @@ private:
     bool motor_on_ = false;
     int irq_delay_ = 0;
     bool dma_error_ = false;
+    uint8_t last_cmd_ = 0;
 };
 
 }  // namespace dsp

@@ -49,6 +49,7 @@ public:
     uint8_t peek(uint32_t address) const { return const_cast<AtariSt*>(this)->read_byte(address); }
     bool floppy_loaded() const { return floppy_.loaded(); }
     int floppy_spt() const { return floppy_.spt(); }
+    int floppy_tracks() const { return floppy_.tracks(); }
 
 private:
     uint8_t read_byte(uint32_t address);

@@ -60,6 +60,7 @@ void StFloppy::reset() {
     irq_delay_ = 0;
     dma_error_ = false;
     psg_a_ = 0xff;
+    last_cmd_ = 0;
 }
 
 bool StFloppy::decode_geometry(size_t bytes) {
@@ -67,8 +68,9 @@ bool StFloppy::decode_geometry(size_t bytes) {
     const struct {
         int tracks, sides, spt;
     } cands[] = {
-        {80, 2, 9},  {80, 2, 10}, {80, 1, 9}, {80, 1, 10}, {81, 2, 10},
-        {82, 2, 10}, {79, 2, 9},  {40, 2, 9}, {80, 2, 11},
+        {80, 2, 9},  {80, 2, 10}, {80, 1, 9}, {80, 1, 10}, {81, 2, 9},
+        {81, 2, 10}, {82, 2, 9},  {82, 2, 10}, {79, 2, 9}, {40, 2, 9},
+        {80, 2, 11}, {83, 2, 9},
     };
     for (const auto& c : cands) {
         if (c.tracks * c.sides * c.spt == k) {
@@ -242,9 +244,12 @@ void StFloppy::dma_data_w(uint16_t value) {
 uint8_t StFloppy::fdc_status() {
     uint8_t v = fdc_status_;
     if (fdc_busy_) v |= 0x01;
-    if (fdc_track_ == 0) v |= 0x04;
-    if (motor_on_) v |= 0x80;  // WD1772: bit 7 is Motor On, not Not Ready
-    // Reading the status register clears INTRQ on a real 1772.
+    const bool type1 = (last_cmd_ & 0x80) == 0;
+    if (type1) {
+        if (fdc_track_ == 0) v |= 0x04;  // TR00 (type II uses this bit as Lost Data)
+        if (motor_on_) v |= 0x20;        // spin-up done
+    }
+    if (motor_on_) v |= 0x80;
     fdc_irq_ = false;
     return v;
 }
@@ -257,6 +262,7 @@ void StFloppy::finish_command() {
 }
 
 void StFloppy::fdc_command(uint8_t cmd) {
+    last_cmd_ = cmd;
     fdc_irq_ = false;
     irq_delay_ = 0;
     dma_error_ = false;
@@ -281,11 +287,11 @@ void StFloppy::fdc_command(uint8_t cmd) {
         fdc_irq_ = (cmd & 8) != 0;
         return;
     }
-    if (type == 0x80) {
+    if ((cmd & 0xe0) == 0x80) {
         do_dma_read();
         return;
     }
-    if (type == 0xa0) {
+    if ((cmd & 0xe0) == 0xa0) {
         do_dma_write();
         return;
     }

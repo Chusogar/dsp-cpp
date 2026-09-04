@@ -4801,6 +4801,47 @@ void test_st_boot_if_present() {
     check(oem > 0, "TOS DMA-read the floppy boot sector (OEM DSPST)");
 }
 
+void test_st_north_south_if_present() {
+    const char* rom = "/tmp/roms/st.zip";
+    const char* disks[] = {"/tmp/st/northsouth.st", "/tmp/st/North & South.st", nullptr};
+    std::FILE* rf = std::fopen(rom, "rb");
+    if (!rf) return;
+    std::fclose(rf);
+    const char* disk = nullptr;
+    for (int i = 0; disks[i]; i++) {
+        std::FILE* df = std::fopen(disks[i], "rb");
+        if (df) {
+            std::fclose(df);
+            disk = disks[i];
+            break;
+        }
+    }
+    if (!disk) return;
+
+    dsp::AtariSt boot;
+    std::string error;
+    check(boot.init(rom, &error), "ST TOS loads for North & South");
+    check(boot.load_media(disk, &error), "North & South .ST mounts in drive A");
+    check(boot.floppy_tracks() == 82 && boot.floppy_spt() == 9,
+          "North & South is an 82-track 9-sector ST image");
+
+    for (int i = 0; i < 1000; i++) boot.run_frame();
+    write_st_ppm("/tmp/st-northsouth.ppm", boot);
+    check(unique_pixels(boot) >= 8, "North & South paints more than the TOS desktop");
+    int blue = 0, green = 0;
+    const uint32_t* fb = boot.framebuffer();
+    const int n = boot.screen_width() * boot.screen_height();
+    for (int i = 0; i < n; i++) {
+        const int r = int((fb[i] >> 16) & 0xff);
+        const int g = int((fb[i] >> 8) & 0xff);
+        const int b = int(fb[i] & 0xff);
+        if (b > 100 && b > r && b > g) blue++;
+        if (r < 40 && g > 180 && b < 40) green++;
+    }
+    check(blue > 20000, "North & South language screen is the blue sky title");
+    check(green < 20000, "North & South left the GEM desktop");
+}
+
 void test_ql_match_point_if_present() {
     const char* rom = "/tmp/roms/ql.zip";
     const char* match = "/tmp/ql/Match Point (1985)(Psion).mdv";
@@ -5098,6 +5139,7 @@ int main() {
     test_st_missing_roms();
     test_st_floppy_formats();
     test_st_boot_if_present();
+    test_st_north_south_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
