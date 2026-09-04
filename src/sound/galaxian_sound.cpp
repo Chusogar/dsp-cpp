@@ -78,11 +78,13 @@ int16_t GalaxianSound::update() {
     if (pitch_div_ & 0x08) tone += 5600;
 
     int32_t melody = 0;
-    if (pitch_ != 0xff) {
-        if (vol1_) melody += tone;
-        if (vol2_) melody += tone * 2 / 3;
-        melody += tone / 6;
-    }
+    // The 74393 runs whenever the pitch clock does. VOL1/VOL2 (4066)
+    // raise the ladder into the op-amp; a little of QA/QC/QD still
+    // leaks through the mixer when the latch sits at $FF (title/attract
+    // mute) — enough for the board's idle tone.
+    if (vol1_) melody += tone;
+    if (vol2_) melody += tone * 2 / 3;
+    melody += tone / (pitch_ == 0xff ? 10 : 6);
 
     int32_t bg = melody;
     const int lfo_scale = 1 + int(lfo_);

@@ -1129,7 +1129,13 @@ void Galaxian::run_frame() {
         // MAME clocks the 6F flip-flop at vblank and leaves /NMI asserted
         // until irq_enable_w clears it. A one-line pulse can drop the edge
         // if the Z80 is mid-instruction when line 248 starts.
-        if (line == 248 && nmi_enable_) cpu_.set_nmi(IrqLine::Assert);
+        if (line == 248 && nmi_enable_) {
+            // /NMI is falling-edge triggered. Release the previous
+            // vblank level so the 6F clock produces a new edge even
+            // when the game leaves irq_enable high.
+            cpu_.set_nmi(IrqLine::Clear);
+            cpu_.set_nmi(IrqLine::Assert);
+        }
         cpu_.run(cycles_per_line);
     }
     update_video();

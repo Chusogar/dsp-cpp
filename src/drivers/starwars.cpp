@@ -214,6 +214,10 @@ void StarWars::reset() {
     // Xicor X2212: 256×4 SRAM powers up 0xFF (MAME x2212_device).
     nvram_.fill(0xff);
     nvram_eeprom_.fill(0xff);
+    // Attract music ($622D) latches $4814 only when the saved starting-
+    // shields nibble is 0 (6 shields — the operator / current MAME default).
+    nvram_[0x91] = 0;
+    nvram_eeprom_[0x91] = 0;
     nvram_store_ = false;
     nvram_recall_ = false;
     main_cpu_.reset();
@@ -234,6 +238,8 @@ void StarWars::reset() {
     sound_writes_ = 0;
     main_writes_ = 0;
     sound_resets_ = 0;
+    irq_acks_ = 0;
+    tick_writes_ = 0;
     analog_x_ = analog_y_ = 0x80;
     adc_value_ = 0x80;
     adc_channel_ = 0;
@@ -347,6 +353,7 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
     }
     if (address >= 0x4660 && address <= 0x467f) {
         main_cpu_.set_irq(IrqLine::Clear);
+        ++irq_acks_;
         return;
     }
     if (address >= 0x4680 && address <= 0x469f) {
@@ -371,7 +378,9 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
         return;
     }
     if (address >= 0x4800 && address <= 0x4fff) {
-        work_ram_[address & 0x7ff] = value;
+        const uint16_t off = uint16_t(address & 0x7ff);
+        work_ram_[off] = value;
+        if (off == 0x3d || off == 0x3e) ++tick_writes_;
         return;
     }
     if (address >= 0x5000 && address <= 0x5fff) {

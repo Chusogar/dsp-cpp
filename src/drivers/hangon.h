@@ -126,6 +126,7 @@ private:
     uint16_t dsw_a_ = 0xffff;
     uint16_t dsw_b_ = 0xfffe;
     bool z80_reset_ = true;
+    int z80_nmi_holdoff_ = 0;
     int sprite_banks_ = 7;
     uint8_t i8751_addr_ = 0;
     uint32_t mcu_irqs_ = 0;

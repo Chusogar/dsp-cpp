@@ -163,9 +163,10 @@ HangOn::HangOn(Game game)
     sound_cpu_.set_io_handlers([this](uint16_t p) { return sound_in(p); },
                                [this](uint16_t p, uint8_t v) { sound_out(p, v); });
     sound_cpu_.set_cycle_handler([this](int cycles) { on_sound_cycles(cycles); });
-    ym2203_.set_irq_handler([this](bool state) {
-        sound_cpu_.set_irq(state ? IrqLine::Assert : IrqLine::Clear);
-    });
+    // Hang-On / Space Harrier poll YM status; Space Harrier is IM 1
+    // and $0038 is mid-init, not an ISR. Driving /INT re-enters $0037
+    // and stops timer B before the $0D33 poll can see it.
+    ym2203_.set_irq_handler(nullptr);
     pcm_.set_read_rom([this](uint32_t addr) -> uint8_t {
         if (pcm_rom_.empty()) return 0x80;
         return pcm_rom_[addr % pcm_rom_.size()];
@@ -175,18 +176,29 @@ HangOn::HangOn(Game game)
                             [this](uint8_t value) {
                                 sound_latch_ = value;
                                 ++ppi_a_writes_;
-                                // Pulse Z80 NMI on every latch write so Space
-                                // Harrier still delivers commands if the 8255
-                                // has not yet been programmed for mode 2 /OBF.
-                                sound_cpu_.set_nmi(IrqLine::Assert);
-                                sound_cpu_.set_nmi(IrqLine::Clear);
+                                // Do not latch NMI while the Z80 is held in
+                                // reset: Space Harrier's IM 1 vector sits
+                                // inside $0037, and a pending pulse skips
+                                // the YM2203 timer-B wait at $0D33.
+                                if (!z80_reset_ && z80_nmi_holdoff_ <= 0) {
+                                    sound_cpu_.set_nmi(IrqLine::Assert);
+                                    sound_cpu_.set_nmi(IrqLine::Clear);
+                                }
                             },
                             [this](uint8_t value) {
+                                const bool was_reset = z80_reset_;
                                 z80_reset_ = (value & 0x20) == 0;
-                                if (z80_reset_) sound_cpu_.reset();
+                                if (z80_reset_) {
+                                    sound_cpu_.reset();
+                                } else if (was_reset) {
+                                    // Finish YM timer-B init before PPI
+                                    // commands start stealing cycles.
+                                    z80_nmi_holdoff_ = 40000;
+                                }
                                 video_.screen_enabled = (value & 0x10) != 0;
                             },
                             [this](uint8_t value) {
+                                if (z80_reset_ || z80_nmi_holdoff_ > 0) return;
                                 sound_cpu_.set_nmi((value & 0x80) ? IrqLine::Clear
                                                                   : IrqLine::Assert);
                             });
@@ -339,8 +351,19 @@ void HangOn::reset() {
     ppi1_.reset();
     if (mcu_) {
         mcu_->reset();
-        // Reach SETB EA ($022C) before the first vblank so INT0 is armed.
-        mcu_->run(25000);
+        // Space Harrier's 8751 checksums its ROM and the 68K program
+        // (MOVX via P1) before SETB EA at $022C. The vblank ISR then
+        // writes $40400 so the 68K can leave the $1380 wait. 25000
+        // cycles only covers the first checksum loop.
+        mcu_->run(5000000);
+        // Arm INT0 the way vblank will, so the $40400 handshake is
+        // posted before the 68K reaches the $1380 TST wait.
+        for (int i = 0; i < 8; i++) {
+            mcu_->set_irq0_line(IrqLine::Assert);
+            mcu_->run(4000);
+            mcu_->set_irq0_line(IrqLine::Clear);
+            mcu_->run(200);
+        }
     }
     video_.reset();
     video_.screen_enabled = true;
@@ -357,6 +380,7 @@ void HangOn::reset() {
     // port B. Space Harrier's idle $80 command stops YM timers if the
     // Z80 runs that loop before the first real latch write.
     z80_reset_ = true;
+    z80_nmi_holdoff_ = 0;
     i8751_addr_ = 0;
     mcu_irqs_ = 0;
     analog_x_ = 0x80;
@@ -675,6 +699,16 @@ void HangOn::sound_out(uint16_t port, uint8_t value) {
 }
 
 void HangOn::on_sound_cycles(int cycles) {
+    if (z80_nmi_holdoff_ > 0) {
+        z80_nmi_holdoff_ -= cycles;
+        if (z80_nmi_holdoff_ <= 0) {
+            z80_nmi_holdoff_ = 0;
+            if (!z80_reset_) {
+                sound_cpu_.set_nmi(IrqLine::Assert);
+                sound_cpu_.set_nmi(IrqLine::Clear);
+            }
+        }
+    }
     if (use_ym2151_) ym2151_.run_timers(cycles);
     else ym2203_.run_timers(cycles);
     pcm_acc_ += int64_t(cycles) * pcm_.tick_rate();

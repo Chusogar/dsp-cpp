@@ -65,6 +65,10 @@ public:
     uint8_t debug_work(uint16_t offset) const { return work_ram_[offset & 0x7ff]; }
     uint8_t debug_nvram(uint8_t offset) const { return uint8_t((nvram_[offset] & 0x0f) | 0xf0); }
     uint8_t debug_dsw0() const { return dsw0_; }
+    uint8_t debug_cc() const { return main_cpu_.debug_cc(); }
+    uint8_t debug_dp() const { return main_cpu_.dp; }
+    uint32_t debug_irq_acks() const { return irq_acks_; }
+    uint32_t debug_tick_writes() const { return tick_writes_; }
 
 private:
     uint8_t main_read(uint16_t address);
@@ -131,6 +135,8 @@ private:
     uint32_t sound_writes_ = 0;
     uint32_t main_writes_ = 0;
     uint32_t sound_resets_ = 0;
+    uint32_t irq_acks_ = 0;
+    uint32_t tick_writes_ = 0;
 };
 
 }  // namespace dsp

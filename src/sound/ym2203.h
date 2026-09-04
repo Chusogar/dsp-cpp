@@ -46,6 +46,7 @@ private:
     uint8_t regs_[256] = {};
     float amplitude_;
     bool external_timers_ = false;
+    int32_t forced_tb_ = 0;
 };
 
 }  // namespace dsp
