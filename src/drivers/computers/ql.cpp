@@ -92,6 +92,23 @@ SinclairQl::SinclairQl() : cpu_(kCpuClock), ipc_(kIpcClock, Mcs48::Chip::I8749) 
     });
     zx8302_.set_comdata_callback([this](int state) { comdata_to_ipc_ = state; });
     zx8302_.set_baudx4_callback([this](int state) { baudx4_ = state; });
+    zx8302_.set_mdseld_callback([this](int state) { mdv1_.comms_in_w(state); });
+    zx8302_.set_mdselck_callback([this](int state) {
+        mdv2_.clk_w(state);
+        mdv1_.clk_w(state);
+        mdv2_.comms_in_w(mdv1_.comms_out());
+        update_mdv_gap();
+    });
+    zx8302_.set_mdrdw_callback([this](int state) {
+        mdv1_.read_write_w(state);
+        mdv2_.read_write_w(state);
+    });
+    zx8302_.set_erase_callback([this](int state) {
+        mdv1_.erase_w(state);
+        mdv2_.erase_w(state);
+    });
+    mdv1_.set_tx_pop([this]() { return zx8302_.mdv_tx_pop(); });
+    mdv2_.set_tx_pop([this]() { return zx8302_.mdv_tx_pop(); });
 }
 
 bool SinclairQl::init(const std::string& rom_path, std::string* error) {
@@ -134,6 +151,9 @@ void SinclairQl::reset() {
     keylatch_ = 0;
     ipc_cycle_acc_ = 0;
     baud_acc_ = 0;
+    mdv_acc_ = 0;
+    mdv1_.reset();
+    mdv2_.reset();
     rtc_frames_ = 0;
     flash_frames_ = 0;
     audio_acc_ = 0;
@@ -171,6 +191,13 @@ void SinclairQl::set_inputs(const MachineInputs& inputs) {
 }
 
 void SinclairQl::set_dip_switch(int, uint8_t) {}
+
+bool SinclairQl::load_media(const std::string& path, std::string* error) {
+    if (!mdv1_.loaded()) return mdv1_.load_file(path, error);
+    if (!mdv2_.loaded()) return mdv2_.load_file(path, error);
+    if (error) *error = "both QL microdrives already have a cartridge";
+    return false;
+}
 
 void SinclairQl::drain_audio(std::vector<int16_t>& out) {
     out.insert(out.end(), audio_.begin(), audio_.end());
@@ -261,6 +288,34 @@ void SinclairQl::on_cpu_cycles(int cycles) {
         baud_acc_ -= cpu_clock;
         zx8302_.tick_baudx4();
     }
+    mdv_acc_ += int64_t(cycles) * int64_t(kMdvBitRate);
+    while (mdv_acc_ >= cpu_clock) {
+        mdv_acc_ -= cpu_clock;
+        tick_mdv_bits();
+    }
+}
+
+void SinclairQl::update_mdv_gap() {
+    int gap = 1;
+    if (mdv1_.selected() && mdv1_.loaded()) {
+        gap = mdv1_.gap();
+    } else if (mdv2_.selected() && mdv2_.loaded()) {
+        gap = mdv2_.gap();
+    } else if (mdv1_.selected() || mdv2_.selected()) {
+        gap = 1;
+    }
+    zx8302_.mdv_gap_w(gap);
+}
+
+void SinclairQl::tick_mdv_bits() {
+    const bool running = mdv1_.motor() || mdv2_.motor();
+    if (running) {
+        update_mdv_gap();
+        zx8302_.mdv_raw1_w(mdv1_.data1() | mdv2_.data1());
+        zx8302_.mdv_raw2_w(mdv1_.data2() | mdv2_.data2());
+    }
+    mdv1_.tick_bit();
+    mdv2_.tick_bit();
 }
 
 void SinclairQl::run_ipc(int cycles) {

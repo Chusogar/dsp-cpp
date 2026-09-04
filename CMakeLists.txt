@@ -112,6 +112,7 @@ add_executable(dsp
   src/machine/tc0140syt.cpp
   src/machine/opwolf_cchip.cpp
   src/machine/zx8302.cpp
+  src/machine/ql_mdv.cpp
 
     
   src/drivers/arcade/bagman.cpp
@@ -315,6 +316,7 @@ add_executable(dsp_tests
   src/machine/tc0140syt.cpp
   src/machine/opwolf_cchip.cpp
   src/machine/zx8302.cpp
+  src/machine/ql_mdv.cpp
   src/machine/konami_decrypt.cpp
   src/machine/nb1414_m4.cpp
   src/drivers/computers/spectrum.cpp
