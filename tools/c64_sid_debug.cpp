@@ -1,7 +1,7 @@
 #include <cstdio>
 #include <vector>
 
-#include "drivers/c64.h"
+#include "drivers/computers/c64.h"
 
 using namespace dsp;
 

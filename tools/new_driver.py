@@ -11,6 +11,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TEMPLATES = ROOT / "docs" / "templates"
 DRIVERS = ROOT / "src" / "drivers"
+KINDS = ("arcade", "computers", "consoles")
 
 
 def render(template: pathlib.Path, replacements: dict) -> str:
@@ -27,20 +28,26 @@ def main() -> int:
     parser.add_argument("--title", help="window title (default: the class name)")
     parser.add_argument("--pascal", help="Pascal unit it is ported from")
     parser.add_argument("--force", action="store_true", help="overwrite existing files")
+    parser.add_argument("--kind", choices=KINDS, default="arcade",
+                        help="src/drivers subfolder (default: arcade)")
     args = parser.parse_args()
 
     name = args.name.lower()
     class_name = args.class_name or name.capitalize()
+    kind = args.kind
     replacements = {
         "FILE": name,
         "CLASS": class_name,
         "TITLE": args.title or class_name,
         "PASCAL": args.pascal or "%s_hw.pas" % name,
+        "KIND": kind,
     }
 
     written = []
+    out_dir = DRIVERS / kind
+    out_dir.mkdir(parents=True, exist_ok=True)
     for suffix in ("h", "cpp"):
-        target = DRIVERS / f"{name}.{suffix}"
+        target = out_dir / f"{name}.{suffix}"
         if target.exists() and not args.force:
             print(f"{target} already exists, use --force to overwrite", file=sys.stderr)
             return 1
@@ -50,9 +57,9 @@ def main() -> int:
     for target in written:
         print(f"wrote {target.relative_to(ROOT)}")
     print("\nAdd it to CMakeLists.txt (both targets that need it):")
-    print(f"  src/drivers/{name}.cpp")
+    print(f"  src/drivers/{kind}/{name}.cpp")
     print("\nAnd to src/main.cpp:")
-    print(f'  #include "drivers/{name}.h"')
+    print(f'  #include "drivers/{kind}/{name}.h"')
     print(f'  if (game == "{name}") return std::make_unique<dsp::{class_name}>();')
     print("\nThen follow docs/adding-a-driver.md.")
     return 0

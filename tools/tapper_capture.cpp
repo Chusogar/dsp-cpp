@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "core/machine.h"
-#include "drivers/mcr.h"
+#include "drivers/arcade/mcr.h"
 
 namespace {
 
