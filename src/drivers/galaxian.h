@@ -118,6 +118,8 @@ public:
     uint8_t debug_mem(uint16_t address) { return read_byte(address); }
     uint32_t debug_pitch_writes() const { return pitch_writes_; }
     uint32_t debug_sound_writes() const { return sound_bit_writes_; }
+    uint8_t debug_discrete_pitch() const { return discrete_.debug_pitch(); }
+    uint8_t debug_discrete_fs() const { return discrete_.debug_fs(); }
 
 private:
     uint8_t read_byte(uint16_t address);

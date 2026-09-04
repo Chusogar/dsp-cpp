@@ -63,6 +63,8 @@ public:
     uint8_t debug_sound_latch() const { return sound_latch_; }
     uint8_t debug_main_latch() const { return main_latch_; }
     uint8_t debug_work(uint16_t offset) const { return work_ram_[offset & 0x7ff]; }
+    uint8_t debug_nvram(uint8_t offset) const { return uint8_t((nvram_[offset] & 0x0f) | 0xf0); }
+    uint8_t debug_dsw0() const { return dsw0_; }
 
 private:
     uint8_t main_read(uint16_t address);
@@ -101,6 +103,9 @@ private:
     std::array<uint8_t, 0x800> sound_ram_{};
     std::array<uint8_t, 0x10000> sound_rom_{};
     std::array<uint8_t, 0x100> nvram_{};
+    std::array<uint8_t, 0x100> nvram_eeprom_{};
+    bool nvram_store_ = false;
+    bool nvram_recall_ = false;
 
     std::vector<uint32_t> framebuffer_;
     std::vector<int16_t> audio_;

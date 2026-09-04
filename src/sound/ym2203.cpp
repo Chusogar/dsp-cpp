@@ -19,6 +19,7 @@ void YM2203::set_port_handlers(AY8910::PortRead port_a_read, AY8910::PortRead po
 }
 
 void YM2203::reset() {
+    external_timers_ = false;
     opn_.prescaler_w(0, 1);
     ay_.reset();
     opn_.irq_mask_set(0x03);
@@ -83,9 +84,16 @@ int32_t YM2203::update() {
     int32_t out = ay_.update() + int32_t(float(fm) * amplitude_);
     out = std::max(-0x7fff, std::min(0x7fff, out));
 
-    opn_.internal_timer_a(ch2);
-    opn_.internal_timer_b();
+    if (!external_timers_) {
+        opn_.internal_timer_a(ch2);
+        opn_.internal_timer_b();
+    }
     return out;
+}
+
+void YM2203::run_timers(int cycles) {
+    external_timers_ = true;
+    opn_.advance_timers(cycles, opn_.channel(2));
 }
 
 }  // namespace dsp

@@ -23,16 +23,15 @@ void I8255::set_port_handlers(
 
 void I8255::reset()
 {
+    // Intel 8255 / MAME: RESET forces control $9B (all inputs) and clears
+    // the output latches. Callbacks stay quiet until a port is programmed
+    // as an output — Hang-On / Space Harrier use PB5 as Z80 /RESET, so
+    // driving $FF here would release the sound CPU before the 68K is ready.
     control_ = 0x9b;
-
-    port_a_latch_ = 0xff;
-    port_b_latch_ = 0xff;
-    port_c_latch_ = 0xff;
+    port_a_latch_ = 0;
+    port_b_latch_ = 0;
+    port_c_latch_ = 0;
     pc6_in_ = true;
-
-    if (port_a_write_) port_a_write_(port_a_latch_);
-    if (port_b_write_) port_b_write_(port_b_latch_);
-    if (port_c_write_) port_c_write_(port_c_latch_);
 }
 
 void I8255::notify_pc()

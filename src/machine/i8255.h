@@ -32,9 +32,9 @@ private:
 
     uint8_t control_ = 0x9b;
 
-    uint8_t port_a_latch_ = 0xff;
-    uint8_t port_b_latch_ = 0xff;
-    uint8_t port_c_latch_ = 0xff;
+    uint8_t port_a_latch_ = 0;
+    uint8_t port_b_latch_ = 0;
+    uint8_t port_c_latch_ = 0;
 
     PortRead port_a_read_;
     PortRead port_b_read_;

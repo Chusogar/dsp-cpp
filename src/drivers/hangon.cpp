@@ -352,7 +352,11 @@ void HangOn::reset() {
     sound_latch_ = 0;
     ppi_a_writes_ = 0;
     control_res_ = 0;
-    z80_reset_ = false;
+    // PB5 is Z80 /RESET (1 = run). The 8255 comes out of reset with
+    // latches cleared, so the sound CPU stays held until the 68K writes
+    // port B. Space Harrier's idle $80 command stops YM timers if the
+    // Z80 runs that loop before the first real latch write.
+    z80_reset_ = true;
     i8751_addr_ = 0;
     mcu_irqs_ = 0;
     analog_x_ = 0x80;
@@ -672,6 +676,7 @@ void HangOn::sound_out(uint16_t port, uint8_t value) {
 
 void HangOn::on_sound_cycles(int cycles) {
     if (use_ym2151_) ym2151_.run_timers(cycles);
+    else ym2203_.run_timers(cycles);
     pcm_acc_ += int64_t(cycles) * pcm_.tick_rate();
     while (pcm_acc_ >= sound_clock_) {
         pcm_acc_ -= sound_clock_;

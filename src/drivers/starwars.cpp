@@ -211,7 +211,11 @@ void StarWars::reset() {
     sound_ram_.fill(0);
     math_.ram().fill(0);
     math_.reset();
-    nvram_.fill(0);
+    // Xicor X2212: 256×4 SRAM powers up 0xFF (MAME x2212_device).
+    nvram_.fill(0xff);
+    nvram_eeprom_.fill(0xff);
+    nvram_store_ = false;
+    nvram_recall_ = false;
     main_cpu_.reset();
     sound_cpu_.reset();
     pokey0_.reset();
@@ -280,7 +284,10 @@ uint8_t StarWars::main_read(uint16_t address) {
         catch_up_sound(8192);
         return uint8_t((sound_pending_ ? 0x80 : 0) | (main_pending_ ? 0x40 : 0));
     }
-    if (address >= 0x4500 && address <= 0x45ff) return nvram_[address & 0xff];
+    if (address >= 0x4500 && address <= 0x45ff) {
+        // Unmapped high nibble is 0xF0, matching MAME's space.unmap().
+        return uint8_t((nvram_[address & 0xff] & 0x0f) | 0xf0);
+    }
     if (address == 0x4700) return math_.div_reh();
     if (address == 0x4701) return math_.div_rel();
     if (address == 0x4703) return uint8_t((prng_ >> 8) & 0xff);
@@ -317,7 +324,15 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
         return;
     }
     if (address >= 0x4500 && address <= 0x45ff) {
-        nvram_[address & 0xff] = value;
+        nvram_[address & 0xff] = uint8_t(value & 0x0f);
+        return;
+    }
+    if (address >= 0x4640 && address <= 0x465f) {
+        return;  // watchdog
+    }
+    if (address >= 0x46a0 && address <= 0x46bf) {
+        if (!nvram_store_) nvram_eeprom_ = nvram_;
+        nvram_store_ = true;
         return;
     }
     if (address >= 0x4600 && address <= 0x461f) {
@@ -376,6 +391,11 @@ void StarWars::outlatch_w(int bit, bool value) {
     if (bit == 4) {
         bank_ = value ? 1 : 0;
         bank2_ = bank_;
+    }
+    if (bit == 7) {
+        // LS259 Q7 → X2212 /RECALL (MAME treats a 0→1 edge as recall).
+        if (value && !nvram_recall_) nvram_ = nvram_eeprom_;
+        nvram_recall_ = value;
     }
 }
 

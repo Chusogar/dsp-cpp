@@ -20,6 +20,12 @@ public:
 
     int16_t update();
 
+    uint8_t debug_pitch() const { return pitch_; }
+    uint8_t debug_fs() const {
+        return uint8_t((fs_[0] ? 1 : 0) | (fs_[1] ? 2 : 0) | (fs_[2] ? 4 : 0) |
+                       (fire_ ? 8 : 0) | (hit_ ? 16 : 0) | (vol1_ ? 32 : 0) | (vol2_ ? 64 : 0));
+    }
+
 private:
     uint8_t pitch_ = 0xff;
     uint8_t lfo_ = 0;

@@ -57,6 +57,9 @@ public:
     uint8_t debug_mcu_ie() const { return mcu_ ? mcu_->debug_sfr(0xa8) : uint8_t(0); }
     uint8_t debug_mcu_tcon() const { return mcu_ ? mcu_->debug_sfr(0x88) : uint8_t(0); }
     uint8_t debug_mcu_p1() const { return mcu_ ? mcu_->debug_sfr(0x90) : uint8_t(0); }
+    uint8_t debug_ym_status() const { return ym2203_.status(); }
+    uint8_t debug_ym_reg(uint8_t address) const { return ym2203_.debug_reg(address); }
+    uint8_t debug_sound_ram(uint16_t address) const { return sound_mem_[address]; }
 
 private:
     bool is_sharrier_map() const { return game_ != Game::HangOn; }
@@ -122,7 +125,7 @@ private:
     uint16_t in0_ = 0xffff;
     uint16_t dsw_a_ = 0xffff;
     uint16_t dsw_b_ = 0xfffe;
-    bool z80_reset_ = false;
+    bool z80_reset_ = true;
     int sprite_banks_ = 7;
     uint8_t i8751_addr_ = 0;
     uint32_t mcu_irqs_ = 0;

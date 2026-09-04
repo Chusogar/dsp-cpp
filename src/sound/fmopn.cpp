@@ -422,6 +422,22 @@ void OpnCore::internal_timer_b() {
     if (tbc_ <= 0.0) timer_b_over();
 }
 
+void OpnCore::advance_timers(int cycles, Channel& csm_channel) {
+    if (cycles <= 0 || timer_prescaler_ <= 0) return;
+    const double step = double(cycles) / double(timer_prescaler_);
+    if (tac_ != 0.0) {
+        tac_ -= step;
+        if (tac_ <= 0.0) {
+            timer_a_over();
+            if ((mode_ & 0x80) != 0) csm_key_control(csm_channel);
+        }
+    }
+    if (tbc_ != 0.0) {
+        tbc_ -= step;
+        if (tbc_ <= 0.0) timer_b_over();
+    }
+}
+
 void OpnCore::write_mode(int reg, int value) {
     switch (reg) {
         case 0x24:
