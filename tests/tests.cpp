@@ -4764,6 +4764,52 @@ void test_st_floppy_formats() {
     check(machine.floppy_loaded(), "ST reports the floppy");
 }
 
+void test_st_ikbd_mouse() {
+    dsp::AtariSt machine;
+    dsp::MachineInputs in;
+    in.has_pointer = true;
+    in.pointer_x = 400;
+    in.pointer_y = 300;
+    machine.set_inputs(in);
+    check(machine.ikbd_pending_bytes().empty(),
+          "the first pointer sample does not throw GEM's mouse off-screen");
+
+    in.pointer_x = 404;  // +4 host px → +2 TOS pixels in low res
+    machine.set_inputs(in);
+    auto q = machine.ikbd_pending_bytes();
+    check(q.size() == 3, "a small move is one relative IKBD packet");
+    check(q[0] == 0xf8 && q[1] == 2 && q[2] == 0, "low-res IKBD X is halved to shifter pixels");
+
+    const size_t after_move = q.size();
+    in.pointer_button1 = true;
+    machine.set_inputs(in);
+    q = machine.ikbd_pending_bytes();
+    check(q.size() == after_move + 3, "a left click sends one 0xFA packet");
+    check(q[after_move] == 0xfa && q[after_move + 1] == 0 && q[after_move + 2] == 0,
+          "click with no motion is 0xFA,0,0");
+
+    const size_t after_click = q.size();
+    machine.set_inputs(in);
+    check(machine.ikbd_pending_bytes().size() == after_click,
+          "holding the button does not flood the IKBD");
+
+    in.pointer_button1 = false;
+    machine.set_inputs(in);
+    q = machine.ikbd_pending_bytes();
+    check(q.size() == after_click + 3, "button release sends a packet");
+    check(q[after_click] == 0xf8 && q[after_click + 1] == 0 && q[after_click + 2] == 0,
+          "release is 0xF8,0,0");
+
+    in.pointer_x += 400;  // +400 host → +200 TOS = 127+73
+    machine.set_inputs(in);
+    q = machine.ikbd_pending_bytes();
+    check(q.size() >= after_click + 3 + 6, "a large flick is split into ±127 packets");
+    const size_t p = after_click + 3;
+    check(q[p] == 0xf8 && int8_t(q[p + 1]) == 127 && q[p + 2] == 0 && q[p + 3] == 0xf8 &&
+              int8_t(q[p + 4]) == 73 && q[p + 5] == 0,
+          "200 TOS pixels split as 127 then 73");
+}
+
 void test_st_boot_if_present() {
     const char* rom = "/tmp/roms/st.zip";
     std::FILE* f = std::fopen(rom, "rb");
@@ -4801,6 +4847,37 @@ void test_st_boot_if_present() {
         }
     }
     check(oem > 0, "TOS DMA-read the floppy boot sector (OEM DSPST)");
+
+    auto be16 = [&](uint32_t a) {
+        return uint16_t((uint16_t(boot.peek(a)) << 8) | boot.peek(a + 1));
+    };
+    uint32_t gcur = 0;
+    for (uint32_t a = 0x2000; a < 0x4000; a += 2) {
+        if (be16(a) == 159 && be16(a + 2) == 99) {
+            gcur = a;
+            break;
+        }
+    }
+    check(gcur != 0, "TOS Line-A mouse sits at the desktop centre");
+    dsp::MachineInputs pointer;
+    pointer.has_pointer = true;
+    pointer.pointer_x = 400;
+    pointer.pointer_y = 300;
+    for (int i = 0; i < 20; i++) {
+        boot.set_inputs(pointer);
+        boot.run_frame();
+    }
+    check(be16(gcur) == 159 && be16(gcur + 2) == 99,
+          "parking the host pointer does not yank the GEM mouse");
+    pointer.pointer_x = 420;
+    pointer.pointer_button1 = true;
+    for (int i = 0; i < 20; i++) {
+        boot.set_inputs(pointer);
+        boot.run_frame();
+    }
+    const int mx = be16(gcur);
+    const int my = be16(gcur + 2);
+    check(mx > 159 && mx < 220 && my == 99, "a small move+click keeps the GEM mouse on-screen");
 }
 
 void test_st_north_south_if_present() {
@@ -5269,6 +5346,7 @@ int main() {
     test_ql_psion_chess_if_present();
     test_st_missing_roms();
     test_st_floppy_formats();
+    test_st_ikbd_mouse();
     test_st_boot_if_present();
     test_st_north_south_if_present();
     test_amiga_missing_roms();

@@ -116,6 +116,10 @@ void AtariSt::reset() {
     ikbd_pending_.clear();
     ikbd_cmd_ = 0;
     ikbd_reset_step_ = 0;
+    last_pointer_x_ = last_pointer_y_ = 0;
+    pointer_frac_x_ = pointer_frac_y_ = 0;
+    pointer_seen_ = false;
+    last_pointer_b1_ = last_pointer_b2_ = false;
     video_count_ = 0;
     keys_down_.fill(false);
     mfp_acc_ = 0;
@@ -165,6 +169,80 @@ void AtariSt::ikbd_byte(uint8_t value) {
     ikbd_cmd_ = value;
 }
 
+std::vector<uint8_t> AtariSt::ikbd_pending_bytes() const {
+    std::vector<uint8_t> out;
+    out.reserve(ikbd_pending_.size());
+    for (const IkbdByte& b : ikbd_pending_) out.push_back(b.value);
+    return out;
+}
+
+void AtariSt::ikbd_mouse_packet(int dx, int dy, bool left, bool right) {
+    uint8_t head = 0xf8;
+    if (left) head = uint8_t(head | 2);
+    if (right) head = uint8_t(head | 1);
+    ikbd_push(head);
+    ikbd_push(uint8_t(dx));
+    ikbd_push(uint8_t(dy));
+}
+
+void AtariSt::ikbd_mouse(const MachineInputs& inputs) {
+    if (!inputs.has_pointer) return;
+    if (!pointer_seen_) {
+        last_pointer_x_ = inputs.pointer_x;
+        last_pointer_y_ = inputs.pointer_y;
+        last_pointer_b1_ = inputs.pointer_button1;
+        last_pointer_b2_ = inputs.pointer_button2;
+        pointer_seen_ = true;
+        pointer_frac_x_ = pointer_frac_y_ = 0;
+        // A click on the first sample still needs a button packet, but never
+        // a motion from (0,0) — that throws GEM's cursor off the screen.
+        if (inputs.pointer_button1 || inputs.pointer_button2)
+            ikbd_mouse_packet(0, 0, inputs.pointer_button1, inputs.pointer_button2);
+        return;
+    }
+
+    const int dx_host = inputs.pointer_x - last_pointer_x_;
+    const int dy_host = inputs.pointer_y - last_pointer_y_;
+    last_pointer_x_ = inputs.pointer_x;
+    last_pointer_y_ = inputs.pointer_y;
+
+    // The shifter framebuffer is 640×400 with low/med doubled. IKBD deltas are
+    // TOS screen pixels (320×200 low, 640×200 med, 640×400 high).
+    const int mode = resolution_ & 3;
+    const int xs = (mode == 0) ? 2 : 1;
+    const int ys = (mode == 2) ? 1 : 2;
+    pointer_frac_x_ += dx_host;
+    pointer_frac_y_ += dy_host;
+    int dx = pointer_frac_x_ / xs;
+    int dy = pointer_frac_y_ / ys;
+    pointer_frac_x_ -= dx * xs;
+    pointer_frac_y_ -= dy * ys;
+
+    const bool left = inputs.pointer_button1;
+    const bool right = inputs.pointer_button2;
+    const bool bchange = left != last_pointer_b1_ || right != last_pointer_b2_;
+    last_pointer_b1_ = left;
+    last_pointer_b2_ = right;
+    if (!dx && !dy && !bchange) return;
+
+    // Relative reports are signed 8-bit. Split so a fast host flick cannot
+    // wrap; avoid -128 (0x80) which is also the IKBD reset prefix.
+    bool send_button = bchange;
+    while (dx || dy || send_button) {
+        int sx = dx;
+        int sy = dy;
+        if (sx > 127) sx = 127;
+        if (sx < -127) sx = -127;
+        if (sy > 127) sy = 127;
+        if (sy < -127) sy = -127;
+        ikbd_mouse_packet(sx, sy, left, right);
+        dx -= sx;
+        dy -= sy;
+        send_button = false;
+        if (!dx && !dy) break;
+    }
+}
+
 void AtariSt::ikbd_keys(const MachineInputs& inputs) {
     for (const IkbdMap& map : kIkbd) {
         const bool down = inputs.key(map.key);
@@ -173,24 +251,7 @@ void AtariSt::ikbd_keys(const MachineInputs& inputs) {
         if (!down && keys_down_[idx]) ikbd_push(uint8_t(map.code | 0x80));
         keys_down_[idx] = down;
     }
-    if (inputs.has_pointer) {
-        int dx = inputs.pointer_x - last_pointer_x_;
-        int dy = inputs.pointer_y - last_pointer_y_;
-        last_pointer_x_ = inputs.pointer_x;
-        last_pointer_y_ = inputs.pointer_y;
-        if (dx || dy || inputs.pointer_button1 || inputs.pointer_button2) {
-            if (dx > 127) dx = 127;
-            if (dx < -128) dx = -128;
-            if (dy > 127) dy = 127;
-            if (dy < -128) dy = -128;
-            uint8_t head = 0xf8;
-            if (inputs.pointer_button1) head = uint8_t(head | 2);
-            if (inputs.pointer_button2) head = uint8_t(head | 1);
-            ikbd_push(head);
-            ikbd_push(uint8_t(dx));
-            ikbd_push(uint8_t(dy));
-        }
-    }
+    ikbd_mouse(inputs);
 }
 
 uint8_t AtariSt::acia_status() const {
