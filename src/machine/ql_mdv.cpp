@@ -1,6 +1,7 @@
 #include "machine/ql_mdv.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <fstream>
 #include <zlib.h>
@@ -315,6 +316,46 @@ bool add_ql_file(std::vector<uint8_t>& image, const std::string& name, const uin
     return true;
 }
 
+// Q-emuLator prepends "]!QDOS File Header" + reserved + length-in-words.
+// 15 words (30 bytes) store QDOS header bytes 4-13; 22 words (44 bytes)
+// add a 14-byte microdrive sector header used by copy-protection.
+bool strip_qemul_header(std::vector<uint8_t>& body, uint8_t& type, uint32_t& dataspace) {
+    const size_t ilen = std::strlen(kQdosInline);
+    if (body.size() < 30 || std::memcmp(body.data(), kQdosInline, ilen) != 0) return false;
+    const int words = body[19];
+    const int total = words * 2;
+    if ((words != 15 && words != 22) || body.size() < size_t(total)) return false;
+    type = body[21];
+    dataspace = be32(body.data() + 22);
+    body.erase(body.begin(), body.begin() + total);
+    return true;
+}
+
+void rewrite_flp_to_mdv(std::vector<uint8_t>& body) {
+    int ascii = 0;
+    for (uint8_t b : body) {
+        if (b == '\n' || b == '\r' || (b >= 0x20 && b < 0x7f)) ascii++;
+    }
+    if (body.empty() || ascii * 10 < int(body.size()) * 8) return;
+    auto replace = [&](const char* from, const char* to) {
+        const size_t n = std::strlen(from);
+        for (size_t i = 0; i + n <= body.size(); i++) {
+            bool match = true;
+            for (size_t k = 0; k < n; k++) {
+                const char c = char(std::tolower(static_cast<unsigned char>(body[i + k])));
+                if (c != from[k]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (!match) continue;
+            for (size_t k = 0; k < n; k++) body[i + k] = uint8_t(to[k]);
+        }
+    };
+    replace("flp1_", "mdv1_");
+    replace("flp2_", "mdv2_");
+}
+
 bool qlpak_to_qlay(const std::vector<uint8_t>& zip, std::vector<uint8_t>& qlay, std::string* error) {
     std::vector<ZipLocal> files;
     if (!parse_zip(zip, files, error)) return false;
@@ -327,29 +368,17 @@ bool qlpak_to_qlay(const std::vector<uint8_t>& zip, std::vector<uint8_t>& qlay, 
 
         uint8_t type = 0;
         uint32_t dataspace = 0;
-        uint32_t size = uint32_t(body.size());
-        const uint8_t* payload = body.data();
-        if (z.extra.size() >= 72) {
+        if (!strip_qemul_header(body, type, dataspace) && z.extra.size() >= 72) {
             const uint8_t* fh = z.extra.data() + 8;
-            size = be32(fh);
             type = fh[5];
             dataspace = be32(fh + 6);
+            if (be32(fh) > 0 && be32(fh) <= uint32_t(body.size())) {
+                body.resize(be32(fh));
+            }
         }
-        const size_t ilen = std::strlen(kQdosInline);
-        if (body.size() > ilen + 64 && std::memcmp(body.data(), kQdosInline, ilen) == 0) {
-            const uint8_t* fh = body.data() + ilen;
-            size = be32(fh);
-            type = fh[5];
-            dataspace = be32(fh + 6);
-            payload = fh + 64;
-            if (size > 64) size -= 64;
-            if (payload + size > body.data() + body.size()) size = uint32_t(body.data() + body.size() - payload);
-        } else if (z.extra.size() < 72) {
-            size = uint32_t(body.size());
-            payload = body.data();
-        }
+        rewrite_flp_to_mdv(body);
 
-        if (!add_ql_file(qlay, z.name, payload, size, type, dataspace)) {
+        if (!add_ql_file(qlay, z.name, body.data(), uint32_t(body.size()), type, dataspace)) {
             if (error) *error = "qlpak does not fit on a 255-sector cartridge";
             return false;
         }

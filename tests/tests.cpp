@@ -4570,6 +4570,25 @@ void test_ql_mdv_formats() {
     check(machine.mdv1_loaded() && !machine.mdv2_loaded(), "the first image occupies mdv1");
     check(machine.load_media(match, &error), "QL attaches a second cartridge in mdv2");
     check(machine.mdv2_loaded(), "the second image occupies mdv2");
+
+    const char* chess = "/tmp/ql/PsionChess.qlpak";
+    std::FILE* cf = std::fopen(chess, "rb");
+    if (!cf) return;
+    std::fclose(cf);
+    error.clear();
+    check(dsp::load_ql_cartridge(chess, qlay, &error), "PsionChess.qlpak converts to QLAY");
+    check(qlay.size() == size_t(dsp::kMdvImageBytes), "PsionChess fills a 255-sector cartridge");
+    const char* boot_src = "LBYTES mdv1_chessc";
+    bool saw_boot = false, saw_chessc = false, saw_logo = false, saw_flp = false;
+    for (size_t i = 0; i + 16 < qlay.size(); i++) {
+        if (std::memcmp(&qlay[i], "BOOT", 4) == 0) saw_boot = true;
+        if (std::memcmp(&qlay[i], "CHESSC", 6) == 0) saw_chessc = true;
+        if (std::memcmp(&qlay[i], "LOGO", 4) == 0) saw_logo = true;
+        if (std::memcmp(&qlay[i], "flp1_", 5) == 0) saw_flp = true;
+        if (std::memcmp(&qlay[i], boot_src, 18) == 0) saw_boot = true;
+    }
+    check(saw_boot && saw_chessc && saw_logo, "PsionChess qlpak stores BOOT, CHESSC and LOGO");
+    check(!saw_flp, "qlpak BASIC on a microdrive uses mdv1_ instead of flp1_");
 }
 
 void test_ql_match_point_if_present() {
