@@ -8,6 +8,7 @@
 #include "core/machine.h"
 #include "cpu/m68000.h"
 #include "cpu/mcs48.h"
+#include "machine/ql_mdv.h"
 #include "machine/zx8302.h"
 #include "video/zx8301.h"
 
@@ -27,6 +28,7 @@ public:
 
     bool init(const std::string& rom_path, std::string* error) override;
     void reset() override;
+    bool load_media(const std::string& path, std::string* error) override;
     void run_frame() override;
     void set_inputs(const MachineInputs& inputs) override;
     void set_dip_switch(int bank, uint8_t value) override;
@@ -43,6 +45,12 @@ public:
     uint16_t debug_ipc_pc() const { return ipc_.pc(); }
     uint8_t debug_irq() const { return zx8302_.irq(); }
     uint8_t peek(uint32_t address) const { return const_cast<SinclairQl*>(this)->read_byte(address); }
+    bool mdv1_loaded() const { return mdv1_.loaded(); }
+    bool mdv2_loaded() const { return mdv2_.loaded(); }
+    bool mdv1_selected() const { return mdv1_.selected(); }
+    bool mdv2_selected() const { return mdv2_.selected(); }
+    bool mdv1_motor() const { return mdv1_.motor(); }
+    bool mdv2_motor() const { return mdv2_.motor(); }
 
 private:
     uint8_t read_byte(uint32_t address);
@@ -56,11 +64,15 @@ private:
     uint8_t keyboard_rows() const;
     void ipc_port_out(uint16_t port, uint8_t value);
     uint8_t ipc_port_in(uint16_t port) const;
+    void update_mdv_gap();
+    void tick_mdv_bits();
 
     M68000 cpu_;
     Mcs48 ipc_;
     Zx8301 video_;
     Zx8302 zx8302_;
+    QlMicrodrive mdv1_;
+    QlMicrodrive mdv2_;
 
     std::array<uint8_t, 0x10000> rom_{};
     std::array<uint32_t, kWidth * kHeight> framebuffer_{};
@@ -75,6 +87,8 @@ private:
     uint8_t keylatch_ = 0;
     int64_t ipc_cycle_acc_ = 0;
     int64_t baud_acc_ = 0;
+    int64_t mdv_acc_ = 0;
+    int mdv_stall_ = 0;
     int rtc_frames_ = 0;
     int flash_frames_ = 0;
     int64_t audio_acc_ = 0;

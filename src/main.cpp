@@ -146,9 +146,11 @@ void print_usage(const char* program) {
         "Options:\n"
         "  --game NAME        emulator / game to run (required; see list above)\n"
         "  --tape FILE        tape/cart: Spectrum/CPC/C64/MSX (.tap/.tzx/.cdt/.prg/.t64/.cas),\n"
-        "                     EXL-100 / EXELTEL cartridge, or PV-2000 cart (.bin/.rom)\n"
+        "                     EXL-100 / EXELTEL cartridge, PV-2000 cart (.bin/.rom),\n"
+        "                     or QL microdrive .mdv/.qlpak\n"
         "  --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, MSX2 .dsk, Apple II .dsk/.do/.po/.nib,\n"
-        "                     Pentagon/Scorpion .trd/.scl\n"
+        "                     Pentagon/Scorpion .trd/.scl, or QL microdrive .mdv/.qlpak\n"
+        "                     (repeat --disk/--tape to fill QL mdv1 then mdv2)\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
         "                     bank, mikie has three (0=A, 1=B, 2=C); trackfld: 0=A coinage,\n"
@@ -525,8 +527,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 int main(int argc, char** argv) {
     dsp::AppOptions options;
     std::string game;
-    std::string tape;
-    std::string disk;
+    std::vector<std::string> media;
     std::vector<DipSetting> dips;
 
     for (int index = 1; index < argc; index++) {
@@ -558,9 +559,9 @@ int main(int argc, char** argv) {
             }
             dips.push_back(setting);
         } else if (argument == "--tape") {
-            tape = next("--tape");
+            media.emplace_back(next("--tape"));
         } else if (argument == "--disk") {
-            disk = next("--disk");
+            media.emplace_back(next("--disk"));
         } else if (argument == "--mute") {
             options.mute = true;
         } else if (argument == "--fullscreen") {
@@ -607,13 +608,11 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "cannot start %s: %s\n", game.c_str(), error.c_str());
         return 1;
     }
-    if (!tape.empty() && !machine->load_media(tape, &error)) {
-        std::fprintf(stderr, "cannot load tape %s: %s\n", tape.c_str(), error.c_str());
-        return 1;
-    }
-    if (!disk.empty() && !machine->load_media(disk, &error)) {
-        std::fprintf(stderr, "cannot load disk %s: %s\n", disk.c_str(), error.c_str());
-        return 1;
+    for (const std::string& path : media) {
+        if (!machine->load_media(path, &error)) {
+            std::fprintf(stderr, "cannot load media %s: %s\n", path.c_str(), error.c_str());
+            return 1;
+        }
     }
     for (const DipSetting& setting : dips) machine->set_dip_switch(setting.bank, setting.value);
     for (const std::string& warning : machine->warnings()) {

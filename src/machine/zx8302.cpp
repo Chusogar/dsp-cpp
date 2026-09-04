@@ -19,6 +19,14 @@ void Zx8302::reset() {
     status_ = kStatusMdvGap;
     mdv_data_[0] = 0;
     mdv_data_[1] = 0;
+    mdv_shift_[0] = 0;
+    mdv_shift_[1] = 0;
+    mdv_bit_count_ = 0;
+    mdv_sync_ = kMdvIdle;
+    mdv_tx_[0] = 0;
+    mdv_tx_[1] = 0;
+    mdv_tx_count_ = 0;
+    mdv_ctrl_ = 0;
     comdata_from_ipc_ = 1;
     comdata_to_cpu_ = 1;
     comdata_to_ipc_ = 1;
@@ -86,16 +94,94 @@ void Zx8302::irq_acknowledge_w(uint8_t value) {
     }
 }
 
-void Zx8302::mdv_control_w(uint8_t) {
-    status_ = uint8_t(status_ & ~kStatusRxFull);
+void Zx8302::mdv_control_w(uint8_t value) {
+    if (mdseld_cb_) mdseld_cb_(value & 1);
+    if (mdselck_cb_) mdselck_cb_((value >> 1) & 1);
+    if (mdrdw_cb_) mdrdw_cb_((value >> 2) & 1);
+    if (erase_cb_) erase_cb_((value >> 3) & 1);
+
+    // JS writes $02 after every gap (and again between a block header and
+    // its data) even when MDSELCK is already high. Arm on the level, like
+    // the ZX8302 in MAME: clear RX and hunt for the next FF/FF preamble.
+    if (value & 0x02) {
+        status_ = uint8_t(status_ & ~kStatusRxFull);
+        mdv_sync_ = kMdvSearch;
+        mdv_bit_count_ = 0;
+        mdv_shift_[0] = 0;
+        mdv_shift_[1] = 0;
+    }
+    mdv_ctrl_ = value;
+    if ((value & 0x04) == 0) {
+        mdv_tx_count_ = 0;
+        status_ = uint8_t(status_ & ~kStatusTxFull);
+    }
 }
 
-void Zx8302::data_w(uint8_t) { status_ = uint8_t(status_ | kStatusTxFull); }
+void Zx8302::data_w(uint8_t value) {
+    if ((tcr_ & kModeMask) == kModeMdv) {
+        if (mdv_tx_count_ < 2) mdv_tx_[mdv_tx_count_++] = value;
+        if (mdv_tx_count_ == 2) status_ = uint8_t(status_ | kStatusTxFull);
+        return;
+    }
+    status_ = uint8_t(status_ | kStatusTxFull);
+}
+
+uint16_t Zx8302::mdv_tx_pop() {
+    uint16_t pair = 0;
+    if (mdv_tx_count_ == 2) {
+        pair = uint16_t((uint16_t(mdv_tx_[0]) << 8) | mdv_tx_[1]);
+        mdv_tx_count_ = 0;
+        status_ = uint8_t(status_ & ~kStatusTxFull);
+    }
+    return pair;
+}
+
+void Zx8302::mdv_raw1_w(int state) {
+    mdv_shift_[0] = uint8_t((mdv_shift_[0] << 1) | (state & 1));
+}
+
+void Zx8302::mdv_raw2_w(int state) {
+    mdv_shift_[1] = uint8_t((mdv_shift_[1] << 1) | (state & 1));
+    if (mdv_sync_ == kMdvIdle) return;
+    if (mdv_sync_ == kMdvSearch) {
+        if (mdv_shift_[0] == 0xff && mdv_shift_[1] == 0xff) {
+            mdv_sync_ = kMdvDeliver;
+            mdv_bit_count_ = 0;
+        }
+        return;
+    }
+    mdv_bit_count_++;
+    if (mdv_bit_count_ < 8) return;
+    mdv_bit_count_ = 0;
+    mdv_data_[0] = mdv_shift_[0];
+    mdv_data_[1] = mdv_shift_[1];
+    status_ = uint8_t(status_ | kStatusRxFull);
+}
+
+void Zx8302::mdv_gap_w(int state) {
+    const bool was = (status_ & kStatusMdvGap) != 0;
+    if (state) {
+        status_ = uint8_t(status_ | kStatusMdvGap);
+        // Do not drop RX or leave DELIVER here. The last pair of a record
+        // is assembled on the pair before the gap; JS still has to read it.
+        // SEARCH is re-armed by the next MDSELCK write after wait_gap.
+        if (!was && (irq_mask_ & 0x20)) trigger(kIntGap);
+    } else {
+        status_ = uint8_t(status_ & ~kStatusMdvGap);
+    }
+}
 
 uint8_t Zx8302::mdv_track_r(uint32_t offset) {
     const int track = int(offset & 1);
     const uint8_t data = mdv_data_[track];
-    if (track == 1) status_ = uint8_t(status_ & ~kStatusRxFull);
+    if (track == 1) {
+        status_ = uint8_t(status_ & ~kStatusRxFull);
+        // JS polls RX-full for only ~20 instructions between the two
+        // tracks of a pair and the next pair. At 100 kHz that window is
+        // 600 CPU cycles, so present the next pair as soon as this one
+        // is consumed.
+        if (mdv_burst_cb_) mdv_burst_cb_();
+    }
     return data;
 }
 

@@ -32,6 +32,7 @@
 #include "drivers/computers/apple2.h"
 #include "drivers/computers/exelv.h"
 #include "drivers/computers/ql.h"
+#include "machine/ql_mdv.h"
 #include "drivers/consoles/gameboy.h"
 #include "drivers/arcade/mcr.h"
 #include "drivers/computers/msx2.h"
@@ -4391,6 +4392,335 @@ void test_ql_roms_if_present() {
     check(count_lit_pixels(boot) > 80, "QL attract/copyright paints the ZX8301 screen");
 }
 
+bool write_bytes(const std::string& path, const uint8_t* data, size_t size) {
+    std::ofstream out(path, std::ios::binary);
+    if (!out) return false;
+    out.write(reinterpret_cast<const char*>(data), std::streamsize(size));
+    return bool(out);
+}
+
+void put_u16(std::vector<uint8_t>& b, uint16_t v) {
+    b.push_back(uint8_t(v));
+    b.push_back(uint8_t(v >> 8));
+}
+void put_u32(std::vector<uint8_t>& b, uint32_t v) {
+    put_u16(b, uint16_t(v));
+    put_u16(b, uint16_t(v >> 16));
+}
+
+std::vector<uint8_t> make_store_zip(const std::string& name, const std::vector<uint8_t>& data) {
+    std::vector<uint8_t> zip;
+    const uint32_t crc = 0;  // QLPAK loader does not check CRC
+    zip.insert(zip.end(), {'P', 'K', 3, 4});
+    put_u16(zip, 20);
+    put_u16(zip, 0);
+    put_u16(zip, 0);
+    put_u16(zip, 0);
+    put_u16(zip, 0);
+    put_u32(zip, crc);
+    put_u32(zip, uint32_t(data.size()));
+    put_u32(zip, uint32_t(data.size()));
+    put_u16(zip, uint16_t(name.size()));
+    put_u16(zip, 0);
+    zip.insert(zip.end(), name.begin(), name.end());
+    zip.insert(zip.end(), data.begin(), data.end());
+    const uint32_t local_len = uint32_t(zip.size());
+    zip.insert(zip.end(), {'P', 'K', 1, 2});
+    put_u16(zip, 20);
+    put_u16(zip, 20);
+    put_u16(zip, 0);
+    put_u16(zip, 0);
+    put_u16(zip, 0);
+    put_u16(zip, 0);
+    put_u32(zip, crc);
+    put_u32(zip, uint32_t(data.size()));
+    put_u32(zip, uint32_t(data.size()));
+    put_u16(zip, uint16_t(name.size()));
+    put_u16(zip, 0);
+    put_u16(zip, 0);
+    put_u16(zip, 0);
+    put_u16(zip, 0);
+    put_u32(zip, 0);
+    put_u32(zip, 0);
+    zip.insert(zip.end(), name.begin(), name.end());
+    const uint32_t cd_len = uint32_t(zip.size()) - local_len;
+    zip.insert(zip.end(), {'P', 'K', 5, 6});
+    put_u16(zip, 0);
+    put_u16(zip, 0);
+    put_u16(zip, 1);
+    put_u16(zip, 1);
+    put_u32(zip, cd_len);
+    put_u32(zip, local_len);
+    put_u16(zip, 0);
+    return zip;
+}
+
+void hold_ql_key(dsp::SinclairQl& machine, dsp::Key key, int frames) {
+    dsp::MachineInputs inputs{};
+    inputs.keys[size_t(key)] = true;
+    machine.set_inputs(inputs);
+    for (int i = 0; i < frames; i++) machine.run_frame();
+    inputs.keys[size_t(key)] = false;
+    machine.set_inputs(inputs);
+    for (int i = 0; i < 3; i++) machine.run_frame();
+}
+
+dsp::Key ql_letter(char c) {
+    switch (c) {
+        case 'a': return dsp::Key::A;
+        case 'b': return dsp::Key::B;
+        case 'c': return dsp::Key::C;
+        case 'd': return dsp::Key::D;
+        case 'e': return dsp::Key::E;
+        case 'f': return dsp::Key::F;
+        case 'g': return dsp::Key::G;
+        case 'h': return dsp::Key::H;
+        case 'i': return dsp::Key::I;
+        case 'j': return dsp::Key::J;
+        case 'k': return dsp::Key::K;
+        case 'l': return dsp::Key::L;
+        case 'm': return dsp::Key::M;
+        case 'n': return dsp::Key::N;
+        case 'o': return dsp::Key::O;
+        case 'p': return dsp::Key::P;
+        case 'q': return dsp::Key::Q;
+        case 'r': return dsp::Key::R;
+        case 's': return dsp::Key::S;
+        case 't': return dsp::Key::T;
+        case 'u': return dsp::Key::U;
+        case 'v': return dsp::Key::V;
+        case 'w': return dsp::Key::W;
+        case 'x': return dsp::Key::X;
+        case 'y': return dsp::Key::Y;
+        case 'z': return dsp::Key::Z;
+        case '0': return dsp::Key::Num0;
+        case '1': return dsp::Key::Num1;
+        case '2': return dsp::Key::Num2;
+        case '3': return dsp::Key::Num3;
+        case '4': return dsp::Key::Num4;
+        case '5': return dsp::Key::Num5;
+        case '6': return dsp::Key::Num6;
+        case '7': return dsp::Key::Num7;
+        case '8': return dsp::Key::Num8;
+        case '9': return dsp::Key::Num9;
+        case ' ': return dsp::Key::Space;
+        case '\n': return dsp::Key::Enter;
+        case '-': return dsp::Key::Minus;
+        case '_': return dsp::Key::Minus;
+        default: return dsp::Key::Space;
+    }
+}
+
+void type_ql(dsp::SinclairQl& machine, const char* text) {
+    for (const char* p = text; *p; ++p) {
+        dsp::MachineInputs inputs{};
+        if (*p == '_') {
+            // Shift must be down before the minus key or the IPC drops `_`.
+            inputs.keys[size_t(dsp::Key::LeftShift)] = true;
+            machine.set_inputs(inputs);
+            for (int i = 0; i < 6; i++) machine.run_frame();
+        }
+        if (*p == '_') inputs.keys[size_t(dsp::Key::LeftShift)] = true;
+        inputs.keys[size_t(ql_letter(*p))] = true;
+        machine.set_inputs(inputs);
+        for (int i = 0; i < 8; i++) machine.run_frame();
+        inputs = {};
+        machine.set_inputs(inputs);
+        for (int i = 0; i < 5; i++) machine.run_frame();
+    }
+}
+
+void test_ql_mdv_formats() {
+    std::string error;
+    std::vector<uint8_t> qlay;
+    check(!dsp::load_ql_cartridge("/no/such/cart.mdv", qlay, &error),
+          "missing microdrive image is rejected");
+
+    const std::string junk = "/tmp/ql-junk.mdv";
+    const uint8_t trash[] = {'N', 'O', 'T', 'M', 'D', 'V', 1, 2, 3, 4};
+    check(write_bytes(junk, trash, sizeof(trash)), "wrote a junk .mdv");
+    error.clear();
+    check(!dsp::load_ql_cartridge(junk, qlay, &error), "short junk is not a QLAY cartridge");
+    check(error.find("mdv") != std::string::npos || error.find("qlpak") != std::string::npos,
+          "junk image reports mdv/qlpak");
+
+    const std::string pak = "/tmp/ql-test.qlpak";
+    const std::vector<uint8_t> body{'H', 'E', 'L', 'L', 'O', 'Q', 'L'};
+    const auto zip = make_store_zip("hello", body);
+    check(write_bytes(pak, zip.data(), zip.size()), "wrote a .qlpak zip");
+    error.clear();
+    check(dsp::load_ql_cartridge(pak, qlay, &error), "qlpak converts to a QLAY cartridge");
+    check(qlay.size() == size_t(dsp::kMdvImageBytes), "qlpak is formatted as 255 QLAY sectors");
+
+    dsp::QlMicrodrive drive;
+    check(drive.load_image(qlay, &error), "microdrive accepts a formatted qlpak image");
+    check(drive.loaded(), "microdrive reports the qlpak cartridge");
+
+    const char* match = "/tmp/ql/Match Point (1985)(Psion).mdv";
+    std::FILE* f = std::fopen(match, "rb");
+    if (!f) return;
+    std::fclose(f);
+    error.clear();
+    check(dsp::load_ql_cartridge(match, qlay, &error), "Match Point .mdv is a QLAY cartridge");
+    check(qlay.size() == 174930, "Match Point is 255 x 686 QLAY bytes");
+
+    dsp::SinclairQl machine;
+    error.clear();
+    check(machine.load_media(match, &error), "QL attaches a cartridge before the ROM set is loaded");
+    check(machine.mdv1_loaded() && !machine.mdv2_loaded(), "the first image occupies mdv1");
+    check(machine.load_media(match, &error), "QL attaches a second cartridge in mdv2");
+    check(machine.mdv2_loaded(), "the second image occupies mdv2");
+
+    const char* chess = "/tmp/ql/PsionChess.qlpak";
+    std::FILE* cf = std::fopen(chess, "rb");
+    if (!cf) return;
+    std::fclose(cf);
+    error.clear();
+    check(dsp::load_ql_cartridge(chess, qlay, &error), "PsionChess.qlpak converts to QLAY");
+    check(qlay.size() == size_t(dsp::kMdvImageBytes), "PsionChess fills a 255-sector cartridge");
+    const char* boot_src = "LBYTES mdv1_chessc";
+    bool saw_boot = false, saw_chessc = false, saw_logo = false, saw_flp = false;
+    for (size_t i = 0; i + 16 < qlay.size(); i++) {
+        if (std::memcmp(&qlay[i], "BOOT", 4) == 0) saw_boot = true;
+        if (std::memcmp(&qlay[i], "CHESSC", 6) == 0) saw_chessc = true;
+        if (std::memcmp(&qlay[i], "LOGO", 4) == 0) saw_logo = true;
+        if (std::memcmp(&qlay[i], "flp1_", 5) == 0) saw_flp = true;
+        if (std::memcmp(&qlay[i], boot_src, 18) == 0) saw_boot = true;
+    }
+    check(saw_boot && saw_chessc && saw_logo, "PsionChess qlpak stores BOOT, CHESSC and LOGO");
+    check(!saw_flp, "qlpak BASIC on a microdrive uses mdv1_ instead of flp1_");
+    check(std::memcmp(&qlay[14], "chess     ", 10) == 0,
+          "PsionChess keeps the copy-protected cartridge name");
+}
+
+void write_ql_ppm(const std::string& path, const dsp::SinclairQl& machine) {
+    std::ofstream out(path, std::ios::binary);
+    const int w = machine.screen_width();
+    const int h = machine.screen_height();
+    out << "P6\n" << w << " " << h << "\n255\n";
+    const uint32_t* fb = machine.framebuffer();
+    for (int i = 0; i < w * h; i++) {
+        const uint32_t p = fb[i];
+        const char rgb[3] = {char((p >> 16) & 0xff), char((p >> 8) & 0xff), char(p & 0xff)};
+        out.write(rgb, 3);
+    }
+}
+
+int count_ql_argb(const dsp::SinclairQl& machine, uint32_t argb) {
+    const uint32_t* fb = machine.framebuffer();
+    const int n = machine.screen_width() * machine.screen_height();
+    int c = 0;
+    for (int i = 0; i < n; i++) {
+        if (fb[i] == argb) c++;
+    }
+    return c;
+}
+
+void test_ql_psion_chess_if_present() {
+    const char* rom = "/tmp/roms/ql.zip";
+    const char* chess = "/tmp/ql/PsionChess.qlpak";
+    std::FILE* rf = std::fopen(rom, "rb");
+    std::FILE* cf = std::fopen(chess, "rb");
+    if (!rf || !cf) {
+        if (rf) std::fclose(rf);
+        if (cf) std::fclose(cf);
+        return;
+    }
+    std::fclose(rf);
+    std::fclose(cf);
+
+    dsp::SinclairQl boot;
+    std::string error;
+    check(boot.init(rom, &error), "QL ROM set loads for Psion Chess");
+    check(boot.load_media(chess, &error), "PsionChess.qlpak mounts in mdv1");
+    check(boot.mdv1_loaded() && !boot.mdv2_loaded(), "the first image occupies mdv1");
+    check(boot.load_media(chess, &error), "PsionChess.qlpak also mounts in mdv2");
+    check(boot.mdv2_loaded(), "the second image occupies mdv2");
+
+    for (int i = 0; i < 220; i++) boot.run_frame();
+    check(count_lit_pixels(boot) > 80, "QL reaches the F1/F2 copyright screen before chess");
+    write_ql_ppm("/tmp/ql-chess-copyright.ppm", boot);
+
+    hold_ql_key(boot, dsp::Key::F1, 10);
+
+    bool saw_logo = false;
+    bool saw_prompt = false;
+    for (int i = 0; i < 5000; i++) {
+        boot.run_frame();
+        // Logo bitmap leaves a 00 C0 word at offset 38; red CLS is 00 FF.
+        if (!saw_logo && boot.peek(0x25026) == 0x00 && boot.peek(0x25027) == 0xc0) {
+            saw_logo = true;
+            for (int extra = 0; extra < 400; extra++) boot.run_frame();
+            write_ql_ppm("/tmp/ql-chess-title.ppm", boot);
+        }
+        const int green = count_ql_argb(boot, 0xff00ff00);
+        const int red = count_ql_argb(boot, 0xffff0000);
+        if (saw_logo && green > 400 && red < 1000) {
+            saw_prompt = true;
+            write_ql_ppm("/tmp/ql-chess-mdv2-prompt.ppm", boot);
+            break;
+        }
+    }
+    check(saw_logo, "mdv1_boot LBYTES mdv1_logo and paints QL CHESS");
+    check(saw_prompt, "Psion Chess asks for the master cartridge in mdv2");
+
+    hold_ql_key(boot, dsp::Key::Space, 12);
+    bool saw_board = false;
+    for (int i = 0; i < 2500; i++) {
+        boot.run_frame();
+        const int white = count_ql_argb(boot, 0xffffffff);
+        const int red = count_ql_argb(boot, 0xffff0000);
+        const int green_now = count_ql_argb(boot, 0xff00ff00);
+        if (white > 4000 && red > 500 && green_now > 1000) {
+            saw_board = true;
+            break;
+        }
+    }
+    write_ql_ppm("/tmp/ql-chess-ingame.ppm", boot);
+    check(saw_board, "space plus mdv2 starts the chess board");
+    check(count_lit_pixels(boot) > 5000, "the chess board paints the ZX8301 screen");
+}
+
+void test_ql_match_point_if_present() {
+    const char* rom = "/tmp/roms/ql.zip";
+    const char* match = "/tmp/ql/Match Point (1985)(Psion).mdv";
+    std::FILE* rf = std::fopen(rom, "rb");
+    std::FILE* mf = std::fopen(match, "rb");
+    if (!rf || !mf) {
+        if (rf) std::fclose(rf);
+        if (mf) std::fclose(mf);
+        return;
+    }
+    std::fclose(rf);
+    std::fclose(mf);
+
+    dsp::SinclairQl boot;
+    std::string error;
+    check(boot.init(rom, &error), "QL ROM set loads for Match Point");
+    check(boot.load_media(match, &error), "Match Point mounts in mdv1");
+    check(boot.mdv1_loaded() && !boot.mdv2_loaded(), "first cartridge fills mdv1");
+    check(boot.load_media(match, &error), "Match Point also mounts in mdv2");
+    check(boot.mdv2_loaded(), "second cartridge fills mdv2");
+    check(!boot.load_media(match, &error), "a third cartridge is rejected");
+
+    for (int i = 0; i < 220; i++) boot.run_frame();
+    const int copyright = count_lit_pixels(boot);
+    check(copyright > 80, "QL still reaches the F1/F2 copyright screen");
+
+    hold_ql_key(boot, dsp::Key::F1, 10);
+    for (int i = 0; i < 900; i++) boot.run_frame();
+    const int after_boot = count_lit_pixels(boot);
+    check(after_boot > 40, "mdv1_boot paints after F1");
+    // Working MDV runs the cartridge boot (CLS + a few lines). A dead drive
+    // would drop into the SuperBASIC windows, which flood the screen with paper.
+    check(after_boot < 40000, "mdv1_boot is not the empty SuperBASIC desktop");
+
+    type_ql(boot, "lrun mdv2_match\n");
+    for (int i = 0; i < 1200; i++) boot.run_frame();
+    const int after_match = count_lit_pixels(boot);
+    check(after_match > 80, "mdv2_match / Match Point updates the screen");
+}
+
 void test_apple2_missing_roms_and_dummy() {
     dsp::Apple2 machine;
     std::string error;
@@ -4642,6 +4972,9 @@ int main() {
     test_apple2_roms_if_present();
     test_ql_missing_roms();
     test_ql_roms_if_present();
+    test_ql_mdv_formats();
+    test_ql_match_point_if_present();
+    test_ql_psion_chess_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
