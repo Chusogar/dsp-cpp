@@ -13,6 +13,10 @@ struct GfxLayout {
     int total = 0;
     int planes = 1;
     int char_increment = 0;  // bit distance between two consecutive elements
+    // When true, plane 0 is the LSB of the pen (MAME drawgfx). The default is
+    // plane 0 as the MSB, matching the rest of this port. Bit 0 of each offset
+    // is always the MSB of that ROM byte, like MAME.
+    bool lsb_first = false;
     // Rotates every decoded element 90 degrees clockwise (rot90 / Rotater).
     bool rotate_cw = false;
     // Rotates every decoded element 90 degrees counter-clockwise (rol90 / Rotatel).

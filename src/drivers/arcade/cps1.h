@@ -100,6 +100,27 @@ public:
 
     const char* title() const override;
 
+    uint32_t debug_pc() const { return main_cpu_.pc(); }
+    uint16_t debug_layer() const { return cps1_layer_; }
+    uint16_t debug_palctrl() const { return cps1_palcltr_; }
+    uint16_t debug_videocontrol() const { return video_control_; }
+    uint32_t debug_pal_base() const { return cps1_pal_; }
+    uint32_t debug_scroll1_base() const { return cps1_scroll1_; }
+    uint32_t debug_scroll2_base() const { return cps1_scroll2_; }
+    uint32_t debug_scroll3_base() const { return cps1_scroll3_; }
+    uint32_t debug_sprite_base() const { return cps1_sprites_; }
+    uint16_t debug_scroll_x1() const { return scroll_x1_; }
+    uint16_t debug_scroll_y1() const { return scroll_y1_; }
+    uint16_t debug_scroll_x2() const { return scroll_x2_; }
+    uint16_t debug_scroll_y2() const { return scroll_y2_; }
+    uint16_t debug_scroll_x3() const { return scroll_x3_; }
+    uint16_t debug_scroll_y3() const { return scroll_y3_; }
+
+    uint16_t debug_sprite_word(int index) const {
+        return sprite_buffer_[size_t(index) & 0x3ff];
+    }
+    uint16_t debug_vram_word(uint32_t word) const { return vram_[word % 0x18000]; }
+
 private:
     bool uses_qsound() const { return game_ == Game::Dino || game_ == Game::Punisher; }
     bool rotate_final() const { return game_ == Game::Ca1941; }
@@ -210,6 +231,7 @@ private:
     uint16_t pri_mask1_ = 0;
     uint16_t pri_mask2_ = 0;
     uint16_t pri_mask3_ = 0;
+    uint16_t video_control_ = 0;
     uint16_t scroll_x1_ = 0, scroll_y1_ = 0;
     uint16_t scroll_x2_ = 0, scroll_y2_ = 0;
     uint16_t scroll_x3_ = 0, scroll_y3_ = 0;
