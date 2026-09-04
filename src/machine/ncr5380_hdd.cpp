@@ -27,6 +27,7 @@ void Ncr5380Hdd::reset() {
     cdb_len_ = cdb_pos_ = 0;
     status_ = message_ = 0;
     last_cmd_ = 0;
+    cmd_count_ = 0;
     xfer_.clear();
     xfer_pos_ = 0;
     xfer_done_ = 0;
@@ -179,6 +180,8 @@ void Ncr5380Hdd::finish_command() {
 
 void Ncr5380Hdd::execute() {
     last_cmd_ = cdb_[0];
+    cmd_log_[cmd_count_ & 15] = last_cmd_;
+    cmd_count_++;
     last_lba_ = 0;
     xfer_.clear();
     xfer_pos_ = 0;
@@ -461,7 +464,9 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
             // Only this disk (SCSI ID 0) answers selection. Initiator BSY is
             // visible on CSR but must not be treated as target BSY.
             if (sel_ && loaded_ && (odr_ & 0x01)) bsy_ = true;
-            if (!sel_ && bsy_ && phase_ == kFree) start_command();
+            // Wait for the SCSI Manager to set TCR to COMMAND. Starting
+            // the phase on SEL-drop clocks a zero CDB if ODR is still 0.
+            if (!sel_ && bsy_ && phase_ == kFree && (tcr_ & 7) == kCommand) start_command();
             break;
         }
         case 2:
@@ -474,6 +479,7 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
             break;
         case 3:
             tcr_ = data;
+            if ((data & 7) == kCommand && bsy_ && phase_ == kFree) start_command();
             // The Plus SCSI Manager often DMA-reads fewer bytes than the
             // CDB requested (256 of a 512-byte DDM). When it programs STATUS
             // or MESSAGE IN, follow that phase even if data remains.

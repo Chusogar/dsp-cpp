@@ -19,6 +19,8 @@ public:
     uint32_t xfer_bytes() const { return xfer_done_; }
     uint32_t access_count() const { return accesses_; }
     const uint8_t* last_cdb() const { return cdb_; }
+    uint32_t cmd_count() const { return cmd_count_; }
+    uint8_t cmd_log(int i) const { return cmd_log_[static_cast<unsigned>(i) & 15u]; }
     uint8_t last_icr() const { return icr_; }
     uint8_t last_mode() const { return mode_; }
     bool selected() const { return bsy_; }
@@ -85,6 +87,8 @@ private:
     uint8_t message_ = 0;
     uint8_t last_cmd_ = 0;
     uint32_t last_lba_ = 0;
+    uint32_t cmd_count_ = 0;
+    uint8_t cmd_log_[16]{};
 
     std::vector<uint8_t> xfer_;
     size_t xfer_pos_ = 0;
