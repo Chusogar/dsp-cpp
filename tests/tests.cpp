@@ -4668,17 +4668,17 @@ void test_ql_psion_chess_if_present() {
     bool saw_board = false;
     for (int i = 0; i < 2500; i++) {
         boot.run_frame();
-        const int green_now = count_ql_argb(boot, 0xff00ff00);
         const int white = count_ql_argb(boot, 0xffffffff);
-        if (green_now < 400 && white > 1500) {
+        const int red = count_ql_argb(boot, 0xffff0000);
+        const int green_now = count_ql_argb(boot, 0xff00ff00);
+        if (white > 4000 && red > 500 && green_now > 1000) {
             saw_board = true;
             break;
         }
     }
     write_ql_ppm("/tmp/ql-chess-ingame.ppm", boot);
     check(saw_board, "space plus mdv2 starts the chess board");
-    check(count_lit_pixels(boot) > 1000, "the chess board paints the ZX8301 screen");
-    check(count_ql_argb(boot, 0xff00ff00) < 400, "chess leaves the green mdv2 prompt");
+    check(count_lit_pixels(boot) > 5000, "the chess board paints the ZX8301 screen");
 }
 
 void test_ql_match_point_if_present() {
