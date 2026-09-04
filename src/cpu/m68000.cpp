@@ -2554,8 +2554,13 @@ bool M68000::take_irq() {
         putword(a[7].l + 2, pc_.wh());
         putword(a[7].l + 4, pc_.wl());
         opcode_ = false;
-        pc_.set_wh(getword(0x64 + uint32_t((level - 1) * 4)));
-        pc_.set_wl(getword(0x66 + uint32_t((level - 1) * 4)));
+        uint32_t vec_addr = 0x64 + uint32_t((level - 1) * 4);
+        if (irq_ack_) {
+            const int vec = irq_ack_(level);
+            if (vec >= 0) vec_addr = uint32_t(vec) * 4u;
+        }
+        pc_.set_wh(getword(vec_addr));
+        pc_.set_wl(getword(vec_addr + 2));
         opcode_ = true;
         if (irq_[size_t(level)] == IrqLine::Hold) irq_[size_t(level)] = IrqLine::Clear;
         cc.im = uint8_t(level);

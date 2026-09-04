@@ -17,7 +17,7 @@ Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 **Altered Beast**).
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
 **MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**,
-**EXL-100** / **EXELTEL**. Consoles: NES, Game Boy / Game Boy
+**EXL-100** / **EXELTEL**, **Sinclair QL**, **Atari ST**. Consoles: NES, Game Boy / Game Boy
 Color, **Atari 2600**, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
 **Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
 

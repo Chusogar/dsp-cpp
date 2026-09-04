@@ -21,6 +21,8 @@ public:
     // pulses an external reset line to peripherals when this runs; it does
     // NOT reset the executing CPU itself.
     using ResetInstructionHandler = std::function<void()>;
+    // Optional: return the 68000 vector number (0-255) for an IPL. When unset,
+    // autovectors 25-31 are used. The Atari ST MFP needs this for IPL 6.
 
     enum class Type { M68000, M68010 };
 
@@ -54,6 +56,9 @@ public:
     void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
     void set_reset_instruction_handler(ResetInstructionHandler handler) {
         reset_instruction_handler_ = std::move(handler);
+    }
+    void set_irq_acknowledge(std::function<int(int)> handler) {
+        irq_ack_ = std::move(handler);
     }
 
     void reset();
@@ -146,6 +151,7 @@ private:
     WriteByteHandler write_byte_;
     CycleHandler cycle_handler_;
     ResetInstructionHandler reset_instruction_handler_;
+    std::function<int(int)> irq_ack_;
 };
 
 }  // namespace dsp
