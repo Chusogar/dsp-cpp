@@ -4810,6 +4810,46 @@ void test_st_ikbd_mouse() {
           "200 TOS pixels split as 127 then 73");
 }
 
+void test_st_blitter() {
+    dsp::AtariSt machine;
+    for (int i = 0; i < 16; i++) {
+        machine.poke(0x1000 + uint32_t(i), uint8_t(0xa0 + i));
+        machine.poke(0x2000 + uint32_t(i), 0);
+    }
+    machine.poke_word(0xff8a20, 2);
+    machine.poke_word(0xff8a22, 2);
+    machine.poke_word(0xff8a24, 0);
+    machine.poke_word(0xff8a26, 0x1000);
+    machine.poke_word(0xff8a28, 0xffff);
+    machine.poke_word(0xff8a2a, 0xffff);
+    machine.poke_word(0xff8a2c, 0xffff);
+    machine.poke_word(0xff8a2e, 2);
+    machine.poke_word(0xff8a30, 2);
+    machine.poke_word(0xff8a32, 0);
+    machine.poke_word(0xff8a34, 0x2000);
+    machine.poke_word(0xff8a36, 8);
+    machine.poke_word(0xff8a38, 1);
+    machine.poke(0xff8a3a, 2);
+    machine.poke(0xff8a3b, 3);
+    machine.poke(0xff8a3d, 0);
+    machine.poke(0xff8a3c, 0x80);
+    check((machine.peek(0xff8a3c) & 0x80) == 0, "blitter busy clears after a copy");
+    for (int i = 0; i < 16; i++) {
+        check(machine.peek(0x2000 + uint32_t(i)) == uint8_t(0xa0 + i),
+              "blitter copies source words into dest RAM");
+    }
+
+    machine.poke_word(0xff8a26, 0x1000);
+    machine.poke_word(0xff8a34, 0x2000);
+    machine.poke_word(0xff8a36, 8);
+    machine.poke_word(0xff8a38, 1);
+    machine.poke(0xff8a3b, 6);
+    machine.poke(0xff8a3c, 0x80);
+    for (int i = 0; i < 16; i++) {
+        check(machine.peek(0x2000 + uint32_t(i)) == 0, "XOR blit of matching words clears dest");
+    }
+}
+
 void test_st_boot_if_present() {
     const char* rom = "/tmp/roms/st.zip";
     std::FILE* f = std::fopen(rom, "rb");
@@ -4878,6 +4918,73 @@ void test_st_boot_if_present() {
     const int mx = be16(gcur);
     const int my = be16(gcur + 2);
     check(mx > 159 && mx < 220 && my == 99, "a small move+click keeps the GEM mouse on-screen");
+
+    // Fresh boot: double-click drive A. Open-bus $FF at $FF8A3C used to hang
+    // Line-A in `tst.b (a5); bmi.s` after GEM recognised the clicks.
+    dsp::AtariSt desk;
+    check(desk.init(rom, &error), "ST TOS reloads for a drive-A double-click");
+    check(desk.load_media(disk, &error), "ST remounts the 720K floppy");
+    for (int i = 0; i < 500; i++) desk.run_frame();
+    auto desk16 = [&](uint32_t a) {
+        return uint16_t((uint16_t(desk.peek(a)) << 8) | desk.peek(a + 1));
+    };
+    uint32_t dgcur = 0;
+    for (uint32_t a = 0x2000; a < 0x4000; a += 2) {
+        if (desk16(a) == 159 && desk16(a + 2) == 99) {
+            dgcur = a;
+            break;
+        }
+    }
+    check(dgcur != 0, "Line-A mouse is at the desktop centre before the double-click");
+
+    dsp::MachineInputs mouse;
+    mouse.has_pointer = true;
+    mouse.pointer_x = 500;
+    mouse.pointer_y = 300;
+    for (int i = 0; i < 8; i++) {
+        desk.set_inputs(mouse);
+        desk.run_frame();
+    }
+    // Host 500,300 → 230,158 is TOS 24,28, the drive-A icon in low res.
+    mouse.pointer_x = 230;
+    mouse.pointer_y = 158;
+    for (int i = 0; i < 20; i++) {
+        desk.set_inputs(mouse);
+        desk.run_frame();
+    }
+    check(desk16(dgcur) < 40 && desk16(dgcur + 2) < 50, "GEM mouse sits on drive A");
+    write_st_ppm("/tmp/st-on-drive-a.ppm", desk);
+
+    auto click_frames = [&](bool down, int frames) {
+        mouse.pointer_button1 = down;
+        for (int i = 0; i < frames; i++) {
+            desk.set_inputs(mouse);
+            desk.run_frame();
+        }
+    };
+    click_frames(true, 2);
+    click_frames(false, 2);
+    click_frames(true, 2);
+    click_frames(false, 2);
+    for (int i = 0; i < 150; i++) desk.run_frame();
+    write_st_ppm("/tmp/st-dclick-a.ppm", desk);
+
+    const uint32_t pc = desk.debug_pc() & 0xffffffu;
+    check(pc != 0xfd08fa && pc != 0xfd08fc,
+          "double-click does not spin on the Line-A blitter busy wait");
+    const uint32_t hz200 =
+        (uint32_t(desk16(0x4ba)) << 16) | uint32_t(desk16(0x4bc));
+    check(hz200 > 1000, "_hz_200 still ticks after the double-click");
+    int white = 0;
+    const uint32_t* dfb = desk.framebuffer();
+    const int dn = desk.screen_width() * desk.screen_height();
+    for (int i = 0; i < dn; i++) {
+        const int r = int((dfb[i] >> 16) & 0xff);
+        const int g = int((dfb[i] >> 8) & 0xff);
+        const int b = int(dfb[i] & 0xff);
+        if (r > 200 && g > 200 && b > 200) white++;
+    }
+    check(white > 25000, "opening drive A paints a GEM window");
 }
 
 void test_st_north_south_if_present() {
@@ -5347,6 +5454,7 @@ int main() {
     test_st_missing_roms();
     test_st_floppy_formats();
     test_st_ikbd_mouse();
+    test_st_blitter();
     test_st_boot_if_present();
     test_st_north_south_if_present();
     test_amiga_missing_roms();
