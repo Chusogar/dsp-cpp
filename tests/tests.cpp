@@ -5545,7 +5545,10 @@ void test_mac_boot_if_present() {
     check(!sys7.floppy_loaded(), "a hard disk image does not sit in the Sony drive");
     for (int i = 0; i < 1800; i++) sys7.run_frame();
     write_mac_ppm("/tmp/macplus-system7.ppm", sys7);
-    check(sys7.scsi_xfer_bytes() >= 512, "the Plus ROM SCSI Manager reads the System 7 boot blocks");
+    check(sys7.scsi_xfer_bytes() >= 2560,
+          "the Plus ROM loads the SCSI driver and _Reads the System 7 LK boot blocks");
+    check(sys7.last_scsi_lba() == 2 || sys7.scsi_xfer_bytes() >= 2560,
+          "Prime reads HFS LBA 2 (the original image's boot blocks)");
     check(unique_pixels(sys7) >= 2, "System 7 boot paints the Macintosh screen");
 }
 
