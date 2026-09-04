@@ -14,8 +14,10 @@
 
 namespace dsp {
 
-// Macintosh Plus: 68000, 128K ROM, 1MB RAM, 512×342 1bpp, IWM 800K floppy,
-// NCR 5380 SCSI hard disk at $580000.
+// Macintosh Plus: 68000, 128K ROM, 4MB RAM (SIMM upgrade), 512×342 1bpp,
+// IWM 800K floppy, NCR 5380 SCSI hard disk at $580000. Stock Plus is 1MB;
+// System 7.0 needs ≥2MB and the ROM's early screen buffer sits at $3FA700
+// (4MB − $5900), so a full 4MB decode matches both the memory test and video.
 class MacPlus : public Machine {
 public:
     static constexpr uint32_t kCpuClock = 7833600;
@@ -27,7 +29,7 @@ public:
     static constexpr int kCyclesPerLine = kHTotal / 2;  // 352
     static constexpr int kWidth = kHVisible;
     static constexpr int kHeight = kVVisible;
-    static constexpr uint32_t kRamSize = 0x100000;
+    static constexpr uint32_t kRamSize = 0x400000;
     static constexpr uint32_t kRomSize = 0x20000;
     static constexpr int kSampleRate = 22254;
     static constexpr double kFps =
@@ -56,7 +58,7 @@ public:
     uint32_t debug_sp() const { return cpu_.a[7].l; }
     uint8_t debug_im() const { return cpu_.cc.im; }
     uint8_t peek(uint32_t address) { return read_byte(address); }
-    uint8_t peek_ram(uint32_t address) const { return ram_[address & (kRamSize - 1)]; }
+    uint8_t peek_ram(uint32_t address) const { return ram_[ram_index(address)]; }
     void poke(uint32_t address, uint8_t value) { write_byte(address, value); }
     bool overlay() const { return overlay_; }
     bool floppy_loaded() const { return iwm_.loaded(); }
@@ -87,8 +89,9 @@ private:
     uint8_t via_pb_r();
     uint8_t scc_read(uint32_t address);
     void scc_write(uint32_t address, uint8_t value);
-    uint8_t ram_at(uint32_t address) const { return ram_[address & (kRamSize - 1)]; }
-    void ram_at(uint32_t address, uint8_t value) { ram_[address & (kRamSize - 1)] = value; }
+    uint32_t ram_index(uint32_t address) const;
+    uint8_t ram_at(uint32_t address) const { return ram_[ram_index(address)]; }
+    void ram_at(uint32_t address, uint8_t value) { ram_[ram_index(address)] = value; }
     void clock_keyboard();
     static uint8_t keyboard_reply(uint8_t command);
 

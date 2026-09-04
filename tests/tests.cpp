@@ -5509,7 +5509,7 @@ void test_mac_boot_if_present() {
     check(boot.init(rom, &error), "Mac Plus ROM v3/v2/v1 loads");
     check(boot.debug_pc() == 0x0040002a, "68000 reset PC is in the Plus ROM window");
 
-    for (int i = 0; i < 700; i++) boot.run_frame();
+    for (int i = 0; i < 2800; i++) boot.run_frame();
     write_mac_ppm("/tmp/macplus-question.ppm", boot);
     check(boot.debug_pc() != 0, "Mac 68000 is executing after ROM boot");
     check(!boot.overlay(), "VIA PA4 cleared the ROM overlay so RAM sits at 0");
@@ -5517,6 +5517,9 @@ void test_mac_boot_if_present() {
     check(mac_has_floppy_icon(boot), "ROM paints the flashing floppy icon on the grey desktop");
     check((boot.peek(0x0b22) & 0xc0) == 0xc0,
           "Plus ROM sets HWCfgFlags SCSI bits ($420000 is not a ROM mirror)");
+    check(boot.peek(0x0108) == 0x00 && boot.peek(0x0109) == 0x40 && boot.peek(0x010a) == 0x00 &&
+              boot.peek(0x010b) == 0x00,
+          "ROM memory test finds 4MB (MemTop = $400000)");
 
     const std::string disk = "/tmp/roms/mac-system.dsk";
     write_mac_lk_disk(disk);
@@ -5524,7 +5527,7 @@ void test_mac_boot_if_present() {
     check(happy.init(rom, &error), "Mac Plus ROM reloads for a boot disk");
     check(happy.load_media(disk, &error), "800K disk with Macintosh boot blocks mounts in the Sony drive");
     bool saw_motor = false;
-    for (int i = 0; i < 800; i++) {
+    for (int i = 0; i < 3000; i++) {
         happy.run_frame();
         if (happy.iwm().motor_on()) saw_motor = true;
     }
@@ -5543,12 +5546,16 @@ void test_mac_boot_if_present() {
     check(sys7.load_media(hd, &error), "System7_0_1.img mounts as a SCSI hard disk");
     check(sys7.scsi_loaded() && sys7.scsi_blocks() >= 20480, "the HFS volume is a 10MB SCSI disk");
     check(!sys7.floppy_loaded(), "a hard disk image does not sit in the Sony drive");
-    for (int i = 0; i < 1800; i++) sys7.run_frame();
+    for (int i = 0; i < 8000; i++) sys7.run_frame();
     write_mac_ppm("/tmp/macplus-system7.ppm", sys7);
+    check(sys7.peek(0x0108) == 0x00 && sys7.peek(0x0109) == 0x40,
+          "System 7 sees 4MB at MemTop");
     check(sys7.scsi_xfer_bytes() >= 2560,
           "the Plus ROM loads the SCSI driver and _Reads the System 7 LK boot blocks");
     check(sys7.last_scsi_lba() == 2 || sys7.scsi_xfer_bytes() >= 2560,
           "Prime reads HFS LBA 2 (the original image's boot blocks)");
+    check(sys7.scsi_xfer_bytes() > 3584,
+          "with 4MB the boot continues past the Happy Mac System heap");
     check(unique_pixels(sys7) >= 2, "System 7 boot paints the Macintosh screen");
 }
 

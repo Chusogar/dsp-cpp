@@ -232,6 +232,15 @@ void MacPlus::scc_write(uint32_t address, uint8_t value) {
     scc_ptr_[ch] = 0;
 }
 
+uint32_t MacPlus::ram_index(uint32_t address) const {
+    address &= 0xffffff;
+    // $600000–$7FFFFF is the 2MB overlay-time RAM window and always aliases
+    // the first 2MB. The $000000–$3FFFFF decode is unique through all 4MB so
+    // the ROM memory test can set MemTop to $400000 instead of seeing a wrap.
+    if (address >= 0x600000 && address < 0x800000) address -= 0x600000;
+    return address & (kRamSize - 1);
+}
+
 uint8_t MacPlus::read_byte(uint32_t address) {
     address &= 0xffffff;
     if (address < 0x400000) {
