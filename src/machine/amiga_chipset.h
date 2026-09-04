@@ -38,6 +38,13 @@ public:
     uint16_t dmacon() const { return dmacon_; }
     uint16_t color00() const { return color_[0]; }
     uint16_t bplcon0() const { return bplcon0_; }
+    uint32_t cop1lc() const { return cop1lc_; }
+    uint32_t cop2lc() const { return cop2lc_; }
+    uint32_t bplpt0() const { return bplpt_[0]; }
+    uint16_t color(int i) const { return color_[size_t(i) & 31]; }
+    uint32_t sprpt0() const { return sprpt_[0]; }
+    uint16_t sprpos0() const { return sprpos_[0]; }
+    uint16_t sprctl0() const { return sprctl_[0]; }
 
     bool dma_master() const { return (dmacon_ & 0x0200) != 0; }
 
@@ -49,9 +56,11 @@ private:
     bool dma(uint16_t bit) const { return (dmacon_ & 0x0200) && (dmacon_ & bit); }
     void copper_restart();
     void copper_step_until_wait(int vpos);
+    void sprite_dma_line(int vpos);
     void blit();
     void disk_dma();
     uint32_t rgb(uint16_t c) const;
+    void plot_sprites(uint32_t* framebuffer) const;
 
     ChipRead16 read16_;
     ChipWrite16 write16_;
@@ -81,9 +90,23 @@ private:
     bool bzero_ = true;
 
     int vpos_ = 0;
+    bool lof_ = false;
     bool ciaa_irq_ = false;
     bool ciab_irq_ = false;
     bool cop_stopped_ = true;
+    bool copper_active_ = false;
+
+    std::array<uint32_t, 8> sprpt_{};
+    std::array<uint16_t, 8> sprpos_{};
+    std::array<uint16_t, 8> sprctl_{};
+    std::array<uint16_t, 8> sprdata_{};
+    std::array<uint16_t, 8> sprdatb_{};
+    // Per visible line, last DMA data so render() can composite sprites.
+    std::array<std::array<uint16_t, kHeight>, 8> spr_line_data_{};
+    std::array<std::array<uint16_t, kHeight>, 8> spr_line_datb_{};
+    std::array<std::array<uint16_t, kHeight>, 8> spr_line_pos_{};
+    std::array<std::array<uint16_t, kHeight>, 8> spr_line_ctl_{};
+    std::array<std::array<uint8_t, kHeight>, 8> spr_line_on_{};
 };
 
 }  // namespace dsp

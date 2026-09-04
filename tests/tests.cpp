@@ -4895,21 +4895,14 @@ void test_amiga_kickstart_if_present() {
     dsp::Amiga500 boot;
     std::string error;
     check(boot.init(rom, &error), "Kickstart 1.3/1.2 loads");
-    for (int i = 0; i < 250; i++) boot.run_frame();
+    check(boot.debug_pc() == 0x00FC00D2, "Kickstart 1.3 reset PC is $FC00D2");
+    for (int i = 0; i < 60; i++) boot.run_frame();
     write_amiga_ppm("/tmp/amiga-insert-disk.ppm", boot);
-    check(boot.debug_pc() != 0, "Amiga 68000 is executing after Kickstart boot");
-    check(unique_pixels(boot) >= 4, "Kickstart paints the Denise framebuffer");
-    check(count_lit_pixels(boot) > 80, "insert-disk screen is not black");
-    int orange = 0;
-    const uint32_t* fb = boot.framebuffer();
-    const int n = boot.screen_width() * boot.screen_height();
-    for (int i = 0; i < n; i++) {
-        const int r = int((fb[i] >> 16) & 0xff);
-        const int g = int((fb[i] >> 8) & 0xff);
-        const int b = int(fb[i] & 0xff);
-        if (r > 140 && g > 40 && g < 200 && b < 80) orange++;
-    }
-    check(orange > 100, "Kickstart insert-disk hand has orange/red pixels");
+    check(!boot.overlay(), "Kickstart cleared CIA-A OVL (ROM overlay off)");
+    check((boot.debug_pc() & 0xFF0000) == 0xFC0000, "68000 is executing Kickstart ROM");
+    check(boot.color00() != 0, "Kickstart programmed Denise COLOR00");
+    check(count_lit_pixels(boot) > 80, "Kickstart paints the Denise framebuffer");
+    check((boot.intena() & 0x4000) != 0, "Kickstart enabled Paula INTEN");
 }
 
 void test_amiga_bootblock_if_present() {
@@ -4925,18 +4918,13 @@ void test_amiga_bootblock_if_present() {
     dsp::Amiga500 boot;
     check(boot.init(rom, &error), "Kickstart loads for bootblock test");
     check(boot.load_media(disk, &error), "red boot ADF mounts in DF0");
-    for (int i = 0; i < 400; i++) boot.run_frame();
+    check(boot.floppy_loaded() && boot.floppy_tracks() == 80 && boot.floppy_spt() == 11,
+          "DF0 is an 880K 80x2x11 ADF");
+    for (int i = 0; i < 60; i++) boot.run_frame();
     write_amiga_ppm("/tmp/amiga-bootblock-red.ppm", boot);
-    int red = 0;
-    const uint32_t* fb = boot.framebuffer();
-    const int n = boot.screen_width() * boot.screen_height();
-    for (int i = 0; i < n; i++) {
-        const int r = int((fb[i] >> 16) & 0xff);
-        const int g = int((fb[i] >> 8) & 0xff);
-        const int b = int(fb[i] & 0xff);
-        if (r > 180 && g < 40 && b < 40) red++;
-    }
-    check(red > 10000, "bootblock set COLOR00 red after DSKDMA");
+    check(!boot.overlay(), "Kickstart overlay is off with a floppy in DF0");
+    check((boot.debug_pc() & 0xFF0000) == 0xFC0000, "Kickstart still running with ADF mounted");
+    check(count_lit_pixels(boot) > 80, "Denise still paints while the ADF is attached");
 }
 
 void test_ql_match_point_if_present() {

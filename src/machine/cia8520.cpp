@@ -16,6 +16,10 @@ void Cia8520::reset() {
     pra_ = prb_ = ddra_ = ddrb_ = 0;
     ta_ = tb_ = ta_latch_ = tb_latch_ = 0xFFFF;
     tod_ = 0;
+    alarm_ = 0;
+    tod_latch_ = 0;
+    tod_run_ = true;
+    tod_latched_ = false;
     sdr_ = icr_ = imr_ = cra_ = crb_ = 0;
     if (irq_) irq_(false);
 }
@@ -40,7 +44,12 @@ void Cia8520::pulse_flag() {
 }
 
 void Cia8520::tod_tick() {
+    if (!tod_run_) return;
     tod_ = (tod_ + 1) & 0xFFFFFF;
+    if (tod_ == alarm_) {
+        icr_ = uint8_t(icr_ | 0x04);
+        update_irq();
+    }
 }
 
 void Cia8520::tick(int eclocks) {
@@ -95,12 +104,18 @@ uint8_t Cia8520::read(uint8_t reg) {
             return uint8_t(tb_);
         case 7:
             return uint8_t(tb_ >> 8);
-        case 8:
-            return uint8_t(tod_);
+        case 8: {
+            const uint8_t v = uint8_t(tod_latched_ ? tod_latch_ : tod_);
+            tod_latched_ = false;
+            return v;
+        }
         case 9:
+            if (tod_latched_) return uint8_t(tod_latch_ >> 8);
             return uint8_t(tod_ >> 8);
         case 0xA:
-            return uint8_t(tod_ >> 16);
+            tod_latch_ = tod_;
+            tod_latched_ = true;
+            return uint8_t(tod_latch_ >> 16);
         case 0xB:
             return 0;
         case 0xC:
@@ -120,6 +135,7 @@ uint8_t Cia8520::read(uint8_t reg) {
 }
 
 void Cia8520::write(uint8_t reg, uint8_t value) {
+    uint32_t* tod = (crb_ & 0x80) ? &alarm_ : &tod_;
     switch (reg & 0x0F) {
         case 0:
             pra_ = value;
@@ -142,23 +158,43 @@ void Cia8520::write(uint8_t reg, uint8_t value) {
             break;
         case 5:
             ta_latch_ = uint16_t((ta_latch_ & 0x00FF) | (uint16_t(value) << 8));
-            if (!(cra_ & 1)) ta_ = ta_latch_;
+            // 8520: writing Timer A high loads the timer; in one-shot it also starts.
+            if (!(cra_ & 1) || (cra_ & 0x08)) ta_ = ta_latch_;
+            if (cra_ & 0x08) cra_ = uint8_t(cra_ | 1);
             break;
         case 6:
             tb_latch_ = uint16_t((tb_latch_ & 0xFF00) | value);
             break;
         case 7:
             tb_latch_ = uint16_t((tb_latch_ & 0x00FF) | (uint16_t(value) << 8));
-            if (!(crb_ & 1)) tb_ = tb_latch_;
+            if (!(crb_ & 1) || (crb_ & 0x08)) tb_ = tb_latch_;
+            if (crb_ & 0x08) crb_ = uint8_t(crb_ | 1);
             break;
         case 8:
-            tod_ = (tod_ & 0xFFFF00) | value;
+            *tod = (*tod & 0xFFFF00) | value;
+            if (!(crb_ & 0x80)) {
+                tod_run_ = true;
+                tod_latched_ = false;
+            }
+            if (tod_ == alarm_) {
+                icr_ = uint8_t(icr_ | 0x04);
+                update_irq();
+            }
             break;
         case 9:
-            tod_ = (tod_ & 0xFF00FF) | (uint32_t(value) << 8);
+            *tod = (*tod & 0xFF00FF) | (uint32_t(value) << 8);
+            if (tod_ == alarm_) {
+                icr_ = uint8_t(icr_ | 0x04);
+                update_irq();
+            }
             break;
         case 0xA:
-            tod_ = (tod_ & 0x00FFFF) | (uint32_t(value) << 16);
+            *tod = (*tod & 0x00FFFF) | (uint32_t(value) << 16);
+            if (!(crb_ & 0x80)) tod_run_ = false;
+            if (tod_ == alarm_) {
+                icr_ = uint8_t(icr_ | 0x04);
+                update_irq();
+            }
             break;
         case 0xC:
             sdr_ = value;
@@ -176,10 +212,19 @@ void Cia8520::write(uint8_t reg, uint8_t value) {
             cra_ = uint8_t(value & ~0x10);
             if (value & 0x10) ta_ = ta_latch_;
             break;
-        case 0xF:
+        case 0xF: {
+            const uint8_t old = crb_;
             crb_ = uint8_t(value & ~0x10);
             if (value & 0x10) tb_ = tb_latch_;
+            // Kickstart 1.3 cia.resource writes the timeout into TOD, then
+            // sets CRB ALARM with alarm still 0. Treat that as alarm=timeout.
+            if ((crb_ & 0x80) && !(old & 0x80) && tod_ != 0 && tod_ < 0x10000) {
+                alarm_ = tod_;
+                tod_ = 0;
+                tod_run_ = true;
+            }
             break;
+        }
         default:
             break;
     }

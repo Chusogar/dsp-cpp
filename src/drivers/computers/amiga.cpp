@@ -176,6 +176,9 @@ uint8_t Amiga500::read_byte(uint32_t address) {
         }
         return rom_[off & (rom_.size() - 1)];
     }
+    if (address >= 0x00E80000u && address < 0x00F80000u) {
+        return 0xFF;  // no Zorro board / empty diagnostic slot
+    }
     return 0xFF;
 }
 
@@ -258,6 +261,7 @@ void Amiga500::run_frame() {
     for (int line = 0; line < kLines; line++) {
         chipset_.set_vpos(line);
         chipset_.copper_line(line);
+        ciab_.tod_tick();  // CIA-B TOD is HSYNC
         cpu_.run(kCyclesPerLine);
         update_ipl();
     }

@@ -214,6 +214,19 @@ Options:
                    Commodore Amiga .adf
 ```
 
+### Commodore Amiga 500
+
+`--game amiga` (also `a500`, `amiga500`) is a PAL OCS Amiga 500: 68000 @ 7.09 MHz,
+512 KiB chip RAM, Kickstart overlay, MOS 8520 CIAs, copper/blitter/bitplanes, and
+Paula disk DMA. Point it at a MAME `a500.zip` and it loads Kickstart 1.3
+(`315093-02.u2`) or 1.2. `--disk FILE.adf` mounts an 880K (80×2×11) AmigaDOS ADF;
+tracks are encoded as MFM for Kickstart's trackdisk DSKDMA.
+
+```bash
+./build/dsp --game amiga /path/to/a500.zip
+./build/dsp --game amiga --disk workbench.adf /path/to/a500.zip
+```
+
 ### Atari System 1 (Indiana Jones, Marble Madness, Peter Pack Rat, Road Runner)
 
 Atari System 1 is a 7.16 MHz 68000 behind a SLAPSTIC (105 on Indiana Jones, 103

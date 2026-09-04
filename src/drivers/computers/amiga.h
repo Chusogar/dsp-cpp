@@ -47,6 +47,17 @@ public:
     uint16_t dmacon() const { return chipset_.dmacon(); }
     uint16_t intena() const { return chipset_.intena(); }
     bool overlay() const;
+    Cia8520& ciaa() { return ciaa_; }
+    Cia8520& ciab() { return ciab_; }
+    uint16_t intreq() const { return chipset_.intreq(); }
+    uint16_t bplcon0() const { return chipset_.bplcon0(); }
+    uint32_t cop1lc() const { return chipset_.cop1lc(); }
+    uint32_t cop2lc() const { return chipset_.cop2lc(); }
+    uint32_t bplpt0() const { return chipset_.bplpt0(); }
+    uint16_t color_reg(int i) const { return chipset_.color(i); }
+    uint32_t sprpt0() const { return chipset_.sprpt0(); }
+    uint16_t sprpos0() const { return chipset_.sprpos0(); }
+    uint16_t sprctl0() const { return chipset_.sprctl0(); }
     bool floppy_loaded() const { return floppy_.loaded(); }
     int floppy_tracks() const { return floppy_.tracks(); }
     int floppy_spt() const { return floppy_.spt(); }

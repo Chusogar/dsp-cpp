@@ -10,6 +10,7 @@ constexpr uint16_t kDmaen = 0x0200;
 constexpr uint16_t kBplen = 0x0100;
 constexpr uint16_t kCopen = 0x0080;
 constexpr uint16_t kBlten = 0x0040;
+constexpr uint16_t kSpren = 0x0020;
 constexpr uint16_t kDsken = 0x0010;
 
 int paula_ipl(uint16_t intena, uint16_t intreq) {
@@ -61,7 +62,15 @@ void AmigaChipset::reset() {
     bltadat_ = bltbdat_ = bltcdat_ = 0;
     bzero_ = true;
     vpos_ = 0;
+    lof_ = false;
     cop_stopped_ = true;
+    copper_active_ = false;
+    sprpt_.fill(0);
+    sprpos_.fill(0);
+    sprctl_.fill(0);
+    sprdata_.fill(0);
+    sprdatb_.fill(0);
+    for (auto& row : spr_line_on_) row.fill(0);
 }
 
 uint16_t AmigaChipset::chip_read(uint32_t addr) const {
@@ -103,9 +112,11 @@ uint16_t AmigaChipset::read(uint16_t reg) {
             return v;
         }
         case 0x004:
-            return uint16_t(((vpos_ >> 8) & 1) | 0x0000);
+            return uint16_t((lof_ ? 0x8000 : 0) | ((vpos_ >> 8) & 1));
         case 0x006:
-            return uint16_t(uint16_t(vpos_ & 0xFF) << 8);
+            // Low byte is HPOS. Return mid-line so beam-sync loops that wait
+            // for a non-zero horizontal position can leave the wait.
+            return uint16_t(uint16_t(vpos_ & 0xFF) << 8) | 0x80;
         case 0x00A:
         case 0x00C:
             return 0;
@@ -169,12 +180,12 @@ void AmigaChipset::write(uint16_t reg, uint16_t value) {
         case 0x088:
             coppc_ = cop1lc_;
             cop_stopped_ = false;
-            copper_step_until_wait(vpos_);
+            if (!copper_active_) copper_step_until_wait(vpos_);
             break;
         case 0x08A:
             coppc_ = cop2lc_;
             cop_stopped_ = false;
-            copper_step_until_wait(vpos_);
+            if (!copper_active_) copper_step_until_wait(vpos_);
             break;
         case 0x08E:
             diwstrt_ = value;
@@ -280,6 +291,25 @@ void AmigaChipset::write(uint16_t reg, uint16_t value) {
             if (r >= 0x0E0 && r <= 0x0F6) {
                 const int plane = (r - 0x0E0) >> 2;
                 poke_ptr(bplpt_[size_t(plane)], (r & 2) == 0, value);
+            } else if (r >= 0x120 && r <= 0x13E) {
+                const int s = (r - 0x120) >> 2;
+                poke_ptr(sprpt_[size_t(s)], (r & 2) == 0, value);
+            } else if (r >= 0x140 && r <= 0x17E) {
+                const int s = (r - 0x140) >> 3;
+                switch (r & 6) {
+                    case 0:
+                        sprpos_[size_t(s)] = value;
+                        break;
+                    case 2:
+                        sprctl_[size_t(s)] = value;
+                        break;
+                    case 4:
+                        sprdata_[size_t(s)] = value;
+                        break;
+                    default:
+                        sprdatb_[size_t(s)] = value;
+                        break;
+                }
             } else if (r >= 0x180 && r <= 0x1BE) {
                 color_[(r - 0x180) >> 1] = uint16_t(value & 0x0FFF);
             }
@@ -289,9 +319,11 @@ void AmigaChipset::write(uint16_t reg, uint16_t value) {
 
 void AmigaChipset::begin_frame() {
     vpos_ = 0;
+    lof_ = !lof_;
     intreq_ = uint16_t(intreq_ | 0x0020);  // VERTB
     if (ciaa_irq_) intreq_ = uint16_t(intreq_ | 0x0008);
     if (ciab_irq_) intreq_ = uint16_t(intreq_ | 0x2000);
+    for (auto& row : spr_line_on_) row.fill(0);
     copper_restart();
 }
 
@@ -304,24 +336,92 @@ void AmigaChipset::copper_restart() {
 
 void AmigaChipset::copper_line(int vpos) {
     vpos_ = vpos;
+    sprite_dma_line(vpos);
     if (!dma(kCopen) || cop_stopped_) return;
     copper_step_until_wait(vpos);
 }
 
+void AmigaChipset::sprite_dma_line(int vpos) {
+    const int v0 = (diwstrt_ >> 8) & 0xFF;
+    const int y = vpos - v0;
+    for (int s = 0; s < 8; s++) {
+        auto& pt = sprpt_[size_t(s)];
+        auto& pos = sprpos_[size_t(s)];
+        auto& ctl = sprctl_[size_t(s)];
+        const int vstart = int((pos >> 8) & 0xFF) | ((ctl & 4) ? 0x100 : 0);
+        const int vstop = int((ctl >> 8) & 0xFF) | ((ctl & 2) ? 0x100 : 0);
+        if (dma(kSpren)) {
+            // copinit writes SPRxPT around line 12 (still vblank). Fetch
+            // POS/CTL after that so we do not walk the dummy $FE00/$FF00
+            // terminator into following chip RAM.
+            if (vpos == 20) {
+                pos = chip_read(pt);
+                ctl = chip_read(pt + 2);
+                pt += 4;
+            } else if (vstop != 0 && vpos == vstop && vpos != 20) {
+                pos = chip_read(pt);
+                ctl = chip_read(pt + 2);
+                pt += 4;
+                sprdata_[size_t(s)] = 0;
+                sprdatb_[size_t(s)] = 0;
+            } else if (vpos > 20 && vpos >= vstart && vpos < vstop) {
+                sprdata_[size_t(s)] = chip_read(pt);
+                sprdatb_[size_t(s)] = chip_read(pt + 2);
+                pt += 4;
+            }
+        }
+        if (y >= 0 && y < kHeight) {
+            const int vs = int((pos >> 8) & 0xFF) | ((ctl & 4) ? 0x100 : 0);
+            const int ve = int((ctl >> 8) & 0xFF) | ((ctl & 2) ? 0x100 : 0);
+            const bool on = vpos >= vs && vpos < ve && (sprdata_[size_t(s)] || sprdatb_[size_t(s)]);
+            spr_line_data_[size_t(s)][size_t(y)] = sprdata_[size_t(s)];
+            spr_line_datb_[size_t(s)][size_t(y)] = sprdatb_[size_t(s)];
+            spr_line_pos_[size_t(s)][size_t(y)] = pos;
+            spr_line_ctl_[size_t(s)][size_t(y)] = ctl;
+            spr_line_on_[size_t(s)][size_t(y)] = on ? 1 : 0;
+        }
+    }
+}
+
 void AmigaChipset::copper_step_until_wait(int vpos) {
-    for (int n = 0; n < 16384; n++) {
-        const uint16_t w1 = chip_read(coppc_);
-        const uint16_t w2 = chip_read(coppc_ + 2);
-        coppc_ += 4;
+    if (copper_active_) return;
+    copper_active_ = true;
+    int nops = 0;
+    // A real scanline only has a few dozen copper slots. Running thousands of
+    // MOVEs lets an unfinished COP2 list (zeros) walk chip RAM and smash INTENA.
+    for (int n = 0; n < 32; n++) {
+        const uint32_t pc = coppc_ & 0x000FFFFEu;
+        const uint16_t w1 = chip_read(pc);
+        const uint16_t w2 = chip_read(pc + 2);
+        coppc_ = pc + 4;
         if (w1 == 0xFFFF && (w2 & 0xFFFE) == 0xFFFE) {
             cop_stopped_ = true;
+            copper_active_ = false;
             return;
         }
         if ((w1 & 1) == 0) {
             const uint16_t dest = uint16_t(w1 & 0x1FE);
-            if (dest >= 0x040) write(dest, w2);
+            if (dest < 0x040) {
+                if (++nops >= 4) {
+                    cop_stopped_ = true;
+                    copper_active_ = false;
+                    return;
+                }
+                continue;
+            }
+            nops = 0;
+            if (dest == 0x088) {
+                coppc_ = cop1lc_;
+                continue;
+            }
+            if (dest == 0x08A) {
+                coppc_ = cop2lc_;
+                continue;
+            }
+            write(dest, w2);
             continue;
         }
+        nops = 0;
         // WAIT / SKIP. IR2 bit 0 = 1 is SKIP.
         if (w2 & 1) continue;
         const int wait_v = (w1 >> 8) & 0xFF;
@@ -330,10 +430,16 @@ void AmigaChipset::copper_step_until_wait(int vpos) {
         const int masked_wait = wait_v & ve;
         if (masked_v < masked_wait && wait_v != 0xFF) {
             coppc_ -= 4;
+            copper_active_ = false;
+            return;
+        }
+        // Horizontal WAIT: yield the rest of this line (HPOS is not modelled).
+        if ((w1 & 0xFE) != 0) {
+            copper_active_ = false;
             return;
         }
     }
-    cop_stopped_ = true;
+    copper_active_ = false;
 }
 
 void AmigaChipset::blit() {
@@ -508,21 +614,45 @@ uint32_t AmigaChipset::rgb(uint16_t c) const {
     return 0xFF000000u | uint32_t(r * 17) << 16 | uint32_t(g * 17) << 8 | uint32_t(b * 17);
 }
 
-void AmigaChipset::render(uint32_t* framebuffer) {
-    // Finish any remaining copper MOVEs so a static insert-disk list is applied.
-    if (dma(kCopen) && !cop_stopped_) {
-        for (int n = 0; n < 8192; n++) {
-            const uint16_t w1 = chip_read(coppc_);
-            const uint16_t w2 = chip_read(coppc_ + 2);
-            coppc_ += 4;
-            if (w1 == 0xFFFF && (w2 & 0xFFFE) == 0xFFFE) break;
-            if ((w1 & 1) == 0) {
-                const uint16_t dest = uint16_t(w1 & 0x1FE);
-                if (dest >= 0x040) write(dest, w2);
+void AmigaChipset::plot_sprites(uint32_t* framebuffer) const {
+    const int h0 = diwstrt_ & 0xFF;
+    for (int y = 0; y < kHeight; y++) {
+        for (int s = 0; s < 8; s++) {
+            if (!spr_line_on_[size_t(s)][size_t(y)]) continue;
+            const uint16_t pos = spr_line_pos_[size_t(s)][size_t(y)];
+            const uint16_t ctl = spr_line_ctl_[size_t(s)][size_t(y)];
+            if (s & 1) {
+                const uint16_t even_ctl = spr_line_ctl_[size_t(s - 1)][size_t(y)];
+                if (even_ctl & 0x80) continue;  // attached: drawn with the even sprite
+            }
+            const bool attached = (s + 1 < 8) && (spr_line_ctl_[size_t(s + 1)][size_t(y)] & 0x80) &&
+                                  spr_line_on_[size_t(s + 1)][size_t(y)];
+            const int hstart = ((pos & 0xFF) << 1) | (ctl & 1);
+            const int x0 = (hstart / 2) - h0;
+            const uint16_t da = spr_line_data_[size_t(s)][size_t(y)];
+            const uint16_t db = spr_line_datb_[size_t(s)][size_t(y)];
+            const uint16_t oa = attached ? spr_line_data_[size_t(s + 1)][size_t(y)] : 0;
+            const uint16_t ob = attached ? spr_line_datb_[size_t(s + 1)][size_t(y)] : 0;
+            const int base = 16 + (s & ~1) * 2;
+            for (int i = 0; i < 16; i++) {
+                const int x = x0 + i;
+                if (x < 0 || x >= kWidth) continue;
+                const int bit = 15 - i;
+                int idx = 0;
+                if (da & (1u << bit)) idx |= 1;
+                if (db & (1u << bit)) idx |= 2;
+                if (attached) {
+                    if (oa & (1u << bit)) idx |= 4;
+                    if (ob & (1u << bit)) idx |= 8;
+                }
+                if (!idx) continue;
+                framebuffer[y * kWidth + x] = rgb(color_[size_t((base + idx) & 31)]);
             }
         }
     }
+}
 
+void AmigaChipset::render(uint32_t* framebuffer) {
     const int bpu = std::min(6, (bplcon0_ >> 12) & 7);
     std::array<uint32_t, 6> pt = bplpt_;
     const uint32_t bg = rgb(color_[0]);
@@ -550,6 +680,7 @@ void AmigaChipset::render(uint32_t* framebuffer) {
             }
         }
     }
+    plot_sprites(framebuffer);
 }
 
 }  // namespace dsp

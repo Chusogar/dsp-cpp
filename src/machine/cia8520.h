@@ -31,6 +31,15 @@ public:
     uint8_t ddra() const { return ddra_; }
     uint8_t ddrb() const { return ddrb_; }
     bool irq() const { return (icr_ & 0x80) != 0; }
+    uint8_t cra() const { return cra_; }
+    uint8_t crb() const { return crb_; }
+    uint8_t imr() const { return imr_; }
+    uint8_t icr_peek() const { return icr_; }
+    uint16_t ta() const { return ta_; }
+    uint16_t tb() const { return tb_; }
+    uint32_t tod() const { return tod_; }
+    uint32_t alarm() const { return alarm_; }
+
 
     // Output pins (DDR=1 bits of the latch; inputs read as 1 here).
     uint8_t pa_out() const { return uint8_t(pra_ | uint8_t(~ddra_)); }
@@ -44,8 +53,12 @@ private:
     uint16_t ta_ = 0xFFFF, tb_ = 0xFFFF;
     uint16_t ta_latch_ = 0xFFFF, tb_latch_ = 0xFFFF;
     uint32_t tod_ = 0;
+    uint32_t alarm_ = 0;
+    uint32_t tod_latch_ = 0;
     uint8_t sdr_ = 0, icr_ = 0, imr_ = 0;
     uint8_t cra_ = 0, crb_ = 0;
+    bool tod_run_ = true;
+    bool tod_latched_ = false;
 
     PortRead pa_in_, pb_in_;
     PortWrite pa_out_, pb_out_;
