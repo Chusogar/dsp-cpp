@@ -5413,14 +5413,21 @@ void write_mac_ppm(const std::string& path, const dsp::MacPlus& machine) {
     }
 }
 
-int count_mac_black(const dsp::MacPlus& machine) {
+bool mac_has_floppy_icon(const dsp::MacPlus& machine) {
+    // Grey desktop dither never has a long black run; the 3.5" ROM icon does.
     const uint32_t* fb = machine.framebuffer();
-    const int n = machine.screen_width() * machine.screen_height();
-    int c = 0;
-    for (int i = 0; i < n; i++) {
-        if ((fb[i] & 0xffffff) == 0) c++;
+    const int width = machine.screen_width();
+    for (int y = 150; y < 210; y++) {
+        int run = 0;
+        for (int x = 200; x < 320; x++) {
+            if ((fb[y * width + x] & 0xffffff) == 0) {
+                if (++run >= 20) return true;
+            } else {
+                run = 0;
+            }
+        }
     }
-    return c;
+    return false;
 }
 
 void test_mac_gcr_and_dsk() {
@@ -5463,6 +5470,26 @@ void test_mac_gcr_and_dsk() {
     check(machine.floppy_loaded(), "Mac Plus reports the floppy");
 }
 
+void write_mac_lk_disk(const std::string& path) {
+    std::vector<uint8_t> image(819200, 0);
+    image[0] = 0x4c;
+    image[1] = 0x4b;
+    image[2] = 0x60;
+    image[3] = 0x00;
+    image[4] = 0x00;
+    image[5] = 0x86;
+    std::ifstream boot("/tmp/macdisks/MacOS_6.0.8_System_Startup.img", std::ios::binary);
+    if (boot) {
+        std::vector<uint8_t> dc(0x54 + 1024);
+        boot.read(reinterpret_cast<char*>(dc.data()), std::streamsize(dc.size()));
+        if (boot && dc[0x54] == 0x4c && dc[0x55] == 0x4b) {
+            std::memcpy(image.data(), dc.data() + 0x54, 1024);
+        }
+    }
+    std::ofstream out(path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(image.data()), std::streamsize(image.size()));
+}
+
 void test_mac_missing_roms() {
     dsp::MacPlus machine;
     std::string error = "unset";
@@ -5482,25 +5509,27 @@ void test_mac_boot_if_present() {
     check(boot.init(rom, &error), "Mac Plus ROM v3/v2/v1 loads");
     check(boot.debug_pc() == 0x0040002a, "68000 reset PC is in the Plus ROM window");
 
-    for (int i = 0; i < 180; i++) boot.run_frame();
+    for (int i = 0; i < 700; i++) boot.run_frame();
     write_mac_ppm("/tmp/macplus-question.ppm", boot);
     check(boot.debug_pc() != 0, "Mac 68000 is executing after ROM boot");
     check(!boot.overlay(), "VIA PA4 cleared the ROM overlay so RAM sits at 0");
     check(unique_pixels(boot) >= 2, "Mac framebuffer is not a single colour");
-    check(count_mac_black(boot) > 200, "the flashing disk / question-mark icon paints black pixels");
+    check(mac_has_floppy_icon(boot), "ROM paints the flashing floppy icon on the grey desktop");
 
-    const char* disk = "/tmp/roms/mac-system.dsk";
-    std::FILE* df = std::fopen(disk, "rb");
-    if (!df) return;
-    std::fclose(df);
-
+    const std::string disk = "/tmp/roms/mac-system.dsk";
+    write_mac_lk_disk(disk);
     dsp::MacPlus happy;
     check(happy.init(rom, &error), "Mac Plus ROM reloads for a boot disk");
-    check(happy.load_media(disk, &error), "800K System disk mounts in the Sony drive");
-    for (int i = 0; i < 400; i++) happy.run_frame();
+    check(happy.load_media(disk, &error), "800K disk with Macintosh boot blocks mounts in the Sony drive");
+    bool saw_motor = false;
+    for (int i = 0; i < 800; i++) {
+        happy.run_frame();
+        if (happy.iwm().motor_on()) saw_motor = true;
+    }
     write_mac_ppm("/tmp/macplus-bootdisk.ppm", happy);
-    check(happy.floppy_loaded(), "System disk stays in the drive");
-    check(count_mac_black(happy) > 200, "a boot disk paints the Macintosh screen");
+    check(happy.floppy_loaded(), "boot disk stays in the drive");
+    check(saw_motor, "Sony driver spins the IWM motor to search for D5 AA marks");
+    check(mac_has_floppy_icon(happy), "the disk / question-mark icon stays on screen with a floppy inserted");
 }
 
 void test_ql_match_point_if_present() {

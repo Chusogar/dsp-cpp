@@ -183,6 +183,7 @@ uint8_t Iwm::access(uint8_t offset, uint8_t data, bool is_write) {
         case 0x00:
             if (enable) {
                 data_ = next_nibble();
+                handshake_ = 0xbf;
                 return data_;
             }
             return 0xff;

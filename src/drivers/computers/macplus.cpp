@@ -87,6 +87,11 @@ void MacPlus::reset() {
     scc_dcd_[0] = scc_dcd_[1] = false;
     via_acc_ = 0;
     rtc_acc_ = 0;
+    kbd_acc_ = 0;
+    kbd_cmd_ = 0;
+    kbd_reply_ = 0x7b;
+    kbd_shift_ = 0x7b;
+    kbd_bits_ = 0;
     audio_.clear();
     via_.reset();
     iwm_.reset();
@@ -110,6 +115,16 @@ void MacPlus::on_cpu_cycles(int cycles) {
         via_acc_ -= 10;
         via_.tick(1);
     }
+    const uint8_t sr_mode = uint8_t((via_.acr() >> 2) & 7);
+    if ((sr_mode == 3 || sr_mode == 7) && via_.sr_busy()) {
+        kbd_acc_ += cycles;
+        if (kbd_acc_ >= 80) {
+            kbd_acc_ = 0;
+            clock_keyboard();
+        }
+    } else {
+        kbd_acc_ = 0;
+    }
     rtc_acc_ += cycles;
     if (rtc_acc_ >= int64_t(kCpuClock)) {
         rtc_acc_ -= int64_t(kCpuClock);
@@ -130,12 +145,51 @@ uint8_t MacPlus::via_pb_r() {
     return val;
 }
 
+uint8_t MacPlus::keyboard_reply(uint8_t command) {
+    switch (command) {
+        case 0x10:  // Inquiry
+        case 0x14:  // Instant
+            return 0x7b;
+        case 0x16:  // Model number: US Macintosh Plus (M0110A)
+            return 0x0b;
+        case 0x36:  // Self-test
+            return 0x7d;
+        default:
+            return 0x7b;
+    }
+}
+
+void MacPlus::clock_keyboard() {
+    const uint8_t sr_mode = uint8_t((via_.acr() >> 2) & 7);
+    if (sr_mode == 3) {
+        via_.set_cb2_data((kbd_shift_ & 0x80) != 0);
+        kbd_shift_ = uint8_t(kbd_shift_ << 1);
+    }
+    via_.write_cb1(true);
+    via_.write_cb1(false);
+    if (sr_mode == 7) {
+        kbd_cmd_ = uint8_t((kbd_cmd_ << 1) | (via_.cb2() ? 1 : 0));
+        if (++kbd_bits_ >= 8 || !via_.sr_busy()) {
+            kbd_reply_ = keyboard_reply(kbd_cmd_);
+            kbd_shift_ = kbd_reply_;
+            kbd_cmd_ = 0;
+            kbd_bits_ = 0;
+        }
+    } else if (sr_mode == 3 && !via_.sr_busy()) {
+        kbd_shift_ = kbd_reply_;
+    }
+}
+
 void MacPlus::via_pa_w(uint8_t data) {
     screen_buffer_ = (data & 0x40) ? 1 : 0;
     iwm_.set_hdsel((data & 0x20) != 0);
     main_sound_ = (data & 0x08) != 0;
     snd_vol_ = data & 7;
-    if (via_.ddr_a() & 0x10) overlay_ = (data & 0x10) != 0;
+    // PA4 is pulled up, so overlay stays on until the pin is an output.
+    if (via_.ddr_a() & 0x10)
+        overlay_ = (data & 0x10) != 0;
+    else
+        overlay_ = true;
 }
 
 void MacPlus::via_pb_w(uint8_t data) {
@@ -177,10 +231,11 @@ uint8_t MacPlus::read_byte(uint32_t address) {
     address &= 0xffffff;
     if (address < 0x400000) {
         if (overlay_) return rom_[address & (kRomSize - 1)];
-        return ram_[address & (kRamSize - 1)];
+        return ram_at(address);
     }
     if (address < 0x500000) return rom_[address & (kRomSize - 1)];
     if (address >= 0x580000 && address < 0x600000) return 0xff;
+    if (address >= 0x600000 && address < 0x800000) return ram_at(address);
     if (address >= 0x800000 && address < 0xa00000) return scc_read(address);
     if (address >= 0xc00000 && address < 0xe00000) return iwm_.read(uint8_t((address >> 9) & 0x0f));
     if (address >= 0xe80000 && address < 0xf00000) return via_.read(uint8_t((address >> 9) & 0x0f));
@@ -189,11 +244,17 @@ uint8_t MacPlus::read_byte(uint32_t address) {
 
 void MacPlus::write_byte(uint32_t address, uint8_t value) {
     address &= 0xffffff;
+    // Overlay only remaps reads at 0; writes always land in RAM (write-through),
+    // and $600000 is the overlay-time RAM window documented for 128K/512K/Plus.
     if (address < 0x400000) {
-        if (!overlay_) ram_[address & (kRamSize - 1)] = value;
+        ram_at(address, value);
         return;
     }
     if (address >= 0x580000 && address < 0x600000) return;
+    if (address >= 0x600000 && address < 0x800000) {
+        ram_at(address, value);
+        return;
+    }
     if (address >= 0xa00000 && address < 0xc00000) {
         scc_write(address, value);
         return;

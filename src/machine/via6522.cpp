@@ -191,7 +191,7 @@ void Via6522::write_cb1(bool state) {
             mode == 7) {
             // modes 1,2,3,5,6,7 may use CB1 as shift clock depending on variant;
             // classic: modes 0x06/0x07 (ext) clock on CB1
-            if (mode == 6 || mode == 7) shift_clock();
+            if (mode == 3 || mode == 6 || mode == 7) shift_clock();
         }
     }
 }
@@ -201,6 +201,8 @@ void Via6522::write_cb2(bool state) {
     const bool rise = state && !in_cb2_;
     const bool fall = !state && in_cb2_;
     in_cb2_ = state;
+    // When the shift register owns CB2 the CB2 interrupt is inhibited.
+    if (sr_mode(acr_) != 0) return;
     if (!cb2_fix_out(pcr_) && !cb2_pulse(pcr_) && !cb2_handshake(pcr_)) {
         const bool pos = (pcr_ & 0x40) != 0;
         if ((pos && rise) || (!pos && fall)) set_int(kIntCB2);
@@ -208,6 +210,8 @@ void Via6522::write_cb2(bool state) {
         if (fall) set_int(kIntCB2);
     }
 }
+
+void Via6522::set_cb2_data(bool bit) { in_cb2_ = bit; }
 
 void Via6522::tick_t1() {
     if (!t1_active_) return;

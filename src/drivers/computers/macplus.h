@@ -51,11 +51,16 @@ public:
     bool uses_pointer() const override { return true; }
 
     uint32_t debug_pc() const { return cpu_.pc(); }
+    uint32_t debug_sp() const { return cpu_.a[7].l; }
+    uint8_t debug_im() const { return cpu_.cc.im; }
     uint8_t peek(uint32_t address) { return read_byte(address); }
+    uint8_t peek_ram(uint32_t address) const { return ram_[address & (kRamSize - 1)]; }
     void poke(uint32_t address, uint8_t value) { write_byte(address, value); }
     bool overlay() const { return overlay_; }
     bool floppy_loaded() const { return iwm_.loaded(); }
     int floppy_track() const { return iwm_.track(); }
+    uint8_t last_kbd_cmd() const { return kbd_cmd_; }
+    uint8_t last_kbd_reply() const { return kbd_reply_; }
     Iwm& iwm() { return iwm_; }
     Via6522& via() { return via_; }
 
@@ -73,6 +78,10 @@ private:
     uint8_t via_pb_r();
     uint8_t scc_read(uint32_t address);
     void scc_write(uint32_t address, uint8_t value);
+    uint8_t ram_at(uint32_t address) const { return ram_[address & (kRamSize - 1)]; }
+    void ram_at(uint32_t address, uint8_t value) { ram_[address & (kRamSize - 1)] = value; }
+    void clock_keyboard();
+    static uint8_t keyboard_reply(uint8_t command);
 
     M68000 cpu_;
     Via6522 via_;
@@ -104,6 +113,11 @@ private:
 
     int64_t via_acc_ = 0;
     int64_t rtc_acc_ = 0;
+    int kbd_acc_ = 0;
+    uint8_t kbd_cmd_ = 0;
+    uint8_t kbd_reply_ = 0x7b;
+    uint8_t kbd_shift_ = 0x7b;
+    int kbd_bits_ = 0;
     std::vector<int16_t> audio_;
 };
 
