@@ -490,6 +490,15 @@ void MacPlus::on_cpu_cycles(int cycles) {
         // A1 below $10000 is either nil ($0 / $FFFF) or a low-heap pointer
         // that Color QD TextSize cannot follow (A1=$3742 / D0=-108 crashed
         // the 68000 to $A0007E6E). Skip those A-lines.
+        // PaintRgn / PaintRoundRect with A0=$2 (seen at $40a648) follows
+        // exception vectors as a RgnHandle and blits forever.
+        if (boot2_tried_ && (op == 0xa8a1 || op == 0xa8a3 || op == 0xa8d3) &&
+            (cpu_.a[0].l & 0xffffffu) < 0x100u) {
+            const uint32_t sp = cpu_.a[7].l & 0xffffffu;
+            const uint32_t stacked = read_long(sp + 2) & 0xffffffu;
+            if (stacked == ppc || stacked == ((ppc + 2) & 0xffffffu)) cpu_.a[7].l = sp + 6;
+            cpu_.pc_.l = (ppc + 2) & 0xffffffu;
+        }
         if (boot2_tried_ && op == 0xa868 && (cpu_.a[1].l & 0xffffffu) < 0x10000u) {
             const uint32_t sp = cpu_.a[7].l & 0xffffffu;
             const uint32_t stacked = read_long(sp + 2) & 0xffffffu;
