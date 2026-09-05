@@ -118,6 +118,7 @@ private:
     void maybe_decompress_handle(uint32_t handle);
     bool maybe_decompress_ptr(uint32_t ptr, uint32_t handle);
     void sweep_compressed_handles();
+    void restore_plus_stubs();
 
     M68000 cpu_;
     Via6522 via_;
@@ -176,6 +177,8 @@ private:
     uint32_t read_ret_pc_ = 0;
     uint32_t read_pb_ = 0;
     bool boot2_tried_ = false;
+    uint32_t trap_stub_ = 0;
+    uint32_t restore_stub_pc_ = 0;
     std::vector<int16_t> audio_;
 };
 

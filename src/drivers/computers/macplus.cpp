@@ -147,8 +147,8 @@ void MacPlus::redirect_launch_to_boot2() {
     for (uint32_t i = 0; i < body; ++i) write_byte(code + i, boot2[0x18 + i]);
     write_long(0x010c, code);        // BufPtr: keep the hole out of the heap
     write_long(0x0130, 0x00200000);  // ApplLimit: InitApplZone stops at 2MB
-    write_long(0x0c00 + 0xad * 4, stub);
-    write_long(0x0c00 + 0x5c * 4, stub);
+    trap_stub_ = stub;
+    restore_plus_stubs();
     // ROM _Launch copies the name; we skip that trap.
     if (ram_at(0x0910) != 6) {
         ram_at(0x0910, 6);
@@ -229,6 +229,12 @@ void MacPlus::sweep_compressed_handles() {
     }
 }
 
+void MacPlus::restore_plus_stubs() {
+    if (!trap_stub_ || trap_stub_ + 4 > kRamSize) return;
+    write_long(0x0c00 + 0xad * 4, trap_stub_);
+    write_long(0x0c00 + 0x5c * 4, trap_stub_);
+}
+
 void MacPlus::sanitize_mountvol_pb() {
     const uint32_t pb = cpu_.a[0].l & 0xffffffu;
     if (pb + 0x16u >= kRamSize) return;
@@ -260,6 +266,8 @@ void MacPlus::reset() {
     rtc_ca2_ = false;
     finder_launch_ = false;
     boot2_tried_ = false;
+    trap_stub_ = 0;
+    restore_stub_pc_ = 0;
     last_trap_ = 0;
     trap_count_ = 0;
     last_syserr_ = 0;
@@ -305,6 +313,10 @@ void MacPlus::update_irqs() {
 
 void MacPlus::on_cpu_cycles(int cycles) {
     const uint32_t pc = cpu_.pc();
+    if (restore_stub_pc_ && pc == restore_stub_pc_) {
+        restore_stub_pc_ = 0;
+        restore_plus_stubs();
+    }
     if (decompress_pc_ && pc == decompress_pc_) {
         decompress_pc_ = 0;
         maybe_decompress_handle(cpu_.a[0].l);
@@ -348,12 +360,16 @@ void MacPlus::on_cpu_cycles(int cycles) {
             op == 0xa80c || op == 0xa81f)
             decompress_pc_ = (ppc + 2) & 0xffffffu;
         if (op == 0xa00f) sanitize_mountvol_pb();
-        if (op == 0xa9f0 || op == 0xa9f2 || (boot2_tried_ && (op == 0xa9a0 || op == 0xa81f)))
+        if (op == 0xa9f0 || op == 0xa9f2 || (boot2_tried_ && (op == 0xa9a0 || op == 0xa81f))) {
             sweep_compressed_handles();
+            restore_plus_stubs();
+        }
         if (op == 0xa002) {
             read_ret_pc_ = (ppc + 2) & 0xffffffu;
             read_pb_ = cpu_.a[0].l;
         }
+        if (boot2_tried_ && trap_stub_ && ((op & 0xf0ff) == 0xa047))
+            restore_stub_pc_ = (ppc + 2) & 0xffffffu;
     }
     iwm_.tick(cycles);
     via_acc_ += cycles;
