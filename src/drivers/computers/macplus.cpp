@@ -166,6 +166,8 @@ void MacPlus::redirect_launch_to_boot2() {
     trap_stub_ = stub;
     cwmgr_stub_ = cwmgr;
     snapshot_rom_tool_traps();
+    if (!rom_tool_[0x6e]) rom_tool_[0x6e] = 0x0040d930u;  // Plus v3 InitGraf
+    if (!rom_initgraf_) rom_initgraf_ = rom_tool_[0x6e];
     restore_plus_stubs();
     // ROM _Launch copies the name; we skip that trap.
     if (ram_at(0x0910) != 6) {
@@ -251,11 +253,13 @@ void MacPlus::snapshot_rom_tool_traps() {
     // Remember 128K Toolbox implementations before System 7 PACKs
     // replace them with 32-bit QuickDraw glue. That glue pops the
     // A-line frame as BlockMove params and smashes A7 (seen on
-    // _TextSize / A868 from boot id 2).
+    // _TextSize / A868 from boot id 2). Skip UnimplTrap — System 7
+    // writes $400806 over InitGraf, and that address is still in ROM.
+    constexpr uint32_t kUnimpl = 0x400806;
     for (int i = 0; i < 512; i++) {
         if (rom_tool_[i]) continue;
         const uint32_t v = read_long(0x0e00 + uint32_t(i) * 4);
-        if (v >= 0x400000 && v < 0x420000) rom_tool_[i] = v;
+        if (v >= 0x400000 && v < 0x420000 && v != kUnimpl) rom_tool_[i] = v;
     }
     if (!rom_initgraf_ && rom_tool_[0x6e]) rom_initgraf_ = rom_tool_[0x6e];
 }
