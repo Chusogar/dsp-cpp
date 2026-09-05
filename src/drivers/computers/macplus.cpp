@@ -132,6 +132,9 @@ void MacPlus::redirect_launch_to_boot2() {
     for (uint32_t i = 0; i < 32 && src + i < kRamSize; i++) write_byte(pb + i, read_byte(src + i));
     const uint32_t stub = top + 32;
     static const uint8_t kStub[] = {
+        0xa0, 0x63,                          // _MaxApplZone
+        0x20, 0x78, 0x02, 0xaa,              // MOVEA.L ApplZone,A0
+        0xa0, 0x1b,                          // _SetZone
         0x2f, 0x3c, 0x62, 0x6f, 0x6f, 0x74,  // MOVE.L #'boot',-(A7)
         0x3f, 0x3c, 0x00, 0x02,              // MOVE.W #2,-(A7)
         0xa9, 0xa0,                          // _GetResource
@@ -147,7 +150,7 @@ void MacPlus::redirect_launch_to_boot2() {
         0xa9, 0xc9,                          // _SysError
     };
     for (size_t i = 0; i < sizeof(kStub); ++i) write_byte(stub + uint32_t(i), kStub[i]);
-    write_long(stub + 26, pb);
+    write_long(stub + 34, pb);
     cpu_.pc_.l = stub;
 }
 
