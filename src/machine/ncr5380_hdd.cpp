@@ -423,13 +423,11 @@ void Ncr5380Hdd::take_byte() {
         req_ = false;
         drq_ = false;
         if (xfer_pos_ >= xfer_.size()) {
-            eop_ = true;
-            // DMA: stay in DATA IN with EOP. System 7's SCSI Manager waits
-            // for that bit, then programs TCR to STATUS. Jumping to STATUS
-            // here clears EOP (set_phase) and leaves REQ hanging if they
-            // never ACK. PIO still finishes immediately, like PCE.
-            if (dma_ || (mode_ & kModeDma)) return;
             finish_command();
+            // set_phase() clears EOP. The Plus SCSI Manager polls BSR EOP
+            // before it will program TCR to STATUS; without this bit it
+            // delay-loops in DATA IN / STATUS forever after the last READ.
+            eop_ = true;
         } else {
             pending_req_ = true;
         }
