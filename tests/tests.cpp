@@ -5579,6 +5579,8 @@ void test_mac_boot_if_present() {
           "the 128K Start Manager MountVols and keeps reading past the Happy Mac");
     check(saw_system, "Start Manager copies the boot-block System name to $0AD8");
     check(saw_welcome, "System 7 draws the Welcome to Macintosh dialog");
+    check(sys7.peek(0x0910) == 6 && sys7.peek(0x0911) == 'F',
+          "System 7 names the Finder at CurApName after the Welcome dialog");
     check(unique_pixels(sys7) >= 2, "System 7 boot paints the Macintosh screen");
 }
 

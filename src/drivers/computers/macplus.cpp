@@ -83,11 +83,12 @@ void MacPlus::find_start_manager_mountvol() {
 }
 
 void MacPlus::patch_rom_startboot() {
-    // 128K header +$A is StartBoot: BRA to the cold memory test. 64K-era
-    // disk stubs (Sony / boot) JMP ROMBase+$A after a successful _Write to
-    // "continue boot". On a Plus that wipes RAM and kills the Welcome box.
-    // Point +$A at the 128K Start Manager's "load Finder" tail so a 64K
-    // JMP ROM+$A does not remount and redraw the Happy Mac.
+    // 128K header +$A is StartBoot: BRA to the cold memory test. A 64K-era
+    // stub (copyright 1983, 1984) does CLR ioPosOffset / _Write / BNE fail
+    // / JMP ROMBase+$A on success. On a Plus that BRA wipes RAM. Point +$A
+    // at the Start Manager Finder tail so those JMPs keep loading System 7
+    // instead of cold-booting. Later hits are turned into RTS once Finder
+    // is named so the tail is not re-entered on every write.
     if (rom_.size() < 0x10 || rom_[0x0a] != 0x60 || rom_[0x0b] != 0x00) return;
     if (rom_[0x0c] != 0x00 || rom_[0x0d] != 0x56) return;  // v3 BRA $400062
     constexpr uint32_t kStartMgr = 0x400a90;
@@ -101,6 +102,14 @@ void MacPlus::patch_rom_startboot() {
     rom_[1] = uint8_t(sum >> 16);
     rom_[2] = uint8_t(sum >> 8);
     rom_[3] = uint8_t(sum);
+}
+
+void MacPlus::launch_finder_from_rom_a() {
+    // After CurApName is Finder, further JMP ROM+$A would re-enter
+    // $400A90 and smash the loaded app. RTS back to the 64K stub caller.
+    if (ram_at(0x0910) != 6 || ram_at(0x0911) != 'F') return;
+    finder_launch_ = true;
+    cpu_.pc_.l = 0x00400bb8;
 }
 
 void MacPlus::sanitize_mountvol_pb() {
@@ -132,6 +141,7 @@ void MacPlus::reset() {
     last_pointer_x_ = last_pointer_y_ = 0;
     pointer_seen_ = false;
     rtc_ca2_ = false;
+    finder_launch_ = false;
     scc_ptr_[0] = scc_ptr_[1] = 0;
     scc_wr1_[0] = scc_wr1_[1] = 0;
     scc_dcd_[0] = scc_dcd_[1] = false;
@@ -164,7 +174,9 @@ void MacPlus::update_irqs() {
 }
 
 void MacPlus::on_cpu_cycles(int cycles) {
-    if (mount_vol_pc_ && cpu_.pc() == mount_vol_pc_) sanitize_mountvol_pb();
+    const uint32_t pc = cpu_.pc();
+    if (mount_vol_pc_ && pc == mount_vol_pc_) sanitize_mountvol_pb();
+    if (pc == 0x40000au || pc == 0x40000cu) launch_finder_from_rom_a();
     iwm_.tick(cycles);
     via_acc_ += cycles;
     while (via_acc_ >= 10) {
@@ -190,7 +202,13 @@ void MacPlus::on_cpu_cycles(int cycles) {
     }
 }
 
-uint8_t MacPlus::via_pa_r() { return 0x81; }
+uint8_t MacPlus::via_pa_r() {
+    // PA7 is SCC Wait/Request (idle high). PA6–PA0 are outputs after the
+    // ROM programs DDR-A; return them pulled-up so a read-modify-write
+    // before that, or a mixed out_a() byte, cannot force the alternate
+    // screen (PA6=0) or pulse overlay (PA4=0).
+    return 0xff;
+}
 
 uint8_t MacPlus::via_pb_r() {
     uint8_t val = 0x40;
@@ -237,15 +255,16 @@ void MacPlus::clock_keyboard() {
 }
 
 void MacPlus::via_pa_w(uint8_t data) {
-    screen_buffer_ = (data & 0x40) ? 1 : 0;
-    iwm_.set_hdsel((data & 0x20) != 0);
-    main_sound_ = (data & 0x08) != 0;
-    snd_vol_ = data & 7;
+    const uint8_t ddr = via_.ddr_a();
+    if (ddr & 0x40) screen_buffer_ = (data & 0x40) ? 1 : 0;
+    if (ddr & 0x20) iwm_.set_hdsel((data & 0x20) != 0);
+    if (ddr & 0x08) main_sound_ = (data & 0x08) != 0;
+    if (ddr & 0x07) snd_vol_ = data & 7;
     // Overlay is a one-shot latch. Reset maps ROM at $0; the first PA4
     // output-low clears it. Later VIA writes (volume, page buffers) must
     // not turn it back on or VBL takes the ROM reset vector and System 7
     // reboots out of the Welcome box.
-    if ((via_.ddr_a() & 0x10) && (data & 0x10) == 0) overlay_ = false;
+    if ((ddr & 0x10) && (data & 0x10) == 0) overlay_ = false;
 }
 
 void MacPlus::via_pb_w(uint8_t data) {

@@ -100,6 +100,7 @@ private:
     void find_start_manager_mountvol();
     void patch_rom_startboot();
     void sanitize_mountvol_pb();
+    void launch_finder_from_rom_a();
     static uint8_t keyboard_reply(uint8_t command);
 
     M68000 cpu_;
@@ -139,6 +140,7 @@ private:
     uint8_t kbd_shift_ = 0x7b;
     int kbd_bits_ = 0;
     uint32_t mount_vol_pc_ = 0;
+    bool finder_launch_ = false;
     std::vector<int16_t> audio_;
 };
 
