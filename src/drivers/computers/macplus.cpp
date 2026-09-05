@@ -118,17 +118,20 @@ void MacPlus::redirect_launch_to_boot2() {
     // PCE never hits 128K _Launch: System 7's 'boot' id 2 (Process Manager)
     // starts the Finder. The Plus ROM JSRs boot+$2 too early for that, so we
     // take over here — after System is open — and GetResource the same
-    // resource. Failure falls through to the original Launch PB in A0.
+    // resource. Copy the Launch PB off the stack first; GetResource would
+    // smash it. Do not UseResFile(SysMap): a zero SysMap hides 'boot'.
     boot2_tried_ = true;
     const uint32_t frame = cpu_.a[7].l;
     if (frame + 6 <= kRamSize) cpu_.a[7].l = frame + 6;
-    uint32_t buf = read_long(0x010c) & 0xffffffu;
-    if (buf < 0x80 || buf > kRamSize) buf = 0x003fa700;
-    buf = (buf - 0x40) & ~1u;
-    write_long(0x010c, buf);
+    uint32_t top = read_long(0x010c) & 0xffffffu;
+    if (top < 0x100 || top > kRamSize) top = 0x003fa700;
+    top = (top - 0x80) & ~1u;
+    write_long(0x010c, top);
+    const uint32_t pb = top;
+    const uint32_t src = launch_a0_ & 0xffffffu;
+    for (uint32_t i = 0; i < 32 && src + i < kRamSize; i++) write_byte(pb + i, read_byte(src + i));
+    const uint32_t stub = top + 32;
     static const uint8_t kStub[] = {
-        0x3f, 0x38, 0x0a, 0x58,              // MOVE.W SysMap,-(A7)
-        0xa9, 0x98,                          // _UseResFile
         0x2f, 0x3c, 0x62, 0x6f, 0x6f, 0x74,  // MOVE.L #'boot',-(A7)
         0x3f, 0x3c, 0x00, 0x02,              // MOVE.W #2,-(A7)
         0xa9, 0xa0,                          // _GetResource
@@ -143,9 +146,9 @@ void MacPlus::redirect_launch_to_boot2() {
         0x70, 0x29,                          // MOVEQ #41,D0
         0xa9, 0xc9,                          // _SysError
     };
-    for (size_t i = 0; i < sizeof(kStub); ++i) write_byte(buf + uint32_t(i), kStub[i]);
-    write_long(buf + 32, launch_a0_);
-    cpu_.pc_.l = buf;
+    for (size_t i = 0; i < sizeof(kStub); ++i) write_byte(stub + uint32_t(i), kStub[i]);
+    write_long(stub + 26, pb);
+    cpu_.pc_.l = stub;
 }
 
 uint32_t MacPlus::read_long(uint32_t address) {
