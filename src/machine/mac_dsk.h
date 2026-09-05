@@ -6,7 +6,10 @@
 
 namespace dsp {
 
-// Macintosh 400K/800K GCR floppy images: raw .dsk/.img and Disk Copy 4.2.
+// Macintosh floppy images: raw .dsk/.img and Disk Copy 4.2. 400K/800K are
+// Sony GCR. 1.44MB MFM (SuperDrive / System 6.0.8 Startup) is stored as
+// linear 2880 sectors; the first 800K is also GCR-encoded so the Plus
+// IWM can see a disk while .Sony Prime reads the full volume by LBA.
 class MacDsk {
 public:
     static constexpr int kSectorSize = 512;
@@ -17,6 +20,10 @@ public:
     bool load_file(const std::string& path, std::string* error);
     bool load_bytes(const uint8_t* data, size_t size, std::string* error);
     bool loaded() const { return loaded_; }
+    bool hd() const { return hd_; }
+    uint32_t blocks() const { return loaded_ ? uint32_t(image_.size() / kSectorSize) : 0; }
+    bool read_lba(uint32_t lba, uint8_t dest[kSectorSize]) const;
+    bool write_lba(uint32_t lba, const uint8_t src[kSectorSize]);
     int tracks() const { return tracks_; }
     int sides() const { return sides_; }
     uint8_t format_byte() const { return format_; }
@@ -47,6 +54,7 @@ private:
     int sides_ = 2;
     uint8_t format_ = 0x22;
     bool loaded_ = false;
+    bool hd_ = false;
 };
 
 }  // namespace dsp

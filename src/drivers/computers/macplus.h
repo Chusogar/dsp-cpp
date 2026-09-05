@@ -15,7 +15,8 @@
 namespace dsp {
 
 // Macintosh Plus: 68000, 128K ROM, 4MB RAM (SIMM upgrade), 512×342 1bpp,
-// IWM 800K floppy, NCR 5380 SCSI hard disk at $580000. Stock Plus is 1MB;
+// IWM 400K/800K GCR floppy (plus 1.44MB Disk Copy via .Sony Prime), NCR 5380
+// SCSI hard disk at $580000. Stock Plus is 1MB;
 // System 7.0 needs ≥2MB and the ROM's early screen buffer sits at $3FA700
 // (4MB − $5900), so a full 4MB decode matches both the memory test and video.
 class MacPlus : public Machine {
@@ -97,6 +98,10 @@ public:
     uint8_t last_kbd_reply() const { return kbd_reply_; }
     Iwm& iwm() { return iwm_; }
     Via6522& via() { return via_; }
+    bool floppy_hd() const { return iwm_.disk().hd(); }
+    uint32_t floppy_blocks() const { return iwm_.disk().blocks(); }
+    uint32_t sony_prime_count() const { return sony_prime_count_; }
+    uint32_t sony_read_bytes() const { return sony_read_bytes_; }
 
 private:
     uint8_t read_byte(uint32_t address);
@@ -117,6 +122,11 @@ private:
     void ram_at(uint32_t address, uint8_t value) { ram_[ram_index(address)] = value; }
     void clock_keyboard();
     void find_start_manager_mountvol();
+    void find_sony_driver();
+    void plant_sony_hook();
+    void mark_sony_inserted();
+    void sony_prime();
+    void sony_return(int16_t result);
     void patch_rom_startboot();
     void sanitize_mountvol_pb();
     void launch_finder_from_rom_a();
@@ -208,6 +218,11 @@ private:
     uint32_t rom_initgraf_ = 0;
     uint32_t rom_tool_[512]{};
     uint32_t restore_stub_pc_ = 0;
+    uint32_t sony_prime_rom_ = 0;
+    uint32_t sony_hook_ = 0x003f8000;
+    bool sony_hooked_ = false;
+    uint32_t sony_prime_count_ = 0;
+    uint32_t sony_read_bytes_ = 0;
     std::vector<int16_t> audio_;
 };
 

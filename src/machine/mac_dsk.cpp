@@ -39,6 +39,7 @@ int MacDsk::logical_offset(int track, int side, int sector, int sides) {
 
 void MacDsk::reset() {
     loaded_ = false;
+    hd_ = false;
     image_.clear();
     tags_.clear();
     for (int t = 0; t < kTracks; t++) {
@@ -227,7 +228,7 @@ bool MacDsk::load_file(const std::string& path, std::string* error) {
         return false;
     }
     if (!load_bytes(bytes.data(), bytes.size(), error)) {
-        if (error && error->empty()) *error = path + ": not a Macintosh 400K/800K disk";
+        if (error && error->empty()) *error = path + ": not a Macintosh 400K/800K/1.44MB disk";
         return false;
     }
     return true;
@@ -244,7 +245,8 @@ bool MacDsk::load_bytes(const uint8_t* data, size_t size, std::string* error) {
     if (size >= 0x54 && data[0] < 64 && data[0x52] == 1 && data[0x53] == 0) {
         const uint32_t dsize = be32(data + 0x40);
         const uint32_t tsize = be32(data + 0x44);
-        if (size == 0x54 + dsize + tsize && (dsize == 409600u || dsize == 819200u)) {
+        if (size == 0x54 + dsize + tsize &&
+            (dsize == 409600u || dsize == 819200u || dsize == 1474560u)) {
             payload = data + 0x54;
             payload_size = dsize;
             tag_size = tsize;
@@ -255,14 +257,20 @@ bool MacDsk::load_bytes(const uint8_t* data, size_t size, std::string* error) {
 
     if (payload_size == 409600) {
         sides_ = 1;
+        hd_ = false;
         format_ = format == 0 ? 0x02 : format;
         if (encoding == 0) format_ = 0x02;
     } else if (payload_size == 819200) {
         sides_ = 2;
+        hd_ = false;
         format_ = format == 0 ? 0x22 : format;
         if (encoding == 1 || encoding == 3) format_ = (format ? format : 0x22);
+    } else if (payload_size == 1474560) {
+        sides_ = 2;
+        hd_ = true;
+        format_ = format ? format : 0x22;
     } else {
-        if (error) *error = "Macintosh disk must be 400K or 800K";
+        if (error) *error = "Macintosh disk must be 400K, 800K, or 1.44MB";
         return false;
     }
 
@@ -275,6 +283,22 @@ bool MacDsk::load_bytes(const uint8_t* data, size_t size, std::string* error) {
     }
     loaded_ = true;
     rebuild_all();
+    return true;
+}
+
+bool MacDsk::read_lba(uint32_t lba, uint8_t dest[kSectorSize]) const {
+    if (!loaded_ || dest == nullptr) return false;
+    const size_t off = size_t(lba) * kSectorSize;
+    if (off + kSectorSize > image_.size()) return false;
+    std::memcpy(dest, image_.data() + off, kSectorSize);
+    return true;
+}
+
+bool MacDsk::write_lba(uint32_t lba, const uint8_t src[kSectorSize]) {
+    if (!loaded_ || src == nullptr) return false;
+    const size_t off = size_t(lba) * kSectorSize;
+    if (off + kSectorSize > image_.size()) return false;
+    std::memcpy(image_.data() + off, src, kSectorSize);
     return true;
 }
 

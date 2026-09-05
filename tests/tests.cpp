@@ -5508,8 +5508,23 @@ void test_mac_gcr_and_dsk() {
           "800K Mac disk is 80x2 with 12 sectors on track 0");
     check(disk.sectors_per_track(79) == 8, "inner Mac tracks have 8 sectors");
     check(disk.format_byte() == 0x22, "800K GCR format byte is 0x22");
+    check(!disk.hd(), "800K raw .dsk is not a SuperDrive image");
     check(!disk.nibbles(0, 0).empty() && disk.nibbles(0, 0)[36] == 0xd5,
           "track 0 GCR starts with an address mark after the gap");
+
+    const char* sys608 = "/tmp/macdisks/sys608/MacOS_6.0.8_System_Startup.img";
+    std::FILE* s6 = std::fopen(sys608, "rb");
+    if (s6) {
+        std::fclose(s6);
+        dsp::MacDsk hd;
+        check(hd.load_file(sys608, &error), "Disk Copy 4.2 System 6.0.8 Startup loads as a floppy");
+        check(hd.hd() && hd.blocks() == 2880, "System 6.0.8 Startup is a 1.44MB / 2880-block volume");
+        check(!hd.nibbles(0, 0).empty() && hd.nibbles(0, 0)[36] == 0xd5,
+              "the first 800K of the 1.44MB image is GCR-encoded for the Plus IWM");
+        uint8_t boot[512];
+        check(hd.read_lba(0, boot) && boot[0] == 0x4c && boot[1] == 0x4b,
+              "LBA 0 of System 6.0.8 is Macintosh boot blocks");
+    }
 
     dsp::MacPlus machine;
     check(machine.load_media(path, &error), "Mac Plus attaches a floppy before the ROM is loaded");
@@ -5581,6 +5596,29 @@ void test_mac_boot_if_present() {
     check(happy.floppy_loaded(), "boot disk stays in the drive");
     check(saw_motor, "Sony driver spins the IWM motor to search for D5 AA marks");
     check(mac_has_floppy_icon(happy), "the disk / question-mark icon stays on screen with a floppy inserted");
+
+    const char* sys608 = "/tmp/macdisks/sys608/MacOS_6.0.8_System_Startup.img";
+    std::FILE* s6f = std::fopen(sys608, "rb");
+    if (s6f) {
+        std::fclose(s6f);
+        dsp::MacPlus sys6;
+        check(sys6.init(rom, &error), "Mac Plus ROM reloads for System 6.0.8");
+        check(sys6.load_media(sys608, &error), "System 6.0.8 Startup mounts in the Sony drive");
+        check(sys6.floppy_loaded() && sys6.floppy_hd(), "the IA image sits in the floppy, not SCSI");
+        check(!sys6.scsi_loaded(), "a Disk Copy 1.44MB floppy is not wrapped as a hard disk");
+        bool saw_s6_system = false;
+        bool saw_s6_welcome = false;
+        for (int i = 0; i < 4000; i++) {
+            sys6.run_frame();
+            if (sys6.peek(0xad8) == 6 && sys6.peek(0xad9) == 'S') saw_s6_system = true;
+            if (mac_has_welcome_box(sys6)) saw_s6_welcome = true;
+        }
+        write_mac_ppm("/tmp/macplus-system6.ppm", sys6);
+        check(sys6.sony_prime_count() > 0, ".Sony Prime served the 1.44MB floppy by LBA");
+        check(sys6.sony_read_bytes() >= 1024, "the Start Manager _Reads the System 6 boot blocks");
+        check(saw_s6_system, "Start Manager copies the System 6 boot-block System name to $0AD8");
+        check(saw_s6_welcome, "System 6.0.8 draws the Welcome to Macintosh dialog");
+    }
 
     const char* hd = "/tmp/macdisks/System7_0_1.img";
     std::FILE* hf = std::fopen(hd, "rb");
