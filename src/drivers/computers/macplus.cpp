@@ -114,6 +114,40 @@ void MacPlus::launch_finder_from_rom_a() {
     cpu_.pc_.l = 0x00400bb8;
 }
 
+void MacPlus::redirect_launch_to_boot2() {
+    // PCE never hits 128K _Launch: System 7's 'boot' id 2 (Process Manager)
+    // starts the Finder. The Plus ROM JSRs boot+$2 too early for that, so we
+    // take over here — after System is open — and GetResource the same
+    // resource. Failure falls through to the original Launch PB in A0.
+    boot2_tried_ = true;
+    const uint32_t frame = cpu_.a[7].l;
+    if (frame + 6 <= kRamSize) cpu_.a[7].l = frame + 6;
+    uint32_t buf = read_long(0x010c) & 0xffffffu;
+    if (buf < 0x80 || buf > kRamSize) buf = 0x003fa700;
+    buf = (buf - 0x40) & ~1u;
+    write_long(0x010c, buf);
+    static const uint8_t kStub[] = {
+        0x3f, 0x38, 0x0a, 0x58,              // MOVE.W SysMap,-(A7)
+        0xa9, 0x98,                          // _UseResFile
+        0x2f, 0x3c, 0x62, 0x6f, 0x6f, 0x74,  // MOVE.L #'boot',-(A7)
+        0x3f, 0x3c, 0x00, 0x02,              // MOVE.W #2,-(A7)
+        0xa9, 0xa0,                          // _GetResource
+        0x20, 0x1f,                          // MOVE.L (A7)+,D0
+        0x67, 0x08,                          // BEQ fail
+        0x20, 0x40,                          // MOVEA.L D0,A0
+        0x20, 0x50,                          // MOVEA.L (A0),A0
+        0x4e, 0xd0,                          // JMP (A0)
+        0x4e, 0x71,                          // NOP
+        0x20, 0x7c, 0x00, 0x00, 0x00, 0x00,  // fail: MOVEA.L #pb,A0
+        0xa9, 0xf2,                          // _Launch
+        0x70, 0x29,                          // MOVEQ #41,D0
+        0xa9, 0xc9,                          // _SysError
+    };
+    for (size_t i = 0; i < sizeof(kStub); ++i) write_byte(buf + uint32_t(i), kStub[i]);
+    write_long(buf + 32, launch_a0_);
+    cpu_.pc_.l = buf;
+}
+
 uint32_t MacPlus::read_long(uint32_t address) {
     return (uint32_t(read_byte(address)) << 24) | (uint32_t(read_byte(address + 1)) << 16) |
            (uint32_t(read_byte(address + 2)) << 8) | read_byte(address + 3);
@@ -200,6 +234,7 @@ void MacPlus::reset() {
     pointer_seen_ = false;
     rtc_ca2_ = false;
     finder_launch_ = false;
+    boot2_tried_ = false;
     last_trap_ = 0;
     trap_count_ = 0;
     last_syserr_ = 0;
@@ -283,6 +318,7 @@ void MacPlus::on_cpu_cycles(int cycles) {
         if (op == 0xa9f2) {
             launch_count_++;
             launch_a0_ = cpu_.a[0].l;
+            if (!boot2_tried_) redirect_launch_to_boot2();
         }
         if (op == 0xa9a0 || op == 0xa81a || op == 0xa9a2 || op == 0xa1a0 || op == 0xa11a ||
             op == 0xa80c || op == 0xa81f)

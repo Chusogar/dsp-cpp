@@ -111,6 +111,7 @@ private:
     void patch_rom_startboot();
     void sanitize_mountvol_pb();
     void launch_finder_from_rom_a();
+    void redirect_launch_to_boot2();
     uint8_t keyboard_reply(uint8_t command);
     uint32_t read_long(uint32_t address);
     void write_long(uint32_t address, uint32_t value);
@@ -174,6 +175,7 @@ private:
     uint32_t decompress_count_ = 0;
     uint32_t read_ret_pc_ = 0;
     uint32_t read_pb_ = 0;
+    bool boot2_tried_ = false;
     std::vector<int16_t> audio_;
 };
 
