@@ -121,9 +121,25 @@ void MacPlus::redirect_launch_to_boot2() {
     // so do what the resource's own 24-byte relocator does: copy the body
     // onto the stack and jump there. A3 = 0 so the following
     // _ReleaseResource is a no-op (the bytes were never an RM handle).
+    //
+    // The stub then GetTrapAddress-probes Gestalt / MemoryDispatch / slots.
+    // Those OS traps are 256K-ROM only; a leftover table entry that is not
+    // the unimplemented stub makes boot 2 JSR garbage and spin in the VIA
+    // wait. Point them at a MOVEQ #-1/RTS so the stub skips those features.
     boot2_tried_ = true;
     const std::vector<uint8_t>& boot2 = scsi_.system_boot2();
     if (boot2.size() < 0x20) return;
+    uint32_t top = read_long(0x010c) & 0xffffffu;
+    if (top >= 16 && top <= kRamSize) {
+        top = (top - 8) & ~1u;
+        write_byte(top, 0x70);
+        write_byte(top + 1, 0xff);  // MOVEQ #-1,D0
+        write_byte(top + 2, 0x4e);
+        write_byte(top + 3, 0x75);  // RTS
+        write_long(0x010c, top);
+        for (uint16_t trap : {uint16_t(0x5c), uint16_t(0x5d), uint16_t(0x6e), uint16_t(0xad)})
+            write_long(0x0c00u + uint32_t(trap) * 4u, top);
+    }
     uint32_t sp = cpu_.a[7].l;
     if (sp + 6 > kRamSize) return;
     sp += 6;  // drop the A-line frame; we are not returning to _Launch
