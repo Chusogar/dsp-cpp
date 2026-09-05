@@ -117,42 +117,41 @@ void MacPlus::launch_finder_from_rom_a() {
 void MacPlus::redirect_launch_to_boot2() {
     // PCE never reaches 128K _Launch: the System 7 $FA path GetResource
     // ('boot', 2) and JSRs it with A3 = handle. 128K GetResource returns
-    // memFullErr in SysZone, and a fake handle makes _GetHandleSize bomb,
-    // so do what the resource's own 24-byte relocator does: copy the body
-    // onto the stack and jump there. A3 = 0 so the following
-    // _ReleaseResource is a no-op (the bytes were never an RM handle).
+    // memFullErr in SysZone, so copy the body (skip the GetHandleSize
+    // relocator) to a hole the 128K Start Manager left unused: under the
+    // screen, above ApplLimit. Boot 2's first act is _InitApplZone, which
+    // rebuilds $21400–ApplLimit and would wipe a copy left on the $1FCxxx
+    // stack (that stack sits inside the 4MB application heap).
     //
-    // The stub then GetTrapAddress-probes Gestalt / MemoryDispatch / slots.
-    // Those OS traps are 256K-ROM only; a leftover table entry that is not
-    // the unimplemented stub makes boot 2 JSR garbage and spin in the VIA
-    // wait. Point them at a MOVEQ #-1/RTS so the stub skips those features.
+    // A3 = 0 so the following _ReleaseResource is a no-op. Gestalt /
+    // MemoryDispatch / SlotManager are 256K-only; leftover table entries
+    // that are not the unimplemented stub make boot 2 JSR garbage. Point
+    // them at MOVEQ #-1/RTS so those probes fail cleanly.
     boot2_tried_ = true;
     const std::vector<uint8_t>& boot2 = scsi_.system_boot2();
     if (boot2.size() < 0x20) return;
-    uint32_t top = read_long(0x010c) & 0xffffffu;
-    if (top >= 16 && top <= kRamSize) {
-        top = (top - 8) & ~1u;
-        write_byte(top, 0x70);
-        write_byte(top + 1, 0xff);  // MOVEQ #-1,D0
-        write_byte(top + 2, 0x4e);
-        write_byte(top + 3, 0x75);  // RTS
-        write_long(0x010c, top);
-        for (uint16_t trap : {uint16_t(0x5c), uint16_t(0x5d), uint16_t(0x6e), uint16_t(0xad)})
-            write_long(0x0c00u + uint32_t(trap) * 4u, top);
-    }
-    uint32_t sp = cpu_.a[7].l;
-    if (sp + 6 > kRamSize) return;
-    sp += 6;  // drop the A-line frame; we are not returning to _Launch
     const uint32_t body = uint32_t(boot2.size() - 0x18);
-    if (sp < body + 0x400) return;
-    sp = (sp - body) & ~1u;
-    for (uint32_t i = 0; i < body; ++i) write_byte(sp + i, boot2[0x18 + i]);
-    cpu_.a[7].l = sp;
-    cpu_.a[0].l = sp;
-    cpu_.a[1].l = sp;
+    uint32_t top = read_long(0x010c) & 0xffffffu;
+    if (top < 0x10000 || top > kRamSize) top = 0x003fa700;
+    const uint32_t need = body + 16;
+    if (top < need + 0x20000) return;
+    uint32_t stub = (top - 8) & ~1u;
+    write_byte(stub, 0x70);
+    write_byte(stub + 1, 0xff);  // MOVEQ #-1,D0
+    write_byte(stub + 2, 0x4e);
+    write_byte(stub + 3, 0x75);  // RTS
+    const uint32_t code = (stub - body) & ~1u;
+    for (uint32_t i = 0; i < body; ++i) write_byte(code + i, boot2[0x18 + i]);
+    write_long(0x010c, code);     // BufPtr: keep the hole out of the heap
+    write_long(0x0130, 0x00200000);  // ApplLimit: InitApplZone stops at 2MB
+    for (uint16_t trap : {uint16_t(0x5c), uint16_t(0x5d), uint16_t(0x6e), uint16_t(0xad)})
+        write_long(0x0c00u + uint32_t(trap) * 4u, stub);
+    cpu_.a[7].l = code;  // drop the A-line frame; stack grows toward ApplLimit
+    cpu_.a[0].l = code;
+    cpu_.a[1].l = code;
     cpu_.a[3].l = 0;
     cpu_.d[0].l = body;
-    cpu_.pc_.l = sp;
+    cpu_.pc_.l = code;
 }
 
 uint32_t MacPlus::read_long(uint32_t address) {
