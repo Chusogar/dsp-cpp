@@ -59,7 +59,17 @@ public:
     uint32_t debug_sp() const { return cpu_.a[7].l; }
     uint32_t debug_d0() const { return cpu_.d[0].l; }
     uint32_t debug_a0() const { return cpu_.a[0].l; }
+    uint32_t debug_a5() const { return cpu_.a[5].l; }
     uint32_t debug_a6() const { return cpu_.a[6].l; }
+    uint32_t debug_reg_d(int n) const { return cpu_.d[n & 7].l; }
+    uint32_t debug_reg_a(int n) const { return cpu_.a[n & 7].l; }
+    uint16_t last_trap() const { return last_trap_; }
+    uint32_t trap_count() const { return trap_count_; }
+    uint16_t trap_log(int i) const { return trap_log_[static_cast<unsigned>(i) & 31u]; }
+    uint16_t last_syserr() const { return last_syserr_; }
+    uint32_t launch_count() const { return launch_count_; }
+    uint32_t launch_a0() const { return launch_a0_; }
+    uint32_t decompress_count() const { return decompress_count_; }
     uint8_t debug_im() const { return cpu_.cc.im; }
     uint8_t peek(uint32_t address) { return read_byte(address); }
     uint8_t peek_ram(uint32_t address) const { return ram_[ram_index(address)]; }
@@ -101,7 +111,12 @@ private:
     void patch_rom_startboot();
     void sanitize_mountvol_pb();
     void launch_finder_from_rom_a();
-    static uint8_t keyboard_reply(uint8_t command);
+    uint8_t keyboard_reply(uint8_t command);
+    uint32_t read_long(uint32_t address);
+    void write_long(uint32_t address, uint32_t value);
+    void maybe_decompress_handle(uint32_t handle);
+    bool maybe_decompress_ptr(uint32_t ptr, uint32_t handle);
+    void sweep_compressed_handles();
 
     M68000 cpu_;
     Via6522 via_;
@@ -139,8 +154,26 @@ private:
     uint8_t kbd_reply_ = 0x7b;
     uint8_t kbd_shift_ = 0x7b;
     int kbd_bits_ = 0;
+    uint8_t kbd_queue_[8]{};
+    int kbd_qhead_ = 0;
+    int kbd_qtail_ = 0;
+    bool kbd_enter_ = false;
+    bool kbd_escape_ = false;
+    bool kbd_space_ = false;
+    void kbd_enqueue(uint8_t code);
+    uint8_t kbd_dequeue();
     uint32_t mount_vol_pc_ = 0;
     bool finder_launch_ = false;
+    uint16_t last_trap_ = 0;
+    uint32_t trap_count_ = 0;
+    uint16_t trap_log_[32]{};
+    uint16_t last_syserr_ = 0;
+    uint32_t launch_count_ = 0;
+    uint32_t launch_a0_ = 0;
+    uint32_t decompress_pc_ = 0;
+    uint32_t decompress_count_ = 0;
+    uint32_t read_ret_pc_ = 0;
+    uint32_t read_pb_ = 0;
     std::vector<int16_t> audio_;
 };
 

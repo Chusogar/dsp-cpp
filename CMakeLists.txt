@@ -119,6 +119,7 @@ add_executable(dsp
   src/machine/mac_dsk.cpp
   src/machine/mac_rtc.cpp
   src/machine/ncr5380_hdd.cpp
+  src/machine/mac_dcmp.cpp
   src/machine/iwm.cpp
   src/machine/cia8520.cpp
   src/machine/amiga_adf.cpp
@@ -336,6 +337,7 @@ add_executable(dsp_tests
   src/machine/mac_dsk.cpp
   src/machine/mac_rtc.cpp
   src/machine/ncr5380_hdd.cpp
+  src/machine/mac_dcmp.cpp
   src/machine/iwm.cpp
   src/machine/cia8520.cpp
   src/machine/amiga_adf.cpp

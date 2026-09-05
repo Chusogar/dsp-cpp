@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "core/rom_loader.h"
+#include "machine/mac_dcmp.h"
 
 namespace dsp {
 namespace {
@@ -83,12 +84,12 @@ void MacPlus::find_start_manager_mountvol() {
 }
 
 void MacPlus::patch_rom_startboot() {
-    // 128K header +$A is StartBoot: BRA to the cold memory test. A 64K-era
-    // stub (copyright 1983, 1984) does CLR ioPosOffset / _Write / BNE fail
-    // / JMP ROMBase+$A on success. On a Plus that BRA wipes RAM. Point +$A
-    // at the Start Manager Finder tail so those JMPs keep loading System 7
-    // instead of cold-booting. Later hits are turned into RTS once Finder
-    // is named so the tail is not re-entered on every write.
+    // 128K header +$A is StartBoot: BRA to the cold memory test. System 7's
+    // 'boot' resource writes the boot blocks and JMP ROMBase+$A, expecting
+    // StartBoot to take over. On a Plus that BRA wipes RAM. Point +$A at
+    // the Start Manager tail ($400A90) so those JMPs keep loading System
+    // and the Finder instead of cold-booting. Later hits become RTS once
+    // CurApName is Finder so the tail is not re-entered on every write.
     if (rom_.size() < 0x10 || rom_[0x0a] != 0x60 || rom_[0x0b] != 0x00) return;
     if (rom_[0x0c] != 0x00 || rom_[0x0d] != 0x56) return;  // v3 BRA $400062
     constexpr uint32_t kStartMgr = 0x400a90;
@@ -105,11 +106,68 @@ void MacPlus::patch_rom_startboot() {
 }
 
 void MacPlus::launch_finder_from_rom_a() {
-    // After CurApName is Finder, further JMP ROM+$A would re-enter
-    // $400A90 and smash the loaded app. RTS back to the 64K stub caller.
+    // ROM+$A is the Start Manager tail. Re-entering it after the Finder is
+    // named (System 7's 'boot' stub JMPs here on every boot-block write)
+    // would smash A5. Bounce to the tail RTS at $400BB8 instead.
     if (ram_at(0x0910) != 6 || ram_at(0x0911) != 'F') return;
     finder_launch_ = true;
     cpu_.pc_.l = 0x00400bb8;
+}
+
+uint32_t MacPlus::read_long(uint32_t address) {
+    return (uint32_t(read_byte(address)) << 24) | (uint32_t(read_byte(address + 1)) << 16) |
+           (uint32_t(read_byte(address + 2)) << 8) | read_byte(address + 3);
+}
+
+void MacPlus::write_long(uint32_t address, uint32_t value) {
+    write_byte(address, uint8_t(value >> 24));
+    write_byte(address + 1, uint8_t(value >> 16));
+    write_byte(address + 2, uint8_t(value >> 8));
+    write_byte(address + 3, uint8_t(value));
+}
+
+bool MacPlus::maybe_decompress_ptr(uint32_t ptr, uint32_t handle) {
+    ptr &= 0xffffffu;
+    if (ptr < 0x100 || ptr + 18 > kRamSize) return false;
+    if (read_long(ptr) != 0xa89f6572u) return false;
+    const uint32_t expect = read_long(ptr + 8);
+    if (expect < 2 || expect > 0x100000) return false;
+    uint32_t data_len = expect + 0x100;
+    if (data_len < 0x20000) data_len = 0x20000;
+    if (ptr + data_len > kRamSize) data_len = kRamSize - ptr;
+    std::vector<uint8_t> src(data_len);
+    for (uint32_t i = 0; i < data_len; i++) src[i] = read_byte(ptr + i);
+    const std::vector<uint8_t> out = mac_decompress_resource(src.data(), src.size());
+    if (out.empty()) return false;
+    uint32_t buf = read_long(0x010c) & 0xffffffu;
+    const uint32_t need = uint32_t((out.size() + 1) & ~size_t(1));
+    if (buf < need + 0x2000) return false;
+    buf = (buf - need) & ~1u;
+    for (size_t i = 0; i < out.size(); i++) write_byte(buf + uint32_t(i), out[i]);
+    if (need > out.size()) write_byte(buf + uint32_t(out.size()), 0);
+    if (handle >= 0x100 && handle + 4 <= kRamSize) write_long(handle, buf);
+    write_long(0x010c, buf);
+    decompress_count_++;
+    return true;
+}
+
+void MacPlus::maybe_decompress_handle(uint32_t handle) {
+    handle &= 0xffffffu;
+    if (handle < 0x100 || handle + 4 > kRamSize) return;
+    maybe_decompress_ptr(read_long(handle) & 0xffffffu, handle);
+}
+
+void MacPlus::sweep_compressed_handles() {
+    uint32_t hi = read_long(0x010c) & 0xffffffu;
+    if (hi < 0x8000 || hi > kRamSize) hi = 0x40000;
+    uint32_t start = read_long(0x02a6) & 0xffffffu;
+    if (start < 0x1000 || start >= hi) start = 0x1400;
+    for (uint32_t h = start; h + 8 < hi; h += 4) {
+        const uint32_t p = read_long(h) & 0xffffffu;
+        if (p < 0x1008 || p + 18 >= kRamSize) continue;
+        if (read_long(p) != 0xa89f6572u) continue;
+        maybe_decompress_handle(h);
+    }
 }
 
 void MacPlus::sanitize_mountvol_pb() {
@@ -142,6 +200,16 @@ void MacPlus::reset() {
     pointer_seen_ = false;
     rtc_ca2_ = false;
     finder_launch_ = false;
+    last_trap_ = 0;
+    trap_count_ = 0;
+    last_syserr_ = 0;
+    launch_count_ = 0;
+    launch_a0_ = 0;
+    decompress_pc_ = 0;
+    decompress_count_ = 0;
+    read_ret_pc_ = 0;
+    read_pb_ = 0;
+    for (uint16_t& t : trap_log_) t = 0;
     scc_ptr_[0] = scc_ptr_[1] = 0;
     scc_wr1_[0] = scc_wr1_[1] = 0;
     scc_dcd_[0] = scc_dcd_[1] = false;
@@ -152,6 +220,8 @@ void MacPlus::reset() {
     kbd_reply_ = 0x7b;
     kbd_shift_ = 0x7b;
     kbd_bits_ = 0;
+    kbd_qhead_ = kbd_qtail_ = 0;
+    kbd_enter_ = kbd_escape_ = kbd_space_ = false;
     audio_.clear();
     via_.reset();
     iwm_.reset();
@@ -175,8 +245,48 @@ void MacPlus::update_irqs() {
 
 void MacPlus::on_cpu_cycles(int cycles) {
     const uint32_t pc = cpu_.pc();
+    if (decompress_pc_ && pc == decompress_pc_) {
+        decompress_pc_ = 0;
+        uint32_t h = cpu_.a[0].l & 0xffffffu;
+        if (!h) h = cpu_.d[0].l & 0xffffffu;
+        maybe_decompress_handle(h);
+    }
+    if (read_ret_pc_ && pc == read_ret_pc_) {
+        read_ret_pc_ = 0;
+        const uint32_t pb = read_pb_ & 0xffffffu;
+        if (pb + 0x24u < kRamSize) {
+            const uint32_t buf = read_long(pb + 0x20) & 0xffffffu;
+            if (buf >= 0x1008 && buf + 18 < kRamSize && read_long(buf) == 0xa89f6572u) {
+                const uint32_t hint = read_long(buf - 4) & 0xffffffu;
+                const uint32_t before = decompress_count_;
+                if (!maybe_decompress_ptr(buf, hint)) maybe_decompress_ptr(buf, 0);
+                if (decompress_count_ != before) write_long(pb + 0x20, read_long(0x010c));
+            }
+        }
+    }
     if (mount_vol_pc_ && pc == mount_vol_pc_) sanitize_mountvol_pb();
     if (pc == 0x40000au || pc == 0x40000cu) launch_finder_from_rom_a();
+    const uint32_t ppc = cpu_.ppc();
+    const uint16_t op = uint16_t((uint16_t(read_byte(ppc)) << 8) | read_byte(ppc + 1));
+    if ((op & 0xf000) == 0xa000) {
+        last_trap_ = op;
+        trap_log_[trap_count_ & 31u] = op;
+        trap_count_++;
+        if (op == 0xa9c9) last_syserr_ = cpu_.d[0].wl();
+        if (op == 0xa9f2) {
+            launch_count_++;
+            launch_a0_ = cpu_.a[0].l;
+        }
+        if (op == 0xa9a0 || op == 0xa81a || op == 0xa9a2 || op == 0xa1a0 || op == 0xa11a ||
+            op == 0xa80c || op == 0xa81f)
+            decompress_pc_ = (ppc + 2) & 0xffffffu;
+        if (op == 0xa00f) sanitize_mountvol_pb();
+        if (op == 0xa9f0 || op == 0xa9f2) sweep_compressed_handles();
+        if (op == 0xa002) {
+            read_ret_pc_ = (ppc + 2) & 0xffffffu;
+            read_pb_ = cpu_.a[0].l;
+        }
+    }
     iwm_.tick(cycles);
     via_acc_ += cycles;
     while (via_acc_ >= 10) {
@@ -219,11 +329,21 @@ uint8_t MacPlus::via_pb_r() {
     return val;
 }
 
+void MacPlus::kbd_enqueue(uint8_t code) {
+    if (kbd_qtail_ - kbd_qhead_ >= 8) return;
+    kbd_queue_[kbd_qtail_++ & 7] = code;
+}
+
+uint8_t MacPlus::kbd_dequeue() {
+    if (kbd_qhead_ == kbd_qtail_) return 0x7b;
+    return kbd_queue_[kbd_qhead_++ & 7];
+}
+
 uint8_t MacPlus::keyboard_reply(uint8_t command) {
     switch (command) {
         case 0x10:  // Inquiry
         case 0x14:  // Instant
-            return 0x7b;
+            return kbd_dequeue();
         case 0x16:  // Model number: US Macintosh Plus (M0110A)
             return 0x0b;
         case 0x36:  // Self-test
@@ -282,7 +402,10 @@ uint8_t MacPlus::scc_read(uint32_t address) {
     uint8_t rr = scc_ptr_[ch];
     scc_ptr_[ch] = 0;
     if (rr == 0) {
-        uint8_t v = 0x04;  // Tx empty
+        // RR0 idle: Rx empty, Tx buffer empty (bit2), CTS (bit5). LocalTalk
+        // and the System 7 .MPP INIT spin if CTS never asserts. DCD (bit3)
+        // stays the mouse quadrature line on both channels — do not force it.
+        uint8_t v = 0x24;
         if (scc_dcd_[ch]) v = uint8_t(v | 0x08);
         return v;
     }
@@ -295,7 +418,16 @@ void MacPlus::scc_write(uint32_t address, uint8_t value) {
     const bool data_reg = (which & 2) != 0;
     if (data_reg) return;
     if (scc_ptr_[ch] == 0) {
+        // WR0: bits 2-0 select the next register; bits 5-3 are a command.
+        // Command 2 (Reset Ext/Status) is how the Plus ROM mouse ISR drops
+        // IPL2 after a DCD edge. Ignoring it leaves scc_irq_ stuck and the
+        // CPU never sees VBL again.
+        const uint8_t cmd = uint8_t((value >> 3) & 7);
         scc_ptr_[ch] = uint8_t(value & 7);
+        if (cmd == 2 || cmd == 7) {
+            scc_irq_ = false;
+            update_irqs();
+        }
         return;
     }
     if (scc_ptr_[ch] == 1) scc_wr1_[ch] = value;
@@ -441,9 +573,19 @@ void MacPlus::run_frame() {
         }
     }
     render();
+    if (launch_count_ && decompress_count_ == 0) sweep_compressed_handles();
 }
 
 void MacPlus::set_inputs(const MachineInputs& inputs) {
+    auto edge = [this](bool down, bool& prev, uint8_t make) {
+        if (down && !prev) kbd_enqueue(make);
+        if (!down && prev) kbd_enqueue(uint8_t(make | 0x80));
+        prev = down;
+    };
+    edge(inputs.key(Key::Enter), kbd_enter_, 0x24);
+    edge(inputs.key(Key::Escape), kbd_escape_, 0x35);
+    edge(inputs.key(Key::Space), kbd_space_, 0x31);
+
     mouse_button_ = inputs.pointer_button1;
     if (!inputs.has_pointer) return;
     if (!pointer_seen_) {

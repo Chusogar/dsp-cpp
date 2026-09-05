@@ -28,6 +28,9 @@ void Ncr5380Hdd::reset() {
     status_ = message_ = 0;
     last_cmd_ = 0;
     cmd_count_ = 0;
+    write_count_ = 0;
+    last_write_lba_ = 0;
+    last_write_bytes_ = 0;
     xfer_.clear();
     xfer_pos_ = 0;
     xfer_done_ = 0;
@@ -132,14 +135,33 @@ void Ncr5380Hdd::wrap_raw_hfs() {
     image_[512 + 0x1f1] = uint8_t(sz);
     std::memcpy(image_.data() + 1024, hfs.data(), hfs.size());
     // System 7.0.1 boot blocks use bbVersion $44, so the Plus ROM JSRs
-    // $2(boot). That code _SysError $62 on a 128K ROM and never returns.
-    // RTS lets the ROM Start Manager MountVol and load System itself.
+    // $2(boot). Stock code at $8A tests ROM85 / a machine-ID table and
+    // often _SysError $62 on a 128K ROM. The generic System 7 path at $FA
+    // MountVols, opens System and JMPs 'boot' id 2 — that is how 7.0.1
+    // starts on a real Plus. Force that path. Leave the JSR return on the
+    // stack so a failure RTS falls back to the ROM Start Manager.
     uint8_t* boot = image_.data() + 1024;
-    if (hfs.size() >= 1024 && boot[0] == 'L' && boot[1] == 'K' && boot[6] == 0x44 &&
+    if (hfs.size() >= 0x100 && boot[0] == 'L' && boot[1] == 'K' && boot[6] == 0x44 &&
         boot[0x8a] == 0x4a && boot[0x8b] == 0x78 && boot[0xd8] == 0xa9 &&
-        boot[0xd9] == 0xc9) {
-        boot[2] = 0x4e;
-        boot[3] = 0x75;
+        boot[0xd9] == 0xc9 && boot[0xfa] == 0x41 && boot[0xfb] == 0xfa) {
+        boot[0x8a] = 0x2e;  // MOVE.L A7, D7  (MountVol parameter block)
+        boot[0x8b] = 0x0f;
+        boot[0x8c] = 0x60;  // BRA.W $FA
+        boot[0x8d] = 0x00;
+        boot[0x8e] = 0x00;
+        boot[0x8f] = 0x6c;
+    }
+    // ROM _Launch only accepts APPL. System 7's Finder is type FNDR, so the
+    // 128K Launch fallback reads a bit of the file and _SysError 26.
+    static const uint8_t kFinderFndr[] = {0x06, 'F', 'i', 'n', 'd', 'e', 'r', 0xb4, 0x02, 0x00,
+                                          0x00, 0x00, 'F', 'N', 'D', 'R', 'M', 'A', 'C', 'S'};
+    for (size_t i = 0; i + sizeof(kFinderFndr) <= hfs.size(); ++i) {
+        if (std::equal(std::begin(kFinderFndr), std::end(kFinderFndr), boot + i)) {
+            boot[i + 12] = 'A';
+            boot[i + 13] = 'P';
+            boot[i + 14] = 'P';
+            boot[i + 15] = 'L';
+        }
     }
     blocks_ = uint32_t(image_.size() / 512);
 }
@@ -347,6 +369,9 @@ void Ncr5380Hdd::take_byte() {
                           (uint32_t(cdb_[4]) << 8) | cdb_[5];
                 const size_t off = size_t(lba) * 512;
                 const size_t n = std::min(xfer_.size(), image_.size() - off);
+                write_count_++;
+                last_write_lba_ = lba;
+                last_write_bytes_ = uint32_t(n);
                 if (off < image_.size()) std::memcpy(image_.data() + off, xfer_.data(), n);
             }
             finish_command();

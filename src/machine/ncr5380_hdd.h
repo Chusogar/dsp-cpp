@@ -21,6 +21,9 @@ public:
     const uint8_t* last_cdb() const { return cdb_; }
     uint32_t cmd_count() const { return cmd_count_; }
     uint8_t cmd_log(int i) const { return cmd_log_[static_cast<unsigned>(i) & 15u]; }
+    uint32_t write_count() const { return write_count_; }
+    uint32_t last_write_lba() const { return last_write_lba_; }
+    uint32_t last_write_bytes() const { return last_write_bytes_; }
     uint8_t image_at(uint32_t offset) const {
         return offset < image_.size() ? image_[offset] : 0;
     }
@@ -92,6 +95,9 @@ private:
     uint32_t last_lba_ = 0;
     uint32_t cmd_count_ = 0;
     uint8_t cmd_log_[16]{};
+    uint32_t write_count_ = 0;
+    uint32_t last_write_lba_ = 0;
+    uint32_t last_write_bytes_ = 0;
 
     std::vector<uint8_t> xfer_;
     size_t xfer_pos_ = 0;
