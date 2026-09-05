@@ -256,17 +256,25 @@ uint32_t MacPlus::plant_screen_port(uint32_t below) {
     // $3FA700. Color QD's GetCWMgrPort wants a GrafPtr; a 1-bit port
     // is enough for TextSize / PaintRgn on the Plus.
     const uint32_t port = (below - 0x70) & ~1u;
-    const uint32_t rgn_h = (port - 4) & ~1u;
-    const uint32_t rgn_b = (rgn_h - 0x18) & ~1u;
-    const uint32_t rgn = rgn_b + 8;
-    write_long(rgn_b, 0x80000000u | 0x18u);
-    write_long(rgn_b + 4, rgn_h);
-    write_long(rgn_h, rgn);
-    write_word(rgn, 10);       // rgnSize: rectangular
-    write_word(rgn + 2, 0);    // top
-    write_word(rgn + 4, 0);    // left
-    write_word(rgn + 6, 342);  // bottom
-    write_word(rgn + 8, 512);  // right
+    auto make_rgn = [this](uint32_t handle, uint32_t block) {
+        write_long(block, 0x80000000u | 0x18u);
+        write_long(block + 4, handle);
+        write_long(handle, block + 8);
+        write_word(block + 8, 10);
+        write_word(block + 10, 0);
+        write_word(block + 12, 0);
+        write_word(block + 14, 342);
+        write_word(block + 16, 512);
+    };
+    // Separate visRgn and clipRgn. Do *not* point GrayRgn at either:
+    // the Window Manager SetHandleSize-grows GrayRgn and would smash
+    // the port sitting next to a shared handle.
+    const uint32_t clip_h = (port - 4) & ~1u;
+    const uint32_t clip_b = (clip_h - 0x18) & ~1u;
+    const uint32_t vis_h = (clip_b - 4) & ~1u;
+    const uint32_t vis_b = (vis_h - 0x18) & ~1u;
+    make_rgn(vis_h, vis_b);
+    make_rgn(clip_h, clip_b);
     for (uint32_t i = 0; i < 0x6c; i++) write_byte(port + i, 0);
     write_long(port + 2, 0x003fa700u);  // portBits.baseAddr
     write_word(port + 6, 64);           // rowBytes
@@ -278,8 +286,8 @@ uint32_t MacPlus::plant_screen_port(uint32_t below) {
     write_word(port + 18, 0);
     write_word(port + 20, 342);
     write_word(port + 22, 512);
-    write_long(port + 24, rgn_h);  // visRgn
-    write_long(port + 28, rgn_h);  // clipRgn
+    write_long(port + 24, vis_h);
+    write_long(port + 28, clip_h);
     for (uint32_t i = 0; i < 8; i++) write_byte(port + 40 + i, 0xff);  // pnPat
     write_word(port + 60, 1);   // pnSize.v
     write_word(port + 62, 1);   // pnSize.h
@@ -288,8 +296,7 @@ uint32_t MacPlus::plant_screen_port(uint32_t below) {
     grafport_ = port;
     write_long(0x0a26, port);  // thePort
     write_long(0x09de, port);  // WMgrPort
-    write_long(0x0a20, rgn_h); // GrayRgn
-    return rgn_b;
+    return vis_b;
 }
 
 void MacPlus::snapshot_rom_tool_traps() {
@@ -327,8 +334,12 @@ void MacPlus::restore_plus_stubs() {
     write_long(0x0c00 + 0xad * 4, trap_stub_);
     if (cwmgr_stub_ && cwmgr_stub_ + 6 <= kRamSize)
         write_long(0x0e00 + 0x16f * 4, cwmgr_stub_);
-    if (grafport_ && (read_long(0x0a26) & 0xffffffu) >= 0xffff00u) write_long(0x0a26, grafport_);
-    if (grafport_ && (read_long(0x09de) & 0xffffffu) >= 0xffff00u) write_long(0x09de, grafport_);
+    if (grafport_) {
+        const uint32_t tp = read_long(0x0a26) & 0xffffffu;
+        if (tp < 0x10000 || tp >= 0xffff00u) write_long(0x0a26, grafport_);
+        const uint32_t wm = read_long(0x09de) & 0xffffffu;
+        if (wm < 0x10000 || wm >= 0xffff00u) write_long(0x09de, grafport_);
+    }
 }
 
 void MacPlus::sanitize_mountvol_pb() {
@@ -476,16 +487,14 @@ void MacPlus::on_cpu_cycles(int cycles) {
         // Boot 2 _TextSize with A1=$FFFF walks off through a nil CGrafPort
         // (GetCWMgrPort is not a real color WM port on 128K). Skip that
         // A-line; the 6-byte exception frame is already on the stack.
-        // Only a true nil port (0 / $FFFF / $FFFFFF). $3742 is a heap
-        // GrafPtr and skipping that TextSize left PaintRgn looping in ROM.
-        if (boot2_tried_ && op == 0xa868) {
-            const uint32_t a1 = cpu_.a[1].l & 0xffffffu;
-            if (a1 == 0 || a1 == 0xffffu) {
-                const uint32_t sp = cpu_.a[7].l & 0xffffffu;
-                const uint32_t stacked = read_long(sp + 2) & 0xffffffu;
-                if (stacked == ppc || stacked == ((ppc + 2) & 0xffffffu)) cpu_.a[7].l = sp + 6;
-                cpu_.pc_.l = (ppc + 2) & 0xffffffu;
-            }
+        // A1 below $10000 is either nil ($0 / $FFFF) or a low-heap pointer
+        // that Color QD TextSize cannot follow (A1=$3742 / D0=-108 crashed
+        // the 68000 to $A0007E6E). Skip those A-lines.
+        if (boot2_tried_ && op == 0xa868 && (cpu_.a[1].l & 0xffffffu) < 0x10000u) {
+            const uint32_t sp = cpu_.a[7].l & 0xffffffu;
+            const uint32_t stacked = read_long(sp + 2) & 0xffffffu;
+            if (stacked == ppc || stacked == ((ppc + 2) & 0xffffffu)) cpu_.a[7].l = sp + 6;
+            cpu_.pc_.l = (ppc + 2) & 0xffffffu;
         }
     }
     iwm_.tick(cycles);
