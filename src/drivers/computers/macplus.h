@@ -120,6 +120,7 @@ private:
     void sweep_compressed_handles();
     void restore_plus_stubs();
     void snapshot_rom_tool_traps();
+    void protect_plus_traps(uint32_t address);
 
     M68000 cpu_;
     Via6522 via_;

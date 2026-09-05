@@ -264,6 +264,25 @@ void MacPlus::snapshot_rom_tool_traps() {
     if (!rom_initgraf_ && rom_tool_[0x6e]) rom_initgraf_ = rom_tool_[0x6e];
 }
 
+void MacPlus::protect_plus_traps(uint32_t address) {
+    if (!boot2_tried_ || !trap_stub_) return;
+    address &= 0xffffffu;
+    auto put = [this](uint32_t addr, uint32_t v) {
+        ram_at(addr, uint8_t(v >> 24));
+        ram_at(addr + 1, uint8_t(v >> 16));
+        ram_at(addr + 2, uint8_t(v >> 8));
+        ram_at(addr + 3, uint8_t(v));
+    };
+    if (address >= 0x0c00 + 0xad * 4 && address < 0x0c00 + 0xad * 4 + 4)
+        put(0x0c00 + 0xad * 4, trap_stub_);
+    if (cwmgr_stub_ && address >= 0x0e00 + 0x16f * 4 && address < 0x0e00 + 0x16f * 4 + 4)
+        put(0x0e00 + 0x16f * 4, cwmgr_stub_);
+    if (address >= 0x0e00 + 0x50 * 4 && address < 0x0e00 + 0x70 * 4) {
+        const int i = int((address - 0x0e00) / 4);
+        if (rom_tool_[i]) put(0x0e00 + uint32_t(i) * 4, rom_tool_[i]);
+    }
+}
+
 void MacPlus::restore_plus_stubs() {
     if (!trap_stub_ || trap_stub_ + 4 > kRamSize) return;
     // Only classic QuickDraw / text ($50–$6F). A full Toolbox rewind
@@ -605,6 +624,7 @@ void MacPlus::write_byte(uint32_t address, uint8_t value) {
     // and $600000 is the overlay-time RAM window documented for 128K/512K/Plus.
     if (address < 0x400000) {
         ram_at(address, value);
+        protect_plus_traps(address);
         return;
     }
     if (address >= 0x580000 && address < 0x600000) {
