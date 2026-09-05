@@ -14,12 +14,12 @@
 
 namespace dsp {
 
-// Macintosh Plus: 68000, 128K ROM, 4MB RAM (SIMM upgrade), 512×342 1bpp,
-// IWM 400K/800K GCR floppy (MAME macplus add_35 / MFD51W). 1.44MB SuperDrive
-// is SWIM + add_35_hd on macsefd, not this machine. NCR 5380
-// SCSI hard disk at $580000. Stock Plus is 1MB;
-// System 7.0 needs ≥2MB and the ROM's early screen buffer sits at $3FA700
-// (4MB − $5900), so a full 4MB decode matches both the memory test and video.
+// Macintosh Plus (MAME mac128_state::macplus): 68000 @ 7.8336 MHz, 128K ROM,
+// 4MB RAM (SIMM upgrade), 512×342 1bpp, IWM + two add_35 / MFD51W 800K GCR
+// connectors (internal + empty external). 1.44MB SuperDrive is SWIM +
+// add_35_hd on macsefd, not this machine. NCR 5380 at $580000 with IRQ pin
+// 23 unconnected. Stock Plus is 1MB; System 7.0 needs ≥2MB and the ROM's
+// early screen buffer sits at $3FA700 (4MB − $5900).
 class MacPlus : public Machine {
 public:
     static constexpr uint32_t kCpuClock = 7833600;

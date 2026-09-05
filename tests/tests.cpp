@@ -5526,6 +5526,36 @@ void test_mac_gcr_and_dsk() {
     dsp::MacPlus machine;
     check(machine.load_media(path, &error), "Mac Plus attaches a floppy before the ROM is loaded");
     check(machine.floppy_loaded(), "Mac Plus reports the floppy");
+
+    // MAME iwm_device::control + mac128_state::devsel_w: ENABLE selects
+    // drive 1 (internal MFD51W), SELECT picks the empty external unit.
+    dsp::Iwm& iwm = machine.iwm();
+    auto set_phases = [&iwm](int phases) {
+        iwm.write(uint8_t((phases & 1) ? 1 : 0), 0);
+        iwm.write(uint8_t((phases & 2) ? 3 : 2), 0);
+        iwm.write(uint8_t((phases & 4) ? 5 : 4), 0);
+        iwm.write(6, 0);  // LSTRB off
+    };
+    auto status_sense = [&iwm]() {
+        iwm.write(14, 0);  // Q7 = 0
+        return iwm.read(13);  // Q6 = 1
+    };
+    check(iwm.selected_drive() == 0, "IWM reset leaves no drive selected");
+    iwm.write(9, 0);
+    iwm.write(10, 0);
+    check(iwm.selected_drive() == 1, "IWM ENABLE selects the internal MFD51W");
+    iwm.set_hdsel(true);
+    set_phases(0);
+    check((status_sense() & 0x80) == 0, "internal 800K disk reports DiskInPlace");
+    iwm.write(11, 0);
+    check(iwm.selected_drive() == 2, "IWM SELECT selects the external MFD51W");
+    iwm.set_hdsel(true);
+    set_phases(0);
+    check((status_sense() & 0x80) != 0, "empty external drive reports NoDisk");
+    iwm.set_hdsel(false);
+    set_phases(7);
+    check((status_sense() & 0x80) == 0, "empty external MFD51W still exists (NoDrive=0)");
+    check(machine.floppy_loaded(), "SELECT does not unload the internal disk");
 }
 
 void write_mac_lk_disk(const std::string& path) {

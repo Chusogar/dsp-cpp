@@ -662,14 +662,14 @@ void MacPlus::on_cpu_cycles(int cycles) {
 }
 
 uint8_t MacPlus::via_pa_r() {
-    // PA7 is SCC Wait/Request (idle high). PA6–PA0 are outputs after the
-    // ROM programs DDR-A; return them pulled-up so a read-modify-write
-    // before that, or a mixed out_a() byte, cannot force the alternate
-    // screen (PA6=0) or pulse overlay (PA4=0).
-    return 0xff;
+    // MAME mac_via_in_a: 0x81 — PA7 SCC Wait/Request idle-high. Overlay
+    // and the screen buffer are outputs; via_pa_w only honors DDR bits so
+    // a mixed out_a() cannot clear PA4/PA6 while they are still inputs.
+    return 0x81;
 }
 
 uint8_t MacPlus::via_pb_r() {
+    // MAME mac_via_in_b: PB6 pulled high, mouse Y2/X2, button, RTC data.
     uint8_t val = 0x40;
     val = uint8_t(val | (mouse_bit_[1] << 5));
     val = uint8_t(val | (mouse_bit_[0] << 4));
@@ -724,18 +724,21 @@ void MacPlus::clock_keyboard() {
 }
 
 void MacPlus::via_pa_w(uint8_t data) {
+    // MAME mac_via_out_a: PA6 screen buffer, PA5 IWM hdsel, PA4 overlay
+    // (Plus only; SE clears overlay on the first $400000 fetch), PA3
+    // main sound page, PA2–0 volume. The 6522 callback is the mixed
+    // port, so honor DDR the way the pin would be driven.
     const uint8_t ddr = via_.ddr_a();
     if (ddr & 0x40) screen_buffer_ = (data & 0x40) ? 1 : 0;
     if (ddr & 0x20) iwm_.set_hdsel((data & 0x20) != 0);
     if (ddr & 0x08) main_sound_ = (data & 0x08) != 0;
     if (ddr & 0x07) snd_vol_ = data & 7;
-    // PCE/macplus: on a Plus, overlay is VIA PA4 and follows the pin
-    // live. The 6522 callback is already DDR-masked, so a later volume
-    // RMW keeps PA4 low once the ROM has driven it that way.
     if (ddr & 0x10) overlay_ = (data & 0x10) != 0;
 }
 
 void MacPlus::via_pb_w(uint8_t data) {
+    // MAME mac_via_out_b: PB7 /sndenb, PB2–0 RTC. Plus leaves SCSI IRQ
+    // (SE PB6 mask) disconnected.
     snd_enable_ = (data & 0x80) == 0;
     rtc_.ce_w((data & 0x04) != 0);
     rtc_.clk_w((data & 0x02) != 0);
@@ -792,14 +795,22 @@ uint32_t MacPlus::ram_index(uint32_t address) const {
 }
 
 uint8_t MacPlus::read_byte(uint32_t address) {
+    // MAME macplus_map / mac128.cpp Memory Map:
+    //   $000000–$3FFFFF  RAM, or ROM while VIA PA4 overlay is set
+    //   $400000–$4FFFFF  ROM (A17 wired to /OE → $42xxxx open bus)
+    //   $580000–$5FFFFF  NCR 5380 (Plus only; IRQ pin 23 unconnected)
+    //   $600000–$7FFFFF  RAM window (MAME mac512ke_map; Plus hardware still
+    //                    decodes it — macplus_map omits the handler)
+    //   $800000–$9FFFFF  SCC read    $A00000–$BFFFFF  SCC write
+    //   $C00000–$DFFFFF  IWM         $E80000–$EFFFFF  VIA (VPA)
     address &= 0xffffff;
     if (address < 0x400000) {
         if (overlay_) return rom_[address & (kRomSize - 1)];
         return ram_at(address);
     }
     // 128K Plus ROMs decode A17 onto /OE: $420000 is open bus, $440000 still
-    // hits ROM[0]. The ROM compares those two longs and only sets HWCfgFlags
-    // (SCSI present) when they differ — a 512KE mirrors the ROM and has no SCSI.
+    // hits ROM[0]. MAME plants 0xFF at region+$20000 and 0xAA at +$40000 so
+    // the same compare sets HWCfgFlags (SCSI). 512KE mirrors the ROM.
     if (address < 0x500000) {
         if (address & 0x20000) return 0xff;
         return rom_[address & (kRomSize - 1)];
@@ -814,8 +825,9 @@ uint8_t MacPlus::read_byte(uint32_t address) {
 
 void MacPlus::write_byte(uint32_t address, uint8_t value) {
     address &= 0xffffff;
-    // Overlay only remaps reads at 0; writes always land in RAM (write-through),
-    // and $600000 is the overlay-time RAM window documented for 128K/512K/Plus.
+    // Overlay remaps reads at 0. Hardware write-throughs to RAM (Inside Mac);
+    // MAME's ram_w drops those writes and relies on $600000, which macplus_map
+    // does not install. $600000 stays the overlay-time RAM window.
     if (address < 0x400000) {
         ram_at(address, value);
         protect_plus_traps(address);

@@ -645,6 +645,9 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
 }
 
 uint8_t Ncr5380Hdd::read(uint32_t address) {
+    // MAME mac128_state::scsi_r: register = (word_offset >> 3) & 0xf,
+    // DMA when word_offset >= 0x100 ($580000 + $200, A9). IRQ stays off
+    // the 68000 IPL — Plus pin 23 is unconnected.
     accesses_++;
     const int reg = int((address >> 4) & 7);
     const bool dack = (address & 0x200) != 0;
