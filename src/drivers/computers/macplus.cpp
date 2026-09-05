@@ -123,9 +123,13 @@ void MacPlus::redirect_launch_to_boot2() {
     // rebuilds $21400–ApplLimit and would wipe a copy left on the $1FCxxx
     // stack (that stack sits inside the 4MB application heap).
     //
-    // A3 = 0 so the following _ReleaseResource is a no-op. Do not patch
-    // OS traps $5C/$AD: the 128K table already has real Plus ROM routines
-    // there (not the unimplemented stub), and replacing them SysError 25s.
+    // A3 = 0 so the following _ReleaseResource is a no-op.
+    //
+    // Boot 2 GetTrapAddress-probes OS $AD (Gestalt, 256K+). On a Plus that
+    // slot is a packed rectangle helper, so the probe thinks Gestalt exists
+    // and JSRs it with the wrong convention. Point only $AD at the real
+    // unimplemented vector ($9F). Do not touch $5C/$5D/$6E: those slots are
+    // shift/bit helpers and replacing them SysError 25s.
     boot2_tried_ = true;
     const std::vector<uint8_t>& boot2 = scsi_.system_boot2();
     if (boot2.size() < 0x20) return;
@@ -137,6 +141,14 @@ void MacPlus::redirect_launch_to_boot2() {
     for (uint32_t i = 0; i < body; ++i) write_byte(code + i, boot2[0x18 + i]);
     write_long(0x010c, code);        // BufPtr: keep the hole out of the heap
     write_long(0x0130, 0x00200000);  // ApplLimit: InitApplZone stops at 2MB
+    const uint32_t unimp = read_long(0x0c00 + 0x9f * 4);
+    if (unimp >= 0x400000 && unimp < 0x420000) write_long(0x0c00 + 0xad * 4, unimp);
+    // ROM _Launch copies the name; we skip that trap.
+    if (ram_at(0x0910) != 6) {
+        ram_at(0x0910, 6);
+        const char kFinder[] = "Finder";
+        for (int i = 0; i < 6; i++) ram_at(0x0911 + uint32_t(i), uint8_t(kFinder[i]));
+    }
     cpu_.a[7].l = code;  // drop the A-line frame; stack grows toward ApplLimit
     cpu_.a[0].l = code;
     cpu_.a[1].l = code;
