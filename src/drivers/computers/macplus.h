@@ -77,6 +77,7 @@ public:
     uint32_t boot2_hi() const { return boot2_hi_; }
     uint32_t boot2_main_hi() const { return boot2_main_hi_; }
     uint32_t boot2_hits() const { return boot2_hits_; }
+    uint32_t boot2_last_off() const { return boot2_last_off_; }
     uint32_t lpch_skip() const { return lpch_skip_; }
     uint8_t debug_im() const { return cpu_.cc.im; }
     uint8_t peek(uint32_t address) { return read_byte(address); }
@@ -202,6 +203,7 @@ private:
     uint32_t boot2_hi_ = 0;
     uint32_t boot2_main_hi_ = 0;
     uint32_t boot2_hits_ = 0;
+    uint32_t boot2_last_off_ = 0;
     uint32_t lpch_skip_ = 0;
     uint32_t rom_initgraf_ = 0;
     uint32_t rom_tool_[512]{};

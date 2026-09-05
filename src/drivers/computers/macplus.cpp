@@ -174,6 +174,7 @@ void MacPlus::redirect_launch_to_boot2() {
     boot2_hi_ = 0x18;
     boot2_main_hi_ = 0x18;
     boot2_hits_ = 0;
+    boot2_last_off_ = 0;
     lpch_skip_ = 0;
 }
 
@@ -467,6 +468,7 @@ void MacPlus::reset() {
     boot2_hi_ = 0;
     boot2_main_hi_ = 0;
     boot2_hits_ = 0;
+    boot2_last_off_ = 0;
     lpch_skip_ = 0;
     rom_initgraf_ = 0;
     for (uint32_t& v : rom_tool_) v = 0;
@@ -519,15 +521,20 @@ void MacPlus::on_cpu_cycles(int cycles) {
     if (boot2_base_ && pc >= boot2_base_ && pc < boot2_base_ + 0x2000u) {
         boot2_hits_++;
         const uint32_t off = pc - boot2_base_ + 0x18u;
+        boot2_last_off_ = off;
         if (off > boot2_hi_) boot2_hi_ = off;
         if (off < 0x520u && off > boot2_main_hi_) boot2_main_hi_ = off;
-        // Resource +$1250 is MOVEA.L D0,A0 / JSR (A0) into the concatenated
-        // 'lpch' payload. Those patches are written for 256K ROM / Color QD
-        // and jump into the Plus ROM without returning, so the apply JSR
-        // at +$03be never gets back to MultiFinder _Launch.
-        if (off == 0x1250 || off == 0x1252) {
-            cpu_.pc_.l = boot2_base_ + (0x1254u - 0x18u);
-            lpch_skip_++;
+        // +$1550 is JMP (A0) after GetTrapAddress. Color QD / UnimplTrap
+        // glue never returns, so the apply JSR at +$03be never gets back
+        // to MultiFinder _Launch. Tail-call only Plus ROM implementations.
+        if (off == 0x1550) {
+            const uint32_t dest = cpu_.a[0].l & 0xffffffu;
+            if (dest < 0x400000 || dest >= 0x420000 || dest == 0x400806) {
+                const uint32_t sp = cpu_.a[7].l & 0xffffffu;
+                cpu_.pc_.l = read_long(sp);
+                cpu_.a[7].l = sp + 4;
+                lpch_skip_++;
+            }
         }
     }
     if (!overlay_ && rom_initgraf_ == 0) snapshot_rom_tool_traps();
