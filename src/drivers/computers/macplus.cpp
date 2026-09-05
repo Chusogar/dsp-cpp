@@ -129,38 +129,39 @@ void MacPlus::redirect_launch_to_boot2() {
     // is a packed-rect helper, so the probe JSRs it with the wrong
     // convention. A silent MOVEQ #-4/RTS lets A1AD return. Tool $16F
     // (GetCWMgrPort) is a handle-size helper at $415750 on this ROM, so
-    // a MOVEQ #0 / MOVEA.L D0,A0 / RTS stub sits under the Gestalt
-    // stub. Do not touch $5C: on a Plus that slot is a shift helper
-    // and replacing it corrupts A5 / SysError 25s.
+    // a MOVE.L #screenPort,A0 / RTS stub sits under the Gestalt stub
+    // and returns a 1-bit screen GrafPort. Do not touch $5C: on a Plus
+    // that slot is a shift helper and replacing it corrupts A5 /
+    // SysError 25s.
     boot2_tried_ = true;
     const std::vector<uint8_t>& boot2 = scsi_.system_boot2();
     if (boot2.size() < 0x20) return;
     const uint32_t body = uint32_t(boot2.size() - 0x18);
     uint32_t top = read_long(0x010c) & 0xffffffu;
     if (top < 0x10000 || top > kRamSize) top = 0x003fa700;
-    if (top < body + 0x2000c) return;
-    // Gestalt stub at top-4; GetCWMgrPort stub in the 8 bytes below.
-    // Do not plant the CWMgr stub over the boot-2 body: $033d44
-    // ignores the port pointer and only BSETs $360, but the 128K
-    // table entry $415750 is a handle-size helper and System 7's
-    // 32-bit QD glue JMPs there unless the caller is $416F80.
+    if (top < body + 0x20120) return;
+    // Gestalt stub at top-4; GetCWMgrPort stub in the 8 bytes below
+    // that; a 1-bit screen GrafPort + rectangular visRgn/clipRgn under
+    // the stub. $A26 thePort is -1 for the whole Welcome path (QD lives
+    // on A5), so MOVE.L $A26,A0 still returns a nil port.
     const uint32_t stub = (top - 4) & ~1u;
     const uint32_t cwmgr = (stub - 8) & ~1u;
     write_byte(stub, 0x70);
     write_byte(stub + 1, 0xfc);
     write_byte(stub + 2, 0x4e);
     write_byte(stub + 3, 0x75);
-    // MOVE.L $A26,A0 / RTS / NOP — return thePort. A0=0 made boot 2
-    // call _TextSize with A1=$FFFF and the 68000 walked off to $FFFFFFFF.
+    const uint32_t hole = plant_screen_port(cwmgr);
+    const uint32_t port = grafport_;
+    // MOVE.L #port,A0 / RTS
     write_byte(cwmgr, 0x20);
-    write_byte(cwmgr + 1, 0x78);
-    write_byte(cwmgr + 2, 0x0a);
-    write_byte(cwmgr + 3, 0x26);
-    write_byte(cwmgr + 4, 0x4e);
-    write_byte(cwmgr + 5, 0x75);
+    write_byte(cwmgr + 1, 0x7c);
+    write_byte(cwmgr + 2, uint8_t(port >> 24));
+    write_byte(cwmgr + 3, uint8_t(port >> 16));
+    write_byte(cwmgr + 4, uint8_t(port >> 8));
+    write_byte(cwmgr + 5, uint8_t(port));
     write_byte(cwmgr + 6, 0x4e);
-    write_byte(cwmgr + 7, 0x71);
-    const uint32_t code = (cwmgr - body) & ~1u;
+    write_byte(cwmgr + 7, 0x75);
+    const uint32_t code = (hole - body) & ~1u;
     for (uint32_t i = 0; i < body; ++i) write_byte(code + i, boot2[0x18 + i]);
     write_long(0x010c, code);        // BufPtr: keep the hole out of the heap
     write_long(0x0130, 0x00200000);  // ApplLimit: InitApplZone stops at 2MB
@@ -249,6 +250,48 @@ void MacPlus::sweep_compressed_handles() {
     }
 }
 
+uint32_t MacPlus::plant_screen_port(uint32_t below) {
+    // 108-byte GrafPort + a locked 10-byte rectangular region used as
+    // both visRgn and clipRgn. Screen is 512×342, 64 bytes/row, at
+    // $3FA700. Color QD's GetCWMgrPort wants a GrafPtr; a 1-bit port
+    // is enough for TextSize / PaintRgn on the Plus.
+    const uint32_t port = (below - 0x70) & ~1u;
+    const uint32_t rgn_h = (port - 4) & ~1u;
+    const uint32_t rgn_b = (rgn_h - 0x18) & ~1u;
+    const uint32_t rgn = rgn_b + 8;
+    write_long(rgn_b, 0x80000000u | 0x18u);
+    write_long(rgn_b + 4, rgn_h);
+    write_long(rgn_h, rgn);
+    write_word(rgn, 10);       // rgnSize: rectangular
+    write_word(rgn + 2, 0);    // top
+    write_word(rgn + 4, 0);    // left
+    write_word(rgn + 6, 342);  // bottom
+    write_word(rgn + 8, 512);  // right
+    for (uint32_t i = 0; i < 0x6c; i++) write_byte(port + i, 0);
+    write_long(port + 2, 0x003fa700u);  // portBits.baseAddr
+    write_word(port + 6, 64);           // rowBytes
+    write_word(port + 8, 0);            // bounds.top
+    write_word(port + 10, 0);           // bounds.left
+    write_word(port + 12, 342);         // bounds.bottom
+    write_word(port + 14, 512);         // bounds.right
+    write_word(port + 16, 0);           // portRect.top
+    write_word(port + 18, 0);
+    write_word(port + 20, 342);
+    write_word(port + 22, 512);
+    write_long(port + 24, rgn_h);  // visRgn
+    write_long(port + 28, rgn_h);  // clipRgn
+    for (uint32_t i = 0; i < 8; i++) write_byte(port + 40 + i, 0xff);  // pnPat
+    write_word(port + 60, 1);   // pnSize.v
+    write_word(port + 62, 1);   // pnSize.h
+    write_word(port + 66, 0);   // pnVis (0 = visible)
+    write_word(port + 74, 12);  // txSize
+    grafport_ = port;
+    write_long(0x0a26, port);  // thePort
+    write_long(0x09de, port);  // WMgrPort
+    write_long(0x0a20, rgn_h); // GrayRgn
+    return rgn_b;
+}
+
 void MacPlus::snapshot_rom_tool_traps() {
     // Remember 128K Toolbox implementations before System 7 PACKs
     // replace them with 32-bit QuickDraw glue. That glue pops the
@@ -284,6 +327,8 @@ void MacPlus::restore_plus_stubs() {
     write_long(0x0c00 + 0xad * 4, trap_stub_);
     if (cwmgr_stub_ && cwmgr_stub_ + 6 <= kRamSize)
         write_long(0x0e00 + 0x16f * 4, cwmgr_stub_);
+    if (grafport_ && (read_long(0x0a26) & 0xffffffu) >= 0xffff00u) write_long(0x0a26, grafport_);
+    if (grafport_ && (read_long(0x09de) & 0xffffffu) >= 0xffff00u) write_long(0x09de, grafport_);
 }
 
 void MacPlus::sanitize_mountvol_pb() {
@@ -319,6 +364,7 @@ void MacPlus::reset() {
     boot2_tried_ = false;
     trap_stub_ = 0;
     cwmgr_stub_ = 0;
+    grafport_ = 0;
     rom_initgraf_ = 0;
     for (uint32_t& v : rom_tool_) v = 0;
     restore_stub_pc_ = 0;
