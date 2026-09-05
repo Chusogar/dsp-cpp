@@ -184,12 +184,24 @@ bool MacPlus::maybe_decompress_ptr(uint32_t ptr, uint32_t handle) {
     if (out.empty()) return false;
     uint32_t buf = read_long(0x010c) & 0xffffffu;
     const uint32_t need = uint32_t((out.size() + 1) & ~size_t(1));
-    if (buf < need + 0x2000) return false;
-    buf = (buf - need) & ~1u;
-    for (size_t i = 0; i < out.size(); i++) write_byte(buf + uint32_t(i), out[i]);
-    if (need > out.size()) write_byte(buf + uint32_t(out.size()), 0);
-    if (handle >= 0x100 && handle + 4 <= kRamSize) write_long(handle, buf);
+    // 8-byte locked heap header so GetHandleSize / HLock see a real block,
+    // and keep ApplLimit below BufPtr so MaxApplZone cannot smash it.
+    if (buf < need + 0x2008) return false;
+    buf = (buf - (need + 8)) & ~1u;
+    write_long(buf, 0x80000000u | (need + 8));
+    write_long(buf + 4, handle);
+    const uint32_t data = buf + 8;
+    for (size_t i = 0; i < out.size(); i++) write_byte(data + uint32_t(i), out[i]);
+    if (need > out.size()) write_byte(data + uint32_t(out.size()), 0);
+    if (handle >= 0x100 && handle + 4 <= kRamSize) write_long(handle, data);
     write_long(0x010c, buf);
+    const uint32_t limit = buf > 0x400 ? buf - 0x400 : buf;
+    if ((read_long(0x0130) & 0xffffffu) > limit) write_long(0x0130, limit);
+    for (uint32_t zaddr : {0x02aau, 0x02a6u, 0x0118u}) {
+        const uint32_t zone = read_long(zaddr) & 0xffffffu;
+        if (zone >= 0x1000 && zone + 4 < kRamSize && (read_long(zone) & 0xffffffu) > buf)
+            write_long(zone, buf);
+    }
     decompress_count_++;
     return true;
 }
@@ -201,8 +213,9 @@ void MacPlus::maybe_decompress_handle(uint32_t handle) {
 }
 
 void MacPlus::sweep_compressed_handles() {
-    uint32_t hi = read_long(0x010c) & 0xffffffu;
-    if (hi < 0x8000 || hi > kRamSize) hi = 0x40000;
+    // Walk through the screen hole, not just up to BufPtr: boot id 2 parks
+    // System-file handles above ApplLimit after InitApplZone.
+    uint32_t hi = kRamSize - 0x5900u;
     uint32_t start = read_long(0x02a6) & 0xffffffu;
     if (start < 0x1000 || start >= hi) start = 0x1400;
     for (uint32_t h = start; h + 8 < hi; h += 4) {
@@ -293,9 +306,8 @@ void MacPlus::on_cpu_cycles(int cycles) {
     const uint32_t pc = cpu_.pc();
     if (decompress_pc_ && pc == decompress_pc_) {
         decompress_pc_ = 0;
-        uint32_t h = cpu_.a[0].l & 0xffffffu;
-        if (!h) h = cpu_.d[0].l & 0xffffffu;
-        maybe_decompress_handle(h);
+        maybe_decompress_handle(cpu_.a[0].l);
+        maybe_decompress_handle(cpu_.d[0].l);
     }
     if (read_ret_pc_ && pc == read_ret_pc_) {
         read_ret_pc_ = 0;
