@@ -262,15 +262,18 @@ void MacPlus::snapshot_rom_tool_traps() {
 
 void MacPlus::restore_plus_stubs() {
     if (!trap_stub_ || trap_stub_ + 4 > kRamSize) return;
-    write_long(0x0c00 + 0xad * 4, trap_stub_);
-    if (cwmgr_stub_ && cwmgr_stub_ + 6 <= kRamSize)
-        write_long(0x0e00 + 0x16f * 4, cwmgr_stub_);
-    for (int i = 0; i < 512; i++) {
-        if (i == 0x16f || !rom_tool_[i]) continue;
+    // Only classic QuickDraw / text ($50–$6F). A full Toolbox rewind
+    // put UnimplTrap on OS $AD (shared with tool $2D) and replaced
+    // System 7's GetResource, so dcmp stalled at 13.
+    for (int i = 0x50; i <= 0x6f; i++) {
+        if (!rom_tool_[i]) continue;
         const uint32_t cur = read_long(0x0e00 + uint32_t(i) * 4);
         if (cur != rom_tool_[i] && (cur < 0x400000 || cur >= 0x420000))
             write_long(0x0e00 + uint32_t(i) * 4, rom_tool_[i]);
     }
+    write_long(0x0c00 + 0xad * 4, trap_stub_);
+    if (cwmgr_stub_ && cwmgr_stub_ + 6 <= kRamSize)
+        write_long(0x0e00 + 0x16f * 4, cwmgr_stub_);
 }
 
 void MacPlus::sanitize_mountvol_pb() {
