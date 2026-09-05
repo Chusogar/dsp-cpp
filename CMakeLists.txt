@@ -116,6 +116,11 @@ add_executable(dsp
   src/machine/ql_win.cpp
   src/machine/mc68901.cpp
   src/machine/st_floppy.cpp
+  src/machine/mac_dsk.cpp
+  src/machine/mac_rtc.cpp
+  src/machine/ncr5380_hdd.cpp
+  src/machine/mac_dcmp.cpp
+  src/machine/iwm.cpp
   src/machine/cia8520.cpp
   src/machine/amiga_adf.cpp
   src/machine/amiga_chipset.cpp
@@ -187,6 +192,7 @@ add_executable(dsp
   src/drivers/computers/ql.cpp
   src/drivers/computers/atari_st.cpp
   src/drivers/computers/amiga.cpp
+  src/drivers/computers/macplus.cpp
     
   src/drivers/consoles/sms.cpp
   src/machine/sega_vdp.cpp
@@ -328,6 +334,11 @@ add_executable(dsp_tests
   src/machine/ql_win.cpp
   src/machine/mc68901.cpp
   src/machine/st_floppy.cpp
+  src/machine/mac_dsk.cpp
+  src/machine/mac_rtc.cpp
+  src/machine/ncr5380_hdd.cpp
+  src/machine/mac_dcmp.cpp
+  src/machine/iwm.cpp
   src/machine/cia8520.cpp
   src/machine/amiga_adf.cpp
   src/machine/amiga_chipset.cpp
@@ -349,6 +360,7 @@ add_executable(dsp_tests
   src/drivers/computers/ql.cpp
   src/drivers/computers/atari_st.cpp
   src/drivers/computers/amiga.cpp
+  src/drivers/computers/macplus.cpp
   src/drivers/arcade/starwars.cpp
   src/drivers/arcade/asteroid.cpp
   src/drivers/arcade/polepos.cpp

@@ -38,6 +38,10 @@
 #include "machine/st_floppy.h"
 #include "drivers/computers/amiga.h"
 #include "machine/amiga_adf.h"
+#include "drivers/computers/macplus.h"
+#include "machine/mac_dcmp.h"
+#include "machine/mac_dsk.h"
+#include "machine/iwm.h"
 #include "drivers/consoles/gameboy.h"
 #include "drivers/arcade/mcr.h"
 #include "drivers/computers/msx2.h"
@@ -5397,6 +5401,218 @@ void test_amiga_bootblock_if_present() {
     check((boot.debug_pc() & 0xFF0000) != 0xFC0000, "bootblock is running in chip RAM, not Kickstart");
 }
 
+void write_mac_ppm(const std::string& path, const dsp::MacPlus& machine) {
+    std::ofstream out(path, std::ios::binary);
+    const int w = machine.screen_width();
+    const int h = machine.screen_height();
+    out << "P6\n" << w << " " << h << "\n255\n";
+    const uint32_t* fb = machine.framebuffer();
+    for (int i = 0; i < w * h; i++) {
+        const uint32_t p = fb[i];
+        const char rgb[3] = {char((p >> 16) & 0xff), char((p >> 8) & 0xff), char(p & 0xff)};
+        out.write(rgb, 3);
+    }
+}
+
+bool mac_has_welcome_box(const dsp::MacPlus& machine) {
+    // Welcome to Macintosh is a wide white dialog in the upper half.
+    const uint32_t* fb = machine.framebuffer();
+    const int width = machine.screen_width();
+    for (int y = 40; y < 160; y++) {
+        int run = 0;
+        for (int x = 60; x < 450; x++) {
+            if ((fb[y * width + x] & 0xffffff) == 0xffffff) {
+                if (++run >= 80) return true;
+            } else {
+                run = 0;
+            }
+        }
+    }
+    return false;
+}
+
+bool mac_has_floppy_icon(const dsp::MacPlus& machine) {
+    // Grey desktop dither never has a long black run; the 3.5" ROM icon does.
+    const uint32_t* fb = machine.framebuffer();
+    const int width = machine.screen_width();
+    for (int y = 150; y < 210; y++) {
+        int run = 0;
+        for (int x = 200; x < 320; x++) {
+            if ((fb[y * width + x] & 0xffffff) == 0) {
+                if (++run >= 20) return true;
+            } else {
+                run = 0;
+            }
+        }
+    }
+    return false;
+}
+
+void test_mac_dcmp() {
+    // Type 8 / dcmp 0 is covered offline against Finder CODE. Type 9 / dcmp 2
+    // (GreggyBits) is what System 7's own System file uses.
+    const uint8_t untagged[] = {
+        0xa8, 0x9f, 0x65, 0x72, 0x00, 0x12, 0x09, 0x01, 0x00, 0x00, 0x00, 0x02,
+        0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    const std::vector<uint8_t> u = dsp::mac_decompress_resource(untagged, sizeof(untagged));
+    check(u.size() == 2 && u[0] == 0x00 && u[1] == 0x00,
+          "dcmp 2 untagged index 0 expands to the default table pair 00 00");
+
+    const uint8_t tagged[] = {
+        0xa8, 0x9f, 0x65, 0x72, 0x00, 0x12, 0x09, 0x01, 0x00, 0x00, 0x00, 0x02,
+        0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00, 0xaa, 0xbb,
+    };
+    const std::vector<uint8_t> t = dsp::mac_decompress_resource(tagged, sizeof(tagged));
+    check(t.size() == 2 && t[0] == 0xaa && t[1] == 0xbb,
+          "dcmp 2 tagged 0-bit emits a two-byte literal");
+
+    const uint8_t custom[] = {
+        0xa8, 0x9f, 0x65, 0x72, 0x00, 0x12, 0x09, 0x01, 0x00, 0x00, 0x00, 0x02,
+        0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x12, 0x34, 0x00,
+    };
+    const std::vector<uint8_t> c = dsp::mac_decompress_resource(custom, sizeof(custom));
+    check(c.size() == 2 && c[0] == 0x12 && c[1] == 0x34,
+          "dcmp 2 custom table index 0 emits the supplied pair");
+}
+
+void test_mac_gcr_and_dsk() {
+    uint8_t raw[524];
+    std::memset(raw, 0, sizeof(raw));
+    for (int i = 0; i < 512; i++) raw[12 + i] = uint8_t(i * 3 + 7);
+    std::vector<uint8_t> encoded;
+    dsp::MacDsk::encode_data(3, raw, encoded);
+    check(encoded.size() == 709, "Mac GCR data field is 709 bytes");
+    check(encoded[0] == 0xd5 && encoded[1] == 0xaa && encoded[2] == 0xad,
+          "Mac data field starts D5 AA AD");
+    uint8_t decoded[524];
+    std::memset(decoded, 0, sizeof(decoded));
+    check(dsp::MacDsk::decode_data(encoded.data(), encoded.size(), decoded),
+          "Mac GCR data field decodes");
+    check(std::memcmp(raw, decoded, 524) == 0, "Mac GCR 524-byte payload round-trips");
+
+    std::vector<uint8_t> image(819200, 0);
+    image[0] = 0x4c;
+    image[1] = 0x4b;
+    image[2] = 0x60;
+    image[3] = 0x00;
+    const std::string path = "/tmp/mac-dsptest.dsk";
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(image.data()), std::streamsize(image.size()));
+    }
+    std::string error;
+    dsp::MacDsk disk;
+    check(disk.load_file(path, &error), "800K .dsk loads");
+    check(disk.tracks() == 80 && disk.sides() == 2 && disk.sectors_per_track(0) == 12,
+          "800K Mac disk is 80x2 with 12 sectors on track 0");
+    check(disk.sectors_per_track(79) == 8, "inner Mac tracks have 8 sectors");
+    check(disk.format_byte() == 0x22, "800K GCR format byte is 0x22");
+    check(!disk.nibbles(0, 0).empty() && disk.nibbles(0, 0)[36] == 0xd5,
+          "track 0 GCR starts with an address mark after the gap");
+
+    dsp::MacPlus machine;
+    check(machine.load_media(path, &error), "Mac Plus attaches a floppy before the ROM is loaded");
+    check(machine.floppy_loaded(), "Mac Plus reports the floppy");
+}
+
+void write_mac_lk_disk(const std::string& path) {
+    std::vector<uint8_t> image(819200, 0);
+    image[0] = 0x4c;
+    image[1] = 0x4b;
+    image[2] = 0x60;
+    image[3] = 0x00;
+    image[4] = 0x00;
+    image[5] = 0x86;
+    std::ifstream boot("/tmp/macdisks/MacOS_6.0.8_System_Startup.img", std::ios::binary);
+    if (boot) {
+        std::vector<uint8_t> dc(0x54 + 1024);
+        boot.read(reinterpret_cast<char*>(dc.data()), std::streamsize(dc.size()));
+        if (boot && dc[0x54] == 0x4c && dc[0x55] == 0x4b) {
+            std::memcpy(image.data(), dc.data() + 0x54, 1024);
+        }
+    }
+    std::ofstream out(path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(image.data()), std::streamsize(image.size()));
+}
+
+void test_mac_missing_roms() {
+    dsp::MacPlus machine;
+    std::string error = "unset";
+    check(std::strcmp(machine.title(), "Macintosh Plus") == 0, "Mac Plus title");
+    check(machine.screen_width() == 512 && machine.screen_height() == 342, "Mac 512x342 screen");
+    check(!machine.init("/no/such/macplus.zip", &error), "missing Mac Plus ROM fails init");
+}
+
+void test_mac_boot_if_present() {
+    const char* rom = "/tmp/roms/macplus.zip";
+    std::FILE* f = std::fopen(rom, "rb");
+    if (!f) return;
+    std::fclose(f);
+
+    dsp::MacPlus boot;
+    std::string error;
+    check(boot.init(rom, &error), "Mac Plus ROM v3/v2/v1 loads");
+    check(boot.debug_pc() == 0x0040002a, "68000 reset PC is in the Plus ROM window");
+
+    for (int i = 0; i < 2800; i++) boot.run_frame();
+    write_mac_ppm("/tmp/macplus-question.ppm", boot);
+    check(boot.debug_pc() != 0, "Mac 68000 is executing after ROM boot");
+    check(!boot.overlay(), "VIA PA4 cleared the ROM overlay so RAM sits at 0");
+    check(unique_pixels(boot) >= 2, "Mac framebuffer is not a single colour");
+    check(mac_has_floppy_icon(boot), "ROM paints the flashing floppy icon on the grey desktop");
+    check((boot.peek(0x0b22) & 0xc0) == 0xc0,
+          "Plus ROM sets HWCfgFlags SCSI bits ($420000 is not a ROM mirror)");
+    check(boot.peek(0x0108) == 0x00 && boot.peek(0x0109) == 0x40 && boot.peek(0x010a) == 0x00 &&
+              boot.peek(0x010b) == 0x00,
+          "ROM memory test finds 4MB (MemTop = $400000)");
+
+    const std::string disk = "/tmp/roms/mac-system.dsk";
+    write_mac_lk_disk(disk);
+    dsp::MacPlus happy;
+    check(happy.init(rom, &error), "Mac Plus ROM reloads for a boot disk");
+    check(happy.load_media(disk, &error), "800K disk with Macintosh boot blocks mounts in the Sony drive");
+    bool saw_motor = false;
+    for (int i = 0; i < 3000; i++) {
+        happy.run_frame();
+        if (happy.iwm().motor_on()) saw_motor = true;
+    }
+    write_mac_ppm("/tmp/macplus-bootdisk.ppm", happy);
+    check(happy.floppy_loaded(), "boot disk stays in the drive");
+    check(saw_motor, "Sony driver spins the IWM motor to search for D5 AA marks");
+    check(mac_has_floppy_icon(happy), "the disk / question-mark icon stays on screen with a floppy inserted");
+
+    const char* hd = "/tmp/macdisks/System7_0_1.img";
+    std::FILE* hf = std::fopen(hd, "rb");
+    if (!hf) return;
+    std::fclose(hf);
+
+    dsp::MacPlus sys7;
+    check(sys7.init(rom, &error), "Mac Plus ROM reloads for System 7.0.1");
+    check(sys7.load_media(hd, &error), "System7_0_1.img mounts as a SCSI hard disk");
+    check(sys7.scsi_loaded() && sys7.scsi_blocks() >= 20480, "the HFS volume is a 10MB SCSI disk");
+    check(!sys7.floppy_loaded(), "a hard disk image does not sit in the Sony drive");
+    bool saw_system = false;
+    bool saw_welcome = false;
+    for (int i = 0; i < 2500; i++) {
+        sys7.run_frame();
+        if (sys7.peek(0xad8) == 6 && sys7.peek(0xad9) == 'S') saw_system = true;
+        if (mac_has_welcome_box(sys7)) saw_welcome = true;
+    }
+    write_mac_ppm("/tmp/macplus-system7.ppm", sys7);
+    check(sys7.peek(0x0108) == 0x00 && sys7.peek(0x0109) == 0x40,
+          "System 7 sees 4MB at MemTop");
+    check(sys7.scsi_xfer_bytes() >= 2560,
+          "the Plus ROM loads the SCSI driver and _Reads the System 7 LK boot blocks");
+    check(sys7.scsi_xfer_bytes() > 3584,
+          "the 128K Start Manager MountVols and keeps reading past the Happy Mac");
+    check(saw_system, "Start Manager copies the boot-block System name to $0AD8");
+    check(saw_welcome, "System 7 draws the Welcome to Macintosh dialog");
+    check(sys7.peek(0x0910) == 6 && sys7.peek(0x0911) == 'F',
+          "System 7 names the Finder at CurApName after the Welcome dialog");
+    check(unique_pixels(sys7) >= 2, "System 7 boot paints the Macintosh screen");
+}
+
 void test_ql_match_point_if_present() {
     const char* rom = "/tmp/roms/ql.zip";
     const char* match = "/tmp/ql/Match Point (1985)(Psion).mdv";
@@ -5706,6 +5922,10 @@ int main() {
     test_amiga_adf_format();
     test_amiga_kickstart_if_present();
     test_amiga_bootblock_if_present();
+    test_mac_dcmp();
+    test_mac_gcr_and_dsk();
+    test_mac_missing_roms();
+    test_mac_boot_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

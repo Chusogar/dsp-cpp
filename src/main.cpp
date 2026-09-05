@@ -65,6 +65,7 @@
 #include "drivers/computers/ql.h"
 #include "drivers/computers/atari_st.h"
 #include "drivers/computers/amiga.h"
+#include "drivers/computers/macplus.h"
 
 // Consoles
 #include "drivers/consoles/sms.h"
@@ -131,7 +132,8 @@ void print_supported_emulators() {
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
         "    cpc464, cpc664, cpc6128, msx, msx2, nms8250, c64,\n"
         "    apple2, apple2plus, apple2e, apple2ee, exl100, exeltel, ql,\n"
-        "    st, atarist, atari-st, amiga, a500, amiga500\n"
+        "    st, atarist, atari-st, amiga, a500, amiga500,\n"
+        "    macplus, mac, macintosh, plus\n"
         "\n"
         "  Consoles:\n"
         "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp,\n"
@@ -154,7 +156,9 @@ void print_usage(const char* program) {
         "                     or QL microdrive .mdv/.qlpak or QXL.WIN\n"
         "  --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, MSX2 .dsk, Apple II .dsk/.do/.po/.nib,\n"
         "                     Pentagon/Scorpion .trd/.scl, QL microdrive .mdv/.qlpak or QXL.WIN,\n"
-        "                     Atari ST .st/.msa, or Amiga .adf (repeat --disk/--tape to fill QL mdv1 then mdv2)\n"
+        "                     Atari ST .st/.msa, Amiga .adf, Macintosh 400K/800K .dsk/.img/.dc42,\n"
+        "                     or a Macintosh SCSI hard disk .img/.dsk (raw HFS, e.g. System 7)\n"
+        "                     (repeat --disk/--tape to fill QL mdv1 then mdv2)\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
         "                     bank, mikie has three (0=A, 1=B, 2=C); trackfld: 0=A coinage,\n"
@@ -495,6 +499,10 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	}
 	if (game == "amiga" || game == "a500" || game == "amiga500" || game == "amiga-500") {
 	    return std::make_unique<dsp::Amiga500>();
+	}
+	if (game == "macplus" || game == "mac" || game == "macintosh" || game == "plus" ||
+	    game == "mac-plus") {
+	    return std::make_unique<dsp::MacPlus>();
 	}
     	
 	// consoles

@@ -42,6 +42,8 @@ public:
     void write_ca2(bool state);
     void write_cb1(bool state);
     void write_cb2(bool state);
+    // Drive CB2 as shift-register data without raising the CB2 interrupt flag.
+    void set_cb2_data(bool bit);
 
     // Combined port levels (outputs forced by DDR, else inputs).
     uint8_t out_a() const;
@@ -49,7 +51,12 @@ public:
     bool ca2() const { return out_ca2_; }
     bool cb2() const { return out_cb2_; }
 
+    uint8_t ddr_a() const { return ddr_a_; }
     uint8_t ddr_b() const { return ddr_b_; }
+    uint8_t ora() const { return out_a_; }
+    uint8_t orb() const { return out_b_; }
+    uint8_t sr() const { return sr_; }
+    bool sr_busy() const { return shift_count_ != 0 && shift_count_ != 0xFF; }
 
     uint8_t ifr() const { return ifr_; }
     uint8_t ier() const { return ier_; }
