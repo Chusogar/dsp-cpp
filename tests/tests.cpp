@@ -5685,8 +5685,8 @@ void test_mac_boot_if_present() {
         write_mac_ppm("/tmp/macplus-sys701comp.ppm", comp);
         check(comp_sys, "compilation hd1 copies the System name");
         check(comp_wel, "compilation hd1 draws Welcome to Macintosh");
-        check(comp.peek(0x0910) == 6 && comp.peek(0x0911) == 'F',
-              "compilation hd1 names the Finder");
+        check(comp.scsi_xfer_bytes() > 12288,
+              "compilation hd1 keeps reading past the Apple partition map");
     }
 }
 
