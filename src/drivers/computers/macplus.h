@@ -178,6 +178,8 @@ private:
     uint32_t read_pb_ = 0;
     bool boot2_tried_ = false;
     uint32_t trap_stub_ = 0;
+    uint32_t cwmgr_stub_ = 0;
+    uint32_t rom_initgraf_ = 0;
     uint32_t restore_stub_pc_ = 0;
     std::vector<int16_t> audio_;
 };

@@ -127,26 +127,46 @@ void MacPlus::redirect_launch_to_boot2() {
     //
     // Boot 2 GetTrapAddress-probes OS $AD (Gestalt). On a Plus that slot
     // is a packed-rect helper, so the probe JSRs it with the wrong
-    // convention. A silent MOVEQ #-4/RTS lets A1AD return. Do not touch
-    // $5C: on a Plus that slot is a shift helper and replacing it
-    // corrupts A5 / SysError 25s.
+    // convention. A silent MOVEQ #-4/RTS lets A1AD return. Tool $16F
+    // (GetCWMgrPort) is a handle-size helper at $415750 on this ROM, so
+    // a MOVEQ #0 / MOVEA.L D0,A0 / RTS stub sits under the Gestalt
+    // stub. Do not touch $5C: on a Plus that slot is a shift helper
+    // and replacing it corrupts A5 / SysError 25s.
     boot2_tried_ = true;
     const std::vector<uint8_t>& boot2 = scsi_.system_boot2();
     if (boot2.size() < 0x20) return;
     const uint32_t body = uint32_t(boot2.size() - 0x18);
     uint32_t top = read_long(0x010c) & 0xffffffu;
     if (top < 0x10000 || top > kRamSize) top = 0x003fa700;
-    if (top < body + 0x20000) return;
+    if (top < body + 0x2000c) return;
+    // Gestalt stub at top-4; GetCWMgrPort stub in the 8 bytes below.
+    // Do not plant the CWMgr stub over the boot-2 body: $033d44
+    // ignores the port pointer and only BSETs $360, but the 128K
+    // table entry $415750 is a handle-size helper and System 7's
+    // 32-bit QD glue JMPs there unless the caller is $416F80.
     const uint32_t stub = (top - 4) & ~1u;
+    const uint32_t cwmgr = (stub - 8) & ~1u;
     write_byte(stub, 0x70);
     write_byte(stub + 1, 0xfc);
     write_byte(stub + 2, 0x4e);
     write_byte(stub + 3, 0x75);
-    const uint32_t code = (stub - body) & ~1u;
+    // MOVEQ #0 / MOVEA.L D0,A0 / RTS / NOP — empty GrafPtr, noErr.
+    write_byte(cwmgr, 0x70);
+    write_byte(cwmgr + 1, 0x00);
+    write_byte(cwmgr + 2, 0x20);
+    write_byte(cwmgr + 3, 0x40);
+    write_byte(cwmgr + 4, 0x4e);
+    write_byte(cwmgr + 5, 0x75);
+    write_byte(cwmgr + 6, 0x4e);
+    write_byte(cwmgr + 7, 0x71);
+    const uint32_t code = (cwmgr - body) & ~1u;
     for (uint32_t i = 0; i < body; ++i) write_byte(code + i, boot2[0x18 + i]);
     write_long(0x010c, code);        // BufPtr: keep the hole out of the heap
     write_long(0x0130, 0x00200000);  // ApplLimit: InitApplZone stops at 2MB
     trap_stub_ = stub;
+    cwmgr_stub_ = cwmgr;
+    const uint32_t ig = read_long(0x0e00 + 0x6e * 4);
+    if (ig >= 0x400000 && ig < 0x420000) rom_initgraf_ = ig;
     restore_plus_stubs();
     // ROM _Launch copies the name; we skip that trap.
     if (ram_at(0x0910) != 6) {
@@ -231,6 +251,11 @@ void MacPlus::sweep_compressed_handles() {
 void MacPlus::restore_plus_stubs() {
     if (!trap_stub_ || trap_stub_ + 4 > kRamSize) return;
     write_long(0x0c00 + 0xad * 4, trap_stub_);
+    if (cwmgr_stub_ && cwmgr_stub_ + 6 <= kRamSize)
+        write_long(0x0e00 + 0x16f * 4, cwmgr_stub_);
+    // Keep 128K InitGraf. System 7's 32-bit QD copy glue at $04adb8
+    // pops the A-line frame as BlockMove params and smashes A5.
+    if (rom_initgraf_) write_long(0x0e00 + 0x6e * 4, rom_initgraf_);
 }
 
 void MacPlus::sanitize_mountvol_pb() {
@@ -265,6 +290,8 @@ void MacPlus::reset() {
     finder_launch_ = false;
     boot2_tried_ = false;
     trap_stub_ = 0;
+    cwmgr_stub_ = 0;
+    rom_initgraf_ = 0;
     restore_stub_pc_ = 0;
     last_trap_ = 0;
     trap_count_ = 0;
