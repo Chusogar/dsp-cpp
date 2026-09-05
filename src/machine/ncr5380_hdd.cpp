@@ -235,17 +235,10 @@ void Ncr5380Hdd::start_command() {
 void Ncr5380Hdd::finish_command() {
     set_phase(kStatus);
     idr_ = status_;
-    // Hold REQ until the initiator programs TCR to STATUS. SCSIRead
-    // waits for a phase mismatch (DATA IN → STATUS); raising REQ here
-    // made it look like another data byte and the Manager never called
-    // SCSIComplete. PCE asserts REQ immediately; the Plus SCSI Manager
-    // does not.
-    if ((tcr_ & 7) == kStatus) {
-        if (ack_)
-            pending_req_ = true;
-        else
-            offer_byte();
-    }
+    if (ack_)
+        pending_req_ = true;
+    else
+        offer_byte();
 }
 
 void Ncr5380Hdd::execute() {
@@ -615,10 +608,7 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
             if ((data & 7) == kStatus && (phase_ == kDataIn || phase_ == kDataOut)) {
                 finish_command();
                 raise_eop();
-            } else if ((data & 7) == kStatus && phase_ == kStatus && !req_) {
-                offer_byte();
-            }
-            else if ((data & 7) == kMsgIn && phase_ == kStatus) {
+            } else if ((data & 7) == kMsgIn && phase_ == kStatus) {
                 req_ = false;
                 set_phase(kMsgIn);
                 idr_ = message_;
