@@ -165,8 +165,7 @@ void MacPlus::redirect_launch_to_boot2() {
     write_long(0x0130, 0x00200000);  // ApplLimit: InitApplZone stops at 2MB
     trap_stub_ = stub;
     cwmgr_stub_ = cwmgr;
-    const uint32_t ig = read_long(0x0e00 + 0x6e * 4);
-    if (ig >= 0x400000 && ig < 0x420000) rom_initgraf_ = ig;
+    snapshot_rom_tool_traps();
     restore_plus_stubs();
     // ROM _Launch copies the name; we skip that trap.
     if (ram_at(0x0910) != 6) {
@@ -248,14 +247,30 @@ void MacPlus::sweep_compressed_handles() {
     }
 }
 
+void MacPlus::snapshot_rom_tool_traps() {
+    // Remember 128K Toolbox implementations before System 7 PACKs
+    // replace them with 32-bit QuickDraw glue. That glue pops the
+    // A-line frame as BlockMove params and smashes A7 (seen on
+    // _TextSize / A868 from boot id 2).
+    for (int i = 0; i < 512; i++) {
+        if (rom_tool_[i]) continue;
+        const uint32_t v = read_long(0x0e00 + uint32_t(i) * 4);
+        if (v >= 0x400000 && v < 0x420000) rom_tool_[i] = v;
+    }
+    if (!rom_initgraf_ && rom_tool_[0x6e]) rom_initgraf_ = rom_tool_[0x6e];
+}
+
 void MacPlus::restore_plus_stubs() {
     if (!trap_stub_ || trap_stub_ + 4 > kRamSize) return;
     write_long(0x0c00 + 0xad * 4, trap_stub_);
     if (cwmgr_stub_ && cwmgr_stub_ + 6 <= kRamSize)
         write_long(0x0e00 + 0x16f * 4, cwmgr_stub_);
-    // Keep 128K InitGraf. System 7's 32-bit QD copy glue at $04adb8
-    // pops the A-line frame as BlockMove params and smashes A5.
-    if (rom_initgraf_) write_long(0x0e00 + 0x6e * 4, rom_initgraf_);
+    for (int i = 0; i < 512; i++) {
+        if (i == 0x16f || !rom_tool_[i]) continue;
+        const uint32_t cur = read_long(0x0e00 + uint32_t(i) * 4);
+        if (cur != rom_tool_[i] && (cur < 0x400000 || cur >= 0x420000))
+            write_long(0x0e00 + uint32_t(i) * 4, rom_tool_[i]);
+    }
 }
 
 void MacPlus::sanitize_mountvol_pb() {
@@ -292,6 +307,7 @@ void MacPlus::reset() {
     trap_stub_ = 0;
     cwmgr_stub_ = 0;
     rom_initgraf_ = 0;
+    for (uint32_t& v : rom_tool_) v = 0;
     restore_stub_pc_ = 0;
     last_trap_ = 0;
     trap_count_ = 0;
@@ -338,6 +354,7 @@ void MacPlus::update_irqs() {
 
 void MacPlus::on_cpu_cycles(int cycles) {
     const uint32_t pc = cpu_.pc();
+    if (!overlay_ && rom_initgraf_ == 0) snapshot_rom_tool_traps();
     if (restore_stub_pc_ && pc == restore_stub_pc_) {
         restore_stub_pc_ = 0;
         restore_plus_stubs();
