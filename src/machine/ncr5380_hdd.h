@@ -55,6 +55,10 @@ private:
 
     static int cdb_length(uint8_t opcode);
     void wrap_raw_hfs();
+    void wrap_apm_hfs();
+    void plant_dsphd_stub(uint32_t dest_off, uint32_t hfs_block, uint32_t hfs_blocks);
+    void patch_system7_hfs(uint32_t hfs_off);
+    void extract_boot2();
     void bus_reset();
     void set_phase(uint8_t phase);
     void update_match();

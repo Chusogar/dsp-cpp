@@ -5665,6 +5665,29 @@ void test_mac_boot_if_present() {
     check(sys7.peek(0x0910) == 6 && sys7.peek(0x0911) == 'F',
           "System 7 names the Finder at CurApName after the Welcome dialog");
     check(unique_pixels(sys7) >= 2, "System 7 boot paints the Macintosh screen");
+
+    const char* hd1 = "/tmp/macdisks/sys701comp/hd1.img";
+    std::FILE* h1 = std::fopen(hd1, "rb");
+    if (h1) {
+        std::fclose(h1);
+        dsp::MacPlus comp;
+        check(comp.init(rom, &error), "Mac Plus ROM reloads for the IA 7.0.1 compilation");
+        check(comp.load_media(hd1, &error), "hd1.img mounts as a SCSI APM disk");
+        check(comp.scsi_loaded() && !comp.floppy_loaded(), "compilation hd1 is SCSI, not a floppy");
+        check(comp.scsi().system_boot2().size() >= 0x20,
+              "APM System 7 volume still yields 'boot' id 2");
+        bool comp_sys = false, comp_wel = false;
+        for (int i = 0; i < 2500; i++) {
+            comp.run_frame();
+            if (comp.peek(0xad8) == 6 && comp.peek(0xad9) == 'S') comp_sys = true;
+            if (mac_has_welcome_box(comp)) comp_wel = true;
+        }
+        write_mac_ppm("/tmp/macplus-sys701comp.ppm", comp);
+        check(comp_sys, "compilation hd1 copies the System name");
+        check(comp_wel, "compilation hd1 draws Welcome to Macintosh");
+        check(comp.peek(0x0910) == 6 && comp.peek(0x0911) == 'F',
+              "compilation hd1 names the Finder");
+    }
 }
 
 void test_ql_match_point_if_present() {
