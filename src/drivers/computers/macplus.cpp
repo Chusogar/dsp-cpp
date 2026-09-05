@@ -433,6 +433,15 @@ void MacPlus::on_cpu_cycles(int cycles) {
         }
         if (boot2_tried_ && trap_stub_ && ((op & 0xf0ff) == 0xa047))
             restore_stub_pc_ = (ppc + 2) & 0xffffffu;
+        // Boot 2 _TextSize with A1=$FFFF walks off through a nil CGrafPort
+        // (GetCWMgrPort is not a real color WM port on 128K). Skip that
+        // A-line; the 6-byte exception frame is already on the stack.
+        if (boot2_tried_ && op == 0xa868 && (cpu_.a[1].l & 0xffffffu) <= 0xffffu) {
+            const uint32_t sp = cpu_.a[7].l & 0xffffffu;
+            const uint32_t stacked = read_long(sp + 2) & 0xffffffu;
+            if (stacked == ppc || stacked == ((ppc + 2) & 0xffffffu)) cpu_.a[7].l = sp + 6;
+            cpu_.pc_.l = (ppc + 2) & 0xffffffu;
+        }
     }
     iwm_.tick(cycles);
     via_acc_ += cycles;
