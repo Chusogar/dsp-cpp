@@ -70,6 +70,9 @@ public:
     uint32_t launch_count() const { return launch_count_; }
     uint32_t launch_a0() const { return launch_a0_; }
     uint32_t decompress_count() const { return decompress_count_; }
+    uint32_t enqueue_count() const { return enqueue_count_; }
+    uint32_t dequeue_count() const { return dequeue_count_; }
+    uint32_t cwmgr_count() const { return cwmgr_count_; }
     uint8_t debug_im() const { return cpu_.cc.im; }
     uint8_t peek(uint32_t address) { return read_byte(address); }
     uint8_t peek_ram(uint32_t address) const { return ram_[ram_index(address)]; }
@@ -122,6 +125,10 @@ private:
     void snapshot_rom_tool_traps();
     void protect_plus_traps(uint32_t address);
     uint32_t plant_screen_port(uint32_t below);
+    void skip_aline(bool autopop);
+    void os_enqueue();
+    void os_dequeue();
+    void os_get_cwmgr_port();
 
     M68000 cpu_;
     Via6522 via_;
@@ -181,8 +188,10 @@ private:
     uint32_t read_pb_ = 0;
     bool boot2_tried_ = false;
     uint32_t trap_stub_ = 0;
-    uint32_t cwmgr_stub_ = 0;
     uint32_t grafport_ = 0;
+    uint32_t enqueue_count_ = 0;
+    uint32_t dequeue_count_ = 0;
+    uint32_t cwmgr_count_ = 0;
     uint32_t rom_initgraf_ = 0;
     uint32_t rom_tool_[512]{};
     uint32_t restore_stub_pc_ = 0;
