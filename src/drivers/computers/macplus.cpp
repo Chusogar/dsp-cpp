@@ -256,11 +256,18 @@ void MacPlus::on_cpu_cycles(int cycles) {
         const uint32_t pb = read_pb_ & 0xffffffu;
         if (pb + 0x24u < kRamSize) {
             const uint32_t buf = read_long(pb + 0x20) & 0xffffffu;
-            if (buf >= 0x1008 && buf + 18 < kRamSize && read_long(buf) == 0xa89f6572u) {
-                const uint32_t hint = read_long(buf - 4) & 0xffffffu;
-                const uint32_t before = decompress_count_;
-                if (!maybe_decompress_ptr(buf, hint)) maybe_decompress_ptr(buf, 0);
-                if (decompress_count_ != before) write_long(pb + 0x20, read_long(0x010c));
+            if (buf >= 0x1008 && buf + 22 < kRamSize) {
+                uint32_t src = 0;
+                if (read_long(buf) == 0xa89f6572u)
+                    src = buf;
+                else if (read_long(buf + 4) == 0xa89f6572u)
+                    src = buf + 4;  // HFS resource record is length + payload
+                if (src) {
+                    const uint32_t hint = read_long(buf - 4) & 0xffffffu;
+                    const uint32_t before = decompress_count_;
+                    if (!maybe_decompress_ptr(src, hint)) maybe_decompress_ptr(src, 0);
+                    if (decompress_count_ != before) write_long(pb + 0x20, read_long(0x010c));
+                }
             }
         }
     }
@@ -380,11 +387,10 @@ void MacPlus::via_pa_w(uint8_t data) {
     if (ddr & 0x20) iwm_.set_hdsel((data & 0x20) != 0);
     if (ddr & 0x08) main_sound_ = (data & 0x08) != 0;
     if (ddr & 0x07) snd_vol_ = data & 7;
-    // Overlay is a one-shot latch. Reset maps ROM at $0; the first PA4
-    // output-low clears it. Later VIA writes (volume, page buffers) must
-    // not turn it back on or VBL takes the ROM reset vector and System 7
-    // reboots out of the Welcome box.
-    if ((ddr & 0x10) && (data & 0x10) == 0) overlay_ = false;
+    // PCE/macplus: on a Plus, overlay is VIA PA4 and follows the pin
+    // live. The 6522 callback is already DDR-masked, so a later volume
+    // RMW keeps PA4 low once the ROM has driven it that way.
+    if (ddr & 0x10) overlay_ = (data & 0x10) != 0;
 }
 
 void MacPlus::via_pb_w(uint8_t data) {

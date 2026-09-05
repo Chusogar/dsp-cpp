@@ -22,7 +22,7 @@ constexpr uint8_t kModeArb = 0x01;
 void Ncr5380Hdd::reset() {
     odr_ = icr_ = mode_ = tcr_ = ser_ = idr_ = 0;
     rst_ = bsy_ = sel_ = req_ = ack_ = atn_ = false;
-    drq_ = eop_ = irq_ = aip_ = dma_ = pending_req_ = false;
+    drq_ = eop_ = irq_ = aip_ = dma_ = pending_req_ = arb_ = sel_phase_ = false;
     phase_ = kFree;
     cdb_len_ = cdb_pos_ = 0;
     status_ = message_ = 0;
@@ -135,21 +135,17 @@ void Ncr5380Hdd::wrap_raw_hfs() {
     image_[512 + 0x1f1] = uint8_t(sz);
     std::memcpy(image_.data() + 1024, hfs.data(), hfs.size());
     // System 7.0.1 boot blocks use bbVersion $44, so the Plus ROM JSRs
-    // $2(boot). Stock code at $8A tests ROM85 / a machine-ID table and
-    // often _SysError $62 on a 128K ROM. The generic System 7 path at $FA
-    // MountVols, opens System and JMPs 'boot' id 2 — that is how 7.0.1
-    // starts on a real Plus. Force that path. Leave the JSR return on the
-    // stack so a failure RTS falls back to the ROM Start Manager.
+    // $2(boot). That code _SysError $62 on a 128K ROM and never returns.
+    // PCE/macplus never patches this: it boots a disk that already has an
+    // Apple HD SC driver and a 5380 complete enough for that driver to
+    // finish the JSR. Our raw HFS image only has a .DSPHD stub, so RTS
+    // lets the ROM Start Manager MountVol and load System itself.
     uint8_t* boot = image_.data() + 1024;
-    if (hfs.size() >= 0x100 && boot[0] == 'L' && boot[1] == 'K' && boot[6] == 0x44 &&
+    if (hfs.size() >= 1024 && boot[0] == 'L' && boot[1] == 'K' && boot[6] == 0x44 &&
         boot[0x8a] == 0x4a && boot[0x8b] == 0x78 && boot[0xd8] == 0xa9 &&
-        boot[0xd9] == 0xc9 && boot[0xfa] == 0x41 && boot[0xfb] == 0xfa) {
-        boot[0x8a] = 0x2e;  // MOVE.L A7, D7  (MountVol parameter block)
-        boot[0x8b] = 0x0f;
-        boot[0x8c] = 0x60;  // BRA.W $FA
-        boot[0x8d] = 0x00;
-        boot[0x8e] = 0x00;
-        boot[0x8f] = 0x6c;
+        boot[0xd9] == 0xc9) {
+        boot[2] = 0x4e;
+        boot[3] = 0x75;
     }
     // ROM _Launch only accepts APPL. System 7's Finder is type FNDR, so the
     // 128K Launch fallback reads a bit of the file and _SysError 26.
@@ -182,7 +178,7 @@ int Ncr5380Hdd::cdb_length(uint8_t opcode) {
 
 void Ncr5380Hdd::bus_reset() {
     bsy_ = sel_ = req_ = ack_ = atn_ = false;
-    drq_ = eop_ = aip_ = dma_ = pending_req_ = false;
+    drq_ = eop_ = aip_ = dma_ = pending_req_ = arb_ = sel_phase_ = false;
     phase_ = kFree;
     cdb_len_ = cdb_pos_ = 0;
     xfer_.clear();
@@ -272,11 +268,38 @@ void Ncr5380Hdd::execute() {
             offer_byte();
         return;
     }
-    if (op == 0x1a) {  // MODE SENSE(6)
+    if (op == 0x1a) {  // MODE SENSE(6) — pages match PCE/macplus
         const int n = cdb_[4] ? cdb_[4] : 4;
-        xfer_.assign(4, 0);
-        xfer_[0] = 3;
-        if (n < 4) xfer_.resize(size_t(n));
+        const uint8_t page = uint8_t(cdb_[2] & 0x3f);
+        xfer_.assign(64, 0);
+        size_t len = 0;
+        if (page == 0x01) {
+            xfer_[0] = 0x01;
+            xfer_[1] = 10;
+            len = 12;
+        } else if (page == 0x03) {
+            xfer_[0] = 0x03;
+            xfer_[1] = 22;
+            len = 24;
+        } else if (page == 0x04) {
+            xfer_[0] = 0x04;
+            xfer_[1] = 22;
+            xfer_[5] = 1;
+            xfer_[20] = 0x0e;
+            xfer_[21] = 0x10;  // 3600 rpm
+            len = 32;
+        } else if (page == 0x30) {
+            // Apple HD SC / System 7 SCSI Manager probe.
+            xfer_[0] = 0x30;
+            xfer_[1] = 33;
+            std::memcpy(xfer_.data() + 14, "APPLE COMPUTER, INC", 19);
+            len = 34;
+        } else {
+            xfer_[0] = 3;
+            len = 4;
+        }
+        if (n < int(len)) xfer_.resize(size_t(n));
+        else xfer_.resize(len);
         set_phase(kDataIn);
         if (ack_)
             pending_req_ = true;
@@ -512,19 +535,37 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
             // Only this disk (SCSI ID 0) answers selection. Initiator BSY is
             // visible on CSR but must not be treated as target BSY.
             if (sel_ && loaded_ && (odr_ & 0x01)) bsy_ = true;
+            // PCE/macplus: SEL while arbitrating enters the selection phase.
+            if (arb_ && sel_) sel_phase_ = true;
             // Wait for the SCSI Manager to set TCR to COMMAND. Starting
             // the phase on SEL-drop clocks a zero CDB if ODR is still 0.
             if (!sel_ && bsy_ && phase_ == kFree && (tcr_ & 7) == kCommand) start_command();
             break;
         }
-        case 2:
+        case 2: {
+            // PCE/macplus: MR2 ARB starts arbitration; dropping ARB after
+            // SEL is how System 7's SCSI Manager enters COMMAND.
+            const bool want_arb = (data & kModeArb) != 0;
+            if (want_arb && !arb_ && phase_ == kFree) {
+                arb_ = true;
+                aip_ = true;
+            }
+            if (!want_arb && arb_) {
+                arb_ = false;
+                aip_ = false;
+                if (sel_phase_ && loaded_ && (odr_ & 0x01) && phase_ == kFree) {
+                    bsy_ = true;
+                    start_command();
+                }
+                sel_phase_ = false;
+            }
             mode_ = data;
-            aip_ = (data & kModeArb) != 0;
             if (!(data & kModeDma)) {
                 dma_ = false;
                 drq_ = false;
             }
             break;
+        }
         case 3:
             tcr_ = data;
             if ((data & 7) == kCommand && bsy_ && phase_ == kFree) start_command();

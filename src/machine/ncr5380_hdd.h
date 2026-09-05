@@ -84,6 +84,8 @@ private:
     bool aip_ = false;
     bool dma_ = false;
     bool pending_req_ = false;
+    bool arb_ = false;
+    bool sel_phase_ = false;
     uint8_t phase_ = kFree;
 
     uint8_t cdb_[12]{};
