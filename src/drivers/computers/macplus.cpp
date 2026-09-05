@@ -150,11 +150,12 @@ void MacPlus::redirect_launch_to_boot2() {
     write_byte(stub + 1, 0xfc);
     write_byte(stub + 2, 0x4e);
     write_byte(stub + 3, 0x75);
-    // MOVEQ #0 / MOVEA.L D0,A0 / RTS / NOP — empty GrafPtr, noErr.
-    write_byte(cwmgr, 0x70);
-    write_byte(cwmgr + 1, 0x00);
-    write_byte(cwmgr + 2, 0x20);
-    write_byte(cwmgr + 3, 0x40);
+    // MOVE.L $A26,A0 / RTS / NOP — return thePort. A0=0 made boot 2
+    // call _TextSize with A1=$FFFF and the 68000 walked off to $FFFFFFFF.
+    write_byte(cwmgr, 0x20);
+    write_byte(cwmgr + 1, 0x78);
+    write_byte(cwmgr + 2, 0x0a);
+    write_byte(cwmgr + 3, 0x26);
     write_byte(cwmgr + 4, 0x4e);
     write_byte(cwmgr + 5, 0x75);
     write_byte(cwmgr + 6, 0x4e);
@@ -166,8 +167,7 @@ void MacPlus::redirect_launch_to_boot2() {
     trap_stub_ = stub;
     cwmgr_stub_ = cwmgr;
     snapshot_rom_tool_traps();
-    if (!rom_tool_[0x6e]) rom_tool_[0x6e] = 0x0040d930u;  // Plus v3 InitGraf
-    if (!rom_initgraf_) rom_initgraf_ = rom_tool_[0x6e];
+    if (!rom_initgraf_) rom_initgraf_ = 0x0040d930u;
     restore_plus_stubs();
     // ROM _Launch copies the name; we skip that trap.
     if (ram_at(0x0910) != 6) {
@@ -277,27 +277,19 @@ void MacPlus::protect_plus_traps(uint32_t address) {
         put(0x0c00 + 0xad * 4, trap_stub_);
     if (cwmgr_stub_ && address >= 0x0e00 + 0x16f * 4 && address < 0x0e00 + 0x16f * 4 + 4)
         put(0x0e00 + 0x16f * 4, cwmgr_stub_);
-    if (address >= 0x0e00 + 0x50 * 4 && address < 0x0e00 + 0x70 * 4) {
-        const int i = int((address - 0x0e00) / 4);
-        if (rom_tool_[i]) put(0x0e00 + uint32_t(i) * 4, rom_tool_[i]);
-    }
+    if (rom_initgraf_ && address >= 0x0e00 + 0x6e * 4 && address < 0x0e00 + 0x6e * 4 + 4)
+        put(0x0e00 + 0x6e * 4, rom_initgraf_);
 }
 
 void MacPlus::restore_plus_stubs() {
     if (!trap_stub_ || trap_stub_ + 4 > kRamSize) return;
-    // Only classic QuickDraw / text ($50–$6F). A full Toolbox rewind
-    // put UnimplTrap on OS $AD (shared with tool $2D) and replaced
-    // System 7's GetResource, so dcmp stalled at 13.
-    for (int i = 0x50; i <= 0x6f; i++) {
-        if (!rom_tool_[i]) continue;
-        const uint32_t cur = read_long(0x0e00 + uint32_t(i) * 4);
-        // $400806 UnimplTrap is still in the ROM window — treat it
-        // as a replacement, not as "already the 128K implementation".
-        if (cur != rom_tool_[i]) write_long(0x0e00 + uint32_t(i) * 4, rom_tool_[i]);
-    }
     write_long(0x0c00 + 0xad * 4, trap_stub_);
     if (cwmgr_stub_ && cwmgr_stub_ + 6 <= kRamSize)
         write_long(0x0e00 + 0x16f * 4, cwmgr_stub_);
+    if (rom_initgraf_) {
+        const uint32_t cur = read_long(0x0e00 + 0x6e * 4);
+        if (cur != rom_initgraf_) write_long(0x0e00 + 0x6e * 4, rom_initgraf_);
+    }
 }
 
 void MacPlus::sanitize_mountvol_pb() {
