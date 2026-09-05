@@ -218,11 +218,11 @@ void MacPlus::via_pa_w(uint8_t data) {
     iwm_.set_hdsel((data & 0x20) != 0);
     main_sound_ = (data & 0x08) != 0;
     snd_vol_ = data & 7;
-    // PA4 is pulled up, so overlay stays on until the pin is an output.
-    if (via_.ddr_a() & 0x10)
-        overlay_ = (data & 0x10) != 0;
-    else
-        overlay_ = true;
+    // Overlay is a one-shot latch. Reset maps ROM at $0; the first PA4
+    // output-low clears it. Later VIA writes (volume, page buffers) must
+    // not turn it back on or VBL takes the ROM reset vector and System 7
+    // reboots out of the Welcome box.
+    if ((via_.ddr_a() & 0x10) && (data & 0x10) == 0) overlay_ = false;
 }
 
 void MacPlus::via_pb_w(uint8_t data) {
