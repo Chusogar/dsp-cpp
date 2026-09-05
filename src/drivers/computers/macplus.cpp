@@ -125,12 +125,11 @@ void MacPlus::redirect_launch_to_boot2() {
     //
     // A3 = 0 so the following _ReleaseResource is a no-op.
     //
-    // Boot 2 GetTrapAddress-probes OS $AD (Gestalt) and $5C (MemoryDispatch).
-    // On a Plus those slots are packed-rect / shift helpers, so the probe
-    // thinks the traps exist and JSRs them with the wrong convention.
-    // Both go to a silent MOVEQ #-4/RTS planted above the body. The ROM
-    // unimplemented vector SysError 25s if anything else hits $5C. Leave
-    // $5D/$6E alone.
+    // Boot 2 GetTrapAddress-probes OS $AD (Gestalt). On a Plus that slot
+    // is a packed-rect helper, so the probe JSRs it with the wrong
+    // convention. A silent MOVEQ #-4/RTS lets A1AD return. Do not touch
+    // $5C: on a Plus that slot is a shift helper and replacing it
+    // corrupts A5 / SysError 25s.
     boot2_tried_ = true;
     const std::vector<uint8_t>& boot2 = scsi_.system_boot2();
     if (boot2.size() < 0x20) return;
@@ -232,7 +231,6 @@ void MacPlus::sweep_compressed_handles() {
 void MacPlus::restore_plus_stubs() {
     if (!trap_stub_ || trap_stub_ + 4 > kRamSize) return;
     write_long(0x0c00 + 0xad * 4, trap_stub_);
-    write_long(0x0c00 + 0x5c * 4, trap_stub_);
 }
 
 void MacPlus::sanitize_mountvol_pb() {
