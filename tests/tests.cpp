@@ -5508,12 +5508,54 @@ void test_mac_gcr_and_dsk() {
           "800K Mac disk is 80x2 with 12 sectors on track 0");
     check(disk.sectors_per_track(79) == 8, "inner Mac tracks have 8 sectors");
     check(disk.format_byte() == 0x22, "800K GCR format byte is 0x22");
+    check(!disk.hd(), "800K raw .dsk is not a SuperDrive image");
     check(!disk.nibbles(0, 0).empty() && disk.nibbles(0, 0)[36] == 0xd5,
           "track 0 GCR starts with an address mark after the gap");
+
+    const char* sys608 = "/tmp/macdisks/sys608/MacOS_6.0.8_System_Startup.img";
+    std::FILE* s6 = std::fopen(sys608, "rb");
+    if (s6) {
+        std::fclose(s6);
+        dsp::MacDsk hd;
+        check(!hd.load_file(sys608, &error),
+              "MAME macplus add_35 / MFD51W rejects the IA 1.44MB Disk Copy image");
+        check(error.find("SuperDrive") != std::string::npos,
+              "the error names the SuperDrive / SWIM machine");
+    }
 
     dsp::MacPlus machine;
     check(machine.load_media(path, &error), "Mac Plus attaches a floppy before the ROM is loaded");
     check(machine.floppy_loaded(), "Mac Plus reports the floppy");
+
+    // MAME iwm_device::control + mac128_state::devsel_w: ENABLE selects
+    // drive 1 (internal MFD51W), SELECT picks the empty external unit.
+    dsp::Iwm& iwm = machine.iwm();
+    auto set_phases = [&iwm](int phases) {
+        iwm.write(uint8_t((phases & 1) ? 1 : 0), 0);
+        iwm.write(uint8_t((phases & 2) ? 3 : 2), 0);
+        iwm.write(uint8_t((phases & 4) ? 5 : 4), 0);
+        iwm.write(6, 0);  // LSTRB off
+    };
+    auto status_sense = [&iwm]() {
+        iwm.write(14, 0);  // Q7 = 0
+        return iwm.read(13);  // Q6 = 1
+    };
+    check(iwm.selected_drive() == 0, "IWM reset leaves no drive selected");
+    iwm.write(9, 0);
+    iwm.write(10, 0);
+    check(iwm.selected_drive() == 1, "IWM ENABLE selects the internal MFD51W");
+    iwm.set_hdsel(true);
+    set_phases(0);
+    check((status_sense() & 0x80) == 0, "internal 800K disk reports DiskInPlace");
+    iwm.write(11, 0);
+    check(iwm.selected_drive() == 2, "IWM SELECT selects the external MFD51W");
+    iwm.set_hdsel(true);
+    set_phases(0);
+    check((status_sense() & 0x80) != 0, "empty external drive reports NoDisk");
+    iwm.set_hdsel(false);
+    set_phases(7);
+    check((status_sense() & 0x80) == 0, "empty external MFD51W still exists (NoDrive=0)");
+    check(machine.floppy_loaded(), "SELECT does not unload the internal disk");
 }
 
 void write_mac_lk_disk(const std::string& path) {
@@ -5582,6 +5624,18 @@ void test_mac_boot_if_present() {
     check(saw_motor, "Sony driver spins the IWM motor to search for D5 AA marks");
     check(mac_has_floppy_icon(happy), "the disk / question-mark icon stays on screen with a floppy inserted");
 
+    const char* sys608 = "/tmp/macdisks/sys608/MacOS_6.0.8_System_Startup.img";
+    std::FILE* s6f = std::fopen(sys608, "rb");
+    if (s6f) {
+        std::fclose(s6f);
+        dsp::MacPlus sys6;
+        check(sys6.init(rom, &error), "Mac Plus ROM reloads for the 1.44MB image check");
+        check(!sys6.load_media(sys608, &error),
+              "load_media does not put a SuperDrive 1.44MB image in the Plus Sony drive");
+        check(!sys6.floppy_loaded() && !sys6.scsi_loaded(),
+              "the IA Startup image is neither an 800K GCR floppy nor a 512-byte SCSI disk");
+    }
+
     const char* hd = "/tmp/macdisks/System7_0_1.img";
     std::FILE* hf = std::fopen(hd, "rb");
     if (!hf) return;
@@ -5611,6 +5665,29 @@ void test_mac_boot_if_present() {
     check(sys7.peek(0x0910) == 6 && sys7.peek(0x0911) == 'F',
           "System 7 names the Finder at CurApName after the Welcome dialog");
     check(unique_pixels(sys7) >= 2, "System 7 boot paints the Macintosh screen");
+
+    const char* hd1 = "/tmp/macdisks/sys701comp/hd1.img";
+    std::FILE* h1 = std::fopen(hd1, "rb");
+    if (h1) {
+        std::fclose(h1);
+        dsp::MacPlus comp;
+        check(comp.init(rom, &error), "Mac Plus ROM reloads for the IA 7.0.1 compilation");
+        check(comp.load_media(hd1, &error), "hd1.img mounts as a SCSI APM disk");
+        check(comp.scsi_loaded() && !comp.floppy_loaded(), "compilation hd1 is SCSI, not a floppy");
+        check(comp.scsi().system_boot2().size() >= 0x20,
+              "APM System 7 volume still yields 'boot' id 2");
+        bool comp_sys = false, comp_wel = false;
+        for (int i = 0; i < 2500; i++) {
+            comp.run_frame();
+            if (comp.peek(0xad8) == 6 && comp.peek(0xad9) == 'S') comp_sys = true;
+            if (mac_has_welcome_box(comp)) comp_wel = true;
+        }
+        write_mac_ppm("/tmp/macplus-sys701comp.ppm", comp);
+        check(comp_sys, "compilation hd1 copies the System name");
+        check(comp_wel, "compilation hd1 draws Welcome to Macintosh");
+        check(comp.scsi_xfer_bytes() > 12288,
+              "compilation hd1 keeps reading past the Apple partition map");
+    }
 }
 
 void test_ql_match_point_if_present() {

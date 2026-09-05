@@ -14,10 +14,12 @@
 
 namespace dsp {
 
-// Macintosh Plus: 68000, 128K ROM, 4MB RAM (SIMM upgrade), 512×342 1bpp,
-// IWM 800K floppy, NCR 5380 SCSI hard disk at $580000. Stock Plus is 1MB;
-// System 7.0 needs ≥2MB and the ROM's early screen buffer sits at $3FA700
-// (4MB − $5900), so a full 4MB decode matches both the memory test and video.
+// Macintosh Plus (MAME mac128_state::macplus): 68000 @ 7.8336 MHz, 128K ROM,
+// 4MB RAM (SIMM upgrade), 512×342 1bpp, IWM + two add_35 / MFD51W 800K GCR
+// connectors (internal + empty external). 1.44MB SuperDrive is SWIM +
+// add_35_hd on macsefd, not this machine. NCR 5380 at $580000 with IRQ pin
+// 23 unconnected. Stock Plus is 1MB; System 7.0 needs ≥2MB and the ROM's
+// early screen buffer sits at $3FA700 (4MB − $5900).
 class MacPlus : public Machine {
 public:
     static constexpr uint32_t kCpuClock = 7833600;
@@ -70,6 +72,15 @@ public:
     uint32_t launch_count() const { return launch_count_; }
     uint32_t launch_a0() const { return launch_a0_; }
     uint32_t decompress_count() const { return decompress_count_; }
+    uint32_t enqueue_count() const { return enqueue_count_; }
+    uint32_t dequeue_count() const { return dequeue_count_; }
+    uint32_t cwmgr_count() const { return cwmgr_count_; }
+    uint32_t boot2_base() const { return boot2_base_; }
+    uint32_t boot2_hi() const { return boot2_hi_; }
+    uint32_t boot2_main_hi() const { return boot2_main_hi_; }
+    uint32_t boot2_hits() const { return boot2_hits_; }
+    uint32_t boot2_last_off() const { return boot2_last_off_; }
+    uint32_t lpch_skip() const { return lpch_skip_; }
     uint8_t debug_im() const { return cpu_.cc.im; }
     uint8_t peek(uint32_t address) { return read_byte(address); }
     uint8_t peek_ram(uint32_t address) const { return ram_[ram_index(address)]; }
@@ -118,6 +129,15 @@ private:
     void maybe_decompress_handle(uint32_t handle);
     bool maybe_decompress_ptr(uint32_t ptr, uint32_t handle);
     void sweep_compressed_handles();
+    void restore_plus_stubs();
+    void snapshot_rom_tool_traps();
+    void protect_plus_traps(uint32_t address);
+    uint32_t plant_screen_port(uint32_t below);
+    void skip_aline(bool autopop);
+    void os_enqueue();
+    void os_dequeue();
+    void os_get_cwmgr_port();
+    static bool is_plus_qd_trap(int trap);
 
     M68000 cpu_;
     Via6522 via_;
@@ -176,6 +196,20 @@ private:
     uint32_t read_ret_pc_ = 0;
     uint32_t read_pb_ = 0;
     bool boot2_tried_ = false;
+    uint32_t trap_stub_ = 0;
+    uint32_t grafport_ = 0;
+    uint32_t enqueue_count_ = 0;
+    uint32_t dequeue_count_ = 0;
+    uint32_t cwmgr_count_ = 0;
+    uint32_t boot2_base_ = 0;
+    uint32_t boot2_hi_ = 0;
+    uint32_t boot2_main_hi_ = 0;
+    uint32_t boot2_hits_ = 0;
+    uint32_t boot2_last_off_ = 0;
+    uint32_t lpch_skip_ = 0;
+    uint32_t rom_initgraf_ = 0;
+    uint32_t rom_tool_[512]{};
+    uint32_t restore_stub_pc_ = 0;
     std::vector<int16_t> audio_;
 };
 

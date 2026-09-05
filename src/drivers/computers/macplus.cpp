@@ -125,30 +125,41 @@ void MacPlus::redirect_launch_to_boot2() {
     //
     // A3 = 0 so the following _ReleaseResource is a no-op.
     //
-    // Boot 2 GetTrapAddress-probes OS $AD (Gestalt) and $5C (MemoryDispatch).
-    // On a Plus those slots are packed-rect / shift helpers, so the probe
-    // thinks the traps exist and JSRs them with the wrong convention.
-    // Both go to a silent MOVEQ #-4/RTS planted above the body. The ROM
-    // unimplemented vector SysError 25s if anything else hits $5C. Leave
-    // $5D/$6E alone.
-    boot2_tried_ = true;
+    // Boot 2 GetTrapAddress-probes OS $AD (Gestalt). On a Plus that slot
+    // is a packed-rect helper, so the probe JSRs it with the wrong
+    // convention. A silent MOVEQ #-4/RTS lets A1AD return. PCE's trap
+    // table names A96F _Enqueue and AA48 _GetCWMgrPort; the Plus ROM
+    // $16F slot is a handle-size helper at $415750, so Enqueue / Dequeue
+    // / GetCWMgrPort are handled in C (os_enqueue / os_dequeue /
+    // os_get_cwmgr_port) instead of planting a GrafPort stub on the
+    // wrong vector. Do not touch $5C: on a Plus that slot is a shift
+    // helper and replacing it corrupts A5 / SysError 25s.
+    // System 6 has no 'boot' id 2. Leave boot2_tried_ false so Enqueue /
+    // AliasDispatch / InitApplZone hooks stay off and 128K _Launch runs.
     const std::vector<uint8_t>& boot2 = scsi_.system_boot2();
     if (boot2.size() < 0x20) return;
+    boot2_tried_ = true;
     const uint32_t body = uint32_t(boot2.size() - 0x18);
     uint32_t top = read_long(0x010c) & 0xffffffu;
     if (top < 0x10000 || top > kRamSize) top = 0x003fa700;
-    if (top < body + 0x20000) return;
+    if (top < body + 0x20120) return;
+    // Gestalt stub at top-4; a 1-bit screen GrafPort + rectangular
+    // visRgn/clipRgn under it for AA48 GetCWMgrPort. $A26 thePort is -1
+    // for the whole Welcome path (QD lives on A5).
     const uint32_t stub = (top - 4) & ~1u;
     write_byte(stub, 0x70);
     write_byte(stub + 1, 0xfc);
     write_byte(stub + 2, 0x4e);
     write_byte(stub + 3, 0x75);
-    const uint32_t code = (stub - body) & ~1u;
+    const uint32_t hole = plant_screen_port(stub);
+    const uint32_t code = (hole - body) & ~1u;
     for (uint32_t i = 0; i < body; ++i) write_byte(code + i, boot2[0x18 + i]);
     write_long(0x010c, code);        // BufPtr: keep the hole out of the heap
     write_long(0x0130, 0x00200000);  // ApplLimit: InitApplZone stops at 2MB
-    write_long(0x0c00 + 0xad * 4, stub);
-    write_long(0x0c00 + 0x5c * 4, stub);
+    trap_stub_ = stub;
+    snapshot_rom_tool_traps();
+    if (!rom_initgraf_) rom_initgraf_ = 0x0040d930u;
+    restore_plus_stubs();
     // ROM _Launch copies the name; we skip that trap.
     if (ram_at(0x0910) != 6) {
         ram_at(0x0910, 6);
@@ -161,6 +172,12 @@ void MacPlus::redirect_launch_to_boot2() {
     cpu_.a[3].l = 0;
     cpu_.d[0].l = body;
     cpu_.pc_.l = code;
+    boot2_base_ = code;
+    boot2_hi_ = 0x18;
+    boot2_main_hi_ = 0x18;
+    boot2_hits_ = 0;
+    boot2_last_off_ = 0;
+    lpch_skip_ = 0;
 }
 
 uint32_t MacPlus::read_long(uint32_t address) {
@@ -229,6 +246,190 @@ void MacPlus::sweep_compressed_handles() {
     }
 }
 
+uint32_t MacPlus::plant_screen_port(uint32_t below) {
+    // 108-byte GrafPort + a locked 10-byte rectangular region used as
+    // both visRgn and clipRgn. Screen is 512×342, 64 bytes/row, at
+    // $3FA700. Color QD's GetCWMgrPort wants a GrafPtr; a 1-bit port
+    // is enough for TextSize / PaintRgn on the Plus.
+    const uint32_t port = (below - 0x70) & ~1u;
+    auto make_rgn = [this](uint32_t handle, uint32_t block) {
+        write_long(block, 0x80000000u | 0x18u);
+        write_long(block + 4, handle);
+        write_long(handle, block + 8);
+        write_word(block + 8, 10);
+        write_word(block + 10, 0);
+        write_word(block + 12, 0);
+        write_word(block + 14, 342);
+        write_word(block + 16, 512);
+    };
+    // Separate visRgn and clipRgn. Do *not* point GrayRgn at either:
+    // the Window Manager SetHandleSize-grows GrayRgn and would smash
+    // the port sitting next to a shared handle.
+    const uint32_t clip_h = (port - 4) & ~1u;
+    const uint32_t clip_b = (clip_h - 0x18) & ~1u;
+    const uint32_t vis_h = (clip_b - 4) & ~1u;
+    const uint32_t vis_b = (vis_h - 0x18) & ~1u;
+    make_rgn(vis_h, vis_b);
+    make_rgn(clip_h, clip_b);
+    for (uint32_t i = 0; i < 0x6c; i++) write_byte(port + i, 0);
+    write_long(port + 2, 0x003fa700u);  // portBits.baseAddr
+    write_word(port + 6, 64);           // rowBytes
+    write_word(port + 8, 0);            // bounds.top
+    write_word(port + 10, 0);           // bounds.left
+    write_word(port + 12, 342);         // bounds.bottom
+    write_word(port + 14, 512);         // bounds.right
+    write_word(port + 16, 0);           // portRect.top
+    write_word(port + 18, 0);
+    write_word(port + 20, 342);
+    write_word(port + 22, 512);
+    write_long(port + 24, vis_h);
+    write_long(port + 28, clip_h);
+    for (uint32_t i = 0; i < 8; i++) write_byte(port + 40 + i, 0xff);  // pnPat
+    write_word(port + 60, 1);   // pnSize.v
+    write_word(port + 62, 1);   // pnSize.h
+    write_word(port + 66, 0);   // pnVis (0 = visible)
+    write_word(port + 74, 12);  // txSize
+    grafport_ = port;
+    write_long(0x0a26, port);  // thePort
+    write_long(0x09de, port);  // WMgrPort
+    return vis_b;
+}
+
+void MacPlus::skip_aline(bool autopop) {
+    // group_a has already pushed SR/PC and jumped to the A-line vector.
+    const uint32_t ppc = cpu_.ppc() & 0xffffffu;
+    const uint32_t sp = cpu_.a[7].l & 0xffffffu;
+    const uint32_t stacked = read_long(sp + 2) & 0xffffffu;
+    if (stacked == ppc || stacked == ((ppc + 2) & 0xffffffu)) {
+        cpu_.a[7].l = sp + 6;
+        if (autopop) cpu_.a[7].l += 4;
+    }
+    cpu_.pc_.l = (ppc + 2) & 0xffffffu;
+}
+
+void MacPlus::os_enqueue() {
+    // Inside Macintosh QHdr: +0 qFlags.w, +2 qHead.l, +6 qTail.l
+    // QElem: +0 qLink.l. A0 = qElem, A1 = qHdr.
+    const uint32_t elem = cpu_.a[0].l;
+    const uint32_t elem24 = elem & 0xffffffu;
+    const uint32_t hdr = cpu_.a[1].l & 0xffffffu;
+    if (elem24 < 0x100 || elem24 + 4 > kRamSize || hdr + 10 > kRamSize) return;
+    write_long(elem24, 0);
+    const uint32_t tail = read_long(hdr + 6) & 0xffffffu;
+    if (tail == 0) {
+        write_long(hdr + 2, elem);
+    } else if (tail + 4 <= kRamSize) {
+        write_long(tail, elem);
+    }
+    write_long(hdr + 6, elem);
+    enqueue_count_++;
+}
+
+void MacPlus::os_dequeue() {
+    const uint32_t elem = cpu_.a[0].l & 0xffffffu;
+    const uint32_t hdr = cpu_.a[1].l & 0xffffffu;
+    cpu_.d[0].l = 0xffffffffu;  // qErr
+    if (elem < 0x100 || elem + 4 > kRamSize || hdr + 10 > kRamSize) return;
+    uint32_t pred = 0;
+    uint32_t cur = read_long(hdr + 2) & 0xffffffu;
+    for (int i = 0; i < 4096 && cur >= 0x100 && cur + 4 <= kRamSize; i++) {
+        if (cur == elem) {
+            const uint32_t next = read_long(elem);
+            if (pred)
+                write_long(pred, next);
+            else
+                write_long(hdr + 2, next);
+            if ((read_long(hdr + 6) & 0xffffffu) == elem) write_long(hdr + 6, pred);
+            cpu_.d[0].l = 0;
+            dequeue_count_++;
+            return;
+        }
+        pred = cur;
+        cur = read_long(cur) & 0xffffffu;
+        if (cur == 0) return;
+    }
+}
+
+void MacPlus::os_get_cwmgr_port() {
+    uint32_t port = grafport_;
+    const uint32_t wm = read_long(0x09de) & 0xffffffu;
+    if (wm >= 0x10000 && wm < 0xffff00u) port = wm;
+    if (!port) port = read_long(0x0a26);
+    cpu_.a[0].l = port;
+    cwmgr_count_++;
+}
+
+void MacPlus::snapshot_rom_tool_traps() {
+    // Remember 128K Toolbox implementations before System 7 PACKs
+    // replace them with 32-bit QuickDraw glue. That glue pops the
+    // A-line frame as BlockMove params and smashes A7 (seen on
+    // _TextSize / A868 from boot id 2). Skip UnimplTrap — System 7
+    // writes $400806 over InitGraf, and that address is still in ROM.
+    constexpr uint32_t kUnimpl = 0x400806;
+    for (int i = 0; i < 512; i++) {
+        if (rom_tool_[i]) continue;
+        const uint32_t v = read_long(0x0e00 + uint32_t(i) * 4);
+        if (v >= 0x400000 && v < 0x420000 && v != kUnimpl) rom_tool_[i] = v;
+    }
+    if (!rom_initgraf_ && rom_tool_[0x6e]) rom_initgraf_ = rom_tool_[0x6e];
+}
+
+bool MacPlus::is_plus_qd_trap(int trap) {
+    // 128K QuickDraw. System 7 'lpch' / Color QD glue pops the A-line
+    // frame as BlockMove params and the JSR at boot2 +$03be never
+    // returns. $50–$6F is InitGraf / InitPort / TextSize; the rest are
+    // the dialog primitives the hang loop actually calls. Do not put
+    // GetCWMgrPort on $16F (that slot is Enqueue).
+    if (trap >= 0x50 && trap <= 0x6f) return true;
+    switch (trap) {
+        case 0x33:  // ScrnBitMap
+        case 0x9b:  // PenSize
+        case 0x9e:  // PenNormal
+        case 0xa1:  // FrameRect
+        case 0xa3:  // EraseRect
+        case 0xa8:  // OffsetRect
+        case 0xa9:  // InsetRect
+            return true;
+        default:
+            return false;
+    }
+}
+
+void MacPlus::protect_plus_traps(uint32_t address) {
+    if (!boot2_tried_ || !trap_stub_) return;
+    address &= 0xffffffu;
+    auto put = [this](uint32_t addr, uint32_t v) {
+        ram_at(addr, uint8_t(v >> 24));
+        ram_at(addr + 1, uint8_t(v >> 16));
+        ram_at(addr + 2, uint8_t(v >> 8));
+        ram_at(addr + 3, uint8_t(v));
+    };
+    if (address >= 0x0c00 + 0xad * 4 && address < 0x0c00 + 0xad * 4 + 4)
+        put(0x0c00 + 0xad * 4, trap_stub_);
+    if (address >= 0x0e00 && address < 0x0e00 + 512 * 4) {
+        const int trap = int((address - 0x0e00) / 4);
+        if (is_plus_qd_trap(trap) && rom_tool_[trap])
+            put(0x0e00 + uint32_t(trap) * 4, rom_tool_[trap]);
+    }
+}
+
+void MacPlus::restore_plus_stubs() {
+    if (!trap_stub_ || trap_stub_ + 4 > kRamSize) return;
+    for (int i = 0; i < 512; i++) {
+        if (!is_plus_qd_trap(i) || !rom_tool_[i]) continue;
+        const uint32_t cur = read_long(0x0e00 + uint32_t(i) * 4);
+        if (cur != rom_tool_[i] && (cur < 0x400000 || cur >= 0x420000))
+            write_long(0x0e00 + uint32_t(i) * 4, rom_tool_[i]);
+    }
+    write_long(0x0c00 + 0xad * 4, trap_stub_);
+    if (grafport_) {
+        const uint32_t tp = read_long(0x0a26) & 0xffffffu;
+        if (tp < 0x10000 || tp >= 0xffff00u) write_long(0x0a26, grafport_);
+        const uint32_t wm = read_long(0x09de) & 0xffffffu;
+        if (wm < 0x10000 || wm >= 0xffff00u) write_long(0x09de, grafport_);
+    }
+}
+
 void MacPlus::sanitize_mountvol_pb() {
     const uint32_t pb = cpu_.a[0].l & 0xffffffu;
     if (pb + 0x16u >= kRamSize) return;
@@ -260,6 +461,20 @@ void MacPlus::reset() {
     rtc_ca2_ = false;
     finder_launch_ = false;
     boot2_tried_ = false;
+    trap_stub_ = 0;
+    grafport_ = 0;
+    enqueue_count_ = 0;
+    dequeue_count_ = 0;
+    cwmgr_count_ = 0;
+    boot2_base_ = 0;
+    boot2_hi_ = 0;
+    boot2_main_hi_ = 0;
+    boot2_hits_ = 0;
+    boot2_last_off_ = 0;
+    lpch_skip_ = 0;
+    rom_initgraf_ = 0;
+    for (uint32_t& v : rom_tool_) v = 0;
+    restore_stub_pc_ = 0;
     last_trap_ = 0;
     trap_count_ = 0;
     last_syserr_ = 0;
@@ -304,7 +519,31 @@ void MacPlus::update_irqs() {
 }
 
 void MacPlus::on_cpu_cycles(int cycles) {
-    const uint32_t pc = cpu_.pc();
+    const uint32_t pc = cpu_.pc() & 0xffffffu;
+    if (boot2_base_ && pc >= boot2_base_ && pc < boot2_base_ + 0x2000u) {
+        boot2_hits_++;
+        const uint32_t off = pc - boot2_base_ + 0x18u;
+        boot2_last_off_ = off;
+        if (off > boot2_hi_) boot2_hi_ = off;
+        if (off < 0x520u && off > boot2_main_hi_) boot2_main_hi_ = off;
+        // +$1550 is JMP (A0) after GetTrapAddress. Color QD / UnimplTrap
+        // glue never returns, so the apply JSR at +$03be never gets back
+        // to MultiFinder _Launch. Tail-call only Plus ROM implementations.
+        if (off == 0x1550) {
+            const uint32_t dest = cpu_.a[0].l & 0xffffffu;
+            if (dest < 0x400000 || dest >= 0x420000 || dest == 0x400806) {
+                const uint32_t sp = cpu_.a[7].l & 0xffffffu;
+                cpu_.pc_.l = read_long(sp);
+                cpu_.a[7].l = sp + 4;
+                lpch_skip_++;
+            }
+        }
+    }
+    if (!overlay_ && rom_initgraf_ == 0) snapshot_rom_tool_traps();
+    if (restore_stub_pc_ && pc == restore_stub_pc_) {
+        restore_stub_pc_ = 0;
+        restore_plus_stubs();
+    }
     if (decompress_pc_ && pc == decompress_pc_) {
         decompress_pc_ = 0;
         maybe_decompress_handle(cpu_.a[0].l);
@@ -344,15 +583,57 @@ void MacPlus::on_cpu_cycles(int cycles) {
             launch_a0_ = cpu_.a[0].l;
             if (!boot2_tried_) redirect_launch_to_boot2();
         }
+        // PCE traps.c: A96F=_Enqueue, A96E=_Dequeue, AA48=_GetCWMgrPort.
+        // Only after boot 2: the 128K $16F slot is a handle-size helper.
+        if (boot2_tried_ && (op & 0x0800)) {
+            const uint16_t num = uint16_t(op & 0x03ff);
+            const bool autopop = (op & 0x0400) != 0;
+            if (num == 0x16f) {
+                os_enqueue();
+                skip_aline(autopop);
+            } else if (num == 0x16e) {
+                os_dequeue();
+                skip_aline(autopop);
+            } else if (num == 0x248) {
+                os_get_cwmgr_port();
+                skip_aline(autopop);
+            } else if (num == 0x023) {
+                // A823 is AliasDispatch on System 7; the Plus ROM slot
+                // is not that trap. A no-op noErr lets boot 2's
+                // 'scri'/'extn' probe return from +$06be.
+                cpu_.d[0].l = 0;
+                skip_aline(autopop);
+            }
+        }
         if (op == 0xa9a0 || op == 0xa81a || op == 0xa9a2 || op == 0xa1a0 || op == 0xa11a ||
             op == 0xa80c || op == 0xa81f)
             decompress_pc_ = (ppc + 2) & 0xffffffu;
         if (op == 0xa00f) sanitize_mountvol_pb();
-        if (op == 0xa9f0 || op == 0xa9f2 || (boot2_tried_ && (op == 0xa9a0 || op == 0xa81f)))
+        if (op == 0xa9f0 || op == 0xa9f2 || (boot2_tried_ && (op == 0xa9a0 || op == 0xa81f))) {
             sweep_compressed_handles();
+            restore_plus_stubs();
+        } else if (boot2_tried_ && trap_stub_) {
+            restore_plus_stubs();
+        }
         if (op == 0xa002) {
             read_ret_pc_ = (ppc + 2) & 0xffffffu;
             read_pb_ = cpu_.a[0].l;
+        }
+        if (boot2_tried_ && trap_stub_ && ((op & 0xf0ff) == 0xa047))
+            restore_stub_pc_ = (ppc + 2) & 0xffffffu;
+        // A1 below $10000 is nil ($0 / $FFFF) or a low-heap pointer
+        // Color QD TextSize cannot follow (A1=$3742 crashed to $A0007E6E).
+        if (boot2_tried_ && op == 0xa02c && boot2_main_hi_ >= 0x400u) {
+            // Second _InitApplZone: boot 2 just set ApplZone = BufPtr.
+            // The first call (from +$09ec) already built the app heap;
+            // doing it again from the planted stub never returns.
+            skip_aline(false);
+        }
+        if (boot2_tried_ && op == 0xa868 && (cpu_.a[1].l & 0xffffffu) < 0x10000u) {
+            const uint32_t sp = cpu_.a[7].l & 0xffffffu;
+            const uint32_t stacked = read_long(sp + 2) & 0xffffffu;
+            if (stacked == ppc || stacked == ((ppc + 2) & 0xffffffu)) cpu_.a[7].l = sp + 6;
+            cpu_.pc_.l = (ppc + 2) & 0xffffffu;
         }
     }
     iwm_.tick(cycles);
@@ -381,14 +662,14 @@ void MacPlus::on_cpu_cycles(int cycles) {
 }
 
 uint8_t MacPlus::via_pa_r() {
-    // PA7 is SCC Wait/Request (idle high). PA6–PA0 are outputs after the
-    // ROM programs DDR-A; return them pulled-up so a read-modify-write
-    // before that, or a mixed out_a() byte, cannot force the alternate
-    // screen (PA6=0) or pulse overlay (PA4=0).
-    return 0xff;
+    // MAME mac_via_in_a: 0x81 — PA7 SCC Wait/Request idle-high. Overlay
+    // and the screen buffer are outputs; via_pa_w only honors DDR bits so
+    // a mixed out_a() cannot clear PA4/PA6 while they are still inputs.
+    return 0x81;
 }
 
 uint8_t MacPlus::via_pb_r() {
+    // MAME mac_via_in_b: PB6 pulled high, mouse Y2/X2, button, RTC data.
     uint8_t val = 0x40;
     val = uint8_t(val | (mouse_bit_[1] << 5));
     val = uint8_t(val | (mouse_bit_[0] << 4));
@@ -443,18 +724,21 @@ void MacPlus::clock_keyboard() {
 }
 
 void MacPlus::via_pa_w(uint8_t data) {
+    // MAME mac_via_out_a: PA6 screen buffer, PA5 IWM hdsel, PA4 overlay
+    // (Plus only; SE clears overlay on the first $400000 fetch), PA3
+    // main sound page, PA2–0 volume. The 6522 callback is the mixed
+    // port, so honor DDR the way the pin would be driven.
     const uint8_t ddr = via_.ddr_a();
     if (ddr & 0x40) screen_buffer_ = (data & 0x40) ? 1 : 0;
     if (ddr & 0x20) iwm_.set_hdsel((data & 0x20) != 0);
     if (ddr & 0x08) main_sound_ = (data & 0x08) != 0;
     if (ddr & 0x07) snd_vol_ = data & 7;
-    // PCE/macplus: on a Plus, overlay is VIA PA4 and follows the pin
-    // live. The 6522 callback is already DDR-masked, so a later volume
-    // RMW keeps PA4 low once the ROM has driven it that way.
     if (ddr & 0x10) overlay_ = (data & 0x10) != 0;
 }
 
 void MacPlus::via_pb_w(uint8_t data) {
+    // MAME mac_via_out_b: PB7 /sndenb, PB2–0 RTC. Plus leaves SCSI IRQ
+    // (SE PB6 mask) disconnected.
     snd_enable_ = (data & 0x80) == 0;
     rtc_.ce_w((data & 0x04) != 0);
     rtc_.clk_w((data & 0x02) != 0);
@@ -511,14 +795,22 @@ uint32_t MacPlus::ram_index(uint32_t address) const {
 }
 
 uint8_t MacPlus::read_byte(uint32_t address) {
+    // MAME macplus_map / mac128.cpp Memory Map:
+    //   $000000–$3FFFFF  RAM, or ROM while VIA PA4 overlay is set
+    //   $400000–$4FFFFF  ROM (A17 wired to /OE → $42xxxx open bus)
+    //   $580000–$5FFFFF  NCR 5380 (Plus only; IRQ pin 23 unconnected)
+    //   $600000–$7FFFFF  RAM window (MAME mac512ke_map; Plus hardware still
+    //                    decodes it — macplus_map omits the handler)
+    //   $800000–$9FFFFF  SCC read    $A00000–$BFFFFF  SCC write
+    //   $C00000–$DFFFFF  IWM         $E80000–$EFFFFF  VIA (VPA)
     address &= 0xffffff;
     if (address < 0x400000) {
         if (overlay_) return rom_[address & (kRomSize - 1)];
         return ram_at(address);
     }
     // 128K Plus ROMs decode A17 onto /OE: $420000 is open bus, $440000 still
-    // hits ROM[0]. The ROM compares those two longs and only sets HWCfgFlags
-    // (SCSI present) when they differ — a 512KE mirrors the ROM and has no SCSI.
+    // hits ROM[0]. MAME plants 0xFF at region+$20000 and 0xAA at +$40000 so
+    // the same compare sets HWCfgFlags (SCSI). 512KE mirrors the ROM.
     if (address < 0x500000) {
         if (address & 0x20000) return 0xff;
         return rom_[address & (kRomSize - 1)];
@@ -533,10 +825,12 @@ uint8_t MacPlus::read_byte(uint32_t address) {
 
 void MacPlus::write_byte(uint32_t address, uint8_t value) {
     address &= 0xffffff;
-    // Overlay only remaps reads at 0; writes always land in RAM (write-through),
-    // and $600000 is the overlay-time RAM window documented for 128K/512K/Plus.
+    // Overlay remaps reads at 0. Hardware write-throughs to RAM (Inside Mac);
+    // MAME's ram_w drops those writes and relies on $600000, which macplus_map
+    // does not install. $600000 stays the overlay-time RAM window.
     if (address < 0x400000) {
         ram_at(address, value);
+        protect_plus_traps(address);
         return;
     }
     if (address >= 0x580000 && address < 0x600000) {
@@ -641,6 +935,7 @@ void MacPlus::run_frame() {
     }
     render();
     if (launch_count_ && decompress_count_ == 0) sweep_compressed_handles();
+    if (boot2_tried_ && trap_stub_) restore_plus_stubs();
 }
 
 void MacPlus::set_inputs(const MachineInputs& inputs) {

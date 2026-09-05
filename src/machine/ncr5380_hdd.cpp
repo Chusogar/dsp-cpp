@@ -63,7 +63,32 @@ bool Ncr5380Hdd::load_file(const std::string& path, std::string* error) {
     return true;
 }
 
+namespace {
+
+uint32_t be32_at(const std::vector<uint8_t>& img, size_t off) {
+    return (uint32_t(img[off]) << 24) | (uint32_t(img[off + 1]) << 16) |
+           (uint32_t(img[off + 2]) << 8) | img[off + 3];
+}
+
+void put_be32(std::vector<uint8_t>& img, size_t off, uint32_t value) {
+    img[off] = uint8_t(value >> 24);
+    img[off + 1] = uint8_t(value >> 16);
+    img[off + 2] = uint8_t(value >> 8);
+    img[off + 3] = uint8_t(value);
+}
+
+void put_be16(std::vector<uint8_t>& img, size_t off, uint16_t value) {
+    img[off] = uint8_t(value >> 8);
+    img[off + 1] = uint8_t(value);
+}
+
+}  // namespace
+
 void Ncr5380Hdd::wrap_raw_hfs() {
+    if (image_.size() >= 1024 && image_[0] == 'E' && image_[1] == 'R') {
+        wrap_apm_hfs();
+        return;
+    }
     if (image_.size() < 1024 || image_[0] != 'L' || image_[1] != 'K') return;
 
     const uint32_t hfs_blocks = blocks_;
@@ -83,15 +108,17 @@ void Ncr5380Hdd::wrap_raw_hfs() {
     image_[0x15] = 1;   // start block
     image_[0x17] = 1;   // length
     image_[0x19] = 1;   // Macintosh
+    plant_dsphd_stub(512, 2, hfs_blocks);
+    std::memcpy(image_.data() + 1024, hfs.data(), hfs.size());
+    patch_system7_hfs(1024);
+    extract_boot2();
+    blocks_ = uint32_t(image_.size() / 512);
+}
 
-    // 512-byte .DSPHD stub. The Plus ROM JSRs the first word after loading
-    // the driver: _DrvrInstall (-33), fill dCtlDriver, set BootMask, _AddDrive
-    // (drive 8 in the high word). Prime uses A0 as the IOParam (Plus convention).
-    // Completing a request goes through JIODone ($8FC) so the Device Manager
-    // dequeues and can Prime the HFS MDB _Read. ioCompletion is cleared so
-    // leftover memtest $FF cannot JSR the ROM RAM-fill and reboot. Status
-    // csCode 8 fills DrvSts.
-    static const uint8_t kMacScsiDriver[512] = {
+// 512-byte .DSPHD stub. The Plus ROM JSRs the first word after loading
+// the driver: _DrvrInstall (-33), fill dCtlDriver, set BootMask, _AddDrive
+// (drive 8 in the high word). Prime uses A0 as the IOParam (Plus convention).
+static const uint8_t kMacScsiDriver[512] = {
         0x48, 0xe7, 0xff, 0xfe, 0x41, 0xfa, 0x00, 0x44, 0x30, 0x3c, 0xff, 0xdf, 0xa0, 0x3d, 0x66, 0x00,
         0x00, 0x32, 0x20, 0x78, 0x01, 0x1c, 0x20, 0x68, 0x00, 0x80, 0x08, 0xd0, 0x00, 0x07, 0x22, 0x50,
         0x45, 0xfa, 0x00, 0x28, 0x22, 0xca, 0x32, 0xd2, 0x32, 0xbc, 0x00, 0x02, 0x31, 0xfc, 0xff, 0xff,
@@ -124,57 +151,84 @@ void Ncr5380Hdd::wrap_raw_hfs() {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0xff, 0xdf, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    };
-    std::memcpy(image_.data() + 512, kMacScsiDriver, sizeof(kMacScsiDriver));
-    image_[512 + 0x1c2] = 0;
-    image_[512 + 0x1c3] = 0;
-    image_[512 + 0x1c4] = 0;
-    image_[512 + 0x1c5] = 2;  // HFS starts two blocks after the DDM + stub
-    const uint16_t sz = uint16_t(std::min<uint32_t>(hfs_blocks, 0xffff));
-    image_[512 + 0x1f0] = uint8_t(sz >> 8);
-    image_[512 + 0x1f1] = uint8_t(sz);
-    std::memcpy(image_.data() + 1024, hfs.data(), hfs.size());
-    // System 7.0.1 boot blocks use bbVersion $44, so the Plus ROM JSRs
-    // $2(boot). That code _SysError $62 on a 128K ROM and never returns.
-    // PCE/macplus never patches this: it boots a disk that already has an
-    // Apple HD SC driver and a 5380 complete enough for that driver to
-    // finish the JSR. Our raw HFS image only has a .DSPHD stub, so RTS
-    // lets the ROM Start Manager MountVol and load System itself.
-    uint8_t* boot = image_.data() + 1024;
-    if (hfs.size() >= 1024 && boot[0] == 'L' && boot[1] == 'K' && boot[6] == 0x44 &&
-        boot[0x8a] == 0x4a && boot[0x8b] == 0x78 && boot[0xd8] == 0xa9 &&
+};
+
+void Ncr5380Hdd::plant_dsphd_stub(uint32_t dest_off, uint32_t hfs_block, uint32_t hfs_blocks) {
+    if (dest_off + 512 > image_.size()) return;
+    std::memcpy(image_.data() + dest_off, kMacScsiDriver, sizeof(kMacScsiDriver));
+    put_be32(image_, dest_off + 0x1c2, hfs_block);
+    put_be16(image_, dest_off + 0x1f0, uint16_t(std::min<uint32_t>(hfs_blocks, 0xffff)));
+}
+
+void Ncr5380Hdd::patch_system7_hfs(uint32_t hfs_off) {
+    if (hfs_off + 1024 > image_.size()) return;
+    uint8_t* boot = image_.data() + hfs_off;
+    if (boot[0] != 'L' || boot[1] != 'K') return;
+    // bbVersion $44: Plus ROM JSRs $2(boot) and that code _SysError $62.
+    // RTS lets the 128K Start Manager MountVol and load System itself.
+    if (boot[6] == 0x44 && boot[0x8a] == 0x4a && boot[0x8b] == 0x78 && boot[0xd8] == 0xa9 &&
         boot[0xd9] == 0xc9) {
         boot[2] = 0x4e;
         boot[3] = 0x75;
     }
-    // ROM _Launch only accepts APPL. System 7's Finder is type FNDR, so the
-    // 128K Launch fallback reads a bit of the file and _SysError 26.
-    static const uint8_t kFinderFndr[] = {0x06, 'F', 'i', 'n', 'd', 'e', 'r', 0xb4, 0x02, 0x00,
-                                          0x00, 0x00, 'F', 'N', 'D', 'R', 'M', 'A', 'C', 'S'};
-    for (size_t i = 0; i + sizeof(kFinderFndr) <= hfs.size(); ++i) {
-        if (std::equal(std::begin(kFinderFndr), std::end(kFinderFndr), boot + i)) {
-            boot[i + 12] = 'A';
-            boot[i + 13] = 'P';
-            boot[i + 14] = 'P';
-            boot[i + 15] = 'L';
+    // 128K _Launch only accepts APPL. PCE/System 7 Finder is type FNDR.
+    for (size_t i = hfs_off; i + 20 <= image_.size(); ++i) {
+        if (image_[i] != 6 || std::memcmp(&image_[i + 1], "Finder", 6) != 0) continue;
+        for (size_t j = i + 7; j + 8 <= image_.size() && j < i + 24; ++j) {
+            if (std::memcmp(&image_[j], "FNDRMACS", 8) != 0) continue;
+            image_[j] = 'A';
+            image_[j + 1] = 'P';
+            image_[j + 2] = 'P';
+            image_[j + 3] = 'L';
+            break;
         }
     }
-    // System 7 'boot' id 2 (Process Manager stub). The $FA path JSRs this
-    // after OpenResFile; 128K GetResource hits memFullErr in SysZone, so
-    // the Plus driver copies the body under BufPtr at _Launch.
+}
+
+void Ncr5380Hdd::extract_boot2() {
     boot2_.clear();
     static const uint8_t kBoot2[] = {0x20, 0x4b, 0xa0, 0x25, 0x41, 0xfa, 0x00, 0x12};
     for (size_t i = 4; i + sizeof(kBoot2) <= image_.size(); ++i) {
-        if (!std::equal(std::begin(kBoot2), std::end(kBoot2), image_.begin() + static_cast<std::ptrdiff_t>(i)))
+        if (!std::equal(std::begin(kBoot2), std::end(kBoot2),
+                        image_.begin() + static_cast<std::ptrdiff_t>(i)))
             continue;
-        const uint32_t n = (uint32_t(image_[i - 4]) << 24) | (uint32_t(image_[i - 3]) << 16) |
-                           (uint32_t(image_[i - 2]) << 8) | image_[i - 1];
+        const uint32_t n = be32_at(image_, i - 4);
         if (n < 64 || n > 0x8000 || i + n > image_.size()) continue;
         boot2_.assign(image_.begin() + static_cast<std::ptrdiff_t>(i),
                       image_.begin() + static_cast<std::ptrdiff_t>(i + n));
         break;
     }
-    blocks_ = uint32_t(image_.size() / 512);
+}
+
+void Ncr5380Hdd::wrap_apm_hfs() {
+    // PCE macplus compilation disks: DDM + Apple_Driver43 + HFS. The Plus
+    // ROM loads that driver; our 5380 cannot finish it, so swap in .DSPHD
+    // and apply the same 128K System 7 boot patches as a raw LK image.
+    uint32_t hfs_blk = 0;
+    for (int i = 0; i < 16; ++i) {
+        const size_t off = size_t(1 + i) * 512;
+        if (off + 80 > image_.size()) break;
+        if (image_[off] != 'P' || image_[off + 1] != 'M') break;
+        if (std::memcmp(&image_[off + 48], "Apple_HFS", 9) != 0) continue;
+        const uint32_t start = be32_at(image_, off + 8);
+        const size_t hfs_off = size_t(start) * 512;
+        if (hfs_off + 2 <= image_.size() && image_[hfs_off] == 'L' && image_[hfs_off + 1] == 'K') {
+            hfs_blk = start;
+            break;
+        }
+    }
+    if (!hfs_blk) return;
+
+    uint32_t drv_blk = be32_at(image_, 0x12);
+    if (drv_blk == 0 || size_t(drv_blk) * 512 + 512 > image_.size() || drv_blk == hfs_blk)
+        drv_blk = 1;
+    image_[0x11] = 1;
+    put_be32(image_, 0x12, drv_blk);
+    put_be16(image_, 0x16, 1);
+    put_be16(image_, 0x18, 1);
+    plant_dsphd_stub(drv_blk * 512, hfs_blk, blocks_ > hfs_blk ? blocks_ - hfs_blk : blocks_);
+    patch_system7_hfs(hfs_blk * 512);
+    extract_boot2();
 }
 
 int Ncr5380Hdd::cdb_length(uint8_t opcode) {
@@ -212,6 +266,13 @@ void Ncr5380Hdd::set_phase(uint8_t phase) {
 
 void Ncr5380Hdd::update_match() {}
 
+void Ncr5380Hdd::raise_eop() {
+    eop_ = true;
+    // System 7's SCSI Manager polls BSR INT after a DMA READ, even
+    // when MR2 EOP-IE is clear. The pin stays off the 68000 IPL.
+    irq_ = true;
+}
+
 void Ncr5380Hdd::offer_byte() {
     if (xfer_pos_ < xfer_.size()) idr_ = xfer_[xfer_pos_];
     req_ = true;
@@ -232,6 +293,20 @@ void Ncr5380Hdd::finish_command() {
         pending_req_ = true;
     else
         offer_byte();
+}
+
+void Ncr5380Hdd::extend_data_in() {
+    // System 7's SCSI Manager TIB can ask for more bytes than the CDB
+    // count (READ(6) is capped at one "track"). Stay in DATA IN and
+    // keep reading sequential blocks until the initiator programs
+    // STATUS or MESSAGE IN.
+    if (!loaded_) return;
+    const uint32_t next = last_lba_ + uint32_t(xfer_.size() / 512);
+    if (next >= blocks_) return;
+    const size_t off = xfer_.size();
+    xfer_.resize(off + 512);
+    std::memcpy(xfer_.data() + off, image_.data() + size_t(next) * 512, 512);
+    xfer_done_ += 512;
 }
 
 void Ncr5380Hdd::execute() {
@@ -422,14 +497,12 @@ void Ncr5380Hdd::take_byte() {
         xfer_pos_++;
         req_ = false;
         drq_ = false;
-        if (xfer_pos_ >= xfer_.size()) {
-            finish_command();
-            // set_phase() clears EOP. The Plus SCSI Manager polls BSR EOP
-            // before it will program TCR to STATUS; without this bit it
-            // delay-loops in DATA IN / STATUS forever after the last READ.
-            eop_ = true;
-        } else {
+        if (xfer_pos_ >= xfer_.size()) extend_data_in();
+        if (xfer_pos_ < xfer_.size())
             pending_req_ = true;
+        else {
+            finish_command();
+            raise_eop();
         }
         return;
     }
@@ -552,7 +625,10 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
             on_ack((data & kIcAck) != 0);
             // Only this disk (SCSI ID 0) answers selection. Initiator BSY is
             // visible on CSR but must not be treated as target BSY.
-            if (sel_ && loaded_ && (odr_ & 0x01)) bsy_ = true;
+            if (sel_ && loaded_ && (odr_ & 0x01)) {
+                bsy_ = true;
+                irq_ = true;  // PCE: selection raises 5380 INT (BSR only)
+            }
             // PCE/macplus: SEL while arbitrating enters the selection phase.
             if (arb_ && sel_) sel_phase_ = true;
             // Wait for the SCSI Manager to set TCR to COMMAND. Starting
@@ -578,6 +654,7 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
                 sel_phase_ = false;
             }
             mode_ = data;
+            if ((data & 0x08) && eop_) irq_ = true;
             if (!(data & kModeDma)) {
                 dma_ = false;
                 drq_ = false;
@@ -590,9 +667,10 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
             // The Plus SCSI Manager often DMA-reads fewer bytes than the
             // CDB requested (256 of a 512-byte DDM). When it programs STATUS
             // or MESSAGE IN, follow that phase even if data remains.
-            if ((data & 7) == kStatus && (phase_ == kDataIn || phase_ == kDataOut))
+            if ((data & 7) == kStatus && (phase_ == kDataIn || phase_ == kDataOut)) {
                 finish_command();
-            else if ((data & 7) == kMsgIn && phase_ == kStatus) {
+            } else if ((data & 7) == kMsgIn &&
+                       (phase_ == kStatus || phase_ == kDataIn || phase_ == kDataOut)) {
                 req_ = false;
                 set_phase(kMsgIn);
                 idr_ = message_;
@@ -621,6 +699,9 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
 }
 
 uint8_t Ncr5380Hdd::read(uint32_t address) {
+    // MAME mac128_state::scsi_r: register = (word_offset >> 3) & 0xf,
+    // DMA when word_offset >= 0x100 ($580000 + $200, A9). IRQ stays off
+    // the 68000 IPL — Plus pin 23 is unconnected.
     accesses_++;
     const int reg = int((address >> 4) & 7);
     const bool dack = (address & 0x200) != 0;

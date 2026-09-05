@@ -26,6 +26,7 @@ void Iwm::reset() {
     dir_out_ = true;
     drive_motor_ = false;
     stepping_ = false;
+    drive_ = 0;
     track_ = 0;
     nibble_pos_ = 0;
     cycles_ = 0;
@@ -57,8 +58,16 @@ bool Iwm::load_file(const std::string& path, std::string* error) {
     return true;
 }
 
+void Iwm::update_devsel() {
+    // MAME iwm_device::control: while active, bit 5 picks drive 2 else 1.
+    const int drive = (control_ & 0x10) ? ((control_ & 0x20) ? 2 : 1) : 0;
+    if (drive == drive_) return;
+    drive_ = drive;
+    nibble_pos_ = 0;
+}
+
 uint8_t Iwm::next_nibble() {
-    if (!drive_motor_ || !disk_.loaded()) return 0;
+    if (drive_ != 1 || !drive_motor_ || !disk_.loaded()) return 0;
     const auto& nib = disk_.nibbles(track_, hdsel_ ? 1 : 0);
     if (nib.empty()) return 0;
     if (nibble_pos_ < 0 || nibble_pos_ >= int(nib.size())) nibble_pos_ = 0;
@@ -68,41 +77,51 @@ uint8_t Iwm::next_nibble() {
 }
 
 uint8_t Iwm::sense() const {
+    // MAME iwm status bit 7 is (!floppy || floppy->wpt_r()). No drive
+    // selected leaves the sense line pulled up.
+    if (drive_ == 0) return 1;
+
     const int reg = (phases_ & 7) | (hdsel_ ? 8 : 0);
+    const bool internal = drive_ == 1;
+    const bool has_disk = internal && disk_.loaded();
+    const bool motor = internal && drive_motor_;
+
+    // MAME mac_floppy_device::wpt_r / mfd51w_device (add_35). Drive 2 is
+    // an empty MFD51W on the external connector: present, no disk, GCR.
     switch (reg) {
-        case 0x0:  // step direction
+        case 0x0:  // Dir
             return dir_out_ ? 0 : 1;
-        case 0x1:  // step in progress
-            return stepping_ ? 0 : 1;
-        case 0x2:  // motor on (0 = running)
-            return drive_motor_ ? 0 : 1;
-        case 0x3:  // eject / disk change
+        case 0x1:  // Step (MAME skips the delay → ready)
+            return (internal && stepping_) ? 0 : 1;
+        case 0x2:  // Motor (0 = running)
+            return motor ? 0 : 1;
+        case 0x3:  // Eject / disk change
             return 1;
         case 0x4:
         case 0xc:
             return 0;
-        case 0x5:  // superdrive
+        case 0x5:  // Superdrive? MFD51W has no MFM
             return 0;
-        case 0x6:  // double sided
-            return disk_.sides() > 1 ? 1 : 0;
-        case 0x7:  // drive present (0 = yes)
-            return 0;
-        case 0x8:  // no disk
-            return disk_.loaded() ? 0 : 1;
-        case 0x9:  // not write protected
+        case 0x6:  // DoubleSide: MFD51W is always two-headed
             return 1;
-        case 0xa:  // not track 0
-            return track_ != 0 ? 1 : 0;
-        case 0xb: {  // tachometer
-            if (!disk_.loaded() || !drive_motor_) return 0;
+        case 0x7:  // NoDrive (0 = present)
+            return 0;
+        case 0x8:  // NoDiskInPl
+            return has_disk ? 0 : 1;
+        case 0x9:  // NoWrProtect
+            return 1;
+        case 0xa:  // NotTrack0 — unused drive sits on cylinder 0
+            return (internal && track_ != 0) ? 1 : 0;
+        case 0xb: {  // Tachometer, 120 inversions/rotation
+            if (!has_disk || !motor) return 0;
             const int64_t phase = tach_period_ <= 0 ? 0 : (cycles_ / tach_period_);
             return int(phase & 1);
         }
-        case 0xd:  // MFM mode
+        case 0xd:  // MFMModeOn — IWM GCR drive stays GCR
             return 0;
-        case 0xe:  // ready (0 = ready)
-            return (disk_.loaded() && drive_motor_) ? 0 : 1;
-        case 0xf:  // new interface / 2M
+        case 0xe:  // NoReady
+            return (has_disk && motor) ? 0 : 1;
+        case 0xf:  // new interface / 2M — MFD51W::is_2m() is true
             return 1;
         default:
             return 0;
@@ -110,6 +129,9 @@ uint8_t Iwm::sense() const {
 }
 
 void Iwm::strobe_command() {
+    // MAME mac_floppy_device::seek_phase_w on the IWM LSTRB rising edge.
+    // Commands apply to the selected drive; only the internal unit has media.
+    if (drive_ != 1) return;
     const int reg = (phases_ & 7) | (hdsel_ ? 8 : 0);
     switch (reg) {
         case 0x0:
@@ -134,8 +156,8 @@ void Iwm::strobe_command() {
             drive_motor_ = false;
             break;
         case 0x7:
-            // Brief eject strobes during Plus boot must be ignored; a real
-            // drive needs LSTRB held for ~750 ms.
+            // MAME unload() on StartEject. A real Sony needs LSTRB held
+            // ~750 ms; the Plus ROM strobes this during boot without a disk.
             break;
         default:
             break;
@@ -161,6 +183,7 @@ uint8_t Iwm::access(uint8_t offset, uint8_t data, bool is_write) {
             control_ = uint8_t(control_ | (1 << (offset >> 1)));
         else
             control_ = uint8_t(control_ & ~(1 << (offset >> 1)));
+        update_devsel();
     }
 
     const bool enable = (control_ & 0x10) != 0;

@@ -7,7 +7,9 @@
 
 namespace dsp {
 
-// Apple IWM plus the Sony 800K 3.5" drive it talks to on a Mac Plus.
+// Apple IWM (MAME iwm_device) plus two MAME add_35 / MFD51W 800K GCR
+// connectors. Control bit 4 is DRIVEENABLE, bit 5 is SELECT
+// (1 = internal, 2 = external). The Plus has no SuperDrive / SWIM.
 class Iwm {
 public:
     void reset();
@@ -21,13 +23,16 @@ public:
     bool loaded() const { return disk_.loaded(); }
     int track() const { return track_; }
     int side() const { return hdsel_ ? 1 : 0; }
-    bool motor_on() const { return drive_motor_; }
+    bool motor_on() const { return drive_ == 1 && drive_motor_; }
     uint8_t mode() const { return mode_; }
+    // MAME iwm_device::m_devsel: 0 = idle, 1 = internal, 2 = external.
+    int selected_drive() const { return drive_; }
     MacDsk& disk() { return disk_; }
     const MacDsk& disk() const { return disk_; }
 
 private:
     uint8_t access(uint8_t offset, uint8_t data, bool is_write);
+    void update_devsel();
     uint8_t sense() const;
     void strobe_command();
     uint8_t next_nibble();
@@ -45,6 +50,7 @@ private:
     bool dir_out_ = true;  // true: step toward higher tracks
     bool drive_motor_ = false;
     bool stepping_ = false;
+    int drive_ = 0;
     int track_ = 0;
     int nibble_pos_ = 0;
     int64_t cycles_ = 0;

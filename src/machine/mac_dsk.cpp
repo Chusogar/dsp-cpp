@@ -39,6 +39,7 @@ int MacDsk::logical_offset(int track, int side, int sector, int sides) {
 
 void MacDsk::reset() {
     loaded_ = false;
+    hd_ = false;
     image_.clear();
     tags_.clear();
     for (int t = 0; t < kTracks; t++) {
@@ -255,12 +256,19 @@ bool MacDsk::load_bytes(const uint8_t* data, size_t size, std::string* error) {
 
     if (payload_size == 409600) {
         sides_ = 1;
+        hd_ = false;
         format_ = format == 0 ? 0x02 : format;
         if (encoding == 0) format_ = 0x02;
     } else if (payload_size == 819200) {
         sides_ = 2;
+        hd_ = false;
         format_ = format == 0 ? 0x22 : format;
         if (encoding == 1 || encoding == 3) format_ = (format ? format : 0x22);
+    } else if (payload_size == 1474560) {
+        // MAME macplus uses add_35 → MFD51W (400/800K GCR only).
+        // 1.44MB MFM is MFD75W + SWIM on macsefd / Classic.
+        if (error) *error = "Macintosh Plus floppy is 400K/800K GCR; 1.44MB needs a SuperDrive";
+        return false;
     } else {
         if (error) *error = "Macintosh disk must be 400K or 800K";
         return false;
@@ -275,6 +283,22 @@ bool MacDsk::load_bytes(const uint8_t* data, size_t size, std::string* error) {
     }
     loaded_ = true;
     rebuild_all();
+    return true;
+}
+
+bool MacDsk::read_lba(uint32_t lba, uint8_t dest[kSectorSize]) const {
+    if (!loaded_ || dest == nullptr) return false;
+    const size_t off = size_t(lba) * kSectorSize;
+    if (off + kSectorSize > image_.size()) return false;
+    std::memcpy(dest, image_.data() + off, kSectorSize);
+    return true;
+}
+
+bool MacDsk::write_lba(uint32_t lba, const uint8_t src[kSectorSize]) {
+    if (!loaded_ || src == nullptr) return false;
+    const size_t off = size_t(lba) * kSectorSize;
+    if (off + kSectorSize > image_.size()) return false;
+    std::memcpy(image_.data() + off, src, kSectorSize);
     return true;
 }
 
