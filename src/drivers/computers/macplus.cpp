@@ -102,23 +102,15 @@ void MacPlus::find_sony_driver() {
     }
 }
 
-void MacPlus::plant_sony_hook() {
-    // 1.44MB MFM cannot be read by the Plus IWM GCR path. JMP .Sony Prime
-    // to a RAM stub; sony_prime() serves the 2880-block image by LBA.
-    if (sony_hooked_ || !sony_prime_rom_ || !iwm_.disk().hd()) return;
-    const uint32_t off = sony_prime_rom_ - 0x400000u;
-    if (off + 6 > rom_.size()) return;
-    rom_[off + 0] = 0x4e;
-    rom_[off + 1] = 0xf9;
-    rom_[off + 2] = uint8_t(sony_hook_ >> 24);
-    rom_[off + 3] = uint8_t(sony_hook_ >> 16);
-    rom_[off + 4] = uint8_t(sony_hook_ >> 8);
-    rom_[off + 5] = uint8_t(sony_hook_);
-    if (sony_hook_ + 2 <= kRamSize) {
-        ram_[sony_hook_] = 0x60;
-        ram_[sony_hook_ + 1] = 0xfe;
-    }
-    sony_hooked_ = true;
+void MacPlus::maybe_sony_prime() {
+    // Do not patch ROM: the Plus checksums the 128K image, and a JMP
+    // planted in .Sony Prime yields Sad Mac 01. After the first Prime
+    // instruction (MOVE.L $226,-(A7) on v3) take over and serve LBA.
+    if (!iwm_.disk().hd() || !sony_prime_rom_) return;
+    const uint32_t ppc = cpu_.ppc() & 0xffffffu;
+    if (ppc != sony_prime_rom_) return;
+    if (read_word(sony_prime_rom_) == 0x2f38) cpu_.a[7].l += 4;
+    sony_prime();
 }
 
 void MacPlus::mark_sony_inserted() {
@@ -612,7 +604,6 @@ void MacPlus::reset() {
     rom_initgraf_ = 0;
     for (uint32_t& v : rom_tool_) v = 0;
     restore_stub_pc_ = 0;
-    sony_hooked_ = false;
     sony_prime_count_ = 0;
     sony_read_bytes_ = 0;
     last_trap_ = 0;
@@ -660,8 +651,7 @@ void MacPlus::update_irqs() {
 
 void MacPlus::on_cpu_cycles(int cycles) {
     const uint32_t pc = cpu_.pc() & 0xffffffu;
-    if (!overlay_ && iwm_.disk().hd()) plant_sony_hook();
-    if (sony_hooked_ && pc == sony_hook_) sony_prime();
+    maybe_sony_prime();
     if (boot2_base_ && pc >= boot2_base_ && pc < boot2_base_ + 0x2000u) {
         boot2_hits_++;
         const uint32_t off = pc - boot2_base_ + 0x18u;
@@ -874,10 +864,7 @@ void MacPlus::via_pa_w(uint8_t data) {
     // PCE/macplus: on a Plus, overlay is VIA PA4 and follows the pin
     // live. The 6522 callback is already DDR-masked, so a later volume
     // RMW keeps PA4 low once the ROM has driven it that way.
-    if (ddr & 0x10) {
-        overlay_ = (data & 0x10) != 0;
-        if (!overlay_) plant_sony_hook();
-    }
+    if (ddr & 0x10) overlay_ = (data & 0x10) != 0;
 }
 
 void MacPlus::via_pb_w(uint8_t data) {
