@@ -197,11 +197,6 @@ bool MacPlus::maybe_decompress_ptr(uint32_t ptr, uint32_t handle) {
     write_long(0x010c, buf);
     const uint32_t limit = buf > 0x400 ? buf - 0x400 : buf;
     if ((read_long(0x0130) & 0xffffffu) > limit) write_long(0x0130, limit);
-    for (uint32_t zaddr : {0x02aau, 0x02a6u, 0x0118u}) {
-        const uint32_t zone = read_long(zaddr) & 0xffffffu;
-        if (zone >= 0x1000 && zone + 4 < kRamSize && (read_long(zone) & 0xffffffu) > buf)
-            write_long(zone, buf);
-    }
     decompress_count_++;
     return true;
 }
