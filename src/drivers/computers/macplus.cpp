@@ -333,7 +333,8 @@ void MacPlus::on_cpu_cycles(int cycles) {
             op == 0xa80c || op == 0xa81f)
             decompress_pc_ = (ppc + 2) & 0xffffffu;
         if (op == 0xa00f) sanitize_mountvol_pb();
-        if (op == 0xa9f0 || op == 0xa9f2) sweep_compressed_handles();
+        if (op == 0xa9f0 || op == 0xa9f2 || (boot2_tried_ && (op == 0xa9a0 || op == 0xa81f)))
+            sweep_compressed_handles();
         if (op == 0xa002) {
             read_ret_pc_ = (ppc + 2) & 0xffffffu;
             read_pb_ = cpu_.a[0].l;
