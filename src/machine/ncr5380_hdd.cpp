@@ -159,6 +159,21 @@ void Ncr5380Hdd::wrap_raw_hfs() {
             boot[i + 15] = 'L';
         }
     }
+    // System 7 'boot' id 2 (Process Manager stub). The $FA path JSRs this
+    // after OpenResFile; 128K GetResource hits memFullErr in SysZone, so
+    // the Plus driver plants it and jumps with A3 = handle, like the ROM.
+    boot2_.clear();
+    static const uint8_t kBoot2[] = {0x20, 0x4b, 0xa0, 0x25, 0x41, 0xfa, 0x00, 0x12};
+    for (size_t i = 4; i + sizeof(kBoot2) <= image_.size(); ++i) {
+        if (!std::equal(std::begin(kBoot2), std::end(kBoot2), image_.begin() + static_cast<std::ptrdiff_t>(i)))
+            continue;
+        const uint32_t n = (uint32_t(image_[i - 4]) << 24) | (uint32_t(image_[i - 3]) << 16) |
+                           (uint32_t(image_[i - 2]) << 8) | image_[i - 1];
+        if (n < 64 || n > 0x8000 || i + n > image_.size()) continue;
+        boot2_.assign(image_.begin() + static_cast<std::ptrdiff_t>(i),
+                      image_.begin() + static_cast<std::ptrdiff_t>(i + n));
+        break;
+    }
     blocks_ = uint32_t(image_.size() / 512);
 }
 

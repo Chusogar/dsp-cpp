@@ -30,6 +30,7 @@ public:
     uint8_t last_icr() const { return icr_; }
     uint8_t last_mode() const { return mode_; }
     bool selected() const { return bsy_; }
+    const std::vector<uint8_t>& system_boot2() const { return boot2_; }
 
     uint8_t read(uint32_t address);
     void write(uint32_t address, uint8_t data);
@@ -105,6 +106,7 @@ private:
     size_t xfer_pos_ = 0;
     uint32_t xfer_done_ = 0;
     uint32_t accesses_ = 0;
+    std::vector<uint8_t> boot2_;
 };
 
 }  // namespace dsp

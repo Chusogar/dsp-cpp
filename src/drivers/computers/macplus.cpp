@@ -115,43 +115,28 @@ void MacPlus::launch_finder_from_rom_a() {
 }
 
 void MacPlus::redirect_launch_to_boot2() {
-    // PCE never hits 128K _Launch: System 7's 'boot' id 2 (Process Manager)
-    // starts the Finder. The Plus ROM JSRs boot+$2 too early for that, so we
-    // take over here — after System is open — and GetResource the same
-    // resource. Copy the Launch PB off the stack first; GetResource would
-    // smash it. Do not UseResFile(SysMap): a zero SysMap hides 'boot'.
+    // PCE never reaches 128K _Launch: the System 7 $FA path GetResource
+    // ('boot', 2) and JSRs it with A3 = handle. 128K GetResource returns
+    // memFullErr in SysZone, and a fake handle makes _GetHandleSize bomb,
+    // so do what the resource's own 24-byte relocator does: copy the body
+    // onto the stack and jump there. A3 = 0 so the following
+    // _ReleaseResource is a no-op (the bytes were never an RM handle).
     boot2_tried_ = true;
-    const uint32_t frame = cpu_.a[7].l;
-    if (frame + 6 <= kRamSize) cpu_.a[7].l = frame + 6;
-    uint32_t top = read_long(0x010c) & 0xffffffu;
-    if (top < 0x100 || top > kRamSize) top = 0x003fa700;
-    top = (top - 0x80) & ~1u;
-    write_long(0x010c, top);
-    const uint32_t pb = top;
-    const uint32_t src = launch_a0_ & 0xffffffu;
-    for (uint32_t i = 0; i < 32 && src + i < kRamSize; i++) write_byte(pb + i, read_byte(src + i));
-    const uint32_t stub = top + 32;
-    static const uint8_t kStub[] = {
-        0xa0, 0x63,                          // _MaxApplZone
-        0x20, 0x78, 0x02, 0xaa,              // MOVEA.L ApplZone,A0
-        0xa0, 0x1b,                          // _SetZone
-        0x2f, 0x3c, 0x62, 0x6f, 0x6f, 0x74,  // MOVE.L #'boot',-(A7)
-        0x3f, 0x3c, 0x00, 0x02,              // MOVE.W #2,-(A7)
-        0xa9, 0xa0,                          // _GetResource
-        0x20, 0x1f,                          // MOVE.L (A7)+,D0
-        0x67, 0x08,                          // BEQ fail
-        0x20, 0x40,                          // MOVEA.L D0,A0
-        0x20, 0x50,                          // MOVEA.L (A0),A0
-        0x4e, 0xd0,                          // JMP (A0)
-        0x4e, 0x71,                          // NOP
-        0x20, 0x7c, 0x00, 0x00, 0x00, 0x00,  // fail: MOVEA.L #pb,A0
-        0xa9, 0xf2,                          // _Launch
-        0x70, 0x29,                          // MOVEQ #41,D0
-        0xa9, 0xc9,                          // _SysError
-    };
-    for (size_t i = 0; i < sizeof(kStub); ++i) write_byte(stub + uint32_t(i), kStub[i]);
-    write_long(stub + 34, pb);
-    cpu_.pc_.l = stub;
+    const std::vector<uint8_t>& boot2 = scsi_.system_boot2();
+    if (boot2.size() < 0x20) return;
+    uint32_t sp = cpu_.a[7].l;
+    if (sp + 6 > kRamSize) return;
+    sp += 6;  // drop the A-line frame; we are not returning to _Launch
+    const uint32_t body = uint32_t(boot2.size() - 0x18);
+    if (sp < body + 0x400) return;
+    sp = (sp - body) & ~1u;
+    for (uint32_t i = 0; i < body; ++i) write_byte(sp + i, boot2[0x18 + i]);
+    cpu_.a[7].l = sp;
+    cpu_.a[0].l = sp;
+    cpu_.a[1].l = sp;
+    cpu_.a[3].l = 0;
+    cpu_.d[0].l = body;
+    cpu_.pc_.l = sp;
 }
 
 uint32_t MacPlus::read_long(uint32_t address) {
