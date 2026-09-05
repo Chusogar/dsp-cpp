@@ -161,7 +161,7 @@ void Ncr5380Hdd::wrap_raw_hfs() {
     }
     // System 7 'boot' id 2 (Process Manager stub). The $FA path JSRs this
     // after OpenResFile; 128K GetResource hits memFullErr in SysZone, so
-    // the Plus driver plants it and jumps with A3 = handle, like the ROM.
+    // the Plus driver copies the body under BufPtr at _Launch.
     boot2_.clear();
     static const uint8_t kBoot2[] = {0x20, 0x4b, 0xa0, 0x25, 0x41, 0xfa, 0x00, 0x12};
     for (size_t i = 4; i + sizeof(kBoot2) <= image_.size(); ++i) {

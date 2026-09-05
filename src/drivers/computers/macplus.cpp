@@ -208,8 +208,10 @@ void MacPlus::sweep_compressed_handles() {
     for (uint32_t h = start; h + 8 < hi; h += 4) {
         const uint32_t p = read_long(h) & 0xffffffu;
         if (p < 0x1008 || p + 18 >= kRamSize) continue;
-        if (read_long(p) != 0xa89f6572u) continue;
-        maybe_decompress_handle(h);
+        if (read_long(p) == 0xa89f6572u)
+            maybe_decompress_handle(h);
+        else if (p + 22 < kRamSize && read_long(p + 4) == 0xa89f6572u)
+            maybe_decompress_ptr(p + 4, h);
     }
 }
 

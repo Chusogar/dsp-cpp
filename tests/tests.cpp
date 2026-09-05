@@ -39,6 +39,7 @@
 #include "drivers/computers/amiga.h"
 #include "machine/amiga_adf.h"
 #include "drivers/computers/macplus.h"
+#include "machine/mac_dcmp.h"
 #include "machine/mac_dsk.h"
 #include "machine/iwm.h"
 #include "drivers/consoles/gameboy.h"
@@ -5447,6 +5448,34 @@ bool mac_has_floppy_icon(const dsp::MacPlus& machine) {
     return false;
 }
 
+void test_mac_dcmp() {
+    // Type 8 / dcmp 0 is covered offline against Finder CODE. Type 9 / dcmp 2
+    // (GreggyBits) is what System 7's own System file uses.
+    const uint8_t untagged[] = {
+        0xa8, 0x9f, 0x65, 0x72, 0x00, 0x12, 0x09, 0x01, 0x00, 0x00, 0x00, 0x02,
+        0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    const std::vector<uint8_t> u = dsp::mac_decompress_resource(untagged, sizeof(untagged));
+    check(u.size() == 2 && u[0] == 0x00 && u[1] == 0x00,
+          "dcmp 2 untagged index 0 expands to the default table pair 00 00");
+
+    const uint8_t tagged[] = {
+        0xa8, 0x9f, 0x65, 0x72, 0x00, 0x12, 0x09, 0x01, 0x00, 0x00, 0x00, 0x02,
+        0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00, 0xaa, 0xbb,
+    };
+    const std::vector<uint8_t> t = dsp::mac_decompress_resource(tagged, sizeof(tagged));
+    check(t.size() == 2 && t[0] == 0xaa && t[1] == 0xbb,
+          "dcmp 2 tagged 0-bit emits a two-byte literal");
+
+    const uint8_t custom[] = {
+        0xa8, 0x9f, 0x65, 0x72, 0x00, 0x12, 0x09, 0x01, 0x00, 0x00, 0x00, 0x02,
+        0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x12, 0x34, 0x00,
+    };
+    const std::vector<uint8_t> c = dsp::mac_decompress_resource(custom, sizeof(custom));
+    check(c.size() == 2 && c[0] == 0x12 && c[1] == 0x34,
+          "dcmp 2 custom table index 0 emits the supplied pair");
+}
+
 void test_mac_gcr_and_dsk() {
     uint8_t raw[524];
     std::memset(raw, 0, sizeof(raw));
@@ -5893,6 +5922,7 @@ int main() {
     test_amiga_adf_format();
     test_amiga_kickstart_if_present();
     test_amiga_bootblock_if_present();
+    test_mac_dcmp();
     test_mac_gcr_and_dsk();
     test_mac_missing_roms();
     test_mac_boot_if_present();
