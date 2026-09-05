@@ -55,9 +55,11 @@ public:
     bool uses_pointer() const override { return true; }
 
     uint32_t debug_pc() const { return cpu_.pc(); }
+    uint32_t debug_ppc() const { return cpu_.ppc(); }
     uint32_t debug_sp() const { return cpu_.a[7].l; }
     uint32_t debug_d0() const { return cpu_.d[0].l; }
     uint32_t debug_a0() const { return cpu_.a[0].l; }
+    uint32_t debug_a6() const { return cpu_.a[6].l; }
     uint8_t debug_im() const { return cpu_.cc.im; }
     uint8_t peek(uint32_t address) { return read_byte(address); }
     uint8_t peek_ram(uint32_t address) const { return ram_[ram_index(address)]; }
@@ -96,6 +98,7 @@ private:
     void ram_at(uint32_t address, uint8_t value) { ram_[ram_index(address)] = value; }
     void clock_keyboard();
     void find_start_manager_mountvol();
+    void patch_rom_startboot();
     void sanitize_mountvol_pb();
     static uint8_t keyboard_reply(uint8_t command);
 

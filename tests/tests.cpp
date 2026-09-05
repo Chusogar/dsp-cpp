@@ -5413,6 +5413,23 @@ void write_mac_ppm(const std::string& path, const dsp::MacPlus& machine) {
     }
 }
 
+bool mac_has_welcome_box(const dsp::MacPlus& machine) {
+    // Welcome to Macintosh is a wide white dialog in the upper half.
+    const uint32_t* fb = machine.framebuffer();
+    const int width = machine.screen_width();
+    for (int y = 40; y < 160; y++) {
+        int run = 0;
+        for (int x = 60; x < 450; x++) {
+            if ((fb[y * width + x] & 0xffffff) == 0xffffff) {
+                if (++run >= 80) return true;
+            } else {
+                run = 0;
+            }
+        }
+    }
+    return false;
+}
+
 bool mac_has_floppy_icon(const dsp::MacPlus& machine) {
     // Grey desktop dither never has a long black run; the 3.5" ROM icon does.
     const uint32_t* fb = machine.framebuffer();
@@ -5546,7 +5563,13 @@ void test_mac_boot_if_present() {
     check(sys7.load_media(hd, &error), "System7_0_1.img mounts as a SCSI hard disk");
     check(sys7.scsi_loaded() && sys7.scsi_blocks() >= 20480, "the HFS volume is a 10MB SCSI disk");
     check(!sys7.floppy_loaded(), "a hard disk image does not sit in the Sony drive");
-    for (int i = 0; i < 8000; i++) sys7.run_frame();
+    bool saw_system = false;
+    bool saw_welcome = false;
+    for (int i = 0; i < 2500; i++) {
+        sys7.run_frame();
+        if (sys7.peek(0xad8) == 6 && sys7.peek(0xad9) == 'S') saw_system = true;
+        if (mac_has_welcome_box(sys7)) saw_welcome = true;
+    }
     write_mac_ppm("/tmp/macplus-system7.ppm", sys7);
     check(sys7.peek(0x0108) == 0x00 && sys7.peek(0x0109) == 0x40,
           "System 7 sees 4MB at MemTop");
@@ -5554,6 +5577,8 @@ void test_mac_boot_if_present() {
           "the Plus ROM loads the SCSI driver and _Reads the System 7 LK boot blocks");
     check(sys7.scsi_xfer_bytes() > 3584,
           "the 128K Start Manager MountVols and keeps reading past the Happy Mac");
+    check(saw_system, "Start Manager copies the boot-block System name to $0AD8");
+    check(saw_welcome, "System 7 draws the Welcome to Macintosh dialog");
     check(unique_pixels(sys7) >= 2, "System 7 boot paints the Macintosh screen");
 }
 

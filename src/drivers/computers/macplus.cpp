@@ -1,6 +1,7 @@
 #include "drivers/computers/macplus.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 
 #include "core/rom_loader.h"
@@ -63,6 +64,7 @@ bool MacPlus::init(const std::string& rom_path, std::string* error) {
         return false;
     }
     find_start_manager_mountvol();
+    patch_rom_startboot();
     warnings_.insert(warnings_.end(), loader.warnings().begin(), loader.warnings().end());
     reset();
     return true;
@@ -78,6 +80,26 @@ void MacPlus::find_start_manager_mountvol() {
             break;
         }
     }
+}
+
+void MacPlus::patch_rom_startboot() {
+    // 128K header +$A is StartBoot: BRA to the cold memory test. 64K-era
+    // disk stubs (Sony / boot) JMP ROMBase+$A after a successful _Write to
+    // "continue boot". On a Plus that wipes RAM and kills the Welcome box.
+    // Point +$A at the 128K Start Manager (MountVol / load System) instead.
+    if (rom_.size() < 0x10 || rom_[0x0a] != 0x60 || rom_[0x0b] != 0x00) return;
+    if (rom_[0x0c] != 0x00 || rom_[0x0d] != 0x56) return;  // v3 BRA $400062
+    constexpr uint32_t kStartMgr = 0x400986;
+    const int32_t disp = int32_t(kStartMgr - 0x40000cu);
+    rom_[0x0c] = uint8_t(disp >> 8);
+    rom_[0x0d] = uint8_t(disp);
+    uint32_t sum = 0;
+    for (size_t i = 4; i + 1 < rom_.size(); i += 2)
+        sum += (uint32_t(rom_[i]) << 8) | rom_[i + 1];
+    rom_[0] = uint8_t(sum >> 24);
+    rom_[1] = uint8_t(sum >> 16);
+    rom_[2] = uint8_t(sum >> 8);
+    rom_[3] = uint8_t(sum);
 }
 
 void MacPlus::sanitize_mountvol_pb() {
