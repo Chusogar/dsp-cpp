@@ -228,22 +228,9 @@ void MacPlus::sweep_compressed_handles() {
     }
 }
 
-void MacPlus::snapshot_rom_tool_traps() {
-    const uint32_t ig = read_long(0x0e00 + 0x6e * 4);
-    if (!rom_initgraf_ && ig >= 0x400000 && ig < 0x420000) rom_initgraf_ = ig;
-    const uint32_t cw = read_long(0x0e00 + 0x16f * 4);
-    if (!rom_cwmgr_ && cw >= 0x400000 && cw < 0x420000) rom_cwmgr_ = cw;
-}
-
 void MacPlus::restore_plus_stubs() {
     if (!trap_stub_ || trap_stub_ + 4 > kRamSize) return;
     write_long(0x0c00 + 0xad * 4, trap_stub_);
-    // System 7 PACKs replace InitGraf / GetCWMgrPort with 32-bit QD
-    // glue. On a 128K Plus that glue pops the A-line frame as copy
-    // parameters and leaves A5 odd; keep the ROM implementations.
-    snapshot_rom_tool_traps();
-    if (rom_initgraf_) write_long(0x0e00 + 0x6e * 4, rom_initgraf_);
-    if (rom_cwmgr_) write_long(0x0e00 + 0x16f * 4, rom_cwmgr_);
 }
 
 void MacPlus::sanitize_mountvol_pb() {
@@ -279,8 +266,6 @@ void MacPlus::reset() {
     boot2_tried_ = false;
     trap_stub_ = 0;
     restore_stub_pc_ = 0;
-    rom_initgraf_ = 0;
-    rom_cwmgr_ = 0;
     last_trap_ = 0;
     trap_count_ = 0;
     last_syserr_ = 0;
@@ -355,7 +340,6 @@ void MacPlus::on_cpu_cycles(int cycles) {
             }
         }
     }
-    if (!overlay_) snapshot_rom_tool_traps();
     if (mount_vol_pc_ && pc == mount_vol_pc_) sanitize_mountvol_pb();
     if (pc == 0x40000au || pc == 0x40000cu) launch_finder_from_rom_a();
     const uint32_t ppc = cpu_.ppc();
