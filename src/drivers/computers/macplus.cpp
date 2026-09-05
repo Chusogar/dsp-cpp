@@ -615,18 +615,11 @@ void MacPlus::on_cpu_cycles(int cycles) {
             restore_stub_pc_ = (ppc + 2) & 0xffffffu;
         // A1 below $10000 is nil ($0 / $FFFF) or a low-heap pointer
         // Color QD TextSize cannot follow (A1=$3742 crashed to $A0007E6E).
-        if (boot2_tried_ && op == 0xa02c) {
-            // Boot 2 sets ApplZone = BufPtr (the planted stub) then
-            // _InitApplZone. dcmp has already pulled ApplLimit under
-            // that pointer, so the ROM walks a backwards heap and never
-            // returns. Keep the app heap in $21400–$200000, below boot 2.
-            const uint32_t az = read_long(0x02aa) & 0xffffffu;
-            const uint32_t sz = read_long(0x02a6) & 0xffffffu;
-            const uint32_t bp = boot2_base_ ? boot2_base_ : (read_long(0x010c) & 0xffffffu);
-            if (az == sz || az >= bp || az < 0x1000) write_long(0x02aa, 0x21400);
-            if ((read_long(0x0130) & 0xffffffu) > 0x200000u ||
-                (read_long(0x0130) & 0xffffffu) <= 0x21400u)
-                write_long(0x0130, 0x200000);
+        if (boot2_tried_ && op == 0xa02c && boot2_main_hi_ >= 0x400u) {
+            // Second _InitApplZone: boot 2 just set ApplZone = BufPtr.
+            // The first call (from +$09ec) already built the app heap;
+            // doing it again from the planted stub never returns.
+            skip_aline(false);
         }
         if (boot2_tried_ && op == 0xa868 && (cpu_.a[1].l & 0xffffffu) < 0x10000u) {
             const uint32_t sp = cpu_.a[7].l & 0xffffffu;
