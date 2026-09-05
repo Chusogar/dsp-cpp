@@ -241,6 +241,20 @@ void Ncr5380Hdd::finish_command() {
         offer_byte();
 }
 
+void Ncr5380Hdd::extend_data_in() {
+    // System 7's SCSI Manager TIB can ask for more bytes than the CDB
+    // count (READ(6) is capped at one "track"). Stay in DATA IN and
+    // keep reading sequential blocks until the initiator programs
+    // STATUS or MESSAGE IN.
+    if (!loaded_) return;
+    const uint32_t next = last_lba_ + uint32_t(xfer_.size() / 512);
+    if (next >= blocks_) return;
+    const size_t off = xfer_.size();
+    xfer_.resize(off + 512);
+    std::memcpy(xfer_.data() + off, image_.data() + size_t(next) * 512, 512);
+    xfer_done_ += 512;
+}
+
 void Ncr5380Hdd::execute() {
     last_cmd_ = cdb_[0];
     cmd_log_[cmd_count_ & 15] = last_cmd_;
@@ -429,13 +443,12 @@ void Ncr5380Hdd::take_byte() {
         xfer_pos_++;
         req_ = false;
         drq_ = false;
-        if (xfer_pos_ >= xfer_.size()) {
-            // SCSIRead completes on phase mismatch (target entered
-            // STATUS while TCR is still DATA IN) plus BSR EOP/INT.
+        if (xfer_pos_ >= xfer_.size()) extend_data_in();
+        if (xfer_pos_ < xfer_.size())
+            pending_req_ = true;
+        else {
             finish_command();
             raise_eop();
-        } else {
-            pending_req_ = true;
         }
         return;
     }
@@ -591,11 +604,6 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
             if (!(data & kModeDma)) {
                 dma_ = false;
                 drq_ = false;
-                // Plus SCSI Manager drops DMA after EOP and expects STATUS.
-                if (eop_ && phase_ == kDataIn && xfer_pos_ >= xfer_.size()) {
-                    finish_command();
-                    raise_eop();
-                }
             }
             break;
         }
@@ -607,8 +615,8 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
             // or MESSAGE IN, follow that phase even if data remains.
             if ((data & 7) == kStatus && (phase_ == kDataIn || phase_ == kDataOut)) {
                 finish_command();
-                raise_eop();
-            } else if ((data & 7) == kMsgIn && phase_ == kStatus) {
+            } else if ((data & 7) == kMsgIn &&
+                       (phase_ == kStatus || phase_ == kDataIn || phase_ == kDataOut)) {
                 req_ = false;
                 set_phase(kMsgIn);
                 idr_ = message_;

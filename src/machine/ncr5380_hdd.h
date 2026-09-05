@@ -29,6 +29,13 @@ public:
     }
     uint8_t last_icr() const { return icr_; }
     uint8_t last_mode() const { return mode_; }
+    uint8_t last_tcr() const { return tcr_; }
+    uint8_t bus_phase() const { return phase_; }
+    size_t xfer_pos() const { return xfer_pos_; }
+    size_t xfer_len() const { return xfer_.size(); }
+    bool eop() const { return eop_; }
+    bool irq() const { return irq_; }
+    bool req() const { return req_; }
     bool selected() const { return bsy_; }
     const std::vector<uint8_t>& system_boot2() const { return boot2_; }
 
@@ -57,6 +64,7 @@ private:
     void offer_byte();
     void start_command();
     void finish_command();
+    void extend_data_in();
     void execute();
     uint8_t read_reg(int reg, bool dack);
     void write_reg(int reg, bool dack, uint8_t data);
