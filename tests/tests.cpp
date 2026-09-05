@@ -5517,13 +5517,10 @@ void test_mac_gcr_and_dsk() {
     if (s6) {
         std::fclose(s6);
         dsp::MacDsk hd;
-        check(hd.load_file(sys608, &error), "Disk Copy 4.2 System 6.0.8 Startup loads as a floppy");
-        check(hd.hd() && hd.blocks() == 2880, "System 6.0.8 Startup is a 1.44MB / 2880-block volume");
-        check(!hd.nibbles(0, 0).empty() && hd.nibbles(0, 0)[36] == 0xd5,
-              "the first 800K of the 1.44MB image is GCR-encoded for the Plus IWM");
-        uint8_t boot[512];
-        check(hd.read_lba(0, boot) && boot[0] == 0x4c && boot[1] == 0x4b,
-              "LBA 0 of System 6.0.8 is Macintosh boot blocks");
+        check(!hd.load_file(sys608, &error),
+              "MAME macplus add_35 / MFD51W rejects the IA 1.44MB Disk Copy image");
+        check(error.find("SuperDrive") != std::string::npos,
+              "the error names the SuperDrive / SWIM machine");
     }
 
     dsp::MacPlus machine;
@@ -5602,24 +5599,11 @@ void test_mac_boot_if_present() {
     if (s6f) {
         std::fclose(s6f);
         dsp::MacPlus sys6;
-        check(sys6.init(rom, &error), "Mac Plus ROM reloads for System 6.0.8");
-        check(sys6.load_media(sys608, &error), "System 6.0.8 Startup mounts in the Sony drive");
-        check(sys6.floppy_loaded() && sys6.floppy_hd(), "the IA image sits in the floppy, not SCSI");
-        check(!sys6.scsi_loaded(), "a Disk Copy 1.44MB floppy is not wrapped as a hard disk");
-        bool saw_s6_system = false;
-        bool saw_s6_welcome = false;
-        for (int i = 0; i < 2500; i++) {
-            sys6.run_frame();
-            if (sys6.peek(0xad8) == 6 && sys6.peek(0xad9) == 'S') saw_s6_system = true;
-            if (mac_has_welcome_box(sys6)) saw_s6_welcome = true;
-        }
-        write_mac_ppm("/tmp/macplus-system6.ppm", sys6);
-        check(sys6.sony_prime_count() > 0, ".Sony Prime served the 1.44MB floppy by LBA");
-        check(sys6.sony_read_bytes() >= 1024, "the Start Manager _Reads the System 6 boot blocks");
-        check(saw_s6_system, "Start Manager copies the System 6 boot-block System name to $0AD8");
-        check(saw_s6_welcome, "System 6.0.8 draws the Welcome to Macintosh dialog");
-        check(sys6.peek(0x0910) == 6 && sys6.peek(0x0911) == 'F',
-              "System 6.0.8 names the Finder at CurApName");
+        check(sys6.init(rom, &error), "Mac Plus ROM reloads for the 1.44MB image check");
+        check(!sys6.load_media(sys608, &error),
+              "load_media does not put a SuperDrive 1.44MB image in the Plus Sony drive");
+        check(!sys6.floppy_loaded() && !sys6.scsi_loaded(),
+              "the IA Startup image is neither an 800K GCR floppy nor a 512-byte SCSI disk");
     }
 
     const char* hd = "/tmp/macdisks/System7_0_1.img";

@@ -81,7 +81,7 @@ uint8_t Iwm::sense() const {
         case 0x4:
         case 0xc:
             return 0;
-        case 0x5:  // superdrive
+        case 0x5:  // MAME mac_floppy: Superdrive (1.44MB MFM)? Plus MFD51W = no
             return 0;
         case 0x6:  // double sided
             return disk_.sides() > 1 ? 1 : 0;
@@ -98,11 +98,11 @@ uint8_t Iwm::sense() const {
             const int64_t phase = tach_period_ <= 0 ? 0 : (cycles_ / tach_period_);
             return int(phase & 1);
         }
-        case 0xd:  // MFM mode
+        case 0xd:  // MAME: MFMModeOn (IWM GCR drive stays GCR)
             return 0;
-        case 0xe:  // ready (0 = ready)
+        case 0xe:  // MAME NoReady
             return (disk_.loaded() && drive_motor_) ? 0 : 1;
-        case 0xf:  // new interface / 2M
+        case 0xf:  // MAME: new interface / 2M — 800K MFD51W is_2m() is true
             return 1;
         default:
             return 0;

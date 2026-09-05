@@ -228,7 +228,7 @@ bool MacDsk::load_file(const std::string& path, std::string* error) {
         return false;
     }
     if (!load_bytes(bytes.data(), bytes.size(), error)) {
-        if (error && error->empty()) *error = path + ": not a Macintosh 400K/800K/1.44MB disk";
+        if (error && error->empty()) *error = path + ": not a Macintosh 400K/800K disk";
         return false;
     }
     return true;
@@ -245,8 +245,7 @@ bool MacDsk::load_bytes(const uint8_t* data, size_t size, std::string* error) {
     if (size >= 0x54 && data[0] < 64 && data[0x52] == 1 && data[0x53] == 0) {
         const uint32_t dsize = be32(data + 0x40);
         const uint32_t tsize = be32(data + 0x44);
-        if (size == 0x54 + dsize + tsize &&
-            (dsize == 409600u || dsize == 819200u || dsize == 1474560u)) {
+        if (size == 0x54 + dsize + tsize && (dsize == 409600u || dsize == 819200u)) {
             payload = data + 0x54;
             payload_size = dsize;
             tag_size = tsize;
@@ -266,11 +265,12 @@ bool MacDsk::load_bytes(const uint8_t* data, size_t size, std::string* error) {
         format_ = format == 0 ? 0x22 : format;
         if (encoding == 1 || encoding == 3) format_ = (format ? format : 0x22);
     } else if (payload_size == 1474560) {
-        sides_ = 2;
-        hd_ = true;
-        format_ = format ? format : 0x22;
+        // MAME macplus uses add_35 → MFD51W (400/800K GCR only).
+        // 1.44MB MFM is MFD75W + SWIM on macsefd / Classic.
+        if (error) *error = "Macintosh Plus floppy is 400K/800K GCR; 1.44MB needs a SuperDrive";
+        return false;
     } else {
-        if (error) *error = "Macintosh disk must be 400K, 800K, or 1.44MB";
+        if (error) *error = "Macintosh disk must be 400K or 800K";
         return false;
     }
 
