@@ -845,20 +845,6 @@ void MacPlus::on_cpu_cycles(int cycles) {
             read_ret_pc_ = (ppc + 2) & 0xffffffu;
             read_pb_ = cpu_.a[0].l;
         }
-        if (iwm_.disk().hd() && (op == 0xa002 || op == 0xa003 || op == 0xa004 || op == 0xa005)) {
-            const uint32_t pb = cpu_.a[0].l & 0xffffffu;
-            if (pb + 26 < kRamSize && read_word(pb + 24) == 0xfffb) {
-                sony_from_driver_ = false;
-                if (op == 0xa002 || op == 0xa003)
-                    sony_prime();
-                else if (op == 0xa004)
-                    sony_control();
-                else
-                    sony_status();
-                sony_from_driver_ = true;
-                skip_aline(false);
-            }
-        }
         if (boot2_tried_ && trap_stub_ && ((op & 0xf0ff) == 0xa047))
             restore_stub_pc_ = (ppc + 2) & 0xffffffu;
         // A1 below $10000 is nil ($0 / $FFFF) or a low-heap pointer
