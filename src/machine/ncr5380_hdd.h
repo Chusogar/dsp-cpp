@@ -53,6 +53,7 @@ private:
     void update_match();
     void on_ack(bool ack);
     void take_byte();
+    void raise_eop();
     void offer_byte();
     void start_command();
     void finish_command();

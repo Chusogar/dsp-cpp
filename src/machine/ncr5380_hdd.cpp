@@ -212,6 +212,13 @@ void Ncr5380Hdd::set_phase(uint8_t phase) {
 
 void Ncr5380Hdd::update_match() {}
 
+void Ncr5380Hdd::raise_eop() {
+    eop_ = true;
+    // MR2 bit 3 enables the EOP interrupt. System 7's SCSI Manager
+    // polls BSR INT; the pin stays off the 68000 IPL.
+    if (mode_ & 0x08) irq_ = true;
+}
+
 void Ncr5380Hdd::offer_byte() {
     if (xfer_pos_ < xfer_.size()) idr_ = xfer_[xfer_pos_];
     req_ = true;
@@ -423,11 +430,16 @@ void Ncr5380Hdd::take_byte() {
         req_ = false;
         drq_ = false;
         if (xfer_pos_ >= xfer_.size()) {
+            // Stay in DATA IN with EOP so TCR=$01 still matches. Jumping
+            // to STATUS here left PHASE_MATCH false (TCR still DATA IN)
+            // and the SCSI Manager delay-looped. Assert BSR INT if the
+            // EOP interrupt enable is on; the pin is not wired to IPL.
+            req_ = false;
+            drq_ = false;
+            raise_eop();
+            if (dma_ || (mode_ & kModeDma)) return;
             finish_command();
-            // set_phase() clears EOP. The Plus SCSI Manager polls BSR EOP
-            // before it will program TCR to STATUS; without this bit it
-            // delay-loops in DATA IN / STATUS forever after the last READ.
-            eop_ = true;
+            raise_eop();
         } else {
             pending_req_ = true;
         }
@@ -552,7 +564,10 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
             on_ack((data & kIcAck) != 0);
             // Only this disk (SCSI ID 0) answers selection. Initiator BSY is
             // visible on CSR but must not be treated as target BSY.
-            if (sel_ && loaded_ && (odr_ & 0x01)) bsy_ = true;
+            if (sel_ && loaded_ && (odr_ & 0x01)) {
+                bsy_ = true;
+                irq_ = true;  // PCE: selection raises 5380 INT (BSR only)
+            }
             // PCE/macplus: SEL while arbitrating enters the selection phase.
             if (arb_ && sel_) sel_phase_ = true;
             // Wait for the SCSI Manager to set TCR to COMMAND. Starting
@@ -578,6 +593,7 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
                 sel_phase_ = false;
             }
             mode_ = data;
+            if ((data & 0x08) && eop_) irq_ = true;
             if (!(data & kModeDma)) {
                 dma_ = false;
                 drq_ = false;
@@ -590,8 +606,10 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
             // The Plus SCSI Manager often DMA-reads fewer bytes than the
             // CDB requested (256 of a 512-byte DDM). When it programs STATUS
             // or MESSAGE IN, follow that phase even if data remains.
-            if ((data & 7) == kStatus && (phase_ == kDataIn || phase_ == kDataOut))
+            if ((data & 7) == kStatus && (phase_ == kDataIn || phase_ == kDataOut)) {
                 finish_command();
+                raise_eop();
+            }
             else if ((data & 7) == kMsgIn && phase_ == kStatus) {
                 req_ = false;
                 set_phase(kMsgIn);
