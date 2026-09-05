@@ -277,8 +277,6 @@ void MacPlus::protect_plus_traps(uint32_t address) {
         put(0x0c00 + 0xad * 4, trap_stub_);
     if (cwmgr_stub_ && address >= 0x0e00 + 0x16f * 4 && address < 0x0e00 + 0x16f * 4 + 4)
         put(0x0e00 + 0x16f * 4, cwmgr_stub_);
-    if (rom_initgraf_ && address >= 0x0e00 + 0x6e * 4 && address < 0x0e00 + 0x6e * 4 + 4)
-        put(0x0e00 + 0x6e * 4, rom_initgraf_);
 }
 
 void MacPlus::restore_plus_stubs() {
@@ -286,10 +284,6 @@ void MacPlus::restore_plus_stubs() {
     write_long(0x0c00 + 0xad * 4, trap_stub_);
     if (cwmgr_stub_ && cwmgr_stub_ + 6 <= kRamSize)
         write_long(0x0e00 + 0x16f * 4, cwmgr_stub_);
-    if (rom_initgraf_) {
-        const uint32_t cur = read_long(0x0e00 + 0x6e * 4);
-        if (cur != rom_initgraf_) write_long(0x0e00 + 0x6e * 4, rom_initgraf_);
-    }
 }
 
 void MacPlus::sanitize_mountvol_pb() {
