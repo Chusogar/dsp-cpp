@@ -484,28 +484,8 @@ void MacPlus::on_cpu_cycles(int cycles) {
         }
         if (boot2_tried_ && trap_stub_ && ((op & 0xf0ff) == 0xa047))
             restore_stub_pc_ = (ppc + 2) & 0xffffffu;
-        // Boot 2 _TextSize with A1=$FFFF walks off through a nil CGrafPort
-        // (GetCWMgrPort is not a real color WM port on 128K). Skip that
-        // A-line; the 6-byte exception frame is already on the stack.
-        // A1 below $10000 is either nil ($0 / $FFFF) or a low-heap pointer
-        // that Color QD TextSize cannot follow (A1=$3742 / D0=-108 crashed
-        // the 68000 to $A0007E6E). Skip those A-lines.
-        // 32-bit QD glue calls A8A1/A8A3 with A0 = a ROM address or
-        // low-memory $3F8 whose "handle" is $400020 (rgnSize 0). ROM
-        // $40a648 then blits forever. Only a RAM handle to a region
-        // of at least 10 bytes is safe.
-        if (boot2_tried_ && (op == 0xa8a1 || op == 0xa8a3 || op == 0xa8d3)) {
-            const uint32_t a0 = cpu_.a[0].l & 0xffffffu;
-            uint32_t rgn = 0, sz = 0;
-            if (a0 >= 0x100 && a0 + 4 < 0x400000u) rgn = read_long(a0) & 0xffffffu;
-            if (rgn >= 0x100 && rgn + 2 < 0x400000u) sz = read_word(rgn);
-            if (sz < 10u || sz > 0x4000u) {
-                const uint32_t sp = cpu_.a[7].l & 0xffffffu;
-                const uint32_t stacked = read_long(sp + 2) & 0xffffffu;
-                if (stacked == ppc || stacked == ((ppc + 2) & 0xffffffu)) cpu_.a[7].l = sp + 6;
-                cpu_.pc_.l = (ppc + 2) & 0xffffffu;
-            }
-        }
+        // A1 below $10000 is nil ($0 / $FFFF) or a low-heap pointer
+        // Color QD TextSize cannot follow (A1=$3742 crashed to $A0007E6E).
         if (boot2_tried_ && op == 0xa868 && (cpu_.a[1].l & 0xffffffu) < 0x10000u) {
             const uint32_t sp = cpu_.a[7].l & 0xffffffu;
             const uint32_t stacked = read_long(sp + 2) & 0xffffffu;
