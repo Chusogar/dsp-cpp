@@ -21,6 +21,9 @@ public:
     const uint8_t* last_cdb() const { return cdb_; }
     uint32_t cmd_count() const { return cmd_count_; }
     uint8_t cmd_log(int i) const { return cmd_log_[static_cast<unsigned>(i) & 15u]; }
+    uint8_t image_at(uint32_t offset) const {
+        return offset < image_.size() ? image_[offset] : 0;
+    }
     uint8_t last_icr() const { return icr_; }
     uint8_t last_mode() const { return mode_; }
     bool selected() const { return bsy_; }

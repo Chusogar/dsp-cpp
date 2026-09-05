@@ -5546,14 +5546,14 @@ void test_mac_boot_if_present() {
     check(sys7.load_media(hd, &error), "System7_0_1.img mounts as a SCSI hard disk");
     check(sys7.scsi_loaded() && sys7.scsi_blocks() >= 20480, "the HFS volume is a 10MB SCSI disk");
     check(!sys7.floppy_loaded(), "a hard disk image does not sit in the Sony drive");
-    for (int i = 0; i < 2500; i++) sys7.run_frame();
+    for (int i = 0; i < 8000; i++) sys7.run_frame();
     write_mac_ppm("/tmp/macplus-system7.ppm", sys7);
     check(sys7.peek(0x0108) == 0x00 && sys7.peek(0x0109) == 0x40,
           "System 7 sees 4MB at MemTop");
     check(sys7.scsi_xfer_bytes() >= 2560,
           "the Plus ROM loads the SCSI driver and _Reads the System 7 LK boot blocks");
-    check(sys7.last_scsi_lba() == 2 || sys7.scsi_xfer_bytes() >= 2560,
-          "Prime reads HFS LBA 2 (the original image's boot blocks)");
+    check(sys7.scsi_xfer_bytes() > 3584,
+          "the 128K Start Manager MountVols and keeps reading past the Happy Mac");
     check(unique_pixels(sys7) >= 2, "System 7 boot paints the Macintosh screen");
 }
 

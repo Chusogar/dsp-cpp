@@ -62,9 +62,36 @@ bool MacPlus::init(const std::string& rom_path, std::string* error) {
         if (error && error->empty()) *error = "Macintosh Plus ROM not found in " + rom_path;
         return false;
     }
+    find_start_manager_mountvol();
     warnings_.insert(warnings_.end(), loader.warnings().begin(), loader.warnings().end());
     reset();
     return true;
+}
+
+void MacPlus::find_start_manager_mountvol() {
+    // 128K Start Manager: MOVEA.L A7,A0 / MOVE.W BootDrive,$16(A0) / _MountVol
+    static const uint8_t kPat[] = {0x20, 0x4f, 0x31, 0x78, 0x02, 0x10, 0x00, 0x16, 0xa0, 0x0f};
+    mount_vol_pc_ = 0;
+    for (size_t i = 0; i + sizeof(kPat) <= rom_.size(); ++i) {
+        if (std::equal(std::begin(kPat), std::end(kPat), rom_.begin() + static_cast<std::ptrdiff_t>(i))) {
+            mount_vol_pc_ = 0x400000u + uint32_t(i) + 8u;
+            break;
+        }
+    }
+}
+
+void MacPlus::sanitize_mountvol_pb() {
+    const uint32_t pb = cpu_.a[0].l & 0xffffffu;
+    if (pb + 0x16u >= kRamSize) return;
+    // Only ioVRefNum is written; the rest is whatever the RAM test left on
+    // the stack. ioNamePtr = -1 is a 255-byte Pascal string of open-bus $FF
+    // and File Manager never comes back, so System 7 stays on the Happy Mac.
+    for (uint32_t off : {0x0cu, 0x12u}) {
+        ram_at(pb + off, 0);
+        ram_at(pb + off + 1, 0);
+        ram_at(pb + off + 2, 0);
+        ram_at(pb + off + 3, 0);
+    }
 }
 
 void MacPlus::reset() {
@@ -114,6 +141,7 @@ void MacPlus::update_irqs() {
 }
 
 void MacPlus::on_cpu_cycles(int cycles) {
+    if (mount_vol_pc_ && cpu_.pc() == mount_vol_pc_) sanitize_mountvol_pb();
     iwm_.tick(cycles);
     via_acc_ += cycles;
     while (via_acc_ >= 10) {
