@@ -170,6 +170,10 @@ void MacPlus::redirect_launch_to_boot2() {
     cpu_.a[3].l = 0;
     cpu_.d[0].l = body;
     cpu_.pc_.l = code;
+    boot2_base_ = code;
+    boot2_hi_ = 0x18;
+    boot2_main_hi_ = 0x18;
+    boot2_hits_ = 0;
 }
 
 uint32_t MacPlus::read_long(uint32_t address) {
@@ -426,6 +430,10 @@ void MacPlus::reset() {
     enqueue_count_ = 0;
     dequeue_count_ = 0;
     cwmgr_count_ = 0;
+    boot2_base_ = 0;
+    boot2_hi_ = 0;
+    boot2_main_hi_ = 0;
+    boot2_hits_ = 0;
     rom_initgraf_ = 0;
     for (uint32_t& v : rom_tool_) v = 0;
     restore_stub_pc_ = 0;
@@ -473,7 +481,13 @@ void MacPlus::update_irqs() {
 }
 
 void MacPlus::on_cpu_cycles(int cycles) {
-    const uint32_t pc = cpu_.pc();
+    const uint32_t pc = cpu_.pc() & 0xffffffu;
+    if (boot2_base_ && pc >= boot2_base_ && pc < boot2_base_ + 0x2000u) {
+        boot2_hits_++;
+        const uint32_t off = pc - boot2_base_ + 0x18u;
+        if (off > boot2_hi_) boot2_hi_ = off;
+        if (off < 0x520u && off > boot2_main_hi_) boot2_main_hi_ = off;
+    }
     if (!overlay_ && rom_initgraf_ == 0) snapshot_rom_tool_traps();
     if (restore_stub_pc_ && pc == restore_stub_pc_) {
         restore_stub_pc_ = 0;
