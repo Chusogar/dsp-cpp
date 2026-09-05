@@ -268,8 +268,9 @@ void MacPlus::restore_plus_stubs() {
     for (int i = 0x50; i <= 0x6f; i++) {
         if (!rom_tool_[i]) continue;
         const uint32_t cur = read_long(0x0e00 + uint32_t(i) * 4);
-        if (cur != rom_tool_[i] && (cur < 0x400000 || cur >= 0x420000))
-            write_long(0x0e00 + uint32_t(i) * 4, rom_tool_[i]);
+        // $400806 UnimplTrap is still in the ROM window — treat it
+        // as a replacement, not as "already the 128K implementation".
+        if (cur != rom_tool_[i]) write_long(0x0e00 + uint32_t(i) * 4, rom_tool_[i]);
     }
     write_long(0x0c00 + 0xad * 4, trap_stub_);
     if (cwmgr_stub_ && cwmgr_stub_ + 6 <= kRamSize)
@@ -407,6 +408,8 @@ void MacPlus::on_cpu_cycles(int cycles) {
         if (op == 0xa00f) sanitize_mountvol_pb();
         if (op == 0xa9f0 || op == 0xa9f2 || (boot2_tried_ && (op == 0xa9a0 || op == 0xa81f))) {
             sweep_compressed_handles();
+            restore_plus_stubs();
+        } else if (boot2_tried_ && trap_stub_) {
             restore_plus_stubs();
         }
         if (op == 0xa002) {
@@ -702,6 +705,7 @@ void MacPlus::run_frame() {
     }
     render();
     if (launch_count_ && decompress_count_ == 0) sweep_compressed_handles();
+    if (boot2_tried_ && trap_stub_) restore_plus_stubs();
 }
 
 void MacPlus::set_inputs(const MachineInputs& inputs) {
