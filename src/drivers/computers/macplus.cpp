@@ -595,6 +595,12 @@ void MacPlus::on_cpu_cycles(int cycles) {
             } else if (num == 0x248) {
                 os_get_cwmgr_port();
                 skip_aline(autopop);
+            } else if (num == 0x023) {
+                // A823 is AliasDispatch on System 7; the Plus ROM slot
+                // is not that trap. A no-op noErr lets boot 2's
+                // 'scri'/'extn' probe return from +$06be.
+                cpu_.d[0].l = 0;
+                skip_aline(autopop);
             }
         }
         if (op == 0xa9a0 || op == 0xa81a || op == 0xa9a2 || op == 0xa1a0 || op == 0xa11a ||
