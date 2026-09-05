@@ -5044,54 +5044,29 @@ void test_st_ikbd_mouse() {
     check(q[after_click] == 0xf8 && q[after_click + 1] == 0 && q[after_click + 2] == 0,
           "release is 0xF8,0,0");
 
-    in.pointer_x += 400;  // +400 host → +200 TOS = 127+73
+    in.pointer_x += 400;  // +400 host → +200 TOS = 127, then 73 next sample
     machine.set_inputs(in);
     q = machine.ikbd_pending_bytes();
-    check(q.size() >= after_click + 3 + 6, "a large flick is split into ±127 packets");
-    const size_t p = after_click + 3;
-    check(q[p] == 0xf8 && int8_t(q[p + 1]) == 127 && q[p + 2] == 0 && q[p + 3] == 0xf8 &&
-              int8_t(q[p + 4]) == 73 && q[p + 5] == 0,
-          "200 TOS pixels split as 127 then 73");
+    const size_t after_release = after_click + 3;
+    check(q.size() == after_release + 3, "a large flick is one ±127 packet this sample");
+    const size_t p = after_release;
+    check(q[p] == 0xf8 && int8_t(q[p + 1]) == 127 && q[p + 2] == 0,
+          "first sample of 200 TOS pixels is +127");
+    machine.set_inputs(in);
+    q = machine.ikbd_pending_bytes();
+    check(q.size() == after_release + 6, "the leftover TOS pixels go out on the next sample");
+    check(q[p + 3] == 0xf8 && int8_t(q[p + 4]) == 73 && q[p + 5] == 0,
+          "second sample of 200 TOS pixels is +73");
 }
 
 void test_st_blitter() {
+    // 1040ST has no blitter: $FF8Axx bus-errors (peek reports open bus).
     dsp::AtariSt machine;
-    for (int i = 0; i < 16; i++) {
-        machine.poke(0x1000 + uint32_t(i), uint8_t(0xa0 + i));
-        machine.poke(0x2000 + uint32_t(i), 0);
-    }
-    machine.poke_word(0xff8a20, 2);
-    machine.poke_word(0xff8a22, 2);
-    machine.poke_word(0xff8a24, 0);
-    machine.poke_word(0xff8a26, 0x1000);
-    machine.poke_word(0xff8a28, 0xffff);
-    machine.poke_word(0xff8a2a, 0xffff);
-    machine.poke_word(0xff8a2c, 0xffff);
-    machine.poke_word(0xff8a2e, 2);
-    machine.poke_word(0xff8a30, 2);
-    machine.poke_word(0xff8a32, 0);
-    machine.poke_word(0xff8a34, 0x2000);
+    check(machine.peek(0xff8a00) == 0xff && machine.peek(0xff8a3c) == 0xff,
+          "1040ST blitter ports are open bus, not a dummy chip");
     machine.poke_word(0xff8a36, 8);
-    machine.poke_word(0xff8a38, 1);
-    machine.poke(0xff8a3a, 2);
-    machine.poke(0xff8a3b, 3);
-    machine.poke(0xff8a3d, 0);
     machine.poke(0xff8a3c, 0x80);
-    check((machine.peek(0xff8a3c) & 0x80) == 0, "blitter busy clears after a copy");
-    for (int i = 0; i < 16; i++) {
-        check(machine.peek(0x2000 + uint32_t(i)) == uint8_t(0xa0 + i),
-              "blitter copies source words into dest RAM");
-    }
-
-    machine.poke_word(0xff8a26, 0x1000);
-    machine.poke_word(0xff8a34, 0x2000);
-    machine.poke_word(0xff8a36, 8);
-    machine.poke_word(0xff8a38, 1);
-    machine.poke(0xff8a3b, 6);
-    machine.poke(0xff8a3c, 0x80);
-    for (int i = 0; i < 16; i++) {
-        check(machine.peek(0x2000 + uint32_t(i)) == 0, "XOR blit of matching words clears dest");
-    }
+    check(machine.peek(0xff8a3c) == 0xff, "blitter writes do not stick on a 1040ST");
 }
 
 void test_st_boot_if_present() {
@@ -5154,14 +5129,33 @@ void test_st_boot_if_present() {
     check(be16(gcur) == 159 && be16(gcur + 2) == 99,
           "parking the host pointer does not yank the GEM mouse");
     pointer.pointer_x = 420;
-    pointer.pointer_button1 = true;
     for (int i = 0; i < 20; i++) {
+        boot.set_inputs(pointer);
+        boot.run_frame();
+    }
+    pointer.pointer_button1 = true;
+    for (int i = 0; i < 10; i++) {
+        boot.set_inputs(pointer);
+        boot.run_frame();
+    }
+    pointer.pointer_button1 = false;
+    for (int i = 0; i < 10; i++) {
         boot.set_inputs(pointer);
         boot.run_frame();
     }
     const int mx = be16(gcur);
     const int my = be16(gcur + 2);
     check(mx > 159 && mx < 220 && my == 99, "a small move+click keeps the GEM mouse on-screen");
+    write_st_ppm("/tmp/st-after-click.ppm", boot);
+    int green_after = 0;
+    for (int i = 0; i < n; i++) {
+        const int r = int((fb[i] >> 16) & 0xff);
+        const int g = int((fb[i] >> 8) & 0xff);
+        const int b = int(fb[i] & 0xff);
+        if (r < 40 && g > 180 && b < 40) green_after++;
+    }
+    check(green_after > 200000, "a click does not smear away the GEM desktop");
+    check(unique_pixels(boot) <= 4, "a click does not invent extra palette noise");
 
     // Fresh boot: double-click drive A. Open-bus $FF at $FF8A3C used to hang
     // Line-A in `tst.b (a5); bmi.s` after GEM recognised the clicks.
@@ -5198,6 +5192,38 @@ void test_st_boot_if_present() {
     }
     check(desk16(dgcur) < 40 && desk16(dgcur + 2) < 50, "GEM mouse sits on drive A");
     write_st_ppm("/tmp/st-on-drive-a.ppm", desk);
+    {
+        const uint32_t* ifb = desk.framebuffer();
+        auto ink = [&](int x0, int y0, int x1, int y1) {
+            int nink = 0;
+            for (int y = y0; y < y1; y++) {
+                for (int x = x0; x < x1; x++) {
+                    const uint32_t p = ifb[y * 640 + x];
+                    const int r = int((p >> 16) & 0xff);
+                    const int g = int((p >> 8) & 0xff);
+                    const int b = int(p & 0xff);
+                    if (!(r < 40 && g > 180 && b < 40)) nink++;
+                }
+            }
+            return nink;
+        };
+        const int a_ink = ink(0, 0, 80, 72);
+        const int b_ink = ink(0, 80, 80, 152);
+        check(a_ink < b_ink * 2 + 1500,
+              "the GEM mouse does not XOR-smear drive A when it sits on the icon");
+        int centre_black = 0;
+        for (int y = 180; y < 230; y++) {
+            for (int x = 300; x < 360; x++) {
+                const uint32_t p = ifb[y * 640 + x];
+                const int r = int((p >> 16) & 0xff);
+                const int g = int((p >> 8) & 0xff);
+                const int b = int(p & 0xff);
+                if (r < 20 && g < 20 && b < 20) centre_black++;
+            }
+        }
+        check(centre_black == 0,
+              "moving the mouse off the desktop centre restores the old sprite");
+    }
 
     auto click_frames = [&](bool down, int frames) {
         mouse.pointer_button1 = down;

@@ -46,6 +46,10 @@ public:
 
     explicit M68000(uint32_t clock, Type type = Type::M68000);
 
+    // Thrown from a memory handler to abort the current instruction and take
+    // the 68000 bus-error vector (2). Atari ST TOS probes $FF8A00 this way.
+    struct BusError {};
+
     void set_memory_handlers(ReadWordHandler read, WriteWordHandler write);
     // Optional byte accessors. Without them, byte ops read-modify-write a word,
     // which is wrong for write-only ports (Genesis VDP, I/O).
