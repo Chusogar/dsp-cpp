@@ -86,10 +86,11 @@ void MacPlus::patch_rom_startboot() {
     // 128K header +$A is StartBoot: BRA to the cold memory test. 64K-era
     // disk stubs (Sony / boot) JMP ROMBase+$A after a successful _Write to
     // "continue boot". On a Plus that wipes RAM and kills the Welcome box.
-    // Point +$A at the 128K Start Manager (MountVol / load System) instead.
+    // Point +$A at the 128K Start Manager's "load Finder" tail so a 64K
+    // JMP ROM+$A does not remount and redraw the Happy Mac.
     if (rom_.size() < 0x10 || rom_[0x0a] != 0x60 || rom_[0x0b] != 0x00) return;
     if (rom_[0x0c] != 0x00 || rom_[0x0d] != 0x56) return;  // v3 BRA $400062
-    constexpr uint32_t kStartMgr = 0x400986;
+    constexpr uint32_t kStartMgr = 0x400a90;
     const int32_t disp = int32_t(kStartMgr - 0x40000cu);
     rom_[0x0c] = uint8_t(disp >> 8);
     rom_[0x0d] = uint8_t(disp);
