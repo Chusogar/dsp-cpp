@@ -133,6 +133,7 @@ private:
     void os_enqueue();
     void os_dequeue();
     void os_get_cwmgr_port();
+    static bool is_plus_qd_trap(int trap);
 
     M68000 cpu_;
     Via6522 via_;

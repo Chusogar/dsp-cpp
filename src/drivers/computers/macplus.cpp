@@ -370,6 +370,27 @@ void MacPlus::snapshot_rom_tool_traps() {
     if (!rom_initgraf_ && rom_tool_[0x6e]) rom_initgraf_ = rom_tool_[0x6e];
 }
 
+bool MacPlus::is_plus_qd_trap(int trap) {
+    // 128K QuickDraw. System 7 'lpch' / Color QD glue pops the A-line
+    // frame as BlockMove params and the JSR at boot2 +$03be never
+    // returns. $50–$6F is InitGraf / InitPort / TextSize; the rest are
+    // the dialog primitives the hang loop actually calls. Do not put
+    // GetCWMgrPort on $16F (that slot is Enqueue).
+    if (trap >= 0x50 && trap <= 0x6f) return true;
+    switch (trap) {
+        case 0x33:  // ScrnBitMap
+        case 0x9b:  // PenSize
+        case 0x9e:  // PenNormal
+        case 0xa1:  // FrameRect
+        case 0xa3:  // EraseRect
+        case 0xa8:  // OffsetRect
+        case 0xa9:  // InsetRect
+            return true;
+        default:
+            return false;
+    }
+}
+
 void MacPlus::protect_plus_traps(uint32_t address) {
     if (!boot2_tried_ || !trap_stub_) return;
     address &= 0xffffffu;
@@ -381,10 +402,21 @@ void MacPlus::protect_plus_traps(uint32_t address) {
     };
     if (address >= 0x0c00 + 0xad * 4 && address < 0x0c00 + 0xad * 4 + 4)
         put(0x0c00 + 0xad * 4, trap_stub_);
+    if (address >= 0x0e00 && address < 0x0e00 + 512 * 4) {
+        const int trap = int((address - 0x0e00) / 4);
+        if (is_plus_qd_trap(trap) && rom_tool_[trap])
+            put(0x0e00 + uint32_t(trap) * 4, rom_tool_[trap]);
+    }
 }
 
 void MacPlus::restore_plus_stubs() {
     if (!trap_stub_ || trap_stub_ + 4 > kRamSize) return;
+    for (int i = 0; i < 512; i++) {
+        if (!is_plus_qd_trap(i) || !rom_tool_[i]) continue;
+        const uint32_t cur = read_long(0x0e00 + uint32_t(i) * 4);
+        if (cur != rom_tool_[i] && (cur < 0x400000 || cur >= 0x420000))
+            write_long(0x0e00 + uint32_t(i) * 4, rom_tool_[i]);
+    }
     write_long(0x0c00 + 0xad * 4, trap_stub_);
     if (grafport_) {
         const uint32_t tp = read_long(0x0a26) & 0xffffffu;
