@@ -5512,11 +5512,45 @@ void test_mac_gcr_and_dsk() {
     check(!disk.nibbles(0, 0).empty() && disk.nibbles(0, 0)[36] == 0xd5,
           "track 0 GCR starts with an address mark after the gap");
 
+    std::vector<uint8_t> dc144(0x54 + 1474560, 0);
+    dc144[0] = 8;
+    std::memcpy(&dc144[1], "System 6", 8);
+    dc144[0x40] = 0x00;
+    dc144[0x41] = 0x16;
+    dc144[0x42] = 0x80;
+    dc144[0x43] = 0x00;  // dataSize = 1474560
+    dc144[0x50] = 0x03;  // Disk Copy 4.2: 1.44MB MFM
+    dc144[0x52] = 1;
+    dc144[0x53] = 0;
+    check(dsp::MacDsk::looks_like_mac_floppy(dc144.data(), dc144.size()),
+          "a DC42 1.44MB header counts as a Mac floppy image");
+    dsp::MacDsk dc;
+    check(!dc.load_bytes(dc144.data(), dc144.size(), &error),
+          "DC42 1.44MB is rejected after the header is stripped");
+    check(error.find("SuperDrive") != std::string::npos,
+          "stripped 1.44MB DC42 names the SuperDrive / SWIM machine");
+    const std::string dc_path = "/tmp/mac-dc42-1440.img";
+    {
+        std::ofstream out(dc_path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(dc144.data()), std::streamsize(dc144.size()));
+    }
+    dsp::MacPlus reject;
+    error.clear();
+    check(!reject.load_media(dc_path, &error), "load_media refuses a SuperDrive DC42 image");
+    check(error.find("SuperDrive") != std::string::npos,
+          "load_media keeps the floppy SuperDrive error, not the SCSI 512-byte message");
+    check(error.find("SCSI") == std::string::npos,
+          "the SCSI probe does not overwrite a Disk Copy floppy error");
+    check(!reject.floppy_loaded() && !reject.scsi_loaded(),
+          "the 1.44MB image is neither mounted as IWM nor SCSI");
+
     const char* sys608 = "/tmp/macdisks/sys608/MacOS_6.0.8_System_Startup.img";
     std::FILE* s6 = std::fopen(sys608, "rb");
     if (s6) {
         std::fclose(s6);
         dsp::MacDsk hd;
+        check(dsp::MacDsk::looks_like_mac_floppy(sys608),
+              "the IA System 6.0.8 Startup image is a Disk Copy floppy");
         check(!hd.load_file(sys608, &error),
               "MAME macplus add_35 / MFD51W rejects the IA 1.44MB Disk Copy image");
         check(error.find("SuperDrive") != std::string::npos,
@@ -5632,6 +5666,8 @@ void test_mac_boot_if_present() {
         check(sys6.init(rom, &error), "Mac Plus ROM reloads for the 1.44MB image check");
         check(!sys6.load_media(sys608, &error),
               "load_media does not put a SuperDrive 1.44MB image in the Plus Sony drive");
+        check(error.find("SuperDrive") != std::string::npos,
+              "load_media reports SuperDrive, not a SCSI sector-size error");
         check(!sys6.floppy_loaded() && !sys6.scsi_loaded(),
               "the IA Startup image is neither an 800K GCR floppy nor a 512-byte SCSI disk");
     }

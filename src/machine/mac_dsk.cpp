@@ -19,7 +19,43 @@ uint32_t be32(const uint8_t* p) {
 
 int rotl8(int value) { return ((value << 1) | ((value >> 7) & 1)) & 0xff; }
 
+bool is_floppy_payload(uint32_t size) {
+    return size == 409600u || size == 819200u || size == 1474560u;
+}
+
+bool parse_dc42(const uint8_t* data, size_t size, uint32_t* dsize, uint32_t* tsize) {
+    if (data == nullptr || size < 0x54 || data[0] >= 64 || data[0x52] != 1 || data[0x53] != 0)
+        return false;
+    const uint32_t d = be32(data + 0x40);
+    const uint32_t t = be32(data + 0x44);
+    if (size != 0x54 + d + t) return false;
+    if (dsize) *dsize = d;
+    if (tsize) *tsize = t;
+    return true;
+}
+
 }  // namespace
+
+bool MacDsk::looks_like_mac_floppy(const uint8_t* data, size_t size) {
+    if (is_floppy_payload(uint32_t(size))) return true;
+    uint32_t dsize = 0;
+    return parse_dc42(data, size, &dsize, nullptr) && is_floppy_payload(dsize);
+}
+
+bool MacDsk::looks_like_mac_floppy(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    in.seekg(0, std::ios::end);
+    const std::streamoff size = in.tellg();
+    in.seekg(0, std::ios::beg);
+    if (size < 0) return false;
+    if (is_floppy_payload(uint32_t(size))) return true;
+    uint8_t hdr[0x54];
+    in.read(reinterpret_cast<char*>(hdr), sizeof(hdr));
+    if (!in) return false;
+    uint32_t dsize = 0;
+    return parse_dc42(hdr, size_t(size), &dsize, nullptr) && is_floppy_payload(dsize);
+}
 
 uint8_t MacDsk::gcr6(uint8_t sixbit) { return kGcr6[sixbit & 0x3f]; }
 
@@ -242,16 +278,13 @@ bool MacDsk::load_bytes(const uint8_t* data, size_t size, std::string* error) {
     uint8_t encoding = 0x01;
     uint8_t format = 0x22;
 
-    if (size >= 0x54 && data[0] < 64 && data[0x52] == 1 && data[0x53] == 0) {
-        const uint32_t dsize = be32(data + 0x40);
-        const uint32_t tsize = be32(data + 0x44);
-        if (size == 0x54 + dsize + tsize && (dsize == 409600u || dsize == 819200u)) {
-            payload = data + 0x54;
-            payload_size = dsize;
-            tag_size = tsize;
-            encoding = data[0x50];
-            format = data[0x51];
-        }
+    uint32_t dsize = 0, tsize = 0;
+    if (parse_dc42(data, size, &dsize, &tsize)) {
+        payload = data + 0x54;
+        payload_size = dsize;
+        tag_size = tsize;
+        encoding = data[0x50];
+        format = data[0x51];
     }
 
     if (payload_size == 409600) {

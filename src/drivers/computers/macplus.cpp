@@ -508,6 +508,13 @@ void MacPlus::reset() {
 bool MacPlus::load_media(const std::string& path, std::string* error) {
     std::string floppy_error;
     if (iwm_.load_file(path, &floppy_error)) return true;
+    // A Disk Copy 4.2 1.44MB image is 1474644 bytes (84 + 1474560). That is
+    // not a multiple of 512, so the SCSI probe would hide the SuperDrive
+    // floppy error behind "SCSI disk must be a multiple of 512 bytes".
+    if (MacDsk::looks_like_mac_floppy(path)) {
+        if (error) *error = floppy_error;
+        return false;
+    }
     if (scsi_.load_file(path, error)) return true;
     if (error && error->empty()) *error = floppy_error;
     return false;

@@ -17,6 +17,9 @@ public:
     void reset();
     bool load_file(const std::string& path, std::string* error);
     bool load_bytes(const uint8_t* data, size_t size, std::string* error);
+    // Raw 400K/800K/1.44MB or a Disk Copy 4.2 wrapper of those sizes.
+    static bool looks_like_mac_floppy(const uint8_t* data, size_t size);
+    static bool looks_like_mac_floppy(const std::string& path);
     bool loaded() const { return loaded_; }
     bool hd() const { return hd_; }
     uint32_t blocks() const { return loaded_ ? uint32_t(image_.size() / kSectorSize) : 0; }
