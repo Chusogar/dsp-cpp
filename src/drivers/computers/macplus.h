@@ -123,10 +123,12 @@ private:
     void clock_keyboard();
     void find_start_manager_mountvol();
     void find_sony_driver();
-    void maybe_sony_prime();
+    void maybe_sony_dispatch();
     void mark_sony_inserted();
     void sony_prime();
-    void sony_return(int16_t result);
+    void sony_control();
+    void sony_status();
+    void sony_return(int16_t result, bool from_driver);
     void patch_rom_startboot();
     void sanitize_mountvol_pb();
     void launch_finder_from_rom_a();
@@ -219,6 +221,9 @@ private:
     uint32_t rom_tool_[512]{};
     uint32_t restore_stub_pc_ = 0;
     uint32_t sony_prime_rom_ = 0;
+    uint32_t sony_ctl_rom_ = 0;
+    uint32_t sony_stat_rom_ = 0;
+    bool sony_from_driver_ = true;
     uint32_t sony_prime_count_ = 0;
     uint32_t sony_read_bytes_ = 0;
     std::vector<int16_t> audio_;

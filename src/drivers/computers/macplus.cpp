@@ -86,31 +86,39 @@ void MacPlus::find_start_manager_mountvol() {
 
 void MacPlus::find_sony_driver() {
     // PCE sony.c: DRVR header $4F00, Pascal name 5 ".Sony", +8 is Open.
-    sony_prime_rom_ = 0;
+    sony_prime_rom_ = sony_ctl_rom_ = sony_stat_rom_ = 0;
     for (size_t i = 1; i + 24 < rom_.size(); ++i) {
         if (rom_[i - 1] != 0x05 || rom_[i] != 0x2e) continue;
         if (rom_[i + 1] != 'S' || rom_[i + 2] != 'o' || rom_[i + 3] != 'n' || rom_[i + 4] != 'y')
             continue;
         const size_t drv = i - 19;
         if (drv >= rom_.size() || rom_[drv] != 0x4f || rom_[drv + 1] != 0x00) continue;
-        const uint16_t prime = uint16_t((uint16_t(rom_[drv + 10]) << 8) | rom_[drv + 11]);
-        const uint32_t addr = 0x400000u + uint32_t(drv + prime);
-        if (addr >= 0x400000 && addr + 6 < 0x420000) {
-            sony_prime_rom_ = addr;
-            break;
-        }
+        auto entry = [&](int which) {
+            const uint16_t off =
+                uint16_t((uint16_t(rom_[drv + 8 + which * 2]) << 8) | rom_[drv + 9 + which * 2]);
+            return 0x400000u + uint32_t(drv + off);
+        };
+        sony_prime_rom_ = entry(1);
+        sony_ctl_rom_ = entry(2);
+        sony_stat_rom_ = entry(3);
+        break;
     }
 }
 
-void MacPlus::maybe_sony_prime() {
-    // Do not patch ROM: the Plus checksums the 128K image, and a JMP
-    // planted in .Sony Prime yields Sad Mac 01. After the first Prime
-    // instruction (MOVE.L $226,-(A7) on v3) take over and serve LBA.
-    if (!iwm_.disk().hd() || !sony_prime_rom_) return;
+void MacPlus::maybe_sony_dispatch() {
+    // Do not patch ROM: the Plus checksums the 128K image. After the first
+    // instruction of .Sony Prime/Control/Status, serve the 1.44MB image.
+    if (!iwm_.disk().hd()) return;
     const uint32_t ppc = cpu_.ppc() & 0xffffffu;
-    if (ppc != sony_prime_rom_) return;
-    if (read_word(sony_prime_rom_) == 0x2f38) cpu_.a[7].l += 4;
-    sony_prime();
+    if (sony_prime_rom_ && ppc == sony_prime_rom_) {
+        if (read_word(sony_prime_rom_) == 0x2f38) cpu_.a[7].l += 4;
+        sony_prime();
+    } else if (sony_ctl_rom_ && ppc == sony_ctl_rom_) {
+        if (read_word(sony_ctl_rom_) == 0x2f38) cpu_.a[7].l += 4;
+        sony_control();
+    } else if (sony_stat_rom_ && ppc == sony_stat_rom_) {
+        sony_status();
+    }
 }
 
 void MacPlus::mark_sony_inserted() {
@@ -121,12 +129,16 @@ void MacPlus::mark_sony_inserted() {
     ram_at(d1 + 5, 0xff);
     ram_at(d1 + 18, 0xff);
     ram_at(d1 + 19, 0xff);
+    // Drive 2 is the empty external Sony. IWM sense is shared; if the
+    // ROM thinks a disk is in, Finder asks to initialize it.
+    if (vars + 8 + 132 + 4 < kRamSize) ram_at(vars + 8 + 132 + 3, 0);
 }
 
-void MacPlus::sony_return(int16_t result) {
+void MacPlus::sony_return(int16_t result, bool from_driver) {
     const uint32_t pb = cpu_.a[0].l & 0xffffffu;
     if (pb + 18 < kRamSize) write_word(pb + 16, uint16_t(result));
     cpu_.d[0].l = result < 0 ? uint32_t(int32_t(result)) : 0;
+    if (!from_driver || !sony_from_driver_) return;
     const uint16_t trap = pb + 8 < kRamSize ? read_word(pb + 6) : 0;
     const uint32_t jiodone = read_long(0x08fc) & 0xffffffu;
     if ((trap & 0x0200) == 0 && jiodone >= 0x100 && jiodone < 0x420000) {
@@ -144,13 +156,13 @@ void MacPlus::sony_prime() {
     const uint32_t pb = cpu_.a[0].l & 0xffffffu;
     const uint32_t dce = cpu_.a[1].l & 0xffffffu;
     if (pb + 50 >= kRamSize) {
-        sony_return(-50);
+        sony_return(-50, true);
         return;
     }
     const uint16_t trap = read_word(pb + 6);
     const uint16_t vref = read_word(pb + 22);
     if (vref != 1 && vref != 0) {
-        sony_return(-56);
+        sony_return(-56, true);
         return;
     }
     const uint16_t posmode = read_word(pb + 44);
@@ -172,11 +184,11 @@ void MacPlus::sony_prime() {
     if (posmode & 0x40) {
         write_long(pb + 40, cnt);
         if (dce + 20 < kRamSize) write_long(dce + 16, ofs + cnt);
-        sony_return(0);
+        sony_return(0, true);
         return;
     }
     if ((ofs & 511) || (cnt & 511) || cnt == 0) {
-        sony_return(-50);
+        sony_return(-50, true);
         return;
     }
     const uint32_t n = cnt / 512;
@@ -186,21 +198,21 @@ void MacPlus::sony_prime() {
         const uint32_t lba = ofs / 512 + i;
         if (writing) {
             if (addr + i * 512 + 512 > kRamSize) {
-                sony_return(-20);
+                sony_return(-20, true);
                 return;
             }
             for (int b = 0; b < 512; b++) buf[b] = read_byte(addr + i * 512 + uint32_t(b));
             if (!iwm_.disk().write_lba(lba, buf)) {
-                sony_return(-20);
+                sony_return(-20, true);
                 return;
             }
         } else {
             if (!iwm_.disk().read_lba(lba, buf)) {
-                sony_return(-19);
+                sony_return(-19, true);
                 return;
             }
             if (addr + i * 512 + 512 > kRamSize) {
-                sony_return(-19);
+                sony_return(-19, true);
                 return;
             }
             for (int b = 0; b < 512; b++) write_byte(addr + i * 512 + uint32_t(b), buf[b]);
@@ -209,7 +221,88 @@ void MacPlus::sony_prime() {
     }
     write_long(pb + 40, cnt);
     if (dce + 20 < kRamSize) write_long(dce + 16, ofs + cnt);
-    sony_return(0);
+    sony_return(0, true);
+}
+
+void MacPlus::sony_control() {
+    const uint32_t pb = cpu_.a[0].l & 0xffffffu;
+    if (pb + 28 >= kRamSize) {
+        sony_return(-17, true);
+        return;
+    }
+    const uint16_t vref = read_word(pb + 22);
+    const uint16_t cs = read_word(pb + 26);
+    if (vref != 1 && vref != 0 && cs != 7) {
+        sony_return(-56, true);
+        return;
+    }
+    switch (cs) {
+        case 1:
+            sony_return(-27, true);
+            return;
+        case 5:
+            sony_return(0, true);
+            return;
+        case 6:
+            sony_return(-50, true);
+            return;
+        case 7:
+            sony_return(0, true);
+            return;
+        case 8:
+            sony_return(0, true);
+            return;
+        case 9:
+            sony_return(int16_t(0xffc8), true);
+            return;
+        case 21:
+        case 22:
+            sony_return(-17, true);
+            return;
+        case 23:
+            write_long(pb + 28, 0x00000400);
+            sony_return(0, true);
+            return;
+        default:
+            sony_return(-17, true);
+            return;
+    }
+}
+
+void MacPlus::sony_status() {
+    const uint32_t pb = cpu_.a[0].l & 0xffffffu;
+    if (pb + 34 >= kRamSize) {
+        sony_return(-18, true);
+        return;
+    }
+    const uint16_t vref = read_word(pb + 22);
+    const uint16_t cs = read_word(pb + 26);
+    if (vref != 1 && vref != 0) {
+        sony_return(-64, true);
+        return;
+    }
+    mark_sony_inserted();
+    if (cs == 8) {
+        const uint32_t vars = read_long(0x0134) & 0xffffffu;
+        const uint32_t d1 = vars + 8 + 66;
+        if (vars >= 0x100 && d1 + 22 < kRamSize) {
+            for (int i = 0; i < 11; i++) write_word(pb + 28 + uint32_t(i) * 2, read_word(d1 + uint32_t(i) * 2));
+        }
+        sony_return(0, true);
+        return;
+    }
+    if (cs == 6) {
+        const uint16_t maxfmt = read_word(pb + 28);
+        const uint32_t ptr = read_long(pb + 30) & 0xffffffu;
+        if (maxfmt && ptr + 8 < kRamSize) {
+            write_long(ptr, 2880);
+            write_long(ptr + 4, 0xd2120050);
+            write_word(pb + 28, 1);
+        }
+        sony_return(0, true);
+        return;
+    }
+    sony_return(-18, true);
 }
 
 void MacPlus::patch_rom_startboot() {
@@ -606,6 +699,7 @@ void MacPlus::reset() {
     restore_stub_pc_ = 0;
     sony_prime_count_ = 0;
     sony_read_bytes_ = 0;
+    sony_from_driver_ = true;
     last_trap_ = 0;
     trap_count_ = 0;
     last_syserr_ = 0;
@@ -651,7 +745,7 @@ void MacPlus::update_irqs() {
 
 void MacPlus::on_cpu_cycles(int cycles) {
     const uint32_t pc = cpu_.pc() & 0xffffffu;
-    maybe_sony_prime();
+    maybe_sony_dispatch();
     if (boot2_base_ && pc >= boot2_base_ && pc < boot2_base_ + 0x2000u) {
         boot2_hits_++;
         const uint32_t off = pc - boot2_base_ + 0x18u;
@@ -750,6 +844,20 @@ void MacPlus::on_cpu_cycles(int cycles) {
         if (op == 0xa002) {
             read_ret_pc_ = (ppc + 2) & 0xffffffu;
             read_pb_ = cpu_.a[0].l;
+        }
+        if (iwm_.disk().hd() && (op == 0xa002 || op == 0xa003 || op == 0xa004 || op == 0xa005)) {
+            const uint32_t pb = cpu_.a[0].l & 0xffffffu;
+            if (pb + 26 < kRamSize && read_word(pb + 24) == 0xfffb) {
+                sony_from_driver_ = false;
+                if (op == 0xa002 || op == 0xa003)
+                    sony_prime();
+                else if (op == 0xa004)
+                    sony_control();
+                else
+                    sony_status();
+                sony_from_driver_ = true;
+                skip_aline(false);
+            }
         }
         if (boot2_tried_ && trap_stub_ && ((op & 0xf0ff) == 0xa047))
             restore_stub_pc_ = (ppc + 2) & 0xffffffu;

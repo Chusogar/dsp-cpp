@@ -5608,7 +5608,7 @@ void test_mac_boot_if_present() {
         check(!sys6.scsi_loaded(), "a Disk Copy 1.44MB floppy is not wrapped as a hard disk");
         bool saw_s6_system = false;
         bool saw_s6_welcome = false;
-        for (int i = 0; i < 4000; i++) {
+        for (int i = 0; i < 2500; i++) {
             sys6.run_frame();
             if (sys6.peek(0xad8) == 6 && sys6.peek(0xad9) == 'S') saw_s6_system = true;
             if (mac_has_welcome_box(sys6)) saw_s6_welcome = true;
@@ -5618,6 +5618,8 @@ void test_mac_boot_if_present() {
         check(sys6.sony_read_bytes() >= 1024, "the Start Manager _Reads the System 6 boot blocks");
         check(saw_s6_system, "Start Manager copies the System 6 boot-block System name to $0AD8");
         check(saw_s6_welcome, "System 6.0.8 draws the Welcome to Macintosh dialog");
+        check(sys6.peek(0x0910) == 6 && sys6.peek(0x0911) == 'F',
+              "System 6.0.8 names the Finder at CurApName");
     }
 
     const char* hd = "/tmp/macdisks/System7_0_1.img";
