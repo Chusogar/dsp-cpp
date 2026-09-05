@@ -123,29 +123,20 @@ void MacPlus::redirect_launch_to_boot2() {
     // rebuilds $21400–ApplLimit and would wipe a copy left on the $1FCxxx
     // stack (that stack sits inside the 4MB application heap).
     //
-    // A3 = 0 so the following _ReleaseResource is a no-op. Gestalt /
-    // MemoryDispatch / SlotManager are 256K-only; leftover table entries
-    // that are not the unimplemented stub make boot 2 JSR garbage. Point
-    // them at MOVEQ #-1/RTS so those probes fail cleanly.
+    // A3 = 0 so the following _ReleaseResource is a no-op. Do not patch
+    // OS traps $5C/$AD: the 128K table already has real Plus ROM routines
+    // there (not the unimplemented stub), and replacing them SysError 25s.
     boot2_tried_ = true;
     const std::vector<uint8_t>& boot2 = scsi_.system_boot2();
     if (boot2.size() < 0x20) return;
     const uint32_t body = uint32_t(boot2.size() - 0x18);
     uint32_t top = read_long(0x010c) & 0xffffffu;
     if (top < 0x10000 || top > kRamSize) top = 0x003fa700;
-    const uint32_t need = body + 16;
-    if (top < need + 0x20000) return;
-    uint32_t stub = (top - 8) & ~1u;
-    write_byte(stub, 0x70);
-    write_byte(stub + 1, 0xff);  // MOVEQ #-1,D0
-    write_byte(stub + 2, 0x4e);
-    write_byte(stub + 3, 0x75);  // RTS
-    const uint32_t code = (stub - body) & ~1u;
+    if (top < body + 0x20000) return;
+    const uint32_t code = (top - body) & ~1u;
     for (uint32_t i = 0; i < body; ++i) write_byte(code + i, boot2[0x18 + i]);
-    write_long(0x010c, code);     // BufPtr: keep the hole out of the heap
+    write_long(0x010c, code);        // BufPtr: keep the hole out of the heap
     write_long(0x0130, 0x00200000);  // ApplLimit: InitApplZone stops at 2MB
-    for (uint16_t trap : {uint16_t(0x5c), uint16_t(0x5d), uint16_t(0x6e), uint16_t(0xad)})
-        write_long(0x0c00u + uint32_t(trap) * 4u, stub);
     cpu_.a[7].l = code;  // drop the A-line frame; stack grows toward ApplLimit
     cpu_.a[0].l = code;
     cpu_.a[1].l = code;
