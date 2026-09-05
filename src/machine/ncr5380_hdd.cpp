@@ -214,9 +214,9 @@ void Ncr5380Hdd::update_match() {}
 
 void Ncr5380Hdd::raise_eop() {
     eop_ = true;
-    // MR2 bit 3 enables the EOP interrupt. System 7's SCSI Manager
-    // polls BSR INT; the pin stays off the 68000 IPL.
-    if (mode_ & 0x08) irq_ = true;
+    // System 7's SCSI Manager polls BSR INT after a DMA READ, even
+    // when MR2 EOP-IE is clear. The pin stays off the 68000 IPL.
+    irq_ = true;
 }
 
 void Ncr5380Hdd::offer_byte() {
@@ -597,6 +597,11 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
             if (!(data & kModeDma)) {
                 dma_ = false;
                 drq_ = false;
+                // Plus SCSI Manager drops DMA after EOP and expects STATUS.
+                if (eop_ && phase_ == kDataIn && xfer_pos_ >= xfer_.size()) {
+                    finish_command();
+                    raise_eop();
+                }
             }
             break;
         }
