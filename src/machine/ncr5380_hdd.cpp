@@ -28,6 +28,9 @@ void Ncr5380Hdd::reset() {
     status_ = message_ = 0;
     last_cmd_ = 0;
     cmd_count_ = 0;
+    for (uint8_t& c : cmd_log_) c = 0;
+    for (uint32_t& v : cmd_lba_log_) v = 0;
+    for (uint32_t& v : cmd_len_log_) v = 0;
     write_count_ = 0;
     last_write_lba_ = 0;
     last_write_bytes_ = 0;
@@ -143,6 +146,8 @@ void Ncr5380Hdd::extend_data_in() {
 void Ncr5380Hdd::execute() {
     last_cmd_ = cdb_[0];
     cmd_log_[cmd_count_ & 15] = last_cmd_;
+    cmd_lba_log_[cmd_count_ & 15] = 0;
+    cmd_len_log_[cmd_count_ & 15] = 0;
     cmd_count_++;
     last_lba_ = 0;
     xfer_.clear();
@@ -355,11 +360,15 @@ void Ncr5380Hdd::execute() {
         last_lba_ = lba;
         count = cdb_[4] ? cdb_[4] : 256;
         writing = op == 0x0a;
+        cmd_lba_log_[(cmd_count_ - 1) & 15] = lba;
+        cmd_len_log_[(cmd_count_ - 1) & 15] = count;
     } else if (op == 0x28 || op == 0x2a) {
         lba = (uint32_t(cdb_[2]) << 24) | (uint32_t(cdb_[3]) << 16) | (uint32_t(cdb_[4]) << 8) |
               cdb_[5];
         count = (uint32_t(cdb_[7]) << 8) | cdb_[8];
         writing = op == 0x2a;
+        cmd_lba_log_[(cmd_count_ - 1) & 15] = lba;
+        cmd_len_log_[(cmd_count_ - 1) & 15] = count;
     } else {
         finish_command();
         return;

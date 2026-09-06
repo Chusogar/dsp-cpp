@@ -5753,8 +5753,8 @@ void test_mac_boot_if_present() {
         for (int i = 0; i < 2500; i++) comp.run_frame();
         write_mac_ppm("/tmp/macplus-sys701comp.ppm", comp);
         check(comp.scsi_accesses() > 0, "the ROM SCSI Manager selects the APM disk");
-        check(comp.scsi_xfer_bytes() >= 512,
-              "the Plus ROM reads the driver descriptor map from SCSI ID 6");
+        check(comp.scsi_xfer_bytes() >= 10240,
+              "the Plus ROM reads the DDM and the 19-block Apple_Driver43 from SCSI ID 6");
     }
 }
 
