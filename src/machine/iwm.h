@@ -7,9 +7,10 @@
 
 namespace dsp {
 
-// Apple IWM (MAME iwm_device) plus two MAME add_35 / MFD51W 800K GCR
-// connectors. Control bit 4 is DRIVEENABLE, bit 5 is SELECT
-// (1 = internal, 2 = external). The Plus has no SuperDrive / SWIM.
+// Apple IWM (MAME iwm_device) plus two 800K GCR connectors. Control bit 4
+// is DRIVEENABLE, bit 5 is SELECT (1 = internal, 2 = external). When the
+// internal image is 1.44MB, sense matches MAME add_35_hd / MFD75W
+// SuperDrive (0x5 has MFM, 0xd MFMModeOn, LSTRB 0x9/0xd).
 class Iwm {
 public:
     void reset();
@@ -27,6 +28,7 @@ public:
     uint8_t mode() const { return mode_; }
     // MAME iwm_device::m_devsel: 0 = idle, 1 = internal, 2 = external.
     int selected_drive() const { return drive_; }
+    bool mfm_mode() const { return mfm_mode_; }
     MacDsk& disk() { return disk_; }
     const MacDsk& disk() const { return disk_; }
 
@@ -50,6 +52,7 @@ private:
     bool dir_out_ = true;  // true: step toward higher tracks
     bool drive_motor_ = false;
     bool stepping_ = false;
+    bool mfm_mode_ = false;
     int drive_ = 0;
     int track_ = 0;
     int nibble_pos_ = 0;

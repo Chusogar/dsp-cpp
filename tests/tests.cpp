@@ -5512,15 +5512,49 @@ void test_mac_gcr_and_dsk() {
     check(!disk.nibbles(0, 0).empty() && disk.nibbles(0, 0)[36] == 0xd5,
           "track 0 GCR starts with an address mark after the gap");
 
+    std::vector<uint8_t> dc144(0x54 + 1474560, 0);
+    dc144[0] = 8;
+    std::memcpy(&dc144[1], "System 6", 8);
+    dc144[0x40] = 0x00;
+    dc144[0x41] = 0x16;
+    dc144[0x42] = 0x80;
+    dc144[0x43] = 0x00;  // dataSize = 1474560
+    dc144[0x50] = 0x03;  // Disk Copy 4.2: 1.44MB MFM
+    dc144[0x52] = 1;
+    dc144[0x53] = 0;
+    check(dsp::MacDsk::looks_like_mac_floppy(dc144.data(), dc144.size()),
+          "a DC42 1.44MB header counts as a Mac floppy image");
+    dsp::MacDsk dc;
+    check(dc.load_bytes(dc144.data(), dc144.size(), &error),
+          "DC42 1.44MB SuperDrive image loads after the header is stripped");
+    check(dc.hd() && dc.blocks() == 2880, "1.44MB SuperDrive is 2880 LBA blocks");
+    check(dc.nibbles(0, 0).empty(), "HD SuperDrive media has no IWM GCR marks");
+    const std::string dc_path = "/tmp/mac-dc42-1440.img";
+    {
+        std::ofstream out(dc_path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(dc144.data()), std::streamsize(dc144.size()));
+    }
+    dsp::MacPlus hdplus;
+    error.clear();
+    check(hdplus.load_media(dc_path, &error), "load_media mounts a SuperDrive DC42 image");
+    check(hdplus.floppy_loaded() && !hdplus.scsi_loaded(),
+          "1.44MB Disk Copy sits in the SuperDrive, not on SCSI");
+    check(hdplus.iwm().disk().hd() && hdplus.iwm().disk().blocks() == 2880,
+          "the mounted SuperDrive reports 2880 blocks");
+
     const char* sys608 = "/tmp/macdisks/sys608/MacOS_6.0.8_System_Startup.img";
     std::FILE* s6 = std::fopen(sys608, "rb");
     if (s6) {
         std::fclose(s6);
         dsp::MacDsk hd;
-        check(!hd.load_file(sys608, &error),
-              "MAME macplus add_35 / MFD51W rejects the IA 1.44MB Disk Copy image");
-        check(error.find("SuperDrive") != std::string::npos,
-              "the error names the SuperDrive / SWIM machine");
+        check(dsp::MacDsk::looks_like_mac_floppy(sys608),
+              "the IA System 6.0.8 Startup image is a Disk Copy floppy");
+        check(hd.load_file(sys608, &error),
+              "the IA 1.44MB Disk Copy image loads as SuperDrive media");
+        check(hd.hd() && hd.blocks() == 2880, "IA System Startup is 2880 SuperDrive blocks");
+        uint8_t boot[512];
+        check(hd.read_lba(0, boot) && boot[0] == 0x4c && boot[1] == 0x4b,
+              "IA System Startup payload is an HFS LK volume");
     }
 
     dsp::MacPlus machine;
@@ -5530,32 +5564,61 @@ void test_mac_gcr_and_dsk() {
     // MAME iwm_device::control + mac128_state::devsel_w: ENABLE selects
     // drive 1 (internal MFD51W), SELECT picks the empty external unit.
     dsp::Iwm& iwm = machine.iwm();
-    auto set_phases = [&iwm](int phases) {
-        iwm.write(uint8_t((phases & 1) ? 1 : 0), 0);
-        iwm.write(uint8_t((phases & 2) ? 3 : 2), 0);
-        iwm.write(uint8_t((phases & 4) ? 5 : 4), 0);
-        iwm.write(6, 0);  // LSTRB off
+    auto set_phases = [](dsp::Iwm& chip, int phases) {
+        chip.write(uint8_t((phases & 1) ? 1 : 0), 0);
+        chip.write(uint8_t((phases & 2) ? 3 : 2), 0);
+        chip.write(uint8_t((phases & 4) ? 5 : 4), 0);
+        chip.write(6, 0);  // LSTRB off
     };
-    auto status_sense = [&iwm]() {
-        iwm.write(14, 0);  // Q7 = 0
-        return iwm.read(13);  // Q6 = 1
+    auto status_sense = [](dsp::Iwm& chip) {
+        chip.write(14, 0);  // Q7 = 0
+        return chip.read(13);  // Q6 = 1
     };
     check(iwm.selected_drive() == 0, "IWM reset leaves no drive selected");
     iwm.write(9, 0);
     iwm.write(10, 0);
     check(iwm.selected_drive() == 1, "IWM ENABLE selects the internal MFD51W");
     iwm.set_hdsel(true);
-    set_phases(0);
-    check((status_sense() & 0x80) == 0, "internal 800K disk reports DiskInPlace");
+    set_phases(iwm, 0);
+    check((status_sense(iwm) & 0x80) == 0, "internal 800K disk reports DiskInPlace");
     iwm.write(11, 0);
     check(iwm.selected_drive() == 2, "IWM SELECT selects the external MFD51W");
     iwm.set_hdsel(true);
-    set_phases(0);
-    check((status_sense() & 0x80) != 0, "empty external drive reports NoDisk");
+    set_phases(iwm, 0);
+    check((status_sense(iwm) & 0x80) != 0, "empty external drive reports NoDisk");
     iwm.set_hdsel(false);
-    set_phases(7);
-    check((status_sense() & 0x80) == 0, "empty external MFD51W still exists (NoDrive=0)");
+    set_phases(iwm, 7);
+    check((status_sense(iwm) & 0x80) == 0, "empty external MFD51W still exists (NoDrive=0)");
     check(machine.floppy_loaded(), "SELECT does not unload the internal disk");
+    iwm.write(10, 0);  // SELECT off → internal again
+    iwm.set_hdsel(false);
+    set_phases(iwm, 5);
+    check((status_sense(iwm) & 0x80) == 0, "800K MFD51W is not a SuperDrive");
+
+    // SuperDrive / MFD75W sense only when HD media is in the internal drive.
+    dsp::MacPlus super;
+    check(super.load_media(dc_path, &error), "SuperDrive sense test remounts the 1.44MB image");
+    dsp::Iwm& swim = super.iwm();
+    swim.write(9, 0);
+    swim.write(10, 0);
+    check(swim.selected_drive() == 1, "ENABLE selects the internal SuperDrive");
+    swim.set_hdsel(false);
+    set_phases(swim, 5);
+    check((status_sense(swim) & 0x80) != 0, "HD media reports SuperDrive (sense 0x5)");
+    swim.set_hdsel(true);
+    set_phases(swim, 5);
+    check((status_sense(swim) & 0x80) == 0, "SuperDrive starts in GCR (MFMModeOn off)");
+    swim.set_hdsel(true);
+    set_phases(swim, 1);
+    swim.write(7, 0);  // LSTRB on → command 0x9 MFM
+    check(swim.mfm_mode(), "LSTRB 0x9 turns SuperDrive MFM on");
+    swim.set_hdsel(true);
+    set_phases(swim, 5);
+    check((status_sense(swim) & 0x80) != 0, "sense 0xd is MFMModeOn after LSTRB 0x9");
+    swim.set_hdsel(true);
+    set_phases(swim, 5);
+    swim.write(7, 0);  // LSTRB 0xd GCR
+    check(!swim.mfm_mode(), "LSTRB 0xd turns SuperDrive back to GCR");
 }
 
 void write_mac_lk_disk(const std::string& path) {
@@ -5629,11 +5692,26 @@ void test_mac_boot_if_present() {
     if (s6f) {
         std::fclose(s6f);
         dsp::MacPlus sys6;
-        check(sys6.init(rom, &error), "Mac Plus ROM reloads for the 1.44MB image check");
-        check(!sys6.load_media(sys608, &error),
-              "load_media does not put a SuperDrive 1.44MB image in the Plus Sony drive");
-        check(!sys6.floppy_loaded() && !sys6.scsi_loaded(),
-              "the IA Startup image is neither an 800K GCR floppy nor a 512-byte SCSI disk");
+        check(sys6.init(rom, &error), "Mac Plus ROM reloads for the SuperDrive image");
+        check(sys6.load_media(sys608, &error),
+              "load_media mounts the IA 1.44MB System Startup in the SuperDrive");
+        check(sys6.floppy_loaded() && !sys6.scsi_loaded(),
+              "System 6.0.8 Startup is a SuperDrive floppy, not SCSI");
+        check(sys6.iwm().disk().hd() && sys6.iwm().disk().blocks() == 2880,
+              "the SuperDrive image is 2880 blocks");
+        bool saw_sys6 = false, wel6 = false;
+        for (int i = 0; i < 2500; i++) {
+            sys6.run_frame();
+            if (sys6.peek(0xad8) == 6 && sys6.peek(0xad9) == 'S') saw_sys6 = true;
+            if (mac_has_welcome_box(sys6)) wel6 = true;
+        }
+        write_mac_ppm("/tmp/macplus-sys608.ppm", sys6);
+        check(sys6.sony_prime_count() > 0, ".Sony Prime served SuperDrive LBA reads");
+        check(sys6.sony_read_bytes() >= 1024, "SuperDrive Prime copied boot blocks into RAM");
+        check(saw_sys6, "System 6.0.8 copies the System name to $0AD8");
+        check(wel6, "System 6.0.8 draws Welcome to Macintosh");
+        check(sys6.peek(0x0910) == 6 && sys6.peek(0x0911) == 'F',
+              "System 6.0.8 names the Finder at CurApName");
     }
 
     const char* hd = "/tmp/macdisks/System7_0_1.img";

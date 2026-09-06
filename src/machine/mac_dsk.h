@@ -6,8 +6,9 @@
 
 namespace dsp {
 
-// Macintosh 400K/800K GCR floppy images: raw .dsk/.img and Disk Copy 4.2.
-// Matches MAME macplus add_35 / MFD51W. 1.44MB DC42 is SuperDrive/SWIM.
+// Macintosh floppy images: 400K/800K GCR and 1.44MB SuperDrive MFM, raw
+// .dsk/.img or Disk Copy 4.2. HD media is served by LBA; GCR tracks are
+// only built for 400K/800K.
 class MacDsk {
 public:
     static constexpr int kSectorSize = 512;
@@ -17,6 +18,9 @@ public:
     void reset();
     bool load_file(const std::string& path, std::string* error);
     bool load_bytes(const uint8_t* data, size_t size, std::string* error);
+    // Raw 400K/800K/1.44MB or a Disk Copy 4.2 wrapper of those sizes.
+    static bool looks_like_mac_floppy(const uint8_t* data, size_t size);
+    static bool looks_like_mac_floppy(const std::string& path);
     bool loaded() const { return loaded_; }
     bool hd() const { return hd_; }
     uint32_t blocks() const { return loaded_ ? uint32_t(image_.size() / kSectorSize) : 0; }

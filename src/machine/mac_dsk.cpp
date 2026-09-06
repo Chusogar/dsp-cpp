@@ -19,7 +19,43 @@ uint32_t be32(const uint8_t* p) {
 
 int rotl8(int value) { return ((value << 1) | ((value >> 7) & 1)) & 0xff; }
 
+bool is_floppy_payload(uint32_t size) {
+    return size == 409600u || size == 819200u || size == 1474560u;
+}
+
+bool parse_dc42(const uint8_t* data, size_t size, uint32_t* dsize, uint32_t* tsize) {
+    if (data == nullptr || size < 0x54 || data[0] >= 64 || data[0x52] != 1 || data[0x53] != 0)
+        return false;
+    const uint32_t d = be32(data + 0x40);
+    const uint32_t t = be32(data + 0x44);
+    if (size != 0x54 + d + t) return false;
+    if (dsize) *dsize = d;
+    if (tsize) *tsize = t;
+    return true;
+}
+
 }  // namespace
+
+bool MacDsk::looks_like_mac_floppy(const uint8_t* data, size_t size) {
+    if (is_floppy_payload(uint32_t(size))) return true;
+    uint32_t dsize = 0;
+    return parse_dc42(data, size, &dsize, nullptr) && is_floppy_payload(dsize);
+}
+
+bool MacDsk::looks_like_mac_floppy(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    in.seekg(0, std::ios::end);
+    const std::streamoff size = in.tellg();
+    in.seekg(0, std::ios::beg);
+    if (size < 0) return false;
+    if (is_floppy_payload(uint32_t(size))) return true;
+    uint8_t hdr[0x54];
+    in.read(reinterpret_cast<char*>(hdr), sizeof(hdr));
+    if (!in) return false;
+    uint32_t dsize = 0;
+    return parse_dc42(hdr, size_t(size), &dsize, nullptr) && is_floppy_payload(dsize);
+}
 
 uint8_t MacDsk::gcr6(uint8_t sixbit) { return kGcr6[sixbit & 0x3f]; }
 
@@ -176,7 +212,9 @@ void MacDsk::append_header(std::vector<uint8_t>& dest, int track, int sector, in
 void MacDsk::encode_track(int track, int side) {
     std::vector<uint8_t>& dest = nibbles_[track][side];
     dest.clear();
-    if (!loaded_ || side >= sides_) return;
+    // 1.44MB SuperDrive disks are MFM. Encoding the first 800K as GCR
+    // would invent D5 AA marks the IWM must not see on HD media.
+    if (!loaded_ || hd_ || side >= sides_) return;
 
     const int ns = sectors_per_track(track);
     // 2:1 interleave used by Macintosh 800K disks.
@@ -228,7 +266,7 @@ bool MacDsk::load_file(const std::string& path, std::string* error) {
         return false;
     }
     if (!load_bytes(bytes.data(), bytes.size(), error)) {
-        if (error && error->empty()) *error = path + ": not a Macintosh 400K/800K disk";
+        if (error && error->empty()) *error = path + ": not a Macintosh 400K/800K/1.44MB disk";
         return false;
     }
     return true;
@@ -242,16 +280,13 @@ bool MacDsk::load_bytes(const uint8_t* data, size_t size, std::string* error) {
     uint8_t encoding = 0x01;
     uint8_t format = 0x22;
 
-    if (size >= 0x54 && data[0] < 64 && data[0x52] == 1 && data[0x53] == 0) {
-        const uint32_t dsize = be32(data + 0x40);
-        const uint32_t tsize = be32(data + 0x44);
-        if (size == 0x54 + dsize + tsize && (dsize == 409600u || dsize == 819200u)) {
-            payload = data + 0x54;
-            payload_size = dsize;
-            tag_size = tsize;
-            encoding = data[0x50];
-            format = data[0x51];
-        }
+    uint32_t dsize = 0, tsize = 0;
+    if (parse_dc42(data, size, &dsize, &tsize)) {
+        payload = data + 0x54;
+        payload_size = dsize;
+        tag_size = tsize;
+        encoding = data[0x50];
+        format = data[0x51];
     }
 
     if (payload_size == 409600) {
@@ -265,12 +300,13 @@ bool MacDsk::load_bytes(const uint8_t* data, size_t size, std::string* error) {
         format_ = format == 0 ? 0x22 : format;
         if (encoding == 1 || encoding == 3) format_ = (format ? format : 0x22);
     } else if (payload_size == 1474560) {
-        // MAME macplus uses add_35 → MFD51W (400/800K GCR only).
-        // 1.44MB MFM is MFD75W + SWIM on macsefd / Classic.
-        if (error) *error = "Macintosh Plus floppy is 400K/800K GCR; 1.44MB needs a SuperDrive";
-        return false;
+        // SuperDrive / MFD75W 1.44MB MFM (80×2×18). IWM GCR cannot read
+        // this; MacPlus serves the 2880 blocks through .Sony Prime.
+        sides_ = 2;
+        hd_ = true;
+        format_ = format ? format : 0x22;
     } else {
-        if (error) *error = "Macintosh disk must be 400K or 800K";
+        if (error) *error = "Macintosh disk must be 400K, 800K, or 1.44MB";
         return false;
     }
 
