@@ -326,8 +326,12 @@ void MacPlus::reset() {
     sony_prime_count_ = 0;
     sony_read_bytes_ = 0;
     last_trap_ = 0;
+    last_trap_d0_ = 0;
     trap_count_ = 0;
     last_syserr_ = 0;
+    last_scsi_dispatch_ = 0;
+    scsi_dispatch_count_ = 0;
+    for (uint16_t& s : scsi_dispatch_log_) s = 0;
     launch_count_ = 0;
     launch_a0_ = 0;
     for (uint16_t& t : trap_log_) t = 0;
@@ -377,9 +381,17 @@ void MacPlus::on_cpu_cycles(int cycles) {
     const uint16_t op = uint16_t((uint16_t(read_byte(ppc)) << 8) | read_byte(ppc + 1));
     if ((op & 0xf000) == 0xa000) {
         last_trap_ = op;
+        last_trap_d0_ = cpu_.d[0].l;
         trap_log_[trap_count_ & 31u] = op;
         trap_count_++;
         if (op == 0xa9c9) last_syserr_ = cpu_.d[0].wl();
+        if (op == 0xa815) {
+            // Plus SCSI Manager: selector is the word on the stack, not D0.
+            // A-line already pushed SR/PC (6 bytes), so the selector sits at A7+6.
+            last_scsi_dispatch_ = read_word((cpu_.a[7].l + 6) & 0xffffffu);
+            scsi_dispatch_log_[scsi_dispatch_count_ & 31u] = last_scsi_dispatch_;
+            scsi_dispatch_count_++;
+        }
         if (op == 0xa9f2) {
             launch_count_++;
             launch_a0_ = cpu_.a[0].l;

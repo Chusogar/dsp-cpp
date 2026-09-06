@@ -8,8 +8,9 @@ namespace dsp {
 
 // NCR 5380 plus one SCSI direct-access disk, mapped the Macintosh Plus way
 // at $580000 (register = A6-A4, DACK = A9). IRQ pin 23 is unconnected.
-// The disk answers SCSI ID 6 (MAME macplus hard1) and serves the image
-// as-is — no HFS patches, no planted driver, no boot-2 extract.
+// The disk answers SCSI IDs 6 (MAME hard1) and 0. A raw HFS volume or an
+// APM image with Apple_Driver43 gets a Plus-era DDM driver so the 128K
+// ROM can AddDrive; HFS contents are not patched.
 class Ncr5380Hdd {
 public:
     void reset();
@@ -55,9 +56,12 @@ private:
         kMsgIn = 7,
     };
 
-    static constexpr int kScsiId = 6;  // MAME macplus NSCSI_CONNECTOR scsi:6
     static int cdb_length(uint8_t opcode);
-    bool our_id() const { return (odr_ & (1u << kScsiId)) != 0; }
+    bool our_id() const { return (odr_ & 0x41) != 0; }  // IDs 0 and 6
+    void wrap_plus_boot();
+    void wrap_raw_hfs();
+    void wrap_apm_hfs();
+    void plant_plus_driver(uint32_t dest_off, uint32_t hfs_block, uint32_t hfs_blocks);
     void bus_reset();
     void set_phase(uint8_t phase);
     void update_match();

@@ -66,6 +66,7 @@ public:
     uint32_t debug_reg_d(int n) const { return cpu_.d[n & 7].l; }
     uint32_t debug_reg_a(int n) const { return cpu_.a[n & 7].l; }
     uint16_t last_trap() const { return last_trap_; }
+    uint32_t last_trap_d0() const { return last_trap_d0_; }
     uint32_t trap_count() const { return trap_count_; }
     uint16_t trap_log(int i) const { return trap_log_[static_cast<unsigned>(i) & 31u]; }
     uint16_t last_syserr() const { return last_syserr_; }
@@ -91,6 +92,11 @@ public:
     Via6522& via() { return via_; }
     uint32_t sony_prime_count() const { return sony_prime_count_; }
     uint32_t sony_read_bytes() const { return sony_read_bytes_; }
+    uint16_t last_scsi_dispatch() const { return last_scsi_dispatch_; }
+    uint32_t scsi_dispatch_count() const { return scsi_dispatch_count_; }
+    uint16_t scsi_dispatch_log(int i) const {
+        return scsi_dispatch_log_[static_cast<unsigned>(i) & 31u];
+    }
 
 private:
     uint8_t read_byte(uint32_t address);
@@ -166,6 +172,7 @@ private:
     void kbd_enqueue(uint8_t code);
     uint8_t kbd_dequeue();
     uint16_t last_trap_ = 0;
+    uint32_t last_trap_d0_ = 0;
     uint32_t trap_count_ = 0;
     uint16_t trap_log_[32]{};
     uint16_t last_syserr_ = 0;
@@ -176,6 +183,9 @@ private:
     uint32_t sony_stat_rom_ = 0;
     uint32_t sony_prime_count_ = 0;
     uint32_t sony_read_bytes_ = 0;
+    uint16_t last_scsi_dispatch_ = 0;
+    uint32_t scsi_dispatch_count_ = 0;
+    uint16_t scsi_dispatch_log_[32]{};
     std::vector<int16_t> audio_;
 };
 
