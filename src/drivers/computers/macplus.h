@@ -90,6 +90,7 @@ public:
     uint8_t last_kbd_reply() const { return kbd_reply_; }
     Iwm& iwm() { return iwm_; }
     Via6522& via() { return via_; }
+    uint32_t decompress_count() const { return decompress_count_; }
     uint32_t sony_prime_count() const { return sony_prime_count_; }
     uint32_t sony_read_bytes() const { return sony_read_bytes_; }
     uint16_t last_scsi_dispatch() const { return last_scsi_dispatch_; }
@@ -118,6 +119,9 @@ private:
     void clock_keyboard();
     void find_sony_driver();
     void maybe_sony_dispatch();
+    bool maybe_decompress_ptr(uint32_t ptr, uint32_t handle);
+    void maybe_decompress_handle(uint32_t handle);
+    void sanitize_mountvol_pb();
     void mark_sony_inserted();
     void sony_prime();
     void sony_control();
@@ -181,6 +185,10 @@ private:
     uint32_t sony_prime_rom_ = 0;
     uint32_t sony_ctl_rom_ = 0;
     uint32_t sony_stat_rom_ = 0;
+    uint32_t decompress_pc_ = 0;
+    uint32_t decompress_count_ = 0;
+    uint32_t read_ret_pc_ = 0;
+    uint32_t read_pb_ = 0;
     uint32_t sony_prime_count_ = 0;
     uint32_t sony_read_bytes_ = 0;
     uint16_t last_scsi_dispatch_ = 0;

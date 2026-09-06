@@ -131,6 +131,17 @@ void Ncr5380Hdd::plant_plus_driver(uint32_t dest_off, uint32_t hfs_block, uint32
     put_be16(image_, dest_off + 0x1f0, uint16_t(std::min<uint32_t>(hfs_blocks, 0xffff)));
 }
 
+void Ncr5380Hdd::plus_boot_block(uint32_t hfs_off) {
+    // 128K Start Manager JSRs $2(boot). System 7 bbVersion $44 code
+    // _SysError $28/$62 there. RTS returns to MountVol / GetResource
+    // ('boot', 2) — the same path a Plus-aware installer leaves.
+    if (hfs_off + 8 > image_.size()) return;
+    uint8_t* boot = image_.data() + hfs_off;
+    if (boot[0] != 'L' || boot[1] != 'K' || boot[6] != 0x44) return;
+    boot[2] = 0x4e;
+    boot[3] = 0x75;
+}
+
 void Ncr5380Hdd::wrap_raw_hfs() {
     if (image_.size() < 1024 || image_[0] != 'L' || image_[1] != 'K') return;
     const uint32_t hfs_blocks = blocks_;
@@ -148,6 +159,7 @@ void Ncr5380Hdd::wrap_raw_hfs() {
     image_[0x19] = 1;
     plant_plus_driver(512, 2, hfs_blocks);
     std::memcpy(image_.data() + 1024, hfs.data(), hfs.size());
+    plus_boot_block(1024);
     blocks_ = uint32_t(image_.size() / 512);
 }
 
@@ -174,6 +186,7 @@ void Ncr5380Hdd::wrap_apm_hfs() {
     put_be16(image_, 0x16, 1);
     put_be16(image_, 0x18, 1);
     plant_plus_driver(drv_blk * 512, hfs_blk, blocks_ > hfs_blk ? blocks_ - hfs_blk : blocks_);
+    plus_boot_block(hfs_blk * 512);
 }
 
 void Ncr5380Hdd::wrap_plus_boot() {

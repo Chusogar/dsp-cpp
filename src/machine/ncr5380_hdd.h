@@ -62,6 +62,7 @@ private:
     void wrap_raw_hfs();
     void wrap_apm_hfs();
     void plant_plus_driver(uint32_t dest_off, uint32_t hfs_block, uint32_t hfs_blocks);
+    void plus_boot_block(uint32_t hfs_off);
     void bus_reset();
     void set_phase(uint8_t phase);
     void update_match();

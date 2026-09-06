@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "core/rom_loader.h"
+#include "machine/mac_dcmp.h"
 
 namespace dsp {
 namespace {
@@ -308,6 +309,58 @@ void MacPlus::write_long(uint32_t address, uint32_t value) {
     write_byte(address + 3, uint8_t(value));
 }
 
+bool MacPlus::maybe_decompress_ptr(uint32_t ptr, uint32_t handle) {
+    ptr &= 0xffffffu;
+    if (ptr < 0x100 || ptr + 18 > kRamSize) return false;
+    if (read_long(ptr) != 0xa89f6572u) return false;
+    const uint32_t expect = read_long(ptr + 8);
+    if (expect < 2 || expect > 0x100000) return false;
+    uint32_t data_len = expect + 0x100;
+    if (data_len < 0x20000) data_len = 0x20000;
+    if (ptr + data_len > kRamSize) data_len = kRamSize - ptr;
+    std::vector<uint8_t> src(data_len);
+    for (uint32_t i = 0; i < data_len; i++) src[i] = read_byte(ptr + i);
+    const std::vector<uint8_t> out = mac_decompress_resource(src.data(), src.size());
+    if (out.empty()) return false;
+    uint32_t buf = read_long(0x010c) & 0xffffffu;
+    const uint32_t need = uint32_t((out.size() + 1) & ~size_t(1));
+    if (buf < need + 0x2008) return false;
+    buf = (buf - (need + 8)) & ~1u;
+    write_long(buf, 0x80000000u | (need + 8));
+    write_long(buf + 4, handle);
+    const uint32_t data = buf + 8;
+    for (size_t i = 0; i < out.size(); i++) write_byte(data + uint32_t(i), out[i]);
+    if (need > out.size()) write_byte(data + uint32_t(out.size()), 0);
+    if (handle >= 0x100 && handle + 4 <= kRamSize) write_long(handle, data);
+    write_long(0x010c, buf);
+    const uint32_t limit = buf > 0x400 ? buf - 0x400 : buf;
+    if ((read_long(0x0130) & 0xffffffu) > limit) write_long(0x0130, limit);
+    for (uint32_t zaddr : {0x02aau, 0x02a6u, 0x0118u}) {
+        const uint32_t zone = read_long(zaddr) & 0xffffffu;
+        if (zone >= 0x1000 && zone + 4 < kRamSize && (read_long(zone) & 0xffffffu) > buf)
+            write_long(zone, buf);
+    }
+    decompress_count_++;
+    return true;
+}
+
+void MacPlus::maybe_decompress_handle(uint32_t handle) {
+    handle &= 0xffffffu;
+    if (handle < 0x100 || handle + 4 > kRamSize) return;
+    maybe_decompress_ptr(read_long(handle) & 0xffffffu, handle);
+}
+
+void MacPlus::sanitize_mountvol_pb() {
+    const uint32_t pb = cpu_.a[0].l & 0xffffffu;
+    if (pb + 0x16u >= kRamSize) return;
+    for (uint32_t off : {0x0cu, 0x12u}) {
+        ram_at(pb + off, 0);
+        ram_at(pb + off + 1, 0);
+        ram_at(pb + off + 2, 0);
+        ram_at(pb + off + 3, 0);
+    }
+}
+
 void MacPlus::reset() {
     std::fill(ram_.begin(), ram_.end(), 0);
     overlay_ = true;
@@ -332,6 +385,10 @@ void MacPlus::reset() {
     last_scsi_dispatch_ = 0;
     scsi_dispatch_count_ = 0;
     for (uint16_t& s : scsi_dispatch_log_) s = 0;
+    decompress_pc_ = 0;
+    decompress_count_ = 0;
+    read_ret_pc_ = 0;
+    read_pb_ = 0;
     launch_count_ = 0;
     launch_a0_ = 0;
     for (uint16_t& t : trap_log_) t = 0;
@@ -377,6 +434,32 @@ void MacPlus::update_irqs() {
 
 void MacPlus::on_cpu_cycles(int cycles) {
     maybe_sony_dispatch();
+    const uint32_t pc = cpu_.pc();
+    if (decompress_pc_ && pc == decompress_pc_) {
+        decompress_pc_ = 0;
+        maybe_decompress_handle(cpu_.a[0].l);
+        maybe_decompress_handle(cpu_.d[0].l);
+    }
+    if (read_ret_pc_ && pc == read_ret_pc_) {
+        read_ret_pc_ = 0;
+        const uint32_t pb = read_pb_ & 0xffffffu;
+        if (pb + 0x24u < kRamSize) {
+            const uint32_t buf = read_long(pb + 0x20) & 0xffffffu;
+            if (buf >= 0x1008 && buf + 22 < kRamSize) {
+                uint32_t src = 0;
+                if (read_long(buf) == 0xa89f6572u)
+                    src = buf;
+                else if (read_long(buf + 4) == 0xa89f6572u)
+                    src = buf + 4;
+                if (src) {
+                    const uint32_t hint = read_long(buf - 4) & 0xffffffu;
+                    const uint32_t before = decompress_count_;
+                    if (!maybe_decompress_ptr(src, hint)) maybe_decompress_ptr(src, 0);
+                    if (decompress_count_ != before) write_long(pb + 0x20, read_long(0x010c));
+                }
+            }
+        }
+    }
     const uint32_t ppc = cpu_.ppc();
     const uint16_t op = uint16_t((uint16_t(read_byte(ppc)) << 8) | read_byte(ppc + 1));
     if ((op & 0xf000) == 0xa000) {
@@ -386,8 +469,6 @@ void MacPlus::on_cpu_cycles(int cycles) {
         trap_count_++;
         if (op == 0xa9c9) last_syserr_ = cpu_.d[0].wl();
         if (op == 0xa815) {
-            // Plus SCSI Manager: selector is the word on the stack, not D0.
-            // A-line already pushed SR/PC (6 bytes), so the selector sits at A7+6.
             last_scsi_dispatch_ = read_word((cpu_.a[7].l + 6) & 0xffffffu);
             scsi_dispatch_log_[scsi_dispatch_count_ & 31u] = last_scsi_dispatch_;
             scsi_dispatch_count_++;
@@ -395,6 +476,14 @@ void MacPlus::on_cpu_cycles(int cycles) {
         if (op == 0xa9f2) {
             launch_count_++;
             launch_a0_ = cpu_.a[0].l;
+        }
+        if (op == 0xa829 || op == 0xa9a0 || op == 0xa81a || op == 0xa9a2 || op == 0xa1a0 ||
+            op == 0xa11a || op == 0xa80c || op == 0xa81f)
+            decompress_pc_ = (ppc + 2) & 0xffffffu;
+        if (op == 0xa00f) sanitize_mountvol_pb();
+        if (op == 0xa002) {
+            read_ret_pc_ = (ppc + 2) & 0xffffffu;
+            read_pb_ = cpu_.a[0].l;
         }
     }
     iwm_.tick(cycles);
