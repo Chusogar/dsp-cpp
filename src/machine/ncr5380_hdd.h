@@ -10,7 +10,8 @@ namespace dsp {
 // at $580000 (register = A6-A4, DACK = A9). IRQ pin 23 is unconnected.
 // The disk answers SCSI IDs 6 (MAME hard1) and 0. A raw HFS volume or an
 // APM image with Apple_Driver43 gets a Plus-era DDM driver so the 128K
-// ROM can AddDrive; HFS contents are not patched.
+// ROM can AddDrive. System 7 bbVersion $44 boot blocks are steered
+// to the generic +$FA path so 'boot' id 2 runs; HFS catalog is not patched.
 class Ncr5380Hdd {
 public:
     void reset();

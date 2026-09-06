@@ -121,6 +121,7 @@ private:
     void maybe_sony_dispatch();
     bool maybe_decompress_ptr(uint32_t ptr, uint32_t handle);
     void maybe_decompress_handle(uint32_t handle);
+    void sweep_compressed_handles();
     void sanitize_mountvol_pb();
     void mark_sony_inserted();
     void sony_prime();
@@ -185,10 +186,13 @@ private:
     uint32_t sony_prime_rom_ = 0;
     uint32_t sony_ctl_rom_ = 0;
     uint32_t sony_stat_rom_ = 0;
-    uint32_t decompress_pc_ = 0;
+    static constexpr int kDcmpStack = 8;
+    uint32_t dcmp_ret_[kDcmpStack]{};
+    int dcmp_sp_ = 0;
+    uint32_t read_ret_[kDcmpStack]{};
+    uint32_t read_pb_[kDcmpStack]{};
+    int read_sp_ = 0;
     uint32_t decompress_count_ = 0;
-    uint32_t read_ret_pc_ = 0;
-    uint32_t read_pb_ = 0;
     uint32_t sony_prime_count_ = 0;
     uint32_t sony_read_bytes_ = 0;
     uint16_t last_scsi_dispatch_ = 0;

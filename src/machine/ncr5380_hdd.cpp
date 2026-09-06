@@ -132,14 +132,24 @@ void Ncr5380Hdd::plant_plus_driver(uint32_t dest_off, uint32_t hfs_block, uint32
 }
 
 void Ncr5380Hdd::plus_boot_block(uint32_t hfs_off) {
-    // 128K Start Manager JSRs $2(boot). System 7 bbVersion $44 code
-    // _SysError $28/$62 there. RTS returns to MountVol / GetResource
-    // ('boot', 2) — the same path a Plus-aware installer leaves.
-    if (hfs_off + 8 > image_.size()) return;
+    // 128K Start Manager JSRs $2(boot) when bbVersion is $44. Stock
+    // System 7 code at +$8A tests ROM85 and _SysError $62 on a Plus.
+    // The generic path at +$FA MountVols, opens System and JMPs
+    // 'boot' id 2 — that is what a Plus-aware installer leaves.
+    if (hfs_off + 0xfc > image_.size()) return;
     uint8_t* boot = image_.data() + hfs_off;
     if (boot[0] != 'L' || boot[1] != 'K' || boot[6] != 0x44) return;
-    boot[2] = 0x4e;
-    boot[3] = 0x75;
+    if (boot[0x8a] != 0x4a || boot[0x8b] != 0x78 || boot[0x8c] != 0x02 ||
+        boot[0x8d] != 0x8e)
+        return;
+    if (boot[0xd8] != 0xa9 || boot[0xd9] != 0xc9) return;
+    if (boot[0xfa] != 0x41 || boot[0xfb] != 0xfa) return;
+    boot[0x8a] = 0x2e;  // MOVE.L A7, D7  (keep the MountVol PB)
+    boot[0x8b] = 0x0f;
+    boot[0x8c] = 0x60;  // BRA.W +$FA
+    boot[0x8d] = 0x00;
+    boot[0x8e] = 0x00;
+    boot[0x8f] = 0x6c;
 }
 
 void Ncr5380Hdd::wrap_raw_hfs() {

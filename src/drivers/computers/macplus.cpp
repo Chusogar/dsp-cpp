@@ -350,6 +350,21 @@ void MacPlus::maybe_decompress_handle(uint32_t handle) {
     maybe_decompress_ptr(read_long(handle) & 0xffffffu, handle);
 }
 
+void MacPlus::sweep_compressed_handles() {
+    // Later Apple ROMs auto-dcmp before _LoadSeg/_Launch. Nested
+    // GetResource on a 128K RM can miss a compressed CODE handle.
+    uint32_t hi = read_long(0x010c) & 0xffffffu;
+    if (hi < 0x8000 || hi > kRamSize) hi = 0x40000;
+    uint32_t start = read_long(0x02a6) & 0xffffffu;
+    if (start < 0x1000 || start >= hi) start = 0x1400;
+    for (uint32_t h = start; h + 8 < hi; h += 4) {
+        const uint32_t p = read_long(h) & 0xffffffu;
+        if (p < 0x1008 || p + 18 >= kRamSize) continue;
+        if (read_long(p) != 0xa89f6572u) continue;
+        maybe_decompress_handle(h);
+    }
+}
+
 void MacPlus::sanitize_mountvol_pb() {
     const uint32_t pb = cpu_.a[0].l & 0xffffffu;
     if (pb + 0x16u >= kRamSize) return;
@@ -385,10 +400,9 @@ void MacPlus::reset() {
     last_scsi_dispatch_ = 0;
     scsi_dispatch_count_ = 0;
     for (uint16_t& s : scsi_dispatch_log_) s = 0;
-    decompress_pc_ = 0;
+    dcmp_sp_ = 0;
+    read_sp_ = 0;
     decompress_count_ = 0;
-    read_ret_pc_ = 0;
-    read_pb_ = 0;
     launch_count_ = 0;
     launch_a0_ = 0;
     for (uint16_t& t : trap_log_) t = 0;
@@ -435,14 +449,14 @@ void MacPlus::update_irqs() {
 void MacPlus::on_cpu_cycles(int cycles) {
     maybe_sony_dispatch();
     const uint32_t pc = cpu_.pc();
-    if (decompress_pc_ && pc == decompress_pc_) {
-        decompress_pc_ = 0;
+    if (dcmp_sp_ > 0 && pc == dcmp_ret_[dcmp_sp_ - 1]) {
+        dcmp_sp_--;
         maybe_decompress_handle(cpu_.a[0].l);
         maybe_decompress_handle(cpu_.d[0].l);
     }
-    if (read_ret_pc_ && pc == read_ret_pc_) {
-        read_ret_pc_ = 0;
-        const uint32_t pb = read_pb_ & 0xffffffu;
+    if (read_sp_ > 0 && pc == read_ret_[read_sp_ - 1]) {
+        read_sp_--;
+        const uint32_t pb = read_pb_[read_sp_] & 0xffffffu;
         if (pb + 0x24u < kRamSize) {
             const uint32_t buf = read_long(pb + 0x20) & 0xffffffu;
             if (buf >= 0x1008 && buf + 22 < kRamSize) {
@@ -478,12 +492,17 @@ void MacPlus::on_cpu_cycles(int cycles) {
             launch_a0_ = cpu_.a[0].l;
         }
         if (op == 0xa829 || op == 0xa9a0 || op == 0xa81a || op == 0xa9a2 || op == 0xa1a0 ||
-            op == 0xa11a || op == 0xa80c || op == 0xa81f)
-            decompress_pc_ = (ppc + 2) & 0xffffffu;
+            op == 0xa11a || op == 0xa80c || op == 0xa81f || op == 0xa895) {
+            if (dcmp_sp_ < kDcmpStack) dcmp_ret_[dcmp_sp_++] = (ppc + 2) & 0xffffffu;
+        }
         if (op == 0xa00f) sanitize_mountvol_pb();
+        if (op == 0xa9f0 || op == 0xa9f2) sweep_compressed_handles();
         if (op == 0xa002) {
-            read_ret_pc_ = (ppc + 2) & 0xffffffu;
-            read_pb_ = cpu_.a[0].l;
+            if (read_sp_ < kDcmpStack) {
+                read_ret_[read_sp_] = (ppc + 2) & 0xffffffu;
+                read_pb_[read_sp_] = cpu_.a[0].l;
+                read_sp_++;
+            }
         }
     }
     iwm_.tick(cycles);
