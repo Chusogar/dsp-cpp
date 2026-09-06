@@ -16,12 +16,10 @@ namespace dsp {
 
 // Macintosh Plus (MAME mac128_state::macplus): 68000 @ 7.8336 MHz, 128K ROM,
 // 4MB RAM (SIMM upgrade), 512×342 1bpp, IWM + two add_35 / MFD51W 800K GCR
-// connectors (internal + empty external). A 1.44MB SuperDrive image is
-// accepted as MFD75W-style HD media: IWM reports SuperDrive sense, and
-// .Sony Prime/Control/Status are intercepted by PC (no ROM patch) to
-// serve 2880 LBA blocks. NCR 5380 at $580000 with IRQ pin 23 unconnected.
-// Stock Plus is 1MB; System 7.0 needs ≥2MB and the ROM's early screen
-// buffer sits at $3FA700 (4MB − $5900).
+// connectors (internal + empty external). SCSI is a 5380 at $580000 with
+// IRQ pin 23 unconnected — the ROM and disk driver run, no OS trap hooks.
+// A 1.44MB SuperDrive image is MFD75W-style HD media (IWM sense + LBA
+// through .Sony). Stock Plus is 1MB; the ROM screen buffer is at $3FA700.
 class MacPlus : public Machine {
 public:
     static constexpr uint32_t kCpuClock = 7833600;
@@ -73,16 +71,6 @@ public:
     uint16_t last_syserr() const { return last_syserr_; }
     uint32_t launch_count() const { return launch_count_; }
     uint32_t launch_a0() const { return launch_a0_; }
-    uint32_t decompress_count() const { return decompress_count_; }
-    uint32_t enqueue_count() const { return enqueue_count_; }
-    uint32_t dequeue_count() const { return dequeue_count_; }
-    uint32_t cwmgr_count() const { return cwmgr_count_; }
-    uint32_t boot2_base() const { return boot2_base_; }
-    uint32_t boot2_hi() const { return boot2_hi_; }
-    uint32_t boot2_main_hi() const { return boot2_main_hi_; }
-    uint32_t boot2_hits() const { return boot2_hits_; }
-    uint32_t boot2_last_off() const { return boot2_last_off_; }
-    uint32_t lpch_skip() const { return lpch_skip_; }
     uint8_t debug_im() const { return cpu_.cc.im; }
     uint8_t peek(uint32_t address) { return read_byte(address); }
     uint8_t peek_ram(uint32_t address) const { return ram_[ram_index(address)]; }
@@ -122,7 +110,6 @@ private:
     uint8_t ram_at(uint32_t address) const { return ram_[ram_index(address)]; }
     void ram_at(uint32_t address, uint8_t value) { ram_[ram_index(address)] = value; }
     void clock_keyboard();
-    void find_start_manager_mountvol();
     void find_sony_driver();
     void maybe_sony_dispatch();
     void mark_sony_inserted();
@@ -130,25 +117,9 @@ private:
     void sony_control();
     void sony_status();
     void sony_return(int16_t result);
-    void patch_rom_startboot();
-    void sanitize_mountvol_pb();
-    void launch_finder_from_rom_a();
-    void redirect_launch_to_boot2();
     uint8_t keyboard_reply(uint8_t command);
     uint32_t read_long(uint32_t address);
     void write_long(uint32_t address, uint32_t value);
-    void maybe_decompress_handle(uint32_t handle);
-    bool maybe_decompress_ptr(uint32_t ptr, uint32_t handle);
-    void sweep_compressed_handles();
-    void restore_plus_stubs();
-    void snapshot_rom_tool_traps();
-    void protect_plus_traps(uint32_t address);
-    uint32_t plant_screen_port(uint32_t below);
-    void skip_aline(bool autopop);
-    void os_enqueue();
-    void os_dequeue();
-    void os_get_cwmgr_port();
-    static bool is_plus_qd_trap(int trap);
 
     M68000 cpu_;
     Via6522 via_;
@@ -194,33 +165,12 @@ private:
     bool kbd_space_ = false;
     void kbd_enqueue(uint8_t code);
     uint8_t kbd_dequeue();
-    uint32_t mount_vol_pc_ = 0;
-    bool finder_launch_ = false;
     uint16_t last_trap_ = 0;
     uint32_t trap_count_ = 0;
     uint16_t trap_log_[32]{};
     uint16_t last_syserr_ = 0;
     uint32_t launch_count_ = 0;
     uint32_t launch_a0_ = 0;
-    uint32_t decompress_pc_ = 0;
-    uint32_t decompress_count_ = 0;
-    uint32_t read_ret_pc_ = 0;
-    uint32_t read_pb_ = 0;
-    bool boot2_tried_ = false;
-    uint32_t trap_stub_ = 0;
-    uint32_t grafport_ = 0;
-    uint32_t enqueue_count_ = 0;
-    uint32_t dequeue_count_ = 0;
-    uint32_t cwmgr_count_ = 0;
-    uint32_t boot2_base_ = 0;
-    uint32_t boot2_hi_ = 0;
-    uint32_t boot2_main_hi_ = 0;
-    uint32_t boot2_hits_ = 0;
-    uint32_t boot2_last_off_ = 0;
-    uint32_t lpch_skip_ = 0;
-    uint32_t rom_initgraf_ = 0;
-    uint32_t rom_tool_[512]{};
-    uint32_t restore_stub_pc_ = 0;
     uint32_t sony_prime_rom_ = 0;
     uint32_t sony_ctl_rom_ = 0;
     uint32_t sony_stat_rom_ = 0;

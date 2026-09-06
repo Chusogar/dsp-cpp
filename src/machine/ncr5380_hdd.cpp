@@ -58,177 +58,8 @@ bool Ncr5380Hdd::load_file(const std::string& path, std::string* error) {
         return false;
     }
     blocks_ = uint32_t(image_.size() / 512);
-    wrap_raw_hfs();
     loaded_ = true;
     return true;
-}
-
-namespace {
-
-uint32_t be32_at(const std::vector<uint8_t>& img, size_t off) {
-    return (uint32_t(img[off]) << 24) | (uint32_t(img[off + 1]) << 16) |
-           (uint32_t(img[off + 2]) << 8) | img[off + 3];
-}
-
-void put_be32(std::vector<uint8_t>& img, size_t off, uint32_t value) {
-    img[off] = uint8_t(value >> 24);
-    img[off + 1] = uint8_t(value >> 16);
-    img[off + 2] = uint8_t(value >> 8);
-    img[off + 3] = uint8_t(value);
-}
-
-void put_be16(std::vector<uint8_t>& img, size_t off, uint16_t value) {
-    img[off] = uint8_t(value >> 8);
-    img[off + 1] = uint8_t(value);
-}
-
-}  // namespace
-
-void Ncr5380Hdd::wrap_raw_hfs() {
-    if (image_.size() >= 1024 && image_[0] == 'E' && image_[1] == 'R') {
-        wrap_apm_hfs();
-        return;
-    }
-    if (image_.size() < 1024 || image_[0] != 'L' || image_[1] != 'K') return;
-
-    const uint32_t hfs_blocks = blocks_;
-    std::vector<uint8_t> hfs = std::move(image_);
-    image_.assign(1024 + hfs.size(), 0);
-
-    image_[0] = 'E';
-    image_[1] = 'R';
-    image_[2] = 0x02;
-    image_[3] = 0x00;
-    const uint32_t total = hfs_blocks + 2;
-    image_[4] = uint8_t(total >> 24);
-    image_[5] = uint8_t(total >> 16);
-    image_[6] = uint8_t(total >> 8);
-    image_[7] = uint8_t(total);
-    image_[0x11] = 1;   // one driver
-    image_[0x15] = 1;   // start block
-    image_[0x17] = 1;   // length
-    image_[0x19] = 1;   // Macintosh
-    plant_dsphd_stub(512, 2, hfs_blocks);
-    std::memcpy(image_.data() + 1024, hfs.data(), hfs.size());
-    patch_system7_hfs(1024);
-    extract_boot2();
-    blocks_ = uint32_t(image_.size() / 512);
-}
-
-// 512-byte .DSPHD stub. The Plus ROM JSRs the first word after loading
-// the driver: _DrvrInstall (-33), fill dCtlDriver, set BootMask, _AddDrive
-// (drive 8 in the high word). Prime uses A0 as the IOParam (Plus convention).
-static const uint8_t kMacScsiDriver[512] = {
-        0x48, 0xe7, 0xff, 0xfe, 0x41, 0xfa, 0x00, 0x44, 0x30, 0x3c, 0xff, 0xdf, 0xa0, 0x3d, 0x66, 0x00,
-        0x00, 0x32, 0x20, 0x78, 0x01, 0x1c, 0x20, 0x68, 0x00, 0x80, 0x08, 0xd0, 0x00, 0x07, 0x22, 0x50,
-        0x45, 0xfa, 0x00, 0x28, 0x22, 0xca, 0x32, 0xd2, 0x32, 0xbc, 0x00, 0x02, 0x31, 0xfc, 0xff, 0xff,
-        0x0b, 0x0e, 0x41, 0xfa, 0x01, 0xb0, 0x30, 0x3c, 0x00, 0x08, 0x48, 0x40, 0x30, 0x3c, 0xff, 0xdf,
-        0xa0, 0x4e, 0x4c, 0xdf, 0x7f, 0xff, 0x70, 0x00, 0x4e, 0x75, 0x4f, 0x20, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x1c, 0x00, 0x4e, 0x00, 0x1c, 0x00, 0x22, 0x00, 0x1c, 0x00, 0x14, 0x06, 0x2e,
-        0x44, 0x53, 0x50, 0x48, 0x44, 0x00, 0x70, 0x00, 0x60, 0x00, 0x00, 0x20, 0x0c, 0x68, 0x00, 0x08,
-        0x00, 0x1a, 0x66, 0x14, 0x42, 0x68, 0x00, 0x1c, 0x42, 0x28, 0x00, 0x1e, 0x11, 0x7c, 0x00, 0x08,
-        0x00, 0x1f, 0x11, 0x7c, 0x00, 0x01, 0x00, 0x20, 0x70, 0x00, 0x31, 0x40, 0x00, 0x10, 0x42, 0xa8,
-        0x00, 0x0c, 0x2f, 0x38, 0x08, 0xfc, 0x4e, 0x75, 0x48, 0xe7, 0x7f, 0xf8, 0x26, 0x48, 0x26, 0x2b,
-        0x00, 0x2e, 0xe0, 0x8b, 0xe2, 0x8b, 0xd6, 0xba, 0x01, 0x1a, 0x28, 0x2b, 0x00, 0x24, 0x24, 0x6b,
-        0x00, 0x20, 0x41, 0xfa, 0x01, 0x14, 0x30, 0x13, 0xc0, 0x7c, 0x00, 0x01, 0x10, 0xbc, 0x00, 0x08,
-        0x4a, 0x40, 0x67, 0x04, 0x10, 0xbc, 0x00, 0x0a, 0x22, 0x03, 0x48, 0x41, 0x02, 0x01, 0x00, 0x1f,
-        0x11, 0x41, 0x00, 0x01, 0x31, 0x43, 0x00, 0x02, 0x22, 0x04, 0x06, 0x81, 0x00, 0x00, 0x01, 0xff,
-        0xe0, 0x89, 0xe2, 0x89, 0x11, 0x41, 0x00, 0x04, 0x42, 0x28, 0x00, 0x05, 0x42, 0x67, 0x3f, 0x3c,
-        0x00, 0x01, 0xa8, 0x15, 0x4a, 0x5f, 0x66, 0x00, 0x00, 0x82, 0x42, 0x67, 0x3f, 0x3a, 0x00, 0xc2,
-        0x3f, 0x3c, 0x00, 0x02, 0xa8, 0x15, 0x4a, 0x5f, 0x66, 0x00, 0x00, 0x70, 0x42, 0x67, 0x48, 0x7a,
-        0x00, 0xb8, 0x3f, 0x3c, 0x00, 0x06, 0x3f, 0x3c, 0x00, 0x03, 0xa8, 0x15, 0x4a, 0x5f, 0x66, 0x00,
-        0x00, 0x5a, 0x41, 0xfa, 0x00, 0xac, 0x30, 0xfc, 0x00, 0x01, 0x20, 0xca, 0x20, 0xc4, 0x30, 0xbc,
-        0x00, 0x07, 0x42, 0x67, 0x48, 0x7a, 0x00, 0x9a, 0x30, 0x13, 0xc0, 0x7c, 0x00, 0x01, 0x66, 0x06,
-        0x3f, 0x3c, 0x00, 0x05, 0x60, 0x04, 0x3f, 0x3c, 0x00, 0x06, 0xa8, 0x15, 0x4a, 0x5f, 0x66, 0x00,
-        0x00, 0x2a, 0x42, 0x67, 0x48, 0x7a, 0x00, 0x86, 0x48, 0x7a, 0x00, 0x84, 0x2f, 0x3c, 0x00, 0x00,
-        0x00, 0x3c, 0x3f, 0x3c, 0x00, 0x04, 0xa8, 0x15, 0x4a, 0x5f, 0x66, 0x00, 0x00, 0x0e, 0x27, 0x44,
-        0x00, 0x28, 0x42, 0x6b, 0x00, 0x10, 0x70, 0x00, 0x60, 0x08, 0x37, 0x7c, 0xff, 0xee, 0x00, 0x10,
-        0x70, 0xff, 0x4c, 0xdf, 0x1f, 0xfe, 0x60, 0x00, 0xff, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0xff, 0xdf, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-};
-
-void Ncr5380Hdd::plant_dsphd_stub(uint32_t dest_off, uint32_t hfs_block, uint32_t hfs_blocks) {
-    if (dest_off + 512 > image_.size()) return;
-    std::memcpy(image_.data() + dest_off, kMacScsiDriver, sizeof(kMacScsiDriver));
-    put_be32(image_, dest_off + 0x1c2, hfs_block);
-    put_be16(image_, dest_off + 0x1f0, uint16_t(std::min<uint32_t>(hfs_blocks, 0xffff)));
-}
-
-void Ncr5380Hdd::patch_system7_hfs(uint32_t hfs_off) {
-    if (hfs_off + 1024 > image_.size()) return;
-    uint8_t* boot = image_.data() + hfs_off;
-    if (boot[0] != 'L' || boot[1] != 'K') return;
-    // bbVersion $44: Plus ROM JSRs $2(boot) and that code _SysError $62.
-    // RTS lets the 128K Start Manager MountVol and load System itself.
-    if (boot[6] == 0x44 && boot[0x8a] == 0x4a && boot[0x8b] == 0x78 && boot[0xd8] == 0xa9 &&
-        boot[0xd9] == 0xc9) {
-        boot[2] = 0x4e;
-        boot[3] = 0x75;
-    }
-    // 128K _Launch only accepts APPL. PCE/System 7 Finder is type FNDR.
-    for (size_t i = hfs_off; i + 20 <= image_.size(); ++i) {
-        if (image_[i] != 6 || std::memcmp(&image_[i + 1], "Finder", 6) != 0) continue;
-        for (size_t j = i + 7; j + 8 <= image_.size() && j < i + 24; ++j) {
-            if (std::memcmp(&image_[j], "FNDRMACS", 8) != 0) continue;
-            image_[j] = 'A';
-            image_[j + 1] = 'P';
-            image_[j + 2] = 'P';
-            image_[j + 3] = 'L';
-            break;
-        }
-    }
-}
-
-void Ncr5380Hdd::extract_boot2() {
-    boot2_.clear();
-    static const uint8_t kBoot2[] = {0x20, 0x4b, 0xa0, 0x25, 0x41, 0xfa, 0x00, 0x12};
-    for (size_t i = 4; i + sizeof(kBoot2) <= image_.size(); ++i) {
-        if (!std::equal(std::begin(kBoot2), std::end(kBoot2),
-                        image_.begin() + static_cast<std::ptrdiff_t>(i)))
-            continue;
-        const uint32_t n = be32_at(image_, i - 4);
-        if (n < 64 || n > 0x8000 || i + n > image_.size()) continue;
-        boot2_.assign(image_.begin() + static_cast<std::ptrdiff_t>(i),
-                      image_.begin() + static_cast<std::ptrdiff_t>(i + n));
-        break;
-    }
-}
-
-void Ncr5380Hdd::wrap_apm_hfs() {
-    // PCE macplus compilation disks: DDM + Apple_Driver43 + HFS. The Plus
-    // ROM loads that driver; our 5380 cannot finish it, so swap in .DSPHD
-    // and apply the same 128K System 7 boot patches as a raw LK image.
-    uint32_t hfs_blk = 0;
-    for (int i = 0; i < 16; ++i) {
-        const size_t off = size_t(1 + i) * 512;
-        if (off + 80 > image_.size()) break;
-        if (image_[off] != 'P' || image_[off + 1] != 'M') break;
-        if (std::memcmp(&image_[off + 48], "Apple_HFS", 9) != 0) continue;
-        const uint32_t start = be32_at(image_, off + 8);
-        const size_t hfs_off = size_t(start) * 512;
-        if (hfs_off + 2 <= image_.size() && image_[hfs_off] == 'L' && image_[hfs_off + 1] == 'K') {
-            hfs_blk = start;
-            break;
-        }
-    }
-    if (!hfs_blk) return;
-
-    uint32_t drv_blk = be32_at(image_, 0x12);
-    if (drv_blk == 0 || size_t(drv_blk) * 512 + 512 > image_.size() || drv_blk == hfs_blk)
-        drv_blk = 1;
-    image_[0x11] = 1;
-    put_be32(image_, 0x12, drv_blk);
-    put_be16(image_, 0x16, 1);
-    put_be16(image_, 0x18, 1);
-    plant_dsphd_stub(drv_blk * 512, hfs_blk, blocks_ > hfs_blk ? blocks_ - hfs_blk : blocks_);
-    patch_system7_hfs(hfs_blk * 512);
-    extract_boot2();
 }
 
 int Ncr5380Hdd::cdb_length(uint8_t opcode) {
@@ -341,15 +172,36 @@ void Ncr5380Hdd::execute() {
             offer_byte();
         return;
     }
-    if (op == 0x12) {  // INQUIRY
+    if (op == 0x12) {  // INQUIRY — MAME nscsi_harddisk SEAGATE ST225N
         const int n = cdb_[4] ? cdb_[4] : 36;
-        xfer_.assign(36, 0);
+        xfer_.assign(56, 0);
         xfer_[0] = 0x00;
         xfer_[1] = 0x00;
-        xfer_[2] = 0x02;
+        xfer_[2] = 0x05;
         xfer_[3] = 0x01;
-        xfer_[4] = 31;
-        std::memcpy(xfer_.data() + 8, "DSP     MAC HD          1.0 ", 28);
+        xfer_[4] = 52;
+        std::memset(xfer_.data() + 8, ' ', 28);
+        std::memcpy(xfer_.data() + 8, "SEAGATE ", 8);
+        std::memcpy(xfer_.data() + 16, "ST225N          ", 16);
+        std::memcpy(xfer_.data() + 32, "1.00", 4);
+        xfer_[36] = 0x00;
+        xfer_[37] = 0x08;
+        xfer_[38] = 0x00;
+        xfer_[39] = 0x99;
+        xfer_[40] = 0xa0;
+        xfer_[41] = 0x27;
+        xfer_[42] = 0x34;
+        xfer_[43] = 0x01;
+        xfer_[44] = 0x04;
+        xfer_[45] = 0xa0;
+        xfer_[46] = 0x01;
+        xfer_[47] = 0x18;
+        xfer_[48] = 0x07;
+        xfer_[49] = 0x00;
+        xfer_[50] = 0xa0;
+        xfer_[51] = 0x00;
+        xfer_[52] = 0x00;
+        xfer_[53] = 0xff;
         if (n < int(xfer_.size())) xfer_.resize(size_t(n));
         set_phase(kDataIn);
         if (ack_)
@@ -358,43 +210,123 @@ void Ncr5380Hdd::execute() {
             offer_byte();
         return;
     }
-    if (op == 0x1a) {  // MODE SENSE(6) — pages match PCE/macplus
+    if (op == 0x15) {  // MODE SELECT(6)
+        const int n = cdb_[4];
+        if (n) {
+            xfer_.assign(size_t(n), 0);
+            set_phase(kDataOut);
+            if (ack_)
+                pending_req_ = true;
+            else {
+                req_ = true;
+                if (mode_ & kModeDma) drq_ = true;
+            }
+            return;
+        }
+        finish_command();
+        return;
+    }
+    if (op == 0x1a) {  // MODE SENSE(6) — MAME nscsi_harddisk
         const int n = cdb_[4] ? cdb_[4] : 4;
         const uint8_t page = uint8_t(cdb_[2] & 0x3f);
-        xfer_.assign(64, 0);
-        size_t len = 0;
-        if (page == 0x01) {
-            xfer_[0] = 0x01;
-            xfer_[1] = 10;
-            len = 12;
-        } else if (page == 0x03) {
-            xfer_[0] = 0x03;
-            xfer_[1] = 22;
-            len = 24;
-        } else if (page == 0x04) {
-            xfer_[0] = 0x04;
-            xfer_[1] = 22;
-            xfer_[5] = 1;
-            xfer_[20] = 0x0e;
-            xfer_[21] = 0x10;  // 3600 rpm
-            len = 32;
-        } else if (page == 0x30) {
-            // Apple HD SC / System 7 SCSI Manager probe.
-            xfer_[0] = 0x30;
-            xfer_[1] = 33;
-            std::memcpy(xfer_.data() + 14, "APPLE COMPUTER, INC", 19);
-            len = 34;
-        } else {
-            xfer_[0] = 3;
-            len = 4;
+        uint32_t spt = 32;
+        uint32_t heads = 16;
+        uint32_t cyl = blocks_ / (spt * heads);
+        if (cyl == 0) {
+            spt = 1;
+            heads = 1;
+            cyl = blocks_ ? blocks_ : 1;
         }
-        if (n < int(len)) xfer_.resize(size_t(n));
-        else xfer_.resize(len);
+        const uint32_t last = blocks_ ? blocks_ - 1 : 0;
+        xfer_.assign(128, 0);
+        size_t pos = 1;
+        xfer_[pos++] = 0x00;
+        xfer_[pos++] = 0x00;
+        xfer_[pos++] = 0x08;
+        xfer_[pos++] = 0x00;
+        xfer_[pos++] = uint8_t(last >> 16);
+        xfer_[pos++] = uint8_t(last >> 8);
+        xfer_[pos++] = uint8_t(last);
+        xfer_[pos++] = 0x00;
+        xfer_[pos++] = 0x00;
+        xfer_[pos++] = 0x02;
+        xfer_[pos++] = 0x00;
+        auto add_page = [&](uint8_t p) {
+            switch (p) {
+                case 0x00:
+                    xfer_[pos++] = 0x80;
+                    xfer_[pos++] = 0x02;
+                    xfer_[pos++] = 0x00;
+                    xfer_[pos++] = 0x00;
+                    break;
+                case 0x01:
+                    xfer_[pos++] = 0x01;
+                    xfer_[pos++] = 0x0a;
+                    xfer_[pos++] = 0x26;
+                    for (int i = 0; i < 9; i++) xfer_[pos++] = 0;
+                    break;
+                case 0x03:
+                    xfer_[pos++] = 0x83;
+                    xfer_[pos++] = 0x16;
+                    xfer_[pos++] = uint8_t((cyl * heads) >> 8);
+                    xfer_[pos++] = uint8_t(cyl * heads);
+                    for (int i = 0; i < 6; i++) xfer_[pos++] = 0;
+                    xfer_[pos++] = uint8_t(spt >> 8);
+                    xfer_[pos++] = uint8_t(spt);
+                    xfer_[pos++] = 0x02;
+                    xfer_[pos++] = 0x00;
+                    for (int i = 0; i < 10; i++) xfer_[pos++] = 0;
+                    break;
+                case 0x04:
+                    xfer_[pos++] = 0x84;
+                    xfer_[pos++] = 0x16;
+                    xfer_[pos++] = uint8_t(cyl >> 16);
+                    xfer_[pos++] = uint8_t(cyl >> 8);
+                    xfer_[pos++] = uint8_t(cyl);
+                    xfer_[pos++] = uint8_t(heads);
+                    for (int i = 0; i < 14; i++) xfer_[pos++] = 0;
+                    xfer_[pos++] = 0x27;
+                    xfer_[pos++] = 0x10;
+                    xfer_[pos++] = 0;
+                    xfer_[pos++] = 0;
+                    break;
+                case 0x08:
+                    xfer_[pos++] = 0x08;
+                    xfer_[pos++] = 0x0a;
+                    for (int i = 0; i < 10; i++) xfer_[pos++] = 0;
+                    break;
+                case 0x30:
+                    xfer_[pos++] = 0xb0;
+                    xfer_[pos++] = 0x16;
+                    std::memcpy(xfer_.data() + pos, "APPLE COMPUTER, INC   ", 22);
+                    pos += 22;
+                    break;
+                default:
+                    break;
+            }
+        };
+        if (page == 0x3f) {
+            add_page(0x00);
+            add_page(0x01);
+            add_page(0x03);
+            add_page(0x04);
+            add_page(0x08);
+            add_page(0x30);
+        } else {
+            add_page(page);
+        }
+        xfer_[0] = uint8_t(pos - 1);
+        if (n < int(pos)) xfer_.resize(size_t(n));
+        else xfer_.resize(pos);
         set_phase(kDataIn);
         if (ack_)
             pending_req_ = true;
         else
             offer_byte();
+        return;
+    }
+    if (op == 0x04 || op == 0x1b || op == 0x2f) {  // FORMAT / START STOP / VERIFY
+        finish_command();
         return;
     }
     if (op == 0x25) {  // READ CAPACITY
@@ -623,9 +555,9 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
             }
             rst_ = false;
             on_ack((data & kIcAck) != 0);
-            // Only this disk (SCSI ID 0) answers selection. Initiator BSY is
-            // visible on CSR but must not be treated as target BSY.
-            if (sel_ && loaded_ && (odr_ & 0x01)) {
+            // MAME macplus hard1 is SCSI ID 6. Initiator BSY is visible on
+            // CSR but must not be treated as target BSY.
+            if (sel_ && loaded_ && our_id()) {
                 bsy_ = true;
                 irq_ = true;  // PCE: selection raises 5380 INT (BSR only)
             }
@@ -647,7 +579,7 @@ void Ncr5380Hdd::write_reg(int reg, bool dack, uint8_t data) {
             if (!want_arb && arb_) {
                 arb_ = false;
                 aip_ = false;
-                if (sel_phase_ && loaded_ && (odr_ & 0x01) && phase_ == kFree) {
+                if (sel_phase_ && loaded_ && our_id() && phase_ == kFree) {
                     bsy_ = true;
                     start_command();
                 }
