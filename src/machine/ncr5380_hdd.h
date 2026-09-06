@@ -7,7 +7,11 @@
 namespace dsp {
 
 // NCR 5380 plus one SCSI direct-access disk, mapped the Macintosh Plus way
-// at $580000 (register = A6-A4, DACK = A9). IRQ is left unconnected.
+// at $580000 (register = A6-A4, DACK = A9). IRQ pin 23 is unconnected.
+// The disk answers SCSI IDs 6 (MAME hard1) and 0. A raw HFS volume or an
+// APM image with Apple_Driver43 gets a Plus-era DDM driver so the 128K
+// ROM can AddDrive. System 7 bbVersion $44 boot blocks are steered
+// to the generic +$FA path so 'boot' id 2 runs; HFS catalog is not patched.
 class Ncr5380Hdd {
 public:
     void reset();
@@ -21,6 +25,8 @@ public:
     const uint8_t* last_cdb() const { return cdb_; }
     uint32_t cmd_count() const { return cmd_count_; }
     uint8_t cmd_log(int i) const { return cmd_log_[static_cast<unsigned>(i) & 15u]; }
+    uint32_t cmd_lba_log(int i) const { return cmd_lba_log_[static_cast<unsigned>(i) & 15u]; }
+    uint32_t cmd_len_log(int i) const { return cmd_len_log_[static_cast<unsigned>(i) & 15u]; }
     uint32_t write_count() const { return write_count_; }
     uint32_t last_write_lba() const { return last_write_lba_; }
     uint32_t last_write_bytes() const { return last_write_bytes_; }
@@ -37,8 +43,6 @@ public:
     bool irq() const { return irq_; }
     bool req() const { return req_; }
     bool selected() const { return bsy_; }
-    const std::vector<uint8_t>& system_boot2() const { return boot2_; }
-
     uint8_t read(uint32_t address);
     void write(uint32_t address, uint8_t data);
 
@@ -54,11 +58,12 @@ private:
     };
 
     static int cdb_length(uint8_t opcode);
+    bool our_id() const { return (odr_ & 0x41) != 0; }  // IDs 0 and 6
+    void wrap_plus_boot();
     void wrap_raw_hfs();
     void wrap_apm_hfs();
-    void plant_dsphd_stub(uint32_t dest_off, uint32_t hfs_block, uint32_t hfs_blocks);
-    void patch_system7_hfs(uint32_t hfs_off);
-    void extract_boot2();
+    void plant_plus_driver(uint32_t dest_off, uint32_t hfs_block, uint32_t hfs_blocks);
+    void plus_boot_block(uint32_t hfs_off);
     void bus_reset();
     void set_phase(uint8_t phase);
     void update_match();
@@ -111,6 +116,8 @@ private:
     uint32_t last_lba_ = 0;
     uint32_t cmd_count_ = 0;
     uint8_t cmd_log_[16]{};
+    uint32_t cmd_lba_log_[16]{};
+    uint32_t cmd_len_log_[16]{};
     uint32_t write_count_ = 0;
     uint32_t last_write_lba_ = 0;
     uint32_t last_write_bytes_ = 0;
@@ -119,7 +126,6 @@ private:
     size_t xfer_pos_ = 0;
     uint32_t xfer_done_ = 0;
     uint32_t accesses_ = 0;
-    std::vector<uint8_t> boot2_;
 };
 
 }  // namespace dsp

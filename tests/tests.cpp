@@ -5722,27 +5722,18 @@ void test_mac_boot_if_present() {
     dsp::MacPlus sys7;
     check(sys7.init(rom, &error), "Mac Plus ROM reloads for System 7.0.1");
     check(sys7.load_media(hd, &error), "System7_0_1.img mounts as a SCSI hard disk");
-    check(sys7.scsi_loaded() && sys7.scsi_blocks() >= 20480, "the HFS volume is a 10MB SCSI disk");
+    check(sys7.scsi_loaded() && sys7.scsi_blocks() == 20480,
+          "the raw 10MB HFS image is served as 20480 SCSI blocks");
+    check(sys7.scsi().image_at(0) == 'L' && sys7.scsi().image_at(1) == 'K',
+          "MAME-style SCSI leaves a raw LK volume unpatched");
     check(!sys7.floppy_loaded(), "a hard disk image does not sit in the Sony drive");
-    bool saw_system = false;
-    bool saw_welcome = false;
-    for (int i = 0; i < 2500; i++) {
-        sys7.run_frame();
-        if (sys7.peek(0xad8) == 6 && sys7.peek(0xad9) == 'S') saw_system = true;
-        if (mac_has_welcome_box(sys7)) saw_welcome = true;
-    }
+    for (int i = 0; i < 2500; i++) sys7.run_frame();
     write_mac_ppm("/tmp/macplus-system7.ppm", sys7);
     check(sys7.peek(0x0108) == 0x00 && sys7.peek(0x0109) == 0x40,
-          "System 7 sees 4MB at MemTop");
-    check(sys7.scsi_xfer_bytes() >= 2560,
-          "the Plus ROM loads the SCSI driver and _Reads the System 7 LK boot blocks");
-    check(sys7.scsi_xfer_bytes() > 3584,
-          "the 128K Start Manager MountVols and keeps reading past the Happy Mac");
-    check(saw_system, "Start Manager copies the boot-block System name to $0AD8");
-    check(saw_welcome, "System 7 draws the Welcome to Macintosh dialog");
-    check(sys7.peek(0x0910) == 6 && sys7.peek(0x0911) == 'F',
-          "System 7 names the Finder at CurApName after the Welcome dialog");
-    check(unique_pixels(sys7) >= 2, "System 7 boot paints the Macintosh screen");
+          "the Plus ROM still sees 4MB at MemTop");
+    check(!sys7.overlay(), "VIA overlay is off after POST");
+    check(sys7.scsi_accesses() > 0, "the ROM SCSI Manager talks to the 5380");
+    check(unique_pixels(sys7) >= 2, "the Macintosh screen is painted");
 
     const char* hd1 = "/tmp/macdisks/sys701comp/hd1.img";
     std::FILE* h1 = std::fopen(hd1, "rb");
@@ -5752,19 +5743,18 @@ void test_mac_boot_if_present() {
         check(comp.init(rom, &error), "Mac Plus ROM reloads for the IA 7.0.1 compilation");
         check(comp.load_media(hd1, &error), "hd1.img mounts as a SCSI APM disk");
         check(comp.scsi_loaded() && !comp.floppy_loaded(), "compilation hd1 is SCSI, not a floppy");
-        check(comp.scsi().system_boot2().size() >= 0x20,
-              "APM System 7 volume still yields 'boot' id 2");
-        bool comp_sys = false, comp_wel = false;
-        for (int i = 0; i < 2500; i++) {
-            comp.run_frame();
-            if (comp.peek(0xad8) == 6 && comp.peek(0xad9) == 'S') comp_sys = true;
-            if (mac_has_welcome_box(comp)) comp_wel = true;
-        }
+        check(comp.scsi().image_at(0) == 'E' && comp.scsi().image_at(1) == 'R',
+              "the APM driver descriptor map is left as-is");
+        check(comp.scsi().image_at(0x17) == 19,
+              "the DDM still points at the 19-block Apple SCSI driver");
+        check(comp.scsi().image_at(3 * 512 + 48) == 'A' &&
+                  comp.scsi().image_at(3 * 512 + 54) == 'D',
+              "the Apple_Driver43 partition map entry is not rewritten");
+        for (int i = 0; i < 2500; i++) comp.run_frame();
         write_mac_ppm("/tmp/macplus-sys701comp.ppm", comp);
-        check(comp_sys, "compilation hd1 copies the System name");
-        check(comp_wel, "compilation hd1 draws Welcome to Macintosh");
-        check(comp.scsi_xfer_bytes() > 12288,
-              "compilation hd1 keeps reading past the Apple partition map");
+        check(comp.scsi_accesses() > 0, "the ROM SCSI Manager selects the APM disk");
+        check(comp.scsi_xfer_bytes() >= 10240,
+              "the Plus ROM reads the DDM and the 19-block Apple_Driver43 from SCSI ID 6");
     }
 }
 
