@@ -16,10 +16,12 @@ namespace dsp {
 
 // Macintosh Plus (MAME mac128_state::macplus): 68000 @ 7.8336 MHz, 128K ROM,
 // 4MB RAM (SIMM upgrade), 512×342 1bpp, IWM + two add_35 / MFD51W 800K GCR
-// connectors (internal + empty external). 1.44MB SuperDrive is SWIM +
-// add_35_hd on macsefd, not this machine. NCR 5380 at $580000 with IRQ pin
-// 23 unconnected. Stock Plus is 1MB; System 7.0 needs ≥2MB and the ROM's
-// early screen buffer sits at $3FA700 (4MB − $5900).
+// connectors (internal + empty external). A 1.44MB SuperDrive image is
+// accepted as MFD75W-style HD media: IWM reports SuperDrive sense, and
+// .Sony Prime/Control/Status are intercepted by PC (no ROM patch) to
+// serve 2880 LBA blocks. NCR 5380 at $580000 with IRQ pin 23 unconnected.
+// Stock Plus is 1MB; System 7.0 needs ≥2MB and the ROM's early screen
+// buffer sits at $3FA700 (4MB − $5900).
 class MacPlus : public Machine {
 public:
     static constexpr uint32_t kCpuClock = 7833600;
@@ -99,6 +101,8 @@ public:
     uint8_t last_kbd_reply() const { return kbd_reply_; }
     Iwm& iwm() { return iwm_; }
     Via6522& via() { return via_; }
+    uint32_t sony_prime_count() const { return sony_prime_count_; }
+    uint32_t sony_read_bytes() const { return sony_read_bytes_; }
 
 private:
     uint8_t read_byte(uint32_t address);
@@ -119,6 +123,13 @@ private:
     void ram_at(uint32_t address, uint8_t value) { ram_[ram_index(address)] = value; }
     void clock_keyboard();
     void find_start_manager_mountvol();
+    void find_sony_driver();
+    void maybe_sony_dispatch();
+    void mark_sony_inserted();
+    void sony_prime();
+    void sony_control();
+    void sony_status();
+    void sony_return(int16_t result);
     void patch_rom_startboot();
     void sanitize_mountvol_pb();
     void launch_finder_from_rom_a();
@@ -210,6 +221,11 @@ private:
     uint32_t rom_initgraf_ = 0;
     uint32_t rom_tool_[512]{};
     uint32_t restore_stub_pc_ = 0;
+    uint32_t sony_prime_rom_ = 0;
+    uint32_t sony_ctl_rom_ = 0;
+    uint32_t sony_stat_rom_ = 0;
+    uint32_t sony_prime_count_ = 0;
+    uint32_t sony_read_bytes_ = 0;
     std::vector<int16_t> audio_;
 };
 

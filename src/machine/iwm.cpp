@@ -26,6 +26,7 @@ void Iwm::reset() {
     dir_out_ = true;
     drive_motor_ = false;
     stepping_ = false;
+    mfm_mode_ = false;
     drive_ = 0;
     track_ = 0;
     nibble_pos_ = 0;
@@ -100,8 +101,8 @@ uint8_t Iwm::sense() const {
         case 0x4:
         case 0xc:
             return 0;
-        case 0x5:  // Superdrive? MFD51W has no MFM
-            return 0;
+        case 0x5:  // Superdrive? MFD75W has MFM when HD media is loaded
+            return (internal && disk_.hd()) ? 1 : 0;
         case 0x6:  // DoubleSide: MFD51W is always two-headed
             return 1;
         case 0x7:  // NoDrive (0 = present)
@@ -117,8 +118,8 @@ uint8_t Iwm::sense() const {
             const int64_t phase = tach_period_ <= 0 ? 0 : (cycles_ / tach_period_);
             return int(phase & 1);
         }
-        case 0xd:  // MFMModeOn — IWM GCR drive stays GCR
-            return 0;
+        case 0xd:  // MFMModeOn — SuperDrive LSTRB 0x9, else GCR
+            return (internal && disk_.hd() && mfm_mode_) ? 1 : 0;
         case 0xe:  // NoReady
             return (has_disk && motor) ? 0 : 1;
         case 0xf:  // new interface / 2M — MFD51W::is_2m() is true
@@ -158,6 +159,12 @@ void Iwm::strobe_command() {
         case 0x7:
             // MAME unload() on StartEject. A real Sony needs LSTRB held
             // ~750 ms; the Plus ROM strobes this during boot without a disk.
+            break;
+        case 0x9:  // MAME mac_floppy_device: SuperDrive MFM on
+            if (disk_.hd()) mfm_mode_ = true;
+            break;
+        case 0xd:  // SuperDrive GCR on
+            mfm_mode_ = false;
             break;
         default:
             break;

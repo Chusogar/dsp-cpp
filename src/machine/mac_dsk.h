@@ -6,8 +6,9 @@
 
 namespace dsp {
 
-// Macintosh 400K/800K GCR floppy images: raw .dsk/.img and Disk Copy 4.2.
-// Matches MAME macplus add_35 / MFD51W. 1.44MB DC42 is SuperDrive/SWIM.
+// Macintosh floppy images: 400K/800K GCR and 1.44MB SuperDrive MFM, raw
+// .dsk/.img or Disk Copy 4.2. HD media is served by LBA; GCR tracks are
+// only built for 400K/800K.
 class MacDsk {
 public:
     static constexpr int kSectorSize = 512;
