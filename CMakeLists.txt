@@ -124,6 +124,7 @@ add_executable(dsp
   src/machine/cia8520.cpp
   src/machine/amiga_adf.cpp
   src/machine/amiga_chipset.cpp
+  src/machine/taito_68705.cpp
  
   src/drivers/arcade/bagman.cpp
   src/drivers/arcade/mikie.cpp
@@ -176,6 +177,14 @@ add_executable(dsp
   src/drivers/arcade/shuuz.cpp
   src/drivers/arcade/gng.cpp
   src/drivers/arcade/bublbobl.cpp
+  src/drivers/arcade/ambush.cpp
+  src/drivers/arcade/shaolinsroad.cpp
+  src/drivers/arcade/tehkanwc.cpp
+  src/drivers/arcade/appoooh.cpp
+  src/drivers/arcade/arkanoid.cpp
+  src/drivers/arcade/renegade.cpp
+  src/drivers/arcade/retofinv.cpp
+  src/drivers/arcade/slapfight.cpp
 
   src/drivers/computers/spectrum.cpp
   src/drivers/computers/spectrum_128k.cpp

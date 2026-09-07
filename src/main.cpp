@@ -49,6 +49,14 @@
 #include "drivers/arcade/shuuz.h"
 #include "drivers/arcade/gng.h"
 #include "drivers/arcade/bublbobl.h"
+#include "drivers/arcade/ambush.h"
+#include "drivers/arcade/shaolinsroad.h"
+#include "drivers/arcade/tehkanwc.h"
+#include "drivers/arcade/appoooh.h"
+#include "drivers/arcade/arkanoid.h"
+#include "drivers/arcade/renegade.h"
+#include "drivers/arcade/retofinv.h"
+#include "drivers/arcade/slapfight.h"
 
 // Computers
 #include "drivers/computers/spectrum.h"
@@ -127,6 +135,8 @@ void print_supported_emulators() {
 		"    shadoww, gaiden, ninjagaiden\n"
 		"    actfancer, actfancr\n"
 		"    ajax, typhoon, simpsons\n"
+		"    ambush, shaolins, tehkanwc, appoooh, robowres, arkanoid, renegade\n"
+		"    retofinv, slapfight, tigerheli\n"
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
@@ -447,6 +457,16 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "bublbobl" || game == "bubblebobble" || game == "bublbobble") {
 	    return std::make_unique<dsp::BublBobl>();
 	}
+	if (game == "ambush") return std::make_unique<dsp::Ambush>();
+	if (game == "shaolin" || game == "shaolins") return std::make_unique<dsp::ShaolinsRoad>();
+	if (game == "tehkanwc") return std::make_unique<dsp::TehkanWc>();
+	if (game == "appoooh") return std::make_unique<dsp::Appoooh>(dsp::Appoooh::Variant::Appoooh);
+	if (game == "robowres") return std::make_unique<dsp::Appoooh>(dsp::Appoooh::Variant::RoboWres);
+	if (game == "arkanoid") return std::make_unique<dsp::Arkanoid>();
+	if (game == "renegade") return std::make_unique<dsp::Renegade>();
+	if (game == "retofinv") return std::make_unique<dsp::Retofinv>();
+	if (game == "slapfight") return std::make_unique<dsp::SlapFight>(dsp::SlapFight::Variant::SlapFight);
+	if (game == "tigerheli") return std::make_unique<dsp::SlapFight>(dsp::SlapFight::Variant::TigerHeli);
 	
 
 	// computers
