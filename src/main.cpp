@@ -67,6 +67,7 @@
 #include "drivers/computers/msx2.h"
 #include "drivers/computers/c64.h"
 #include "drivers/computers/apple2.h"
+#include "drivers/computers/apple2gs.h"
 #include "drivers/computers/exelv.h"
 #include "drivers/computers/pentagon.h"
 #include "drivers/computers/scorpion.h"
@@ -141,7 +142,7 @@ void print_supported_emulators() {
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
         "    cpc464, cpc664, cpc6128, msx, msx2, nms8250, c64,\n"
-        "    apple2, apple2plus, apple2e, apple2ee, exl100, exeltel, ql,\n"
+        "    apple2, apple2gs, apple2plus, apple2e, apple2ee, exl100, exeltel, ql,\n"
         "    st, atarist, atari-st, amiga, a500, amiga500,\n"
         "    macplus, mac, macintosh, plus\n"
         "\n"
@@ -505,6 +506,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
         game == "apple2enhanced" || game == "appleiiee") {
         return std::make_unique<dsp::Apple2>(dsp::Apple2::Model::IIeEnhanced);
     }
+	if (game == "apple2gs") { return std::make_unique<dsp::Apple2GS>(); }
 	if (game == "exl100" || game == "exl-100" || game == "exelvision") {
 	    return std::make_unique<dsp::Exelv>(dsp::Exelv::Model::Exl100);
 	}

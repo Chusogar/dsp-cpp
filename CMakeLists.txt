@@ -32,6 +32,7 @@ add_executable(dsp
   src/cpu/nec_v30.cpp
   src/cpu/z8002.cpp
   src/cpu/mb88xx.cpp
+  src/cpu/w65c816.cpp
  
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
@@ -54,6 +55,7 @@ add_executable(dsp
   src/sound/upd7759.cpp
   src/sound/huc6280_psg.cpp
   src/sound/vlm5030.cpp
+  src/sound/es5503.cpp
     
   src/video/gfx.cpp
   src/video/atari_mo.cpp
@@ -197,6 +199,7 @@ add_executable(dsp
   src/sound/sid6581.cpp
   src/drivers/computers/c64.cpp
   src/drivers/computers/apple2.cpp
+  src/drivers/computers/apple2gs.cpp
   src/drivers/computers/exelv.cpp
   src/drivers/computers/ql.cpp
   src/drivers/computers/atari_st.cpp
