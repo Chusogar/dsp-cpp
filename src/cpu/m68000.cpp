@@ -2608,28 +2608,33 @@ int M68000::run(int cycles) {
         }
 
         ppc_ = pc_;
-        const uint16_t instruction = fetch_word();
-        switch (instruction >> 12) {
-            case 0x0: group_0(instruction); break;
-            case 0x1: group_1(instruction); break;
-            case 0x2: group_2(instruction); break;
-            case 0x3: group_3(instruction); break;
-            case 0x4: group_4(instruction); break;
-            case 0x5: group_5(instruction); break;
-            case 0x6: group_6(instruction); break;
-            case 0x7: group_7(instruction); break;
-            case 0x8: group_8(instruction); break;
-            case 0x9: group_9(instruction); break;
-            case 0xa: group_a(instruction); break;
-            case 0xb: group_b(instruction); break;
-            case 0xc: group_c(instruction); break;
-            case 0xd: group_d(instruction); break;
-            case 0xe: group_e(instruction); break;
-            case 0xf: group_f(instruction); break;
-            default:
-                pc_.l = ppc_.l;
-                exception(0x10, 34);  // illegal instruction
-                break;
+        try {
+            const uint16_t instruction = fetch_word();
+            switch (instruction >> 12) {
+                case 0x0: group_0(instruction); break;
+                case 0x1: group_1(instruction); break;
+                case 0x2: group_2(instruction); break;
+                case 0x3: group_3(instruction); break;
+                case 0x4: group_4(instruction); break;
+                case 0x5: group_5(instruction); break;
+                case 0x6: group_6(instruction); break;
+                case 0x7: group_7(instruction); break;
+                case 0x8: group_8(instruction); break;
+                case 0x9: group_9(instruction); break;
+                case 0xa: group_a(instruction); break;
+                case 0xb: group_b(instruction); break;
+                case 0xc: group_c(instruction); break;
+                case 0xd: group_d(instruction); break;
+                case 0xe: group_e(instruction); break;
+                case 0xf: group_f(instruction); break;
+                default:
+                    pc_.l = ppc_.l;
+                    exception(0x10, 34);  // illegal instruction
+                    break;
+            }
+        } catch (const BusError&) {
+            // TOS's blitter probe restores SP itself; a trap-sized frame is enough.
+            exception(8, 50);
         }
         if (cycle_handler_) cycle_handler_(cycles_ - start);
     }
