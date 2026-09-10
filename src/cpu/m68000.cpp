@@ -114,12 +114,14 @@ void M68000::reset() {
 }
 
 uint8_t M68000::getbyte(uint32_t address) {
+    address &= address_mask_;
     if (read_byte_) return read_byte_(address);
     uint16_t value = getword(address);
     return (address & 1) ? uint8_t(value & 0xff) : uint8_t(value >> 8);
 }
 
 void M68000::putbyte(uint32_t address, uint8_t value) {
+    address &= address_mask_;
     if (write_byte_) {
         write_byte_(address, value);
         return;
@@ -435,16 +437,23 @@ bool M68000::condition(uint8_t code) const {
 
 void M68000::exception(uint32_t vector, int cycles) {
     cycles_ += cycles;
-    const uint16_t flags = get_flags();
-    set_flags(uint16_t(flags | 0x2000));
+    if (exception_handler_) exception_handler_(vector, ppc_.l ? ppc_.l : pc_.l);
+    const uint16_t sr = get_flags();
+    set_flags(uint16_t(sr | 0x2000));
     cc.t = false;
-    a[7].l -= 6;
-    putword(a[7].l, flags);
-    putword(a[7].l + 2, pc_.wh());
-    putword(a[7].l + 4, pc_.wl());
+    const uint32_t fault_pc = ppc_.l ? ppc_.l : pc_.l;
+    const uint32_t vec_num = (vector <= 255u) ? vector : (vector >> 2);
+    const uint32_t vec_addr = vbr_ + (vec_num << 2);
+    if (type_ != Type::M68000) {
+        a[7].l -= 2; putword(a[7].l, uint16_t(vec_num & 0x0fff));
+        a[7].l -= 4; putword(a[7].l, uint16_t(fault_pc >> 16)); putword(a[7].l + 2, uint16_t(fault_pc));
+        a[7].l -= 2; putword(a[7].l, sr);
+    } else {
+        a[7].l -= 6; putword(a[7].l, sr);
+        putword(a[7].l + 2, uint16_t(fault_pc >> 16)); putword(a[7].l + 4, uint16_t(fault_pc));
+    }
     opcode_ = false;
-    pc_.set_wh(getword(vector));
-    pc_.set_wl(getword(vector + 2));
+    pc_.l = (uint32_t(getword(vec_addr)) << 16) | getword(vec_addr + 2);
     opcode_ = true;
 }
 
@@ -1364,10 +1373,14 @@ void M68000::group_e(uint16_t instruction) {
                 result = uint16_t((value << 1) | (cc.c ? 1 : 0));
                 cc.v = false;
                 break;
-            default:
-                pc_.l = ppc_.l;
-                exception(0x10, 34);
-                return;
+            default: {
+                if (type_ == Type::M68020) {
+                    fetch_word(); cycles_ += 12;
+                    cc.n = false; cc.z = true; cc.v = false; cc.c = false;
+                    return;
+                }
+                pc_.l = ppc_.l; exception(4, 34); return;
+            }
         }
         write_w2(dir, result);
         cc.n = (result & 0x8000) != 0;
@@ -1934,8 +1947,7 @@ void M68000::group_5(uint16_t instruction) {
 void M68000::group_6(uint16_t instruction) {
     const uint8_t offset = uint8_t(instruction & 0xff);
     const uint8_t code = uint8_t((instruction >> 8) & 0x0f);
-
-    if (code == 1) {  // bsr
+    if (code == 1) {
         cycles_ += 18;
         if (offset == 0x00) {
             const uint16_t displacement = getword(pc_.l);
@@ -1943,6 +1955,13 @@ void M68000::group_6(uint16_t instruction) {
             putword(a[7].l, uint16_t((pc_.l + 2) >> 16));
             putword(a[7].l + 2, uint16_t(pc_.l + 2));
             pc_.l += uint32_t(int32_t(int16_t(displacement)));
+        } else if (offset == 0xff && type_ != Type::M68000) {
+            const uint32_t hi = getword(pc_.l), lo = getword(pc_.l + 2);
+            const uint32_t ret = pc_.l + 4;
+            a[7].l -= 4;
+            putword(a[7].l, uint16_t(ret >> 16));
+            putword(a[7].l + 2, uint16_t(ret));
+            pc_.l = pc_.l + uint32_t(int32_t((hi << 16) | lo));
         } else {
             a[7].l -= 4;
             putword(a[7].l, uint16_t(pc_.l >> 16));
@@ -1951,24 +1970,29 @@ void M68000::group_6(uint16_t instruction) {
         }
         return;
     }
-
-    // bra is the same as bcc with the always true condition.
     if (condition(code)) {
         cycles_ += 10;
         if (offset == 0x00) pc_.l += uint32_t(int32_t(int16_t(getword(pc_.l))));
-        else pc_.l += uint32_t(int32_t(int8_t(offset)));
+        else if (offset == 0xff && type_ != Type::M68000) {
+            const uint32_t hi = getword(pc_.l), lo = getword(pc_.l + 2);
+            pc_.l = pc_.l + uint32_t(int32_t((hi << 16) | lo));
+        } else pc_.l += uint32_t(int32_t(int8_t(offset)));
     } else {
         cycles_ += 8;
         if (offset == 0x00) pc_.l += 2;
+        else if (offset == 0xff && type_ != Type::M68000) pc_.l += 4;
     }
 }
 
-void M68000::group_7(uint16_t instruction) {  // moveq
+void M68000::group_7(uint16_t instruction) {  // moveq / Basilisk EMUL_OP
     cycles_ += 4;
+    if ((instruction & 0xFF00u) == 0x7100u && emul_op_handler_) {
+        emul_op_handler_(instruction);
+        return;
+    }
     const size_t dest = size_t((instruction >> 9) & 7);
     d[dest].l = uint32_t(int32_t(int8_t(instruction & 0xff)));
-    cc.c = false;
-    cc.v = false;
+    cc.c = false; cc.v = false;
     cc.z = d[dest].l == 0;
     cc.n = (d[dest].l & 0x80000000u) != 0;
 }
@@ -2327,6 +2351,30 @@ void M68000::group_4(uint16_t instruction) {
             write_b2(dir, uint8_t(value | 0x80));
             break;
         }
+        case 0x30: {
+            if (type_ != Type::M68020) { pc_.l = ppc_.l; exception(4, 34); break; }
+            const uint16_t ext = fetch_word();
+            const size_t dq = size_t(ext & 7);
+            const size_t dr = size_t((ext >> 12) & 7);
+            const bool size64 = (ext & 0x0400) != 0;
+            const bool is_signed = (ext & 0x0800) != 0;
+            const uint32_t ea_val = (dir <= 7) ? d[size_t(dir)].l : read_l(dir);
+            cycles_ += 40;
+            if (is_signed) {
+                const int64_t r = int64_t(int32_t(d[dq].l)) * int64_t(int32_t(ea_val));
+                d[dq].l = uint32_t(uint64_t(r));
+                if (size64) d[dr].l = uint32_t(uint64_t(r) >> 32);
+                cc.n = r < 0; cc.z = (r == 0);
+            } else {
+                const uint64_t r = uint64_t(d[dq].l) * uint64_t(ea_val);
+                d[dq].l = uint32_t(r);
+                if (size64) d[dr].l = uint32_t(r >> 32);
+                cc.n = size64 ? ((d[dr].l & 0x80000000u) != 0) : ((d[dq].l & 0x80000000u) != 0);
+                cc.z = (r == 0);
+            }
+            cc.v = false; cc.c = false;
+            break;
+        }
         case 0x32: {  // movem.w memory to register
             const uint16_t mask = fetch_word();
             int count = 0;
@@ -2470,9 +2518,38 @@ void M68000::group_4(uint16_t instruction) {
                         pc_.set_wl(getword(a[7].l + 4));
                         a[7].l += 6;
                         break;
+                    case 0x3a:
+                    case 0x3b: {
+                        if (type_ == Type::M68000) { pc_.l = ppc_.l; exception(4, 34); break; }
+                        if (!check_supervisor()) break;
+                        cycles_ += 12;
+                        const uint16_t ext = fetch_word();
+                        const size_t reg = size_t((ext >> 12) & 0xf);
+                        const uint16_t cr = uint16_t(ext & 0xfff);
+                        uint32_t* rp = (reg & 8) ? &a[reg & 7].l : &d[reg & 7].l;
+                        auto read_cr = [&](uint16_t c) -> uint32_t {
+                            switch (c) {
+                                case 0x800: case 0x803: return other_sp_.l;
+                                case 0x801: return vbr_;
+                                case 0x804: return a[7].l;
+                                default: return 0;
+                            }
+                        };
+                        auto write_cr = [&](uint16_t c, uint32_t v) {
+                            switch (c) {
+                                case 0x800: case 0x803: other_sp_.l = v; break;
+                                case 0x801: vbr_ = v & ~3u; break;
+                                case 0x804: a[7].l = v; break;
+                                default: break;
+                            }
+                        };
+                        if ((instruction & 1) == 0) *rp = read_cr(cr);
+                        else write_cr(cr, *rp);
+                        break;
+                    }
                     default:
                         pc_.l = ppc_.l;
-                        exception(0x10, 34);
+                        exception(4, 34);
                         break;
                 }
             }
@@ -2525,31 +2602,24 @@ void M68000::group_3(uint16_t instruction) {
     }
 }
 
-void M68000::group_a(uint16_t instruction) {  // line 1010 emulator (Atari ST Line-A)
-    (void)instruction;
+void M68000::group_a(uint16_t instruction) {
     cycles_ += 34;
-    const uint16_t flags = get_flags();
-    set_flags(uint16_t(flags | 0x2000));
-    cc.t = false;
-    a[7].l -= 6;
-    putword(a[7].l, flags);
-    putword(a[7].l + 2, ppc_.wh());
-    putword(a[7].l + 4, ppc_.wl());
-    pc_.set_wh(getword(0x0a * 4));
-    pc_.set_wl(getword((0x0a * 4) + 2));
+    if (aline_handler_ && aline_handler_(instruction, ppc_.l)) return;
+    exception(10, 34);
 }
 
-void M68000::group_f(uint16_t instruction) {  // line 1111 emulator
-    (void)instruction;
-    cycles_ += 4;
-    const uint16_t flags = get_flags();
-    set_flags(uint16_t(flags | 0x2000));
-    a[7].l -= 6;
-    putword(a[7].l, flags);
-    putword(a[7].l + 2, pc_.wh());
-    putword(a[7].l + 4, uint16_t(pc_.wl() - 2));
-    pc_.set_wh(getword(0x0b * 4));
-    pc_.set_wl(getword((0x0b * 4) + 2));
+void M68000::group_f(uint16_t instruction) {
+    if (type_ == Type::M68020) {
+        cycles_ += 8;
+        const int mode = (instruction >> 3) & 7, reg = instruction & 7;
+        fetch_word();
+        if (mode == 5 || (mode == 7 && reg == 0)) fetch_word();
+        else if (mode == 6 || (mode == 7 && reg == 1)) fetch_word();
+        else if (mode == 7 && reg == 2) { fetch_word(); fetch_word(); }
+        else if (mode == 7 && (reg == 3 || reg == 4)) fetch_word();
+        return;
+    }
+    exception(11, 34);
 }
 
 bool M68000::take_irq() {
@@ -2559,7 +2629,7 @@ bool M68000::take_irq() {
         cycles_ += 44;
         const uint16_t flags = get_flags();
         set_flags(uint16_t(flags | 0x2000));
-        if (type_ == Type::M68010) {
+        if (type_ != Type::M68000) {
             a[7].l -= 2;
             putword(a[7].l, uint16_t(level << 2));
         }

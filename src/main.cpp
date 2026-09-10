@@ -75,6 +75,7 @@
 #include "drivers/computers/atari_st.h"
 #include "drivers/computers/amiga.h"
 #include "drivers/computers/macplus.h"
+#include "drivers/computers/macii.h"
 
 // Consoles
 #include "drivers/consoles/sms.h"
@@ -144,7 +145,7 @@ void print_supported_emulators() {
         "    cpc464, cpc664, cpc6128, msx, msx2, nms8250, c64,\n"
         "    apple2, apple2gs, apple2plus, apple2e, apple2ee, exl100, exeltel, ql,\n"
         "    st, atarist, atari-st, amiga, a500, amiga500,\n"
-        "    macplus, mac, macintosh, plus\n"
+        "    macplus, mac, macintosh, plus, macii\n"
         "\n"
         "  Consoles:\n"
         "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp,\n"
@@ -527,6 +528,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	    game == "mac-plus") {
 	    return std::make_unique<dsp::MacPlus>();
 	}
+	if (game == "macii") { return std::make_unique<dsp::MacII>(); }
     	
 	// consoles
 	if (game == "sms") return std::make_unique<dsp::Sms>();

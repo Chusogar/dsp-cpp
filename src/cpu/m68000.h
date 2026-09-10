@@ -24,7 +24,7 @@ public:
     // Optional: return the 68000 vector number (0-255) for an IPL. When unset,
     // autovectors 25-31 are used. The Atari ST MFP needs this for IPL 6.
 
-    enum class Type { M68000, M68010 };
+    enum class Type { M68000, M68010, M68020 };
 
     // 32 bit register with the byte/word views the Pascal code relies on.
     struct Reg32 {
@@ -60,6 +60,14 @@ public:
     void set_irq_acknowledge(std::function<int(int)> handler) {
         irq_ack_ = std::move(handler);
     }
+    void set_address_mask(uint32_t mask) { address_mask_ = mask & ~1u; }
+    using ExceptionHandler = std::function<void(uint32_t vector, uint32_t pc)>;
+    void set_exception_handler(ExceptionHandler h) { exception_handler_ = std::move(h); }
+    using AlineHandler = std::function<bool(uint16_t opcode, uint32_t pc)>;
+    void set_aline_handler(AlineHandler h) { aline_handler_ = std::move(h); }
+    using EmulOpHandler = std::function<bool(uint16_t opcode)>;
+    void set_emul_op_handler(EmulOpHandler h) { emul_op_handler_ = std::move(h); }
+
 
     void reset();
     // Runs until at least `cycles` cycles have elapsed, returns the amount executed.
@@ -83,8 +91,8 @@ public:
     Flags cc;
 
 private:
-    uint16_t getword(uint32_t address) { return read_(address & kAddressMask); }
-    void putword(uint32_t address, uint16_t value) { write_(address & kAddressMask, value); }
+    uint16_t getword(uint32_t address) { return read_(address & address_mask_); }
+    void putword(uint32_t address, uint16_t value) { write_(address & address_mask_, value); }
     uint8_t getbyte(uint32_t address);
     void putbyte(uint32_t address, uint8_t value);
 
@@ -133,6 +141,11 @@ private:
     bool check_supervisor();
 
     static constexpr uint32_t kAddressMask = 0xfffffeu;
+    uint32_t address_mask_ = kAddressMask;
+    uint32_t vbr_ = 0;
+    ExceptionHandler exception_handler_;
+    AlineHandler aline_handler_;
+    EmulOpHandler emul_op_handler_;
 
     uint32_t clock_;
     Type type_;

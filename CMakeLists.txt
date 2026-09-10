@@ -205,6 +205,7 @@ add_executable(dsp
   src/drivers/computers/atari_st.cpp
   src/drivers/computers/amiga.cpp
   src/drivers/computers/macplus.cpp
+  src/drivers/computers/macii.cpp
     
   src/drivers/consoles/sms.cpp
   src/machine/sega_vdp.cpp

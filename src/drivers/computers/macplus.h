@@ -89,6 +89,8 @@ public:
     uint8_t last_kbd_cmd() const { return kbd_cmd_; }
     uint8_t last_kbd_reply() const { return kbd_reply_; }
     Iwm& iwm() { return iwm_; }
+    uint32_t mouse_pulse_count_x() const { return mouse_pulse_count_x_; }
+    uint32_t mouse_pulse_count_y() const { return mouse_pulse_count_y_; }
     Via6522& via() { return via_; }
     uint32_t decompress_count() const { return decompress_count_; }
     uint32_t sony_prime_count() const { return sony_prime_count_; }
@@ -117,6 +119,8 @@ private:
     uint8_t ram_at(uint32_t address) const { return ram_[ram_index(address)]; }
     void ram_at(uint32_t address, uint8_t value) { ram_[ram_index(address)] = value; }
     void clock_keyboard();
+    void mouse_tick();
+    void mouse_pulse(int ch, int dir);
     void find_sony_driver();
     void maybe_sony_dispatch();
     bool maybe_decompress_ptr(uint32_t ptr, uint32_t handle);
@@ -155,6 +159,17 @@ private:
     int last_pointer_x_ = 0;
     int last_pointer_y_ = 0;
     bool pointer_seen_ = false;
+    // Outstanding host mouse motion not yet delivered to the ROM, drained
+    // one quadrature step per axis every 10 scanlines (mac128.cpp
+    // mouse_callback cadence) so a fast host move is spread over several
+    // ticks instead of being clipped to one pixel and lost.
+    int mouse_count_x_ = 0;
+    int mouse_count_y_ = 0;
+    // How many quadrature pulses actually reached the VIA/SCC per axis;
+    // lets tests confirm a fast flick is fully drained, not clipped to one
+    // pulse per frame (see mouse_tick).
+    uint32_t mouse_pulse_count_x_ = 0;
+    uint32_t mouse_pulse_count_y_ = 0;
     bool rtc_ca2_ = false;
 
     uint8_t scc_ptr_[2] = {0, 0};

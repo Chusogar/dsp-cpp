@@ -390,6 +390,8 @@ void MacPlus::reset() {
     mouse_last_[0] = mouse_last_[1] = 0;
     last_pointer_x_ = last_pointer_y_ = 0;
     pointer_seen_ = false;
+    mouse_count_x_ = mouse_count_y_ = 0;
+    mouse_pulse_count_x_ = mouse_pulse_count_y_ = 0;
     rtc_ca2_ = false;
     sony_prime_count_ = 0;
     sony_read_bytes_ = 0;
@@ -788,6 +790,7 @@ void MacPlus::run_frame() {
         const bool vblank = line < kVBlankLines;
         via_.write_ca1(vblank);
         via_.set_pb_line(6, !vblank);
+        if (line % 10 == 0) mouse_tick();
         cpu_.run(kCyclesPerLine);
 
         if (!vblank && snd_enable_) {
@@ -822,26 +825,57 @@ void MacPlus::set_inputs(const MachineInputs& inputs) {
         pointer_seen_ = true;
         return;
     }
-    int dx = inputs.pointer_x - last_pointer_x_;
-    int dy = inputs.pointer_y - last_pointer_y_;
+    // set_inputs runs once per emulated frame (sdl_app calls it right before
+    // run_frame). A host mouse routinely moves more than one Mac pixel in
+    // that 1/60s, so the delta is queued here and drained a step at a time
+    // by mouse_tick() instead of being clipped to one pulse and discarded.
+    mouse_count_x_ += inputs.pointer_x - last_pointer_x_;
+    mouse_count_y_ += inputs.pointer_y - last_pointer_y_;
     last_pointer_x_ = inputs.pointer_x;
     last_pointer_y_ = inputs.pointer_y;
-    auto pulse = [this](int ch, int dir) {
-        if (!dir) return;
-        scc_dcd_[ch] = !scc_dcd_[ch];
-        mouse_last_[ch] = uint8_t(scc_dcd_[ch]);
-        if (dir < 0)
-            mouse_bit_[ch] = uint8_t(mouse_last_[ch] ? 0 : 1);
-        else
-            mouse_bit_[ch] = mouse_last_[ch];
-        if (scc_wr1_[ch] & 0x01) {
-            scc_irq_ = true;
-            update_irqs();
-        }
-    };
-    // One quadrature step per axis per frame keeps the ROM's mouse ISR happy.
-    if (dx) pulse(0, dx > 0 ? 1 : -1);
-    if (dy) pulse(1, dy > 0 ? 1 : -1);
+}
+
+void MacPlus::mouse_pulse(int ch, int dir) {
+    if (!dir) return;
+    scc_dcd_[ch] = !scc_dcd_[ch];
+    mouse_last_[ch] = uint8_t(scc_dcd_[ch]);
+    if (dir < 0)
+        mouse_bit_[ch] = uint8_t(mouse_last_[ch] ? 0 : 1);
+    else
+        mouse_bit_[ch] = mouse_last_[ch];
+    if (ch == 0)
+        mouse_pulse_count_x_++;
+    else
+        mouse_pulse_count_y_++;
+    if (scc_wr1_[ch] & 0x01) {
+        scc_irq_ = true;
+        update_irqs();
+    }
+}
+
+void MacPlus::mouse_tick() {
+    // mac128.cpp mouse_callback: drain one quadrature step per axis toward
+    // zero. Y is inverted relative to X — the physical Y sensor's rotation
+    // sense is opposite the screen's down-positive convention, so a direct
+    // (unflipped) mapping moves the cursor the wrong way vertically.
+    int dir_x = 0;
+    if (mouse_count_x_ < 0) {
+        mouse_count_x_++;
+        dir_x = -1;
+    } else if (mouse_count_x_ > 0) {
+        mouse_count_x_--;
+        dir_x = 1;
+    }
+    int dir_y = 0;
+    if (mouse_count_y_ < 0) {
+        mouse_count_y_++;
+        dir_y = 1;
+    } else if (mouse_count_y_ > 0) {
+        mouse_count_y_--;
+        dir_y = -1;
+    }
+    if (dir_x) mouse_pulse(0, dir_x);
+    if (dir_y) mouse_pulse(1, dir_y);
 }
 
 void MacPlus::set_dip_switch(int, uint8_t) {}
