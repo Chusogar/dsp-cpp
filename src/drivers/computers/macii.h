@@ -18,6 +18,59 @@ public:
     void write(uint32_t o,uint8_t v){ o&=0x1fff; regs_[o]=v; if(o<=0x804)regs_[0x804]|=1; }
 private: std::array<uint8_t,0x2000> regs_{};
 };
+// Minimal but real Z8530 SCC register model, ported from the macplus driver
+// (see its scc_read/scc_write for the full derivation and references). Mac
+// II family machines map this at VIA1_BASE+0x4000..0x6000; unlike the Plus,
+// read and write share one address range, split naturally by which of our
+// own read_byte/write_byte gets called, so only the low bits need decoding.
+class SccStub {
+public:
+    void reset(){
+        ptr_[0]=ptr_[1]=0; wr1_[0]=wr1_[1]=0; wr2_=0; wr9_=0;
+        wr15_[0]=wr15_[1]=0xf8; ext_pending_[0]=ext_pending_[1]=false; dcd_[0]=dcd_[1]=false;
+        irq_=false;
+    }
+    // ch: 0=A, 1=B (matches macplus's "PA_EXT/DCDA=X, PB_EXT/DCDB=Y" convention,
+    // though on desktop Mac IIs both channels are ordinary RS-422 ports).
+    uint8_t read(uint32_t local){
+        const int which=int((local>>1)&3); const int ch=(which&1)?0:1;
+        if(which&2) return 0;  // data register: no serial device attached
+        uint8_t rr=ptr_[ch]; ptr_[ch]=0;
+        if(rr==0){uint8_t v=0x24; if(dcd_[ch]) v=uint8_t(v|0x08); return v;}
+        if(rr==2){
+            if(ch==1){
+                uint8_t src=0;
+                if(ext_pending_[0]) src=0x5; else if(ext_pending_[1]) src=0x1;
+                return uint8_t((wr2_&0xf1)|uint8_t(src<<1));
+            }
+            return wr2_;
+        }
+        if(rr==15) return wr15_[ch];
+        return 0;
+    }
+    void write(uint32_t local,uint8_t value){
+        const int which=int((local>>1)&3); const int ch=(which&1)?0:1;
+        if(which&2) return;  // data register: nothing listening
+        if(ptr_[ch]==0){
+            const uint8_t cmd=uint8_t((value>>3)&7);
+            const uint8_t reg=uint8_t(value&7);
+            ptr_[ch]=(cmd==1)?uint8_t(reg+8):reg;  // Point High -> WR8-15
+            if(cmd==2||cmd==7){ ext_pending_[ch]=false; irq_=ext_pending_[0]||ext_pending_[1]; }
+            return;
+        }
+        const uint8_t reg=ptr_[ch];
+        if(reg==1) wr1_[ch]=value;
+        else if(reg==2) wr2_=value;
+        else if(reg==9) wr9_=value;
+        else if(reg==15) wr15_[ch]=value;
+        ptr_[ch]=0;
+    }
+    bool irq() const { return irq_; }
+private:
+    uint8_t ptr_[2]{0,0}, wr1_[2]{0,0}, wr2_=0, wr9_=0, wr15_[2]{0xf8,0xf8};
+    bool ext_pending_[2]{false,false}, dcd_[2]{false,false}, irq_=false;
+};
+
 class MacII : public Machine {
 public:
     static constexpr uint16_t kOpReset=0x7103, kOpPatchBootGlobs=0x7107, kOpFixMemSize=0x7109;
@@ -47,7 +100,7 @@ public:
     bool uses_keyboard() const override {return true;}
     bool uses_pointer() const override {return true;}
 private:
-    enum class MapKind{Ram,Rom,Via1,Via2,Scsi,ScsiDrq,Asc,Iwm,IoStub,Scratch,NubusFb,NubusDecl,Unmapped};
+    enum class MapKind{Ram,Rom,Via1,Via2,Scsi,ScsiDrq,Asc,Iwm,Scc,IoStub,Scratch,NubusFb,NubusDecl,Unmapped};
     static uint32_t mac_norm(uint32_t a){return a>=0xFF000000u?(a&0x00FFFFFFu):a;}
     MapKind classify(uint32_t a) const;
     int rom_offset(uint32_t a) const;
@@ -76,7 +129,7 @@ private:
     uint8_t via2_pb_r(); void via2_pb_w(uint8_t v);
     static uint8_t vreg(uint32_t a){return uint8_t((a>>9)&0x0f);}
     M68000 cpu_; Via6522 via1_,via2_;
-    Iwm iwm_; MacRtc rtc_; Ncr5380Hdd scsi_; AscStub asc_;
+    Iwm iwm_; MacRtc rtc_; Ncr5380Hdd scsi_; AscStub asc_; SccStub scc_;
     std::vector<uint8_t> ram_,rom_,vram_,nubus_decl_,scratch_;
     uint32_t rom_size_=0x100000,universal_info_=0,asc_base_=0,heap_next_=0x10000;
     std::array<uint32_t,256> clut_{};
@@ -86,7 +139,7 @@ private:
     bool rtc_data_=true,reset_done_=false;
     uint8_t glue_=0,nubus_irq_=0x3f;
     uint32_t bank_b_base_=0x00100000;
-    int via_acc_=0,frame_count_=0,diag_n_=0,stm_stuck_=0,slot_next_=0;
+    int via_acc_=0,frame_count_=0,diag_n_=0,stm_stuck_=0,slot_next_=0,ppat_stuck_=0;
     uint32_t last_pc_=0,scsi_acc_=0,aline_n_=0,scratch_acc_=0;
 };
 }

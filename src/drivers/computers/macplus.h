@@ -91,6 +91,8 @@ public:
     Iwm& iwm() { return iwm_; }
     uint32_t mouse_pulse_count_x() const { return mouse_pulse_count_x_; }
     uint32_t mouse_pulse_count_y() const { return mouse_pulse_count_y_; }
+    bool scc_ext_int_enabled(int ch) const { return (scc_wr1_[ch & 1] & 0x01) != 0; }
+    uint32_t scc_irq_assert_count() const { return scc_irq_assert_count_; }
     Via6522& via() { return via_; }
     uint32_t decompress_count() const { return decompress_count_; }
     uint32_t sony_prime_count() const { return sony_prime_count_; }
@@ -170,10 +172,26 @@ private:
     // pulse per frame (see mouse_tick).
     uint32_t mouse_pulse_count_x_ = 0;
     uint32_t mouse_pulse_count_y_ = 0;
+    uint32_t scc_irq_assert_count_ = 0;
     bool rtc_ca2_ = false;
 
     uint8_t scc_ptr_[2] = {0, 0};
     uint8_t scc_wr1_[2] = {0, 0};
+    // WR2 (interrupt vector) and WR9 (master interrupt control) are single
+    // chip-wide registers on the real Z8530 — accessible, and identical,
+    // through either channel's control port.
+    uint8_t scc_wr2_ = 0;
+    uint8_t scc_wr9_ = 0;
+    // WR15 (External/Status interrupt source control) IS per-channel, unlike
+    // WR2/WR9. The Plus ROM's mouse ISR reads RR15 back (an echo of WR15)
+    // to tell which of two sub-handlers to take.
+    uint8_t scc_wr15_[2] = {0xf8, 0xf8};
+    // Per-channel Ext/Status Interrupt Pending, cleared only on a "Reset
+    // Ext/Status Interrupts" command issued to that specific channel — not
+    // by the other channel's ack. Needed so RR2's modified vector (read
+    // from channel B) can tell the ROM's ISR which axis actually needs
+    // servicing; see scc_read's rr==2 case.
+    bool scc_ext_pending_[2] = {false, false};
     bool scc_dcd_[2] = {false, false};
 
     int64_t via_acc_ = 0;

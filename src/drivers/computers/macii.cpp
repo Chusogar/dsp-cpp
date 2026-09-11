@@ -285,6 +285,24 @@ bool MacII::on_aline(uint16_t op,uint32_t pc){
         cpu_.d[0].l=0; cpu_.pc_.l=pc+2; return true;
     case 0x03B: // HNoPurge etc
         cpu_.d[0].l=0; cpu_.pc_.l=pc+2; return true;
+    case 0x20C: {
+        // Trap $AA0C: a Mac II-only Color QuickDraw extended trap (the
+        // $AA00-$ABFF range only exists on machines with Color QuickDraw)
+        // that looks up a default pixel pattern/cursor ('ppat'/'crsr')
+        // from a ROM-internal fallback list when the Resource Manager
+        // doesn't have a real one loaded yet. That list is meant to be
+        // lazily built the first time it's needed; the ROM call path that
+        // builds it isn't one we reach, so the list is left at its
+        // power-on -1 sentinel, and the search loop — which has no bound
+        // on how large a "count" it will trust from that uninitialized
+        // chain — never reliably reaches its own "not found" case, and
+        // gets retried from scratch indefinitely by its caller. Short
+        // -circuit straight to that same "not found" signal the real
+        // search uses on exhaustion (D0 = -1, then return) — this is
+        // exactly what a genuinely empty/absent list would also produce,
+        // so callers already have to handle it gracefully.
+        cpu_.d[0].l = 0xFFFFFFFFu; cpu_.pc_.l = pc+2; return true;
+    }
     default:
         if(aline_n_<=30)
             std::fprintf(stderr,"macii: A-line pass-through num=$%03x\n",num);
@@ -351,12 +369,23 @@ void MacII::apply_basilisk_patches(){
             if(uint16_t(ofs)==0xffff) break;
             if(lmg==0x0cc0) continue;
             uint32_t slot=dec+uint32_t(ofs)*4u; if(slot+3>=rom_size_) continue;
+            // Same exception as the idx-list pass below: don't stomp a slot
+            // that already points at hardware we actually emulate.
+            {const uint32_t v=rom_be32(slot);
+             if((v&0xFFFF0000u)==0x50F10000u) continue;   // SCSI/SCSIDack
+             if(v>=0x50F04000u&&v<0x50F06000u) continue;}  // SCC
             rom_[slot+0]=uint8_t(kScratchBase>>24);rom_[slot+1]=uint8_t(kScratchBase>>16);
             rom_[slot+2]=uint8_t(kScratchBase>>8);rom_[slot+3]=uint8_t(kScratchBase);
         }
         for(int idx:{2,3,4,5,8,9,10,11,13,14,15}){
             uint32_t slot=dec+uint32_t(idx)*4u; if(slot+3>=rom_size_) continue;
-            if((rom_be32(slot)&0xFFFF0000u)==0x50F10000u) continue;
+            // Keep the ROM's own address if it already points at SCSI (real
+            // hardware we emulate) or the SCC (likewise); every other
+            // peripheral base still gets redirected to the safe scratch
+            // stub, matching what this driver was originally tuned against.
+            {const uint32_t v=rom_be32(slot);
+             if((v&0xFFFF0000u)==0x50F10000u) continue;
+             if(v>=0x50F04000u&&v<0x50F06000u) continue;}
             rom_[slot+0]=uint8_t(kScratchBase>>24);rom_[slot+1]=uint8_t(kScratchBase>>16);
             rom_[slot+2]=uint8_t(kScratchBase>>8);rom_[slot+3]=uint8_t(kScratchBase);
         }
@@ -370,9 +399,12 @@ void MacII::apply_basilisk_patches(){
         }
         note("PatchHWBases+ASC");
     }
-    patch_bytes(rom_,0x8C,{0x71,0x03,0x4E,0xF9,0x40,0x80,0x00,0xBA}); note("EMUL_OP_RESET+JMP BA");
-    patch_nops(rom_,0xC2,2); note("GetHardwareInfo");
-    patch_nops(rom_,0xC6,15); note("VIA init");
+    patch_bytes(rom_,0x90,{0x71,0x03,0x4E,0xF9,0x40,0x80,0x00,0xBA}); note("EMUL_OP_RESET+JMP BA");
+    // [disabled: corrupts the bsr.w $73e displacement at 0xC0-0xC3 into a
+    //  bogus target once the entry patch above is correctly aligned at
+    //  0x90; let the real VIA-probe branch run against our emulated VIA]
+    // patch_nops(rom_,0xC2,2); note("GetHardwareInfo");
+    // patch_nops(rom_,0xC6,15); note("VIA init");
     if(rom_size_>0x7C4){patch_bytes(rom_,0x7C0,{0x7E,0x04,0x4E,0x75}); note("CPU type");}
     {static const uint8_t cg[]={0x42,0x9a,0x36,0x0a,0x66,0xfa};
      uint32_t b=find_rom_data(rom_,0xa00,0xb00,cg,sizeof(cg)); if(b){patch_nops(rom_,b+2,2);note("clear_globs");}}
@@ -434,6 +466,39 @@ void MacII::seed_exception_vectors(){
     // F-line: same idea
     for(size_t i=0;i<sizeof(aline_stub);i++) ram_at(0x440+i, aline_stub[i]);
     setvec(11, 0x440);
+    // Color QuickDraw's extended traps ($AA00-$ABFF, Mac II only — e.g.
+    // GetPixPat/_ppat lookups) fall back to a ROM-internal default
+    // pattern/cursor list, reached through a double-indirect pointer chain
+    // rooted at the low-memory globals $A50 (and the parallel $A5A/$A58
+    // pair) whenever that chain hasn't been populated yet. On real
+    // hardware something during Toolbox init lazily builds that list the
+    // first time it's needed; in our environment the call path that does
+    // that is never reached, so those globals are left at their power-on
+    // -1 sentinel. The search code that walks the list has no bounds
+    // check against that: it reads a 16-bit "entries remaining" count
+    // from wherever the (garbage) chain points, and the upper half of
+    // that count register is left over from unrelated earlier work, so it
+    // ends up scanning tens of millions of "entries" instead of finding
+    // an empty list and returning immediately. Rather than reverse the
+    // exact ROM call that's supposed to build this list, hand it a
+    // trivially valid EMPTY list ourselves: a real pointer chain whose
+    // count is 0 and whose first (only) entry's 4-byte type code is 0,
+    // which can never match a real 4-character resource type like 'ppat'
+    // or 'crsr'. The search then does its normal one-entry check, finds
+    // no match, and returns "not found" immediately, exactly as it would
+    // for a legitimately empty list.
+    {
+        const uint32_t p1 = kRamSize - 4096 + 0x200;  // $A50 -> p1
+        const uint32_t p2 = p1 + 0x20;                // [p1] -> p2 ("master pointer")
+        write_long_be(p1, p2);
+        write_word(uint32_t(p2 + 0x18), 0);         // no extra offset from p2
+        write_word(p2, 0);                          // entry count = 0 (one harmless check)
+        write_long_be(p2 + 2, 0);                       // entry[0] type = 0 (never matches)
+        write_long_be(0x0a50, p1);
+        write_long_be(0x0a54, p1);
+        write_word(0x0a5a, uint16_t(p2 >> 16));
+        write_word(0x0a58, uint16_t(p2));
+    }
 }
 void MacII::emul_op_reset(){
     if(reset_done_) return; reset_done_=true;
@@ -507,8 +572,8 @@ bool MacII::init(const std::string& rom_path,std::string* error){
 }
 void MacII::reset(){
     std::fill(ram_.begin(),ram_.end(),0);std::fill(vram_.begin(),vram_.end(),0);std::fill(scratch_.begin(),scratch_.end(),0);
-    init_clut();build_nubus_decl();asc_.reset();overlay_=true;via1_irq_=via2_irq_=false;scsi_irq_level_=false;
-    via_acc_=0;glue_=0;bank_b_base_=0x00100000;nubus_irq_=0x3f;frame_count_=0;diag_n_=0;stm_stuck_=0;slot_next_=0;
+    init_clut();build_nubus_decl();asc_.reset();scc_.reset();overlay_=true;via1_irq_=via2_irq_=false;scsi_irq_level_=false;
+    via_acc_=0;glue_=0;bank_b_base_=0x00100000;nubus_irq_=0x3f;frame_count_=0;diag_n_=0;stm_stuck_=0;slot_next_=0;ppat_stuck_=0;
     scsi_acc_=0;aline_n_=0;scratch_acc_=0;reset_done_=false;asc_base_=0;heap_next_=0x10000;
     via1_.reset();via2_.reset();via2_.write_ca1(true);via2_.write_cb1(true);via2_.write_cb2(true);via1_.write_cb1(true);via1_.write_cb2(true);
     iwm_.reset();rtc_.reset();scsi_.reset();cpu_.set_address_mask(0xfffffffeu);cpu_.reset();
@@ -524,6 +589,41 @@ void MacII::update_irqs(){cpu_.set_irq(2,via2_irq_?IrqLine::Assert:IrqLine::Clea
 void MacII::on_cpu_cycles(int cycles){
     via_acc_+=cycles;while(via_acc_>=20){via_acc_-=20;via1_.tick(1);via2_.tick(1);}
     {
+        // The ROM's A-line/Toolbox trap dispatcher has (at least) two entry
+        // points into the same shared body: one that first collapses our
+        // 8-byte 68020-style exception frame (format word + PC + SR) down
+        // to a 68000-style one via "move.l 2(a7),4(a7)" before touching the
+        // stack, and a "raw" one (opening with "subq.l #2,a7") that skips
+        // that step and assumes the frame is already 68000-shaped. On real
+        // hardware the ROM picks between them based on a CPU-space MOVES
+        // probe we can't emulate faithfully (see MOVES in m68000.cpp), and
+        // for our frame layout it ends up installing the raw entry as
+        // vector 10 — which then leaks the 2-byte format word on every
+        // single trap dispatch, draining the stack to nothing after a few
+        // thousand calls during Toolbox init. Whenever vector 10 points at
+        // a bare "subq.l #2,a7" (opcode $558F), search a little way back
+        // for the matching "move.l 2(a7),4(a7) / bra.b" wrapper and
+        // redirect there instead — address-independent, so it applies
+        // equally to any ROM revision with this dispatcher shape.
+        if(classify(read_long_be(0x28))==MapKind::Rom){
+            const uint32_t v10=read_long_be(0x28);
+            if(read_word(v10)==0x558Fu){
+                // v10 opens with "subq.l #2,a7" (2 bytes), then falls into the
+                // shared dispatch body. Confirm a candidate wrapper genuinely
+                // leads into that SAME shared body (not just a nearby,
+                // unrelated occurrence of the move.l idiom) by comparing the
+                // next couple of words after each prelude for an exact match.
+                const uint16_t body0=read_word(v10+2), body1=read_word(v10+4);
+                for(uint32_t back=8;back<=96;back+=2){
+                    const uint32_t cand=v10-back;
+                    if(read_word(cand)==0x2F6Fu && read_word(cand+2)==0x0002u && read_word(cand+4)==0x0004u
+                       && read_word(cand+6)==body0 && read_word(cand+8)==body1){
+                        write_long_be(0x28,cand);
+                        break;
+                    }
+                }
+            }
+        }
         const uint32_t pcnow=cpu_.pc();
         const uint32_t off=pcnow&0xfffffu;
         if(aline_n_>=5){
@@ -565,6 +665,20 @@ void MacII::on_cpu_cycles(int cycles){
                 stm_stuck_=0;
             }
         } else stm_stuck_=0;
+        // Color QuickDraw's default-pattern/cursor list search (see the
+        // comment in seed_exception_vectors) can still end up scanning a
+        // very long or malformed chain if it's reached through some path
+        // other than the one seeded there, or through stale register state
+        // left over from earlier work. If the search's own compare loop
+        // (cmp.l (a2),d3 / adda.w d0,a2 / dbeq d5,...) is still spinning
+        // after far more iterations than any real pattern/cursor list
+        // would ever contain, force the DBcc counter to run out so it
+        // falls through to its normal "not found" path — the same kind of
+        // bounded assist as the STM region above, just scoped to this one
+        // search loop instead of resetting CPU registers wholesale.
+        if(off==0x12E66u){
+            if(++ppat_stuck_>4000) cpu_.d[5].l&=0xffff0000u;
+        } else if(off!=0x12E68u && off!=0x12E6Au) ppat_stuck_=0;
         if(off>=0xB9F9Au && off<=0xB9FB6u){
             cpu_.d[0].l = 0;
             cpu_.pc_.l=kRomBase+0xB9FB2;
@@ -618,7 +732,7 @@ MacII::MapKind MacII::classify(uint32_t address) const{
     if((address&0xff000000u)==0x50000000u){
         const uint32_t off=(address&~0x00f00000u)&0x000fffffu;
         if(off<0x2000)return MapKind::Via1; if(off<0x4000)return MapKind::Via2;
-        if(off>=0x4000&&off<0x6000) return MapKind::Scratch;
+        if(off>=0x4000&&off<0x6000) return MapKind::Scc;
         if(off>=0x6000&&off<0x8000)return MapKind::ScsiDrq;
         if(off>=0x10000&&off<0x12000)return MapKind::Scsi;
         if(off>=0x12000&&off<0x14000)return MapKind::ScsiDrq;
@@ -647,6 +761,7 @@ uint8_t MacII::read_byte(uint32_t address){
         case MapKind::Scsi:case MapKind::ScsiDrq:{++scsi_acc_;if(scsi_acc_<=6)std::fprintf(stderr,"macii: SCSI R $%08x\n",address);
             uint8_t v=scsi_.read(scsi_addr(address,k==MapKind::ScsiDrq));sync_scsi_irq();return v;}
         case MapKind::Asc:return asc_.read((address&~0x00f00000u)&0x1fffu);case MapKind::Iwm:return iwm_.read(vreg(address));
+        case MapKind::Scc:return scc_.read(((address&~0x00f00000u)&0x000fffffu)-0x4000u);
         case MapKind::NubusFb:{uint32_t off=address&0xfffffu;return off<kVramSize?vram_[off]:0;}
         case MapKind::NubusDecl:{uint32_t off=address&0xffffu;return off<nubus_decl_.size()?nubus_decl_[off]:0xff;}
         default:return 0xff;}}
@@ -660,6 +775,7 @@ void MacII::write_byte(uint32_t address,uint8_t value){
         case MapKind::Scsi:case MapKind::ScsiDrq:{++scsi_acc_;if(scsi_acc_<=6)std::fprintf(stderr,"macii: SCSI W $%08x=$%02x\n",address,value);
             scsi_.write(scsi_addr(address,k==MapKind::ScsiDrq),value);sync_scsi_irq();return;}
         case MapKind::Asc:asc_.write((address&~0x00f00000u)&0x1fffu,value);return;case MapKind::Iwm:iwm_.write(vreg(address),value);return;
+        case MapKind::Scc:scc_.write(((address&~0x00f00000u)&0x000fffffu)-0x4000u,value);return;
         case MapKind::NubusFb:{uint32_t off=address&0xfffffu;if(off<kVramSize)vram_[off]=value;return;}
         default:return;}}
 uint16_t MacII::read_word(uint32_t address){

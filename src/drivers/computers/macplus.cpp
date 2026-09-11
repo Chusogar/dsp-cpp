@@ -392,6 +392,7 @@ void MacPlus::reset() {
     pointer_seen_ = false;
     mouse_count_x_ = mouse_count_y_ = 0;
     mouse_pulse_count_x_ = mouse_pulse_count_y_ = 0;
+    scc_irq_assert_count_ = 0;
     rtc_ca2_ = false;
     sony_prime_count_ = 0;
     sony_read_bytes_ = 0;
@@ -410,6 +411,10 @@ void MacPlus::reset() {
     for (uint16_t& t : trap_log_) t = 0;
     scc_ptr_[0] = scc_ptr_[1] = 0;
     scc_wr1_[0] = scc_wr1_[1] = 0;
+    scc_wr2_ = 0;
+    scc_wr9_ = 0;
+    scc_wr15_[0] = scc_wr15_[1] = 0xf8;
+    scc_ext_pending_[0] = scc_ext_pending_[1] = false;
     scc_dcd_[0] = scc_dcd_[1] = false;
     via_acc_ = 0;
     rtc_acc_ = 0;
@@ -631,6 +636,24 @@ uint8_t MacPlus::scc_read(uint32_t address) {
         if (scc_dcd_[ch]) v = uint8_t(v | 0x08);
         return v;
     }
+    if (rr == 2) {
+        // RR2: on Channel A this is the raw WR2 vector. On Channel B it is
+        // always modified with a 3-bit code (V3 V2 V1, "Status Low" — the
+        // Plus ROM's ISR masks exactly these bits) naming the
+        // highest-priority pending source, per real Z8530 semantics: the
+        // ROM's SCC interrupt handler reads this to dispatch to its
+        // per-condition table (one entry updates the mouse X position,
+        // another updates Y). Channel A outranks Channel B, matching real
+        // SCC channel priority; we only ever model Ext/Status sources.
+        if (ch == 1) {
+            uint8_t src = 0;  // 000 = no source pending (Ch B Tx Buffer Empty slot)
+            if (scc_ext_pending_[0]) src = 0x5;       // 101: Ch A External/Status
+            else if (scc_ext_pending_[1]) src = 0x1;  // 001: Ch B External/Status
+            return uint8_t((scc_wr2_ & 0xf1) | uint8_t(src << 1));
+        }
+        return scc_wr2_;
+    }
+    if (rr == 15) return scc_wr15_[ch];
     return 0;
 }
 
@@ -641,18 +664,33 @@ void MacPlus::scc_write(uint32_t address, uint8_t value) {
     if (data_reg) return;
     if (scc_ptr_[ch] == 0) {
         // WR0: bits 2-0 select the next register; bits 5-3 are a command.
-        // Command 2 (Reset Ext/Status) is how the Plus ROM mouse ISR drops
-        // IPL2 after a DCD edge. Ignoring it leaves scc_irq_ stuck and the
-        // CPU never sees VBL again.
+        // Command 1 is Point High — it accesses WR/RR 8-15 by adding 8 to
+        // the register bits in this SAME byte, not a separate access. Without
+        // this, every attempt to program WR9 (master interrupt control,
+        // needed for the ROM's mouse ISR to identify which axis interrupted)
+        // silently landed on WR1 instead, corrupting it. Command 2 (Reset
+        // Ext/Status) is how the Plus ROM mouse ISR drops IPL2 after a DCD
+        // edge. Ignoring it leaves scc_irq_ stuck and the CPU never sees
+        // VBL again.
         const uint8_t cmd = uint8_t((value >> 3) & 7);
-        scc_ptr_[ch] = uint8_t(value & 7);
+        const uint8_t reg = uint8_t(value & 7);
+        scc_ptr_[ch] = (cmd == 1) ? uint8_t(reg + 8) : reg;
         if (cmd == 2 || cmd == 7) {
-            scc_irq_ = false;
+            // Reset Ext/Status Interrupts / Reset Highest IUS: acknowledges
+            // only the channel this control port belongs to. Clearing the
+            // other channel's pending source here would silently drop a
+            // queued mouse pulse on that axis.
+            scc_ext_pending_[ch] = false;
+            scc_irq_ = scc_ext_pending_[0] || scc_ext_pending_[1];
             update_irqs();
         }
         return;
     }
-    if (scc_ptr_[ch] == 1) scc_wr1_[ch] = value;
+    const uint8_t reg = scc_ptr_[ch];
+    if (reg == 1) scc_wr1_[ch] = value;
+    else if (reg == 2) scc_wr2_ = value;  // chip-wide, either channel writes it
+    else if (reg == 9) scc_wr9_ = value;  // chip-wide, either channel writes it
+    else if (reg == 15) scc_wr15_[ch] = value;
     scc_ptr_[ch] = 0;
 }
 
@@ -840,15 +878,17 @@ void MacPlus::mouse_pulse(int ch, int dir) {
     scc_dcd_[ch] = !scc_dcd_[ch];
     mouse_last_[ch] = uint8_t(scc_dcd_[ch]);
     if (dir < 0)
-        mouse_bit_[ch] = uint8_t(mouse_last_[ch] ? 0 : 1);
-    else
         mouse_bit_[ch] = mouse_last_[ch];
+    else
+        mouse_bit_[ch] = uint8_t(mouse_last_[ch] ? 0 : 1);
     if (ch == 0)
         mouse_pulse_count_x_++;
     else
         mouse_pulse_count_y_++;
     if (scc_wr1_[ch] & 0x01) {
+        scc_ext_pending_[ch] = true;
         scc_irq_ = true;
+        scc_irq_assert_count_++;
         update_irqs();
     }
 }

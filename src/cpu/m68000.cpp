@@ -114,14 +114,19 @@ void M68000::reset() {
 }
 
 uint8_t M68000::getbyte(uint32_t address) {
-    address &= address_mask_;
+    // Preserve bit 0 here: address_mask_ clears it (word alignment, for
+    // getword/putword), but this function still needs the odd/even bit
+    // below to pick the low or high byte of the fetched word. Masking it
+    // away first made every byte read see address&1==0 and always return
+    // the high byte, corrupting all odd-address byte access.
+    address &= (address_mask_ | 1u);
     if (read_byte_) return read_byte_(address);
     uint16_t value = getword(address);
     return (address & 1) ? uint8_t(value & 0xff) : uint8_t(value >> 8);
 }
 
 void M68000::putbyte(uint32_t address, uint8_t value) {
-    address &= address_mask_;
+    address &= (address_mask_ | 1u);  // see getbyte's comment
     if (write_byte_) {
         write_byte_(address, value);
         return;
@@ -174,9 +179,52 @@ void M68000::set_flags(uint16_t value) {
 
 uint32_t M68000::indexed_offset(uint32_t base) {
     const uint16_t extension = fetch_word();
-    const int8_t displacement = int8_t(extension & 0xff);
     const size_t index = size_t((extension >> 12) & 7);
     const Reg32& reg = (extension & 0x8000) ? a[index] : d[index];
+    // 68020+ full extension word format (bit 8 set): adds a base-register
+    // suppress bit, an index-register suppress bit, a 2-bit scale factor
+    // (x1/x2/x4/x8), a variable-size (0/16/32-bit) base displacement word
+    // that follows in memory, and optional memory-indirection with an
+    // outer displacement. A plain 68000/68010 core never sets bit 8 (their
+    // brief-format extension word only has an 8-bit displacement in that
+    // position), so gate this on CPU type to avoid changing already-working
+    // brief-format decoding for those cores.
+    if (type_ == Type::M68020 && (extension & 0x100) != 0) {
+        const bool base_suppress = (extension & 0x80) != 0;
+        const bool index_suppress = (extension & 0x40) != 0;
+        const int scale = 1 << ((extension >> 9) & 3);
+        const int bd_size = (extension >> 4) & 3;  // 0=reserved(treat as none),1=none,2=word,3=long
+        int32_t base_disp = 0;
+        if (bd_size == 2) base_disp = int32_t(int16_t(fetch_word()));
+        else if (bd_size == 3) base_disp = int32_t(fetch_long());
+        int32_t index_val = 0;
+        if (!index_suppress) {
+            index_val = (extension & 0x800) ? int32_t(reg.l) : int32_t(int16_t(reg.wl()));
+            index_val *= scale;
+        }
+        const uint32_t eff_base = base_suppress ? 0u : base;
+        const int iis = extension & 7;
+        if (iis == 0) {
+            // No memory indirection: base + base_disp + scaled index.
+            return uint32_t(int32_t(eff_base) + base_disp + index_val);
+        }
+        // Memory-indirect (pre- or post-indexed) with an outer displacement.
+        uint32_t intermediate_addr = uint32_t(int32_t(eff_base) + base_disp);
+        uint32_t intermediate;
+        if (iis <= 4) {  // preindexed: index added before the indirection
+            intermediate_addr = uint32_t(int32_t(intermediate_addr) + index_val);
+            intermediate = (uint32_t(getword(intermediate_addr)) << 16) | getword(intermediate_addr + 2);
+        } else {  // postindexed: index added after the indirection
+            intermediate = (uint32_t(getword(intermediate_addr)) << 16) | getword(intermediate_addr + 2);
+            intermediate = uint32_t(int32_t(intermediate) + index_val);
+        }
+        int32_t outer_disp = 0;
+        const int od_size = iis & 3;
+        if (od_size == 2) outer_disp = int32_t(int16_t(fetch_word()));
+        else if (od_size == 3) outer_disp = int32_t(fetch_long());
+        return uint32_t(int32_t(intermediate) + outer_disp);
+    }
+    const int8_t displacement = int8_t(extension & 0xff);
     const uint32_t value = (extension & 0x800) ? reg.l : uint32_t(int32_t(int16_t(reg.wl())));
     return base + value + uint32_t(int32_t(displacement));
 }
@@ -461,7 +509,7 @@ bool M68000::check_supervisor() {
     if (cc.s) return true;
     // Privilege violation, vector 8.
     pc_.l = ppc_.l;
-    exception(0x20, 34);
+    exception(8, 34);
     return false;
 }
 
@@ -869,10 +917,46 @@ void M68000::group_0(uint16_t instruction) {
             cc.c = ((((immediate & result) | (~value & (immediate | result))) >> 23) & 0x100) != 0;
             break;
         }
+        case 0x38: case 0x39: case 0x3a: {
+            // moves.b/w/l (68010+): move to/from an alternate address space
+            // selected by SFC/DFC. We have one flat memory map, so this
+            // behaves like an ordinary move — real ROMs use it mainly to
+            // probe which CPU is present (it traps on a plain 68000).
+            const uint16_t ext = fetch_word();
+            const int reg = (ext >> 12) & 7;
+            const bool is_addr_reg = (ext & 0x0800) != 0;
+            const bool reg_to_ea = (ext & 0x8000) != 0;
+            if (op == 0x38) {
+                cycles_ += 4 + calc_ea_t_bw(dir);
+                if (reg_to_ea) {
+                    write_b2(dir, is_addr_reg ? a[reg].l0() : d[reg].l0());
+                } else {
+                    const uint8_t v = read_b(dir);
+                    if (is_addr_reg) a[reg].set_l0(v); else d[reg].set_l0(v);
+                }
+            } else if (op == 0x39) {
+                cycles_ += 4 + calc_ea_t_bw(dir);
+                if (reg_to_ea) {
+                    write_w2(dir, is_addr_reg ? a[reg].wl() : d[reg].wl());
+                } else {
+                    const uint16_t v = read_w(dir);
+                    if (is_addr_reg) a[reg].set_wl(v); else d[reg].set_wl(v);
+                }
+            } else {
+                cycles_ += 4 + calc_ea_t_l(dir);
+                if (reg_to_ea) {
+                    write_l2(dir, is_addr_reg ? a[reg].l : d[reg].l);
+                } else {
+                    const uint32_t v = read_l(dir);
+                    if (is_addr_reg) a[reg].l = v; else d[reg].l = v;
+                }
+            }
+            break;
+        }
         default:
             // Illegal instruction, vector 4.
             pc_.l = ppc_.l;
-            exception(0x10, 34);
+            exception(4, 34);
             break;
     }
 }
@@ -1520,7 +1604,7 @@ void M68000::group_8(uint16_t instruction) {
             const uint16_t divisor = read_w(dir);
             if (divisor == 0) {
                 pc_.l = ppc_.l;
-                exception(0x14, 38);  // divide by zero
+                exception(5, 38);  // divide by zero
                 break;
             }
             cc.c = false;
@@ -1624,7 +1708,7 @@ void M68000::group_8(uint16_t instruction) {
             const int32_t divisor = int32_t(int16_t(read_w(dir)));
             if (divisor == 0) {
                 pc_.l = ppc_.l;
-                exception(0x14, 38);  // divide by zero
+                exception(5, 38);  // divide by zero
                 break;
             }
             const uint32_t value = d[dest].l;
@@ -2092,7 +2176,7 @@ void M68000::group_4(uint16_t instruction) {
             cc.n = value < 0;
             if (value < 0 || value > bound) {
                 pc_.l = ppc_.l;
-                exception(0x18, 30);
+                exception(6, 30);
             }
             break;
         }
@@ -2445,8 +2529,9 @@ void M68000::group_4(uint16_t instruction) {
                 putword(a[7].l + 2, pc_.wh());
                 putword(a[7].l, flags);
                 opcode_ = false;
-                pc_.set_wh(getword(0x80 + ((instruction & 0x0f) * 4)));
-                pc_.set_wl(getword(0x82 + ((instruction & 0x0f) * 4)));
+                const uint32_t vec_addr = vbr_ + 0x80u + uint32_t(instruction & 0x0f) * 4u;
+                pc_.set_wh(getword(vec_addr));
+                pc_.set_wl(getword(vec_addr + 2));
                 opcode_ = true;
             } else if (dir <= 0x17) {  // link
                 cycles_ += 16;
@@ -2577,7 +2662,7 @@ void M68000::group_4(uint16_t instruction) {
         }
         default:
             pc_.l = ppc_.l;
-            exception(0x10, 34);
+            exception(4, 34);
             break;
     }
 }
@@ -2609,16 +2694,20 @@ void M68000::group_a(uint16_t instruction) {
 }
 
 void M68000::group_f(uint16_t instruction) {
-    if (type_ == Type::M68020) {
-        cycles_ += 8;
-        const int mode = (instruction >> 3) & 7, reg = instruction & 7;
-        fetch_word();
-        if (mode == 5 || (mode == 7 && reg == 0)) fetch_word();
-        else if (mode == 6 || (mode == 7 && reg == 1)) fetch_word();
-        else if (mode == 7 && reg == 2) { fetch_word(); fetch_word(); }
-        else if (mode == 7 && (reg == 3 || reg == 4)) fetch_word();
-        return;
-    }
+    // A real 68020 without an FPU coprocessor attached traps every F-line
+    // opcode straight to the Line 1111 Emulator exception (vector 11) as
+    // soon as it recognizes the F-line prefix — it never needs to know the
+    // full instruction's length, since that's entirely the software
+    // handler's job (real FPU emulation, or just "no coprocessor present").
+    // The previous code tried to guess how many extension words to skip
+    // and silently continue, which both executes FPU instructions as
+    // no-ops when real ROMs expect them to fault, and guesses wrong for
+    // several addressing-mode/format combinations (e.g. an immediate
+    // extended-precision source needs several more words than modes 5-7
+    // account for) — landing PC at a garbage mid-instruction address on
+    // return. Just raise the exception unconditionally, like the A-line
+    // path already does.
+    (void)instruction;
     exception(11, 34);
 }
 
@@ -2643,8 +2732,8 @@ bool M68000::take_irq() {
             const int vec = irq_ack_(level);
             if (vec >= 0) vec_addr = uint32_t(vec) * 4u;
         }
-        pc_.set_wh(getword(vec_addr));
-        pc_.set_wl(getword(vec_addr + 2));
+        pc_.set_wh(getword(vbr_ + vec_addr));
+        pc_.set_wl(getword(vbr_ + vec_addr + 2));
         opcode_ = true;
         if (irq_[size_t(level)] == IrqLine::Hold) irq_[size_t(level)] = IrqLine::Clear;
         cc.im = uint8_t(level);
@@ -2678,6 +2767,18 @@ int M68000::run(int cycles) {
         }
 
         ppc_ = pc_;
+        if (pc_.l & 1u) {
+            // Address Error: real 68000-family hardware refuses to fetch an
+            // instruction from an odd address at all and traps immediately
+            // (vector 3) instead. Without this, a bad computed jump/return
+            // that lands on an odd address was previously left to "execute"
+            // whatever garbage instruction decoding fell out of it —
+            // walking off into unrelated memory instead of hitting the
+            // ROM's (or our seed stub's) real error handler like actual
+            // hardware would.
+            exception(3, 34);
+            continue;
+        }
         const uint16_t instruction = fetch_word();
         switch (instruction >> 12) {
             case 0x0: group_0(instruction); break;
@@ -2698,7 +2799,7 @@ int M68000::run(int cycles) {
             case 0xf: group_f(instruction); break;
             default:
                 pc_.l = ppc_.l;
-                exception(0x10, 34);  // illegal instruction
+                exception(4, 34);  // illegal instruction
                 break;
         }
         if (cycle_handler_) cycle_handler_(cycles_ - start);

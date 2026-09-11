@@ -5758,6 +5758,117 @@ void test_mac_boot_if_present() {
     }
 }
 
+void test_mac_mouse_tracking_if_present() {
+    // Regression test for the mouse fix: set_inputs() runs once per emulated
+    // frame, so a normal host mouse routinely moves more than one Mac pixel
+    // between samples. The old code emitted exactly one quadrature pulse per
+    // set_inputs() call and then snapped last_pointer_x_/y_ to the new
+    // absolute position, silently discarding everything past that first
+    // pixel. mouse_tick() must now queue the whole delta and drain it a step
+    // at a time (mac128.cpp mouse_callback cadence) without losing any of it.
+    const char* rom = "/tmp/roms/macplus.zip";
+    std::FILE* f = std::fopen(rom, "rb");
+    if (!f) return;
+    std::fclose(f);
+
+    dsp::MacPlus machine;
+    std::string error;
+    check(machine.init(rom, &error), "Mac Plus ROM loads for the mouse tracking test");
+
+    dsp::MachineInputs in;
+    in.has_pointer = true;
+    in.pointer_x = 0;
+    in.pointer_y = 0;
+    machine.set_inputs(in);
+    machine.run_frame();
+    check(machine.mouse_pulse_count_x() == 0 && machine.mouse_pulse_count_y() == 0,
+          "the first pointer sample only seeds the tracker, no phantom motion");
+
+    // A single fast host flick: 200 Mac pixels of X movement delivered in
+    // ONE set_inputs call, exactly like a real mouse moving between two
+    // 60 Hz samples.
+    in.pointer_x = 200;
+    machine.set_inputs(in);
+    for (int i = 0; i < 10; i++) machine.run_frame();
+    check(machine.mouse_pulse_count_x() == 200,
+          "all 200 pixels of a single-frame flick reach the VIA, not clipped to one pulse");
+
+    in.pointer_y = 40;
+    machine.set_inputs(in);
+    for (int i = 0; i < 5; i++) machine.run_frame();
+    check(machine.mouse_pulse_count_y() == 40, "queued Y motion also drains fully");
+}
+
+void test_mac_mouse_cursor_tracks_if_present() {
+    // Regression test for the SCC fixes (Point High command, WR2/WR9
+    // storage, RR2's channel-B "vector includes status" dispatch, RR15
+    // reset default): the ROM's low-level mouse ISR needs a correctly
+    // delivered AND correctly dispatched SCC interrupt to move the cursor
+    // at all. Before this fix, WR0's "Point High" command (needed to reach
+    // WR9, the SCC's master interrupt control register) was not
+    // implemented, so the ROM's attempt to program WR9 was silently
+    // misdirected into WR1 instead — leaving RR2's channel-B status-vector
+    // dispatch permanently reading zero. The ROM's ISR always jumped to
+    // dispatch-table entry 0 (a bare RTS) no matter which axis moved, so
+    // Inside Macintosh's raw mouse-tracking global (MTemp, $0828) stayed
+    // frozen forever regardless of how many quadrature pulses the VIA/SCC
+    // layer delivered underneath it. test_mac_mouse_tracking_if_present
+    // covers that lower VIA/SCC layer; this test covers the ROM actually
+    // consuming it.
+    const char* rom = "/tmp/roms/macplus.zip";
+    const char* sys608 = "/tmp/macdisks/sys608/MacOS_6.0.8_System_Startup.img";
+    std::FILE* rf = std::fopen(rom, "rb");
+    std::FILE* df = std::fopen(sys608, "rb");
+    if (!rf || !df) {
+        if (rf) std::fclose(rf);
+        if (df) std::fclose(df);
+        return;
+    }
+    std::fclose(rf);
+    std::fclose(df);
+
+    dsp::MacPlus machine;
+    std::string error;
+    check(machine.init(rom, &error), "Mac Plus ROM loads for the cursor tracking test");
+    check(machine.load_media(sys608, &error),
+          "System 6.0.8 Startup mounts for the cursor tracking test");
+
+    dsp::MachineInputs in;
+    in.has_pointer = true;
+    in.pointer_x = 10;
+    in.pointer_y = 10;
+    machine.set_inputs(in);
+    for (int i = 0; i < 2500; i++) {
+        machine.set_inputs(in);
+        machine.run_frame();
+    }
+
+    auto mtemp_v = [&]() { return (int(machine.peek(0x0828)) << 8) | machine.peek(0x0829); };
+    auto mtemp_h = [&]() { return (int(machine.peek(0x082a)) << 8) | machine.peek(0x082b); };
+    const int start_v = mtemp_v();
+    const int start_h = mtemp_h();
+
+    // A realistically paced drag (a little over a pixel per frame, like an
+    // actual mouse), not a single-frame flick — mouse_tick caps delivery at
+    // one quadrature step per axis every 10 scanlines, so a synthetic
+    // flick much faster than a real mouse can transiently outrun how fast
+    // the ROM's own ISR re-arms between edges.
+    const int steps = 200;
+    for (int s = 1; s <= steps; s++) {
+        in.pointer_x = 10 + 240 * s / steps;
+        in.pointer_y = 10 + 140 * s / steps;
+        machine.set_inputs(in);
+        machine.run_frame();
+    }
+
+    check(machine.mouse_pulse_count_x() == 240 && machine.mouse_pulse_count_y() == 140,
+          "the full drag is delivered as VIA/SCC pulses");
+    const int end_v = mtemp_v();
+    const int end_h = mtemp_h();
+    check(std::abs((end_v - start_v) - 140) <= 2 && std::abs((end_h - start_h) - 240) <= 2,
+          "the ROM's own mouse-tracking global (MTemp) follows the drag almost exactly");
+}
+
 void test_ql_match_point_if_present() {
     const char* rom = "/tmp/roms/ql.zip";
     const char* match = "/tmp/ql/Match Point (1985)(Psion).mdv";
@@ -6071,6 +6182,8 @@ int main() {
     test_mac_gcr_and_dsk();
     test_mac_missing_roms();
     test_mac_boot_if_present();
+    test_mac_mouse_tracking_if_present();
+    test_mac_mouse_cursor_tracks_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
