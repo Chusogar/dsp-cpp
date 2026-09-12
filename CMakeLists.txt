@@ -56,6 +56,7 @@ add_executable(dsp
   src/sound/huc6280_psg.cpp
   src/sound/vlm5030.cpp
   src/sound/es5503.cpp
+  src/sound/saa1099.cpp
     
   src/video/gfx.cpp
   src/video/atari_mo.cpp
@@ -127,6 +128,8 @@ add_executable(dsp
   src/machine/amiga_adf.cpp
   src/machine/amiga_chipset.cpp
   src/machine/taito_68705.cpp
+  src/machine/sam_disk.cpp
+  src/machine/wd1772.cpp
  
   src/drivers/arcade/bagman.cpp
   src/drivers/arcade/mikie.cpp
@@ -206,6 +209,7 @@ add_executable(dsp
   src/drivers/computers/amiga.cpp
   src/drivers/computers/macplus.cpp
   src/drivers/computers/macii.cpp
+  src/drivers/computers/samcoupe.cpp
     
   src/drivers/consoles/sms.cpp
   src/machine/sega_vdp.cpp
