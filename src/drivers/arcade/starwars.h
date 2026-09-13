@@ -18,6 +18,10 @@ namespace dsp {
 // Atari Star Wars (1983): dual 6809, AVG vector display, mathbox, 4×POKEY + TMS5220.
 class StarWars : public Machine {
 public:
+    // The Empire Strikes Back runs on the same board with an extra bank of
+    // ROM at $8000-$9FFF selected by an Atari "slapstic" security chip.
+    enum class Game { StarWars, Esb };
+
     static constexpr int kScreenWidth = 400;
     static constexpr int kScreenHeight = 300;
     static constexpr uint32_t kMasterClock = 12096000;
@@ -27,7 +31,7 @@ public:
     static constexpr double kFramesPerSecond = double(kClock3k) / 12.0 / 6.0;
     static constexpr int kSampleRate = 44100;
 
-    StarWars();
+    explicit StarWars(Game game = Game::StarWars);
 
     bool init(const std::string& rom_path, std::string* error) override;
     void reset() override;
@@ -44,7 +48,13 @@ public:
     void drain_audio(std::vector<int16_t>& out) override;
     int sample_rate() const override { return kSampleRate; }
 
-    const char* title() const override { return "Star Wars"; }
+    const char* title() const override {
+        return game_ == Game::Esb ? "The Empire Strikes Back" : "Star Wars";
+    }
+
+    // The yoke is an analog control, so let the front end hand us the mouse
+    // position and fly with it.
+    bool uses_pointer() const override { return true; }
 
     uint16_t debug_pc() const { return main_cpu_.pc(); }
     size_t debug_avg_lines() const { return avg_.lines().size(); }
@@ -63,6 +73,7 @@ private:
     uint8_t avg_read(uint16_t address) const;
     uint8_t adc_channel(int channel) const;
 
+    Game game_ = Game::StarWars;
     M6809 main_cpu_;
     M6809 sound_cpu_;
     Pokey pokey0_;
@@ -74,7 +85,7 @@ private:
     StarwarsMath math_;
     AvgStarwars avg_;
 
-    std::array<uint8_t, 0x12000> main_rom_{};
+    std::array<uint8_t, 0x22000> main_rom_{};
     std::array<uint8_t, 0x1000> vector_rom_{};
     std::array<uint8_t, 0x3000> vector_ram_{};
     std::array<uint8_t, 0x800> work_ram_{};
@@ -93,6 +104,11 @@ private:
     uint8_t analog_y_ = 0x80;
     uint8_t adc_value_ = 0x80;
     int adc_channel_ = 0;
+    // Slapstic (137412-101) state. It watches accesses inside its address
+    // window and switches bank on recognised address sequences.
+    uint8_t slapstic_tweak(uint16_t offset);
+    int slapstic_state_ = 0;
+    int slapstic_bank_ = 3;
     uint8_t bank_ = 0;
     uint8_t outlatch_ = 0;
     uint8_t sound_latch_ = 0;

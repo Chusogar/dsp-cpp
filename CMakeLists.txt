@@ -76,6 +76,7 @@ add_executable(dsp
   src/video/tia.cpp
   src/video/antic.cpp
   src/video/gtia.cpp
+  src/video/maria.cpp
   
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
@@ -237,6 +238,7 @@ add_executable(dsp
   src/drivers/consoles/atari_lynx.cpp
   src/drivers/consoles/a2600.cpp
   src/drivers/consoles/pcengine.cpp
+  src/drivers/consoles/a7800.cpp
   
       
   src/core/rom_loader.cpp

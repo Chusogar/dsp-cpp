@@ -4,7 +4,6 @@
 #include <functional>
 #include <vector>
 
-
 namespace dsp {
 
 // Atari POKEY, ported from pokey.pas.

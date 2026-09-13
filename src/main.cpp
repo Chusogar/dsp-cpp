@@ -93,6 +93,7 @@
 #include "drivers/consoles/a2600.h"
 #include "drivers/consoles/scv.h"
 #include "drivers/consoles/pcengine.h"
+#include "drivers/consoles/a7800.h"
 
 
 #include "frontend/sdl_app.h"
@@ -110,7 +111,7 @@ void print_supported_emulators() {
         "\n"
         "  Arcade:\n"
         "    bagman, mikie, trackfld, gauntlet, mrdo, ddragon, ddragon2,\n"
-        "    elevator, junglek, indydoom, peter, marble, skullxbo, shuuz, starwars, asteroid, roadrunn,\n"
+        "    elevator, junglek, indydoom, peter, marble, skullxbo, shuuz, starwars, esb, asteroid, roadrunn,\n"
         "    paperboy, ssprint, apb, 720,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
 		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
@@ -153,7 +154,7 @@ void print_supported_emulators() {
         "  Consoles:\n"
         "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp,\n"
         "    pv1000, pv2000, coleco, sg1000, gb, nes, lynx, scv, pcengine, sgx,\n"
-        "    a2600, atari2600, vcs\n"
+        "    a2600, atari2600, vcs, a7800\n"
         "\n");
 }
 
@@ -227,7 +228,10 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "peter") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::PeterPak);	
 	if (game == "marble") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Marble);
 	if (game == "starwars" || game == "star-wars") {
-		return std::make_unique<dsp::StarWars>();
+		return std::make_unique<dsp::StarWars>(dsp::StarWars::Game::StarWars);
+	}
+	if (game == "esb") {
+		return std::make_unique<dsp::StarWars>(dsp::StarWars::Game::Esb);
 	}
 	if (game == "asteroid" || game == "asteroids") {
 		return std::make_unique<dsp::Asteroid>();
@@ -435,6 +439,10 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 		return std::make_unique<dsp::Pirates>(dsp::Pirates::Game::Genix);
 	}
 
+	if (game == "shadoww" || game == "shadow_warriors" || game == "gaiden" ||
+	    game == "ninjagaiden")
+	    return std::make_unique<dsp::ShadowWarriors>();
+
 	if (game == "armedf") { return std::make_unique<dsp::ArmedfHw>(dsp::ArmedfHw::Game::ArmedF); }
 	if (game == "terraf") { return std::make_unique<dsp::ArmedfHw>(dsp::ArmedfHw::Game::TerraForce); }
 	if (game == "cclimbr2") { return std::make_unique<dsp::ArmedfHw>(dsp::ArmedfHw::Game::CrazyClimber2); }
@@ -536,8 +544,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "a800") { return std::make_unique<dsp::Atari8>(dsp::Atari8::Model::A800); }
 	if (game == "a800xl") { return std::make_unique<dsp::Atari8>(dsp::Atari8::Model::A800XL); }
 	if (game == "a800xe") { return std::make_unique<dsp::Atari8>(dsp::Atari8::Model::A800XE); }
-
-    	
+		
 	// consoles
 	if (game == "sms") return std::make_unique<dsp::Sms>();
 	if (game == "gamegear") return std::make_unique<dsp::GameGear>();
@@ -564,13 +571,13 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	    return std::make_unique<dsp::A2600>();
 	}
 	if (game == "scv") return std::make_unique<dsp::Scv>();
+	if (game == "a7800") { return std::make_unique<dsp::A7800>(); }
+    
 	
 	if (game == "pce" || game == "pcengine" || game == "tg16")
 	    return std::make_unique<dsp::PcEngine>();
 
-	if (game == "shadoww" || game == "shadow_warriors" || game == "gaiden" ||
-	    game == "ninjagaiden")
-	    return std::make_unique<dsp::ShadowWarriors>();
+	
 	
     return nullptr;
 }

@@ -37,6 +37,33 @@ const std::vector<RomEntry> kMathProms = {
     {"136021-113.7l|136021.113|136021-113", 0x400, 0xc00, 0x83febfde},
 };
 
+// Empire Strikes Back. Each 16K main ROM is split: the low 8K sits in the
+// fixed map, the high 8K in the second bank. $8000-$9FFF is the slapstic
+// window, fed from the two 16K ROMs loaded at 0x14000/0x18000.
+const std::vector<RomEntry> kEsbMainRoms = {
+    {"136031-101.1f", 0x4000, 0x6000, 0xef1e3ae5},
+    {"136031-102.1jk", 0x4000, 0xa000, 0x62ce5c12},
+    {"136031-203.1kl", 0x4000, 0xc000, 0x27b0889b},
+    {"136031-104.1m", 0x4000, 0xe000, 0xfd5c725e},
+};
+const std::vector<RomEntry> kEsbSlapsticRoms = {
+    {"136031-105.3u", 0x4000, 0x14000, 0xea9e4dce},
+    {"136031-106.2u", 0x4000, 0x18000, 0x76d07f59},
+};
+const std::vector<RomEntry> kEsbVectorRom = {
+    {"136031-111.1l", 0x1000, 0, 0xb1f9bd12},
+};
+const std::vector<RomEntry> kEsbSoundRoms = {
+    {"136031-113.1jk", 0x4000, 0x4000, 0x24ae3815},
+    {"136031-112.1h", 0x4000, 0x6000, 0xca72d341},
+};
+const std::vector<RomEntry> kEsbMathProms = {
+    {"136031-110.7h", 0x400, 0x000, 0},
+    {"136031-109.7j", 0x400, 0x400, 0},
+    {"136031-108.7k", 0x400, 0x800, 0},
+    {"136031-107.7l", 0x400, 0xc00, 0},
+};
+
 constexpr int kIrqCycles = int(StarWars::kCpuClock / (StarWars::kClock3k / 12.0) + 0.5);
 
 void blend_pixel(uint32_t& dest, uint32_t color, int intensity) {
@@ -53,8 +80,9 @@ void blend_pixel(uint32_t& dest, uint32_t color, int intensity) {
 
 }  // namespace
 
-StarWars::StarWars()
-    : main_cpu_(kCpuClock),
+StarWars::StarWars(Game game)
+    : game_(game),
+      main_cpu_(kCpuClock),
       sound_cpu_(kCpuClock),
       pokey0_(kCpuClock, 0.20f),
       pokey1_(kCpuClock, 0.20f),
@@ -105,6 +133,41 @@ bool StarWars::init(const std::string& rom_path, std::string* error) {
     };
 
     std::fill(main_rom_.begin(), main_rom_.end(), 0);
+    if (game_ == Game::Esb) {
+        // Each 16K ROM splits across the fixed map and the second bank.
+        static const uint32_t hi[4] = {0x10000, 0x1c000, 0x1e000, 0x20000};
+        for (size_t i = 0; i < kEsbMainRoms.size(); i++) {
+            std::vector<uint8_t> chunk;
+            if (!load_at(kEsbMainRoms[i], chunk)) return false;
+            std::memcpy(main_rom_.data() + kEsbMainRoms[i].offset, chunk.data(), 0x2000);
+            std::memcpy(main_rom_.data() + hi[i], chunk.data() + 0x2000, 0x2000);
+        }
+        for (const auto& e : kEsbSlapsticRoms) {
+            std::vector<uint8_t> chunk;
+            if (!load_at(e, chunk)) return false;
+            std::memcpy(main_rom_.data() + e.offset, chunk.data(), chunk.size());
+        }
+        std::vector<uint8_t> vec;
+        if (!load_at(kEsbVectorRom[0], vec)) return false;
+        std::copy(vec.begin(), vec.end(), vector_rom_.begin());
+        std::vector<uint8_t> snd(0x10000, 0);
+        for (const auto& e : kEsbSoundRoms) {
+            std::vector<uint8_t> chunk;
+            if (!load_at(e, chunk)) return false;
+            std::memcpy(snd.data() + e.offset, chunk.data(), 0x2000);
+            std::memcpy(snd.data() + e.offset + 0x8000, chunk.data() + 0x2000, 0x2000);
+        }
+        std::copy(snd.begin(), snd.end(), sound_rom_.begin());
+        std::vector<uint8_t> avg_prom;
+        if (!load_at(kAvgProm[0], avg_prom)) return false;
+        avg_.set_prom(avg_prom.data(), avg_prom.size());
+        std::vector<uint8_t> mp(0x1000, 0);
+        if (!loader.load(kEsbMathProms, mp, error)) return false;
+        math_.init(mp.data());
+        warnings_ = loader.warnings();
+        reset();
+        return true;
+    }
     std::vector<uint8_t> rom0;
     if (!load_at(kMainRoms[0], rom0)) return false;
     std::memcpy(main_rom_.data() + 0x6000, rom0.data(), 0x2000);
@@ -155,6 +218,8 @@ void StarWars::reset() {
     riot_.reset();
     avg_.reset();
     bank_ = 0;
+    slapstic_state_ = 0;
+    slapstic_bank_ = 3;
     outlatch_ = 0;
     sound_latch_ = main_latch_ = 0;
     sound_pending_ = main_pending_ = false;
@@ -206,6 +271,19 @@ uint8_t StarWars::main_read(uint16_t address) {
     if (address >= 0x6000 && address <= 0x7fff) {
         const uint32_t base = bank_ ? 0x10000u : 0x6000u;
         return main_rom_[base + (address & 0x1fff)];
+    }
+    if (game_ == Game::Esb) {
+        if (address >= 0x8000 && address <= 0x9fff) {
+            // Every access inside the window drives the slapstic's state
+            // machine, including plain instruction fetches -- that is how
+            // the game unlocks a bank switch.
+            slapstic_tweak(uint16_t(address & 0x1fff));
+            return main_rom_[0x14000u + uint32_t(slapstic_bank_) * 0x2000u + (address & 0x1fff)];
+        }
+        if (address >= 0xa000) {
+            const uint32_t base = bank_ ? 0x1c000u : 0xa000u;
+            return main_rom_[base + (address - 0xa000)];
+        }
     }
     if (address >= 0x8000) return main_rom_[address];
     return 0xff;
@@ -402,6 +480,74 @@ void StarWars::draw_line(int x0, int y0, int x1, int y1, uint32_t color, int int
     }
 }
 
+// Atari slapstic 137412-101, as fitted to ESB. The chip sits in the address
+// decode path and only switches bank when it sees a specific sequence of
+// addresses, which the game scatters through its code so a straight ROM
+// copy will not run. Values below are the published ones for this part.
+namespace {
+struct MaskValue { uint16_t mask, value; };
+constexpr bool matches(uint16_t offset, MaskValue mv) { return (offset & mv.mask) == mv.value; }
+constexpr uint16_t kBankSelect[4] = {0x0080, 0x0090, 0x00a0, 0x00b0};
+constexpr MaskValue kAlt1{0x1f00, 0x1e00}, kAlt2{0x1fff, 0x1fff};
+constexpr MaskValue kAlt3{0x1ffc, 0x1b5c}, kAlt4{0x1fcf, 0x0080};
+constexpr MaskValue kBit1{0x1ff0, 0x1540}, kBit2{0x1fcf, 0x0080};
+constexpr MaskValue kBitClr0{0x1ff3, 0x1540}, kBitSet0{0x1ff3, 0x1541};
+constexpr MaskValue kBitClr1{0x1ff3, 0x1542}, kBitSet1{0x1ff3, 0x1543};
+constexpr MaskValue kBitEnd{0x1ff8, 0x1550};
+enum { kIdle = 0, kActive, kAlt1S, kAlt2S, kAlt3S, kBitLoad, kBitSetState };
+}  // namespace
+
+uint8_t StarWars::slapstic_tweak(uint16_t offset) {
+    switch (slapstic_state_) {
+        case kIdle:
+            // Any access to the very first word arms the chip.
+            if (offset == 0x0000) slapstic_state_ = kActive;
+            break;
+        case kActive:
+            for (int i = 0; i < 4; i++) {
+                if (offset == kBankSelect[i]) {
+                    slapstic_bank_ = i;
+                    slapstic_state_ = kIdle;
+                    return uint8_t(slapstic_bank_);
+                }
+            }
+            if (matches(offset, kAlt1)) slapstic_state_ = kAlt1S;
+            else if (matches(offset, kBit1)) slapstic_state_ = kBitLoad;
+            break;
+        case kAlt1S:
+            // On this part the second alternate access must fall outside
+            // the window; in practice it is the 6809's dummy VMA fetch.
+            slapstic_state_ = matches(offset, kAlt2) ? kAlt2S : kActive;
+            break;
+        case kAlt2S:
+            slapstic_state_ = matches(offset, kAlt3) ? kAlt3S : kActive;
+            break;
+        case kAlt3S:
+            if (matches(offset, kAlt4)) {
+                slapstic_bank_ = (offset >> 0) & 3;
+                slapstic_state_ = kIdle;
+            } else {
+                slapstic_state_ = kActive;
+            }
+            break;
+        case kBitLoad:
+            slapstic_state_ = matches(offset, kBit2) ? kBitSetState : kActive;
+            break;
+        case kBitSetState:
+            // Each recognised address flips one bit of the bank number;
+            // the terminating address commits it.
+            if (matches(offset, kBitClr0)) slapstic_bank_ &= ~1;
+            else if (matches(offset, kBitSet0)) slapstic_bank_ |= 1;
+            else if (matches(offset, kBitClr1)) slapstic_bank_ &= ~2;
+            else if (matches(offset, kBitSet1)) slapstic_bank_ |= 2;
+            else if (matches(offset, kBitEnd)) slapstic_state_ = kIdle;
+            else slapstic_state_ = kActive;
+            break;
+        default: slapstic_state_ = kIdle; break;
+    }
+    return uint8_t(slapstic_bank_);
+}
+
 void StarWars::set_inputs(const MachineInputs& inputs) {
     in0_ = 0xff;
     in1_ = 0x3f;
@@ -411,6 +557,28 @@ void StarWars::set_inputs(const MachineInputs& inputs) {
     if (inputs.player1.button1) in0_ &= uint8_t(~0x80);
     if (inputs.player1.button3) in1_ &= uint8_t(~0x10);
     if (inputs.player1.start) in1_ &= uint8_t(~0x20);
+    // Either mouse button works as a trigger, so the whole control scheme
+    // is available without reaching for the keyboard.
+    if (inputs.has_pointer) {
+        if (inputs.pointer_button1) in0_ &= uint8_t(~0x80);
+        if (inputs.pointer_button2) in0_ &= uint8_t(~0x40);
+    }
+
+    if (inputs.has_pointer) {
+        // The yoke reports an absolute position, which is exactly what a
+        // mouse gives us: map the pointer across the screen onto the full
+        // 0-255 range each axis feeds to the ADC. Centre stays at 0x80.
+        const auto map = [](int value, int span) -> uint8_t {
+            if (span <= 1) return 0x80;
+            int scaled = value * 255 / (span - 1);
+            return uint8_t(std::clamp(scaled, 0, 255));
+        };
+        analog_x_ = map(inputs.pointer_x, kScreenWidth);
+        // Vertical axis inverted: pushing the mouse forward (towards the
+        // top of the screen) pulls the nose up, the way a real yoke works.
+        analog_y_ = uint8_t(255 - map(inputs.pointer_y, kScreenHeight));
+        return;
+    }
 
     analog_y_ = 0x80;
     analog_x_ = 0x80;

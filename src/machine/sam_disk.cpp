@@ -33,31 +33,37 @@ const SamTrack* SamDisk::track(int cyl, int head) const {
     return &tracks_[idx];
 }
 
-const SamSector* SamDisk::find(uint8_t track_id, uint8_t sector_id, int side) const {
-    // Candidate physical positions, in priority order (see header comment).
-    const struct { int cyl, head; } candidates[] = {
-        {int(track_id), side & 1},          // standard: track == cylinder
-        {int(track_id) / 2, track_id & 1},  // SDF: track encodes cylinder+head
-    };
-    // First pass: require the sector's own ID field to agree with both the
-    // track and sector numbers requested. This is what distinguishes the
-    // real sector from the decoy IDs protected disks scatter around.
-    for (const auto& c : candidates) {
-        const SamTrack* t = track(c.cyl, c.head);
-        if (!t) continue;
-        for (const auto& s : t->sectors) {
-            if (s.cyl == track_id && s.sector == sector_id) return &s;
+void SamDisk::detect_track_numbering() {
+    int standard = 0, encoded = 0;
+    for (int cyl = 0; cyl < cylinders_; ++cyl) {
+        for (int head = 0; head < sides_; ++head) {
+            const SamTrack* t = track(cyl, head);
+            if (!t) continue;
+            for (const auto& s : t->sectors) {
+                if (s.cyl == cyl) ++standard;
+                if (s.cyl == cyl * 2 + head) ++encoded;
+            }
         }
     }
-    // Second pass: some protected tracks deliberately renumber their ID
-    // cylinder away from the track they sit on, so fall back to matching
-    // the sector number alone at the same candidate positions.
-    for (const auto& c : candidates) {
-        const SamTrack* t = track(c.cyl, c.head);
-        if (!t) continue;
-        for (const auto& s : t->sectors) {
-            if (s.sector == sector_id) return &s;
-        }
+    track_encodes_head_ = encoded > standard;
+}
+
+const SamSector* SamDisk::find(uint8_t track_id, uint8_t sector_id, int side) const {
+    const int cyl = track_encodes_head_ ? int(track_id) / 2 : int(track_id);
+    const int head = track_encodes_head_ ? (track_id & 1) : (side & 1);
+    const SamTrack* t = track(cyl, head);
+    if (!t) return nullptr;
+    // Require the sector's own ID field to agree with both the track and
+    // sector asked for: that is what tells a real sector apart from the
+    // decoy IDs protected disks scatter around.
+    for (const auto& s : t->sectors) {
+        if (s.cyl == track_id && s.sector == sector_id) return &s;
+    }
+    // Some protected tracks deliberately renumber their ID cylinder away
+    // from the track they sit on, so fall back to the sector number alone
+    // -- but only on this one physical track, never on another.
+    for (const auto& s : t->sectors) {
+        if (s.sector == sector_id) return &s;
     }
     return nullptr;
 }
@@ -96,9 +102,13 @@ bool SamDisk::load_sdf(const std::vector<uint8_t>& data, std::string* error) {
     cylinders_ = int(data.size() / (size_t(kSdfTrackSize) * kSdfSides));
     tracks_.assign(size_t(cylinders_) * size_t(sides_), SamTrack{});
 
+    // SDF stores every cylinder of side 0 first, then every cylinder of
+    // side 1 -- not interleaved by side. Reading it as interleaved shuffled
+    // the tracks, which put the same sector ID at two physical positions
+    // and made reads return data from the wrong track.
     size_t off = 0;
-    for (int cyl = 0; cyl < cylinders_; ++cyl) {
-        for (int head = 0; head < sides_; ++head) {
+    for (int head = 0; head < sides_; ++head) {
+        for (int cyl = 0; cyl < cylinders_; ++cyl) {
             if (off + size_t(kSdfTrackSize) > data.size()) {
                 if (error) *error = "SDF image truncated";
                 return false;
@@ -133,6 +143,7 @@ bool SamDisk::load_sdf(const std::vector<uint8_t>& data, std::string* error) {
         }
     }
     loaded_ = true;
+    detect_track_numbering();
     return true;
 }
 
@@ -167,6 +178,7 @@ bool SamDisk::load_mgt(const std::vector<uint8_t>& data, std::string* error) {
         }
     }
     loaded_ = true;
+    detect_track_numbering();
     return true;
 }
 
@@ -218,6 +230,7 @@ bool SamDisk::load_edsk(const std::string& path, std::string* error) {
         }
     }
     loaded_ = true;
+    detect_track_numbering();
     return true;
 }
 

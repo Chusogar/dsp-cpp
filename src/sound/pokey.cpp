@@ -2,7 +2,6 @@
 
 #include <algorithm>
 
-
 namespace dsp {
 namespace {
 

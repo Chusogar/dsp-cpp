@@ -106,11 +106,8 @@ const SamSector* Wd1772::find_sector(bool by_id) const {
     // READ ADDRESS: report whichever sector the head would meet next. Try
     // both track-numbering conventions (see SamDisk::find) and return the
     // first sector of whichever candidate track exists.
-    for (const auto& c : {std::pair<int,int>{int(cur_cyl_), side_ & 1},
-                          std::pair<int,int>{cur_cyl_ / 2, cur_cyl_ & 1}}) {
-        const SamTrack* t = disk_->track(c.first, c.second);
-        if (t && !t->sectors.empty()) return &t->sectors.front();
-    }
+    const SamTrack* t = disk_->track(cur_cyl_, side_ & 1);
+    if (t && !t->sectors.empty()) return &t->sectors.front();
     return nullptr;
 }
 

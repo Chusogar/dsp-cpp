@@ -56,6 +56,16 @@ private:
     bool load_mgt(const std::vector<uint8_t>& data, std::string* error);
     bool load_edsk(const std::string& path, std::string* error);
 
+    // How the track number the FDC is given maps onto the image: standard
+    // SAMDOS images use track == physical cylinder with the head coming
+    // from side-select, while SDF dumps of protected disks encode both in
+    // one number (cylinder = track/2, head = track&1). Detected once at
+    // load time from the stored ID fields -- deciding per-request instead
+    // was ambiguous, because a disk can hold the same ID at two physical
+    // positions and the wrong one would win.
+    void detect_track_numbering();
+    bool track_encodes_head_ = false;
+
     bool loaded_ = false;
     int cylinders_ = 80;
     int sides_ = 2;

@@ -279,6 +279,13 @@ void SamCoupe::io_out(uint16_t port, uint8_t value) {
         out_border(value);
     } else if (low == 249) {
         line_int_ = value;
+        // Writing a new target acknowledges the current LINE interrupt and
+        // re-arms it. Without this the flag stayed asserted until the next
+        // frame, so only one line interrupt could ever fire per frame --
+        // the ROM programs a fresh target from inside each handler to walk
+        // a palette down the screen, and needs one per split.
+        status_ |= 0x01;
+        if (status_ & 0x08) cpu_.set_irq(IrqLine::Clear);
     } else if (low == 252) {
         out_vmpr(value);
     } else if (low == 251) {
@@ -425,13 +432,22 @@ void SamCoupe::on_cycles(int cycles) {
         ++frame_t_;
         if (t_in_line_ >= kTstatesPerLine) {
             t_in_line_ -= kTstatesPerLine;
-            render_line(line_);
-            ++line_;
-            if (line_int_ < 192 && line_ == kTopBorderLines + int(line_int_)) {
-                status_ &= uint8_t(~0x01);  // LINE int (active low)
-                cpu_.set_irq(IrqLine::Hold);
+            // Only ever draw each line once per frame. The CPU usually
+            // overruns the frame's cycle budget slightly (cpu_.run()
+            // finishes the instruction in progress), so letting line_ wrap
+            // back to 0 here meant run_frame()'s catch-up loop then
+            // repainted all 312 lines using the register state left at the
+            // end of the frame, throwing away the correct line-by-line
+            // rendering. That happened on some frames and not others,
+            // which showed up as the display flickering.
+            if (line_ < kLinesPerFrame) {
+                render_line(line_);
+                ++line_;
+                if (line_int_ < 192 && line_ == kTopBorderLines + int(line_int_)) {
+                    status_ &= uint8_t(~0x01);  // LINE int (active low)
+                    cpu_.set_irq(IrqLine::Hold);
+                }
             }
-            if (line_ >= kLinesPerFrame) line_ = 0;
         }
     }
     audio_acc_ += int64_t(cycles) * kSampleRate;
@@ -466,14 +482,20 @@ void SamCoupe::run_frame() {
         // is closer to what its timing expects.
         if (remaining < kTstatesPerFrame - 128) {
             status_ |= 0x08;
-            cpu_.set_irq(IrqLine::Clear);
+            // Only drop the CPU's interrupt line if nothing else is still
+            // asserting it. Clearing unconditionally here cancelled any
+            // LINE interrupt raised during the chunk that just ran, before
+            // the CPU had a chance to take it -- which broke the ROM's
+            // mid-screen palette splits and made the boot screen flicker.
+            if (status_ & 0x01) cpu_.set_irq(IrqLine::Clear);
         }
     }
-    if (line_ != 0 || t_in_line_ != 0) {
-        while (line_ < kLinesPerFrame) {
-            render_line(line_);
-            ++line_;
-        }
+    // Draw whatever the CPU didn't reach (a frame that spent its budget
+    // inside a long instruction, or with the CPU halted). line_ already
+    // says how far rendering got, so this only fills the remainder.
+    while (line_ < kLinesPerFrame) {
+        render_line(line_);
+        ++line_;
     }
     flash_count_ = (flash_count_ + 1) & 0x1f;
     if (flash_count_ == 0) flash_phase_ = !flash_phase_;
