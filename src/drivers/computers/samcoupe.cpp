@@ -250,6 +250,23 @@ uint8_t SamCoupe::io_in(uint16_t port) {
         result = hmpr_;
     } else if (low == 250) {  // LMPR
         result = lmpr_;
+    } else if (low == 248) {
+        // Light-pen registers. Address bit 8 picks between them, so software
+        // selects one via the value it loads into A before "IN A,(0F8h)".
+        // Games use these to synchronise with the raster: Game Boy Tetris
+        // spins on HPEN until the beam reaches line 160 before redrawing.
+        if (port & 0x0100) {
+            // HPEN: the display line being drawn, or kScreenLines when the
+            // beam is outside the display area.
+            const int y = line_ - kTopBorderLines;
+            result = (y >= 0 && y < kScreenLines) ? uint8_t(y) : uint8_t(kScreenLines);
+        } else {
+            // LPEN: horizontal beam position in the line, reported in bits
+            // 7-2, with bit 0 carrying the current border colour's low bit.
+            int x = t_in_line_ - 2 * kSideBorderCells * 8;
+            if (x < 0) x = 0;
+            result = uint8_t((uint8_t(x) & 0xfc) | (border_ & 1));
+        }
     } else if (low == 255) {  // ATTRIBUTE (floating display byte) - not modelled, return 0xff
         result = 0xff;
     } else if (const int off = select_disk_port(port); off >= 0) {
