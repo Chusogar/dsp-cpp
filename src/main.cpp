@@ -77,6 +77,7 @@
 #include "drivers/computers/macplus.h"
 #include "drivers/computers/macii.h"
 #include "drivers/computers/samcoupe.h"
+#include "drivers/computers/atari8.h"
 
 // Consoles
 #include "drivers/consoles/sms.h"
@@ -147,6 +148,7 @@ void print_supported_emulators() {
         "    apple2, apple2gs, apple2plus, apple2e, apple2ee, exl100, exeltel, ql,\n"
         "    st, atarist, atari-st, amiga, a500, amiga500,\n"
         "    macplus, mac, macintosh, plus, macii, samcoupe\n"
+		"    a800, a800xl, a800xe\n"
         "\n"
         "  Consoles:\n"
         "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp,\n"
@@ -531,6 +533,10 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	}
 	if (game == "macii") { return std::make_unique<dsp::MacII>(); }
 	if (game == "samcoupe") { return std::make_unique<dsp::SamCoupe>(); }
+	if (game == "a800") { return std::make_unique<dsp::Atari8>(dsp::Atari8::Model::A800); }
+	if (game == "a800xl") { return std::make_unique<dsp::Atari8>(dsp::Atari8::Model::A800XL); }
+	if (game == "a800xe") { return std::make_unique<dsp::Atari8>(dsp::Atari8::Model::A800XE); }
+
     	
 	// consoles
 	if (game == "sms") return std::make_unique<dsp::Sms>();

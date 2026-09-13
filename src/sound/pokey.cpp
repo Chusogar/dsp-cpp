@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+
 namespace dsp {
 namespace {
 
@@ -134,6 +135,27 @@ void Pokey::inc_chan(Channel& channel) {
     if (channel.counter == 0 && channel.borrow_cnt == 0) {
         channel.borrow_cnt = 3;
         if (irqen_ & channel.int_mask) irqst_ |= channel.int_mask;
+    }
+}
+
+void Pokey::set_key(uint8_t code, bool pressed, bool shift_held) {
+    if (pressed) {
+        kbcode_ = code;
+        skstat_ |= 0x04;  // KEYDET: a key is down (SKSTAT reads active low)
+        if (irqen_ & 0x40) {
+            irqst_ |= 0x40;
+            if (irq_handler_) irq_handler_(0x40);
+        }
+    } else {
+        skstat_ = uint8_t(skstat_ & ~0x04);
+    }
+    if (shift_held) skstat_ |= 0x08; else skstat_ = uint8_t(skstat_ & ~0x08);
+}
+
+void Pokey::press_break() {
+    if (irqen_ & 0x80) {
+        irqst_ |= 0x80;
+        if (irq_handler_) irq_handler_(0x80);
     }
 }
 

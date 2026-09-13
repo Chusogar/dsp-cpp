@@ -4,6 +4,7 @@
 #include <functional>
 #include <vector>
 
+
 namespace dsp {
 
 // Atari POKEY, ported from pokey.pas.
@@ -22,6 +23,14 @@ public:
     void set_serin_handler(PotRead handler) { serin_read_ = std::move(handler); }
 
     void reset();
+
+    // Presents a key to the keyboard scanner: `code` is the Atari KBCODE
+    // (scan code in bits 0-5, shift in bit 6, control in bit 7), and
+    // `pressed` drives the "key still down" bit SKSTAT reports. Raises the
+    // keyboard interrupt when IRQEN enables it, as the real scanner does.
+    void set_key(uint8_t code, bool pressed, bool shift_held);
+    // The BREAK key has its own IRQEN/IRQST bit rather than a scan code.
+    void press_break();
 
     uint8_t read(uint16_t offset);
     void write(uint16_t offset, uint8_t data);

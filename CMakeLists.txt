@@ -74,6 +74,8 @@ add_executable(dsp
   src/video/huc6270.cpp
   src/video/neogeo_video.cpp
   src/video/tia.cpp
+  src/video/antic.cpp
+  src/video/gtia.cpp
   
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
@@ -210,6 +212,7 @@ add_executable(dsp
   src/drivers/computers/macplus.cpp
   src/drivers/computers/macii.cpp
   src/drivers/computers/samcoupe.cpp
+  src/drivers/computers/atari8.cpp
     
   src/drivers/consoles/sms.cpp
   src/machine/sega_vdp.cpp
