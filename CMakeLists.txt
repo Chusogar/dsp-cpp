@@ -133,6 +133,7 @@ add_executable(dsp
   src/machine/taito_68705.cpp
   src/machine/sam_disk.cpp
   src/machine/wd1772.cpp
+  src/machine/sam_tape.cpp
  
   src/drivers/arcade/bagman.cpp
   src/drivers/arcade/mikie.cpp

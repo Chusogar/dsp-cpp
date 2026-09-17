@@ -8,6 +8,7 @@
 #include "core/machine.h"
 #include "cpu/z80.h"
 #include "machine/sam_disk.h"
+#include "machine/sam_tape.h"
 #include "machine/wd1772.h"
 #include "sound/saa1099.h"
 
@@ -39,6 +40,8 @@ public:
     static constexpr int kWidthCells = kScreenCells + 2 * kSideBorderCells;  // 48
     static constexpr int kScreenWidth = kWidthCells * 16;   // 768 (16 px/cell at full ASIC res)
     static constexpr int kScreenHeight = kLinesPerFrame;    // 312
+    // How long an interrupt flag stays asserted, matching SimCoupe.
+    static constexpr int kIntActiveTstates = 128;
     static constexpr int kNumPages = 32;                    // 512K
     static constexpr int kSampleRate = Saa1099::kSampleRate;
     // The SAA1099's own datasheet-typical clock on the SAM Coupe (derived
@@ -46,6 +49,8 @@ public:
     static constexpr uint32_t kSaaClock = 8000000;
 
     SamCoupe();
+
+	void tape_toggle_play() override;
 
     bool init(const std::string& rom_path, std::string* error) override;
     void reset() override;
@@ -104,6 +109,7 @@ private:
     Z80 cpu_;
     Saa1099 saa_;
     SamDisk disk1_, disk2_;
+    SamTape tape_;
     Wd1772 fdc_;
 
     // 32 pages of 16K RAM, plus 2 pages (ROM0/ROM1) of 16K ROM.
@@ -113,12 +119,22 @@ private:
 
     uint8_t lmpr_ = 0, hmpr_ = 0, vmpr_ = 0;
     uint8_t border_ = 0;
+    uint8_t lepr_ = 0, hepr_ = 0;  // external memory page registers (ports 128/129)
     uint8_t status_ = 0xff;   // active-low interrupt flags, read via port 249
     uint8_t line_int_ = 0xff; // port 249 write: target line for the line interrupt
+    // The LINE interrupt flag is only asserted for a short window, the same
+    // as the frame one. Leaving it asserted until software acknowledged it
+    // made the ROM's handler see the interrupt still pending on every entry
+    // and re-enter itself until the stack was destroyed.
+    int line_int_active_ = 0;
 
     // Effective page number for each 16K section, or -1/-2 sentinels for ROM.
     static constexpr int kSectRom0 = -1;
     static constexpr int kSectRom1 = -2;
+    // HMPR bit 7 (MCNTRL) swaps sections C and D over to the external
+    // memory expansion, addressed by LEPR/HEPR. With no expansion fitted
+    // those sections read as unconnected rather than as internal RAM.
+    static constexpr int kSectNone = -3;
     std::array<int, 4> section_page_{kSectRom0, 1, 0, 1};
 
     uint8_t* section_ptr(int slot);

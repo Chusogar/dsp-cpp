@@ -5,11 +5,18 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <system_error>
 
 namespace dsp {
 namespace {
 
 bool load_file(const std::string& path, std::vector<uint8_t>& out) {
+    // Reject anything that isn't a regular file. Opening a directory with
+    // ifstream succeeds on Linux, and the tellg() that follows then reports
+    // a nonsense size, so the resize() below threw std::bad_alloc instead of
+    // the caller getting a clean "not found" and trying the next candidate.
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(path, ec)) return false;
     std::ifstream f(path, std::ios::binary);
     if (!f) return false;
     f.seekg(0, std::ios::end);
@@ -102,6 +109,7 @@ void SamCoupe::reset() {
     vmpr_ = 0;
     update_paging();
     border_ = 0;
+    lepr_ = hepr_ = 0;
     status_ = 0xff;
     line_int_ = 0xff;
     for (int i = 0; i < 16; ++i) {
@@ -117,31 +125,51 @@ void SamCoupe::reset() {
     cpu_.reset();
     saa_.reset();
     fdc_.reset();
+    tape_.rewind();
+    if (tape_.inserted()) tape_.play();
     std::fill(framebuffer_.begin(), framebuffer_.end(), clut_rgb_[0]);
 }
 
 void SamCoupe::update_paging() {
     section_page_[0] = (lmpr_ & 0x20) ? int(lmpr_ & 0x1f) : kSectRom0;
     section_page_[1] = (lmpr_ + 1) & 0x1f;
-    section_page_[2] = hmpr_ & 0x1f;
-    section_page_[3] = (lmpr_ & 0x40) ? kSectRom1 : int((hmpr_ + 1) & 0x1f);
+    if (hmpr_ & 0x80) {
+        // External memory selected; none is fitted here, so C and D read
+        // as unconnected. ROM1 still wins over external RAM in section D.
+        section_page_[2] = kSectNone;
+        section_page_[3] = (lmpr_ & 0x40) ? kSectRom1 : kSectNone;
+    } else {
+        section_page_[2] = hmpr_ & 0x1f;
+        section_page_[3] = (lmpr_ & 0x40) ? kSectRom1 : int((hmpr_ + 1) & 0x1f);
+    }
+}
+
+void SamCoupe::tape_toggle_play() {
+
+    if (true/*tape_.is_loaded()*/) {
+		tape_.rewind();
+		if (tape_.inserted()) tape_.play();
+		//tape_.play(!tape_.is_playing());
+	}
 }
 
 uint8_t* SamCoupe::section_ptr(int slot) {
     const int page = section_page_[size_t(slot)];
+    if (page == kSectNone) return nullptr;
     if (page == kSectRom0) return rom0_.data();
     if (page == kSectRom1) return rom1_.data();
     return ram_[size_t(page)].data();
 }
 
 uint8_t SamCoupe::mem_read(uint16_t addr) {
-    return section_ptr(addr >> 14)[addr & 0x3fff];
+    const uint8_t* p = section_ptr(addr >> 14);
+    return p ? p[addr & 0x3fff] : 0xff;
 }
 
 void SamCoupe::mem_write(uint16_t addr, uint8_t value) {
     const int slot = addr >> 14;
     const int page = section_page_[size_t(slot)];
-    if (page == kSectRom0 || page == kSectRom1) return;  // ROM: read-only
+    if (page == kSectRom0 || page == kSectRom1 || page == kSectNone) return;
     if (slot == 0 && (lmpr_ & 0x80)) return;              // WPRAM: section A locked
     ram_[size_t(page)][addr & 0x3fff] = value;
 }
@@ -243,7 +271,10 @@ uint8_t SamCoupe::io_in(uint16_t port) {
         if (!(high & 0x02)) keys &= key_matrix_[1];
         if (!(high & 0x01)) keys &= key_matrix_[0];
         if (high == 0xff) keys &= key_matrix_[8];  // RDMSEL (all address lines high)
-        result = uint8_t((keys & 0x1f) | 0xe0);
+        // Bits 5-7 are SPEN, EAR and SOFF. EAR carries the tape signal.
+        uint8_t high_bits = 0xe0;
+        if (tape_.inserted() && !tape_.ear()) high_bits &= uint8_t(~0x40);
+        result = uint8_t((keys & 0x1f) | high_bits);
     } else if (low == 252) {  // VMPR
         result = vmpr_;
     } else if (low == 251) {  // HMPR
@@ -307,6 +338,12 @@ void SamCoupe::io_out(uint16_t port, uint8_t value) {
         out_vmpr(value);
     } else if (low == 251) {
         out_hmpr(value);
+    } else if (low == 128) {
+        lepr_ = value;  // external RAM page for section C
+        update_paging();
+    } else if (low == 129) {
+        hepr_ = value;  // external RAM page for section D
+        update_paging();
     } else if (low == 250) {
         out_lmpr(value);
     } else if (low == 0xf8) {  // CLUT: base port 248, register selected by port bits 8-11
@@ -444,6 +481,15 @@ void SamCoupe::render_line(int line) {
 }
 
 void SamCoupe::on_cycles(int cycles) {
+    tape_.tick(cycles);
+    if (line_int_active_ > 0) {
+        line_int_active_ -= cycles;
+        if (line_int_active_ <= 0) {
+            line_int_active_ = 0;
+            status_ |= 0x01;                 // LINE int window over
+            if (status_ & 0x08) cpu_.set_irq(IrqLine::Clear);
+        }
+    }
     for (int n = 0; n < cycles; ++n) {
         ++t_in_line_;
         ++frame_t_;
@@ -462,6 +508,7 @@ void SamCoupe::on_cycles(int cycles) {
                 ++line_;
                 if (line_int_ < 192 && line_ == kTopBorderLines + int(line_int_)) {
                     status_ &= uint8_t(~0x01);  // LINE int (active low)
+                    line_int_active_ = kIntActiveTstates;
                     cpu_.set_irq(IrqLine::Hold);
                 }
             }
@@ -484,6 +531,7 @@ void SamCoupe::run_frame() {
     fdc_.tick_frame();
 
     status_ |= 0x01;  // clear LINE int from the previous frame
+    line_int_active_ = 0;
     status_ &= uint8_t(~0x08);  // FRAME int (active low), raised for the whole frame
     cpu_.set_irq(IrqLine::Hold);
 
@@ -524,6 +572,15 @@ void SamCoupe::drain_audio(std::vector<int16_t>& out) {
 }
 
 bool SamCoupe::load_media(const std::string& path, std::string* error) {
+    // Tape images are told apart by extension; everything else is a disk.
+    auto ends_with = [&](const char* ext) {
+        const size_t n = std::strlen(ext);
+        if (path.size() < n) return false;
+        return std::equal(path.end() - long(n), path.end(), ext, [](char a, char b) {
+            return std::tolower(static_cast<unsigned char>(a)) == b;
+        });
+    };
+    if (ends_with(".tap") || ends_with(".tzx")) return tape_.load(path, error);
     return disk1_.load(path, error);
 }
 
