@@ -59,6 +59,9 @@ public:
     bool sr_busy() const { return shift_count_ != 0 && shift_count_ != 0xFF; }
 
     uint8_t ifr() const { return ifr_; }
+    uint16_t t2_counter() const { return t2_; }
+    uint16_t t2_latch() const { return uint16_t((uint16_t(t2lh_) << 8) | t2ll_); }
+    bool t2_running() const { return t2_active_; }
     uint8_t ier() const { return ier_; }
     uint8_t acr() const { return acr_; }
     uint8_t pcr() const { return pcr_; }
@@ -101,6 +104,12 @@ private:
     uint8_t t2ll_ = 0xFF, t2lh_ = 0xFF;
     uint16_t t1_ = 0, t2_ = 0;
     bool t1_active_ = false, t2_active_ = false;
+    bool t1_int_armed_ = false, t2_int_armed_ = false;
+    // CA2/CB2 in pulse mode go low for one full cycle. Restoring them within
+    // the same write makes the pulse zero-width, so anything sampling the
+    // line once per cycle -- the Vectrex beam-centring signal, for one --
+    // never sees it.
+    bool ca2_pulse_restore_ = false, cb2_pulse_restore_ = false;  // one-shot: the interrupt fires only once
     uint8_t t1_pb7_ = 1;
     bool t2_pb6_prev_ = true;
 

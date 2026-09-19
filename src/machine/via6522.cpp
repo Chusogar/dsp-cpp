@@ -216,15 +216,23 @@ void Via6522::set_cb2_data(bool bit) { in_cb2_ = bit; }
 void Via6522::tick_t1() {
     if (!t1_active_) return;
     if (t1_ == 0) {
-        set_int(kIntT1);
         if (t1_continuous(acr_)) {
+            set_int(kIntT1);
             t1_ = uint16_t(t1ll_ | (uint16_t(t1lh_) << 8));
             t1_pb7_ = uint8_t(t1_pb7_ ^ 1);
             if (t1_set_pb7(acr_)) output_pb();
         } else {
-            t1_active_ = false;
-            t1_pb7_ = 1;
-            if (t1_set_pb7(acr_)) output_pb();
+            // One-shot: only the interrupt happens once. The counter itself
+            // keeps running and wraps, as on the real part -- stopping it
+            // leaves the count at a different phase whenever software
+            // reloads the timer, which shifts every interval it measures.
+            if (t1_int_armed_) {
+                set_int(kIntT1);
+                t1_int_armed_ = false;
+                t1_pb7_ = 1;
+                if (t1_set_pb7(acr_)) output_pb();
+            }
+            t1_ = 0xFFFF;
         }
     } else {
         t1_--;
@@ -238,8 +246,15 @@ void Via6522::tick_t2() {
         return;
     }
     if (t2_ == 0) {
-        set_int(kIntT2);
-        t2_active_ = false;
+        // Like T1, T2 is one-shot only in its interrupt: the counter keeps
+        // running and wraps. Stopping it leaves the count at a different
+        // phase on the next reload, so every interval the software times
+        // with it comes out shifted.
+        if (t2_int_armed_) {
+            set_int(kIntT2);
+            t2_int_armed_ = false;
+        }
+        t2_ = 0xFFFF;
     } else {
         t2_--;
     }
@@ -251,15 +266,12 @@ void Via6522::shift_clock() {
     const bool shift_out = (mode >= 4);  // 4..7 output
 
     if (shift_out) {
-        // Shift out MSB first onto CB2
+        // Shift out MSB first onto CB2 (6522 shifts left, bit7 → CB2).
         shift_out_bit_ = (sr_ & 0x80) != 0;
-        sr_ = uint8_t((sr_ << 1) | (shift_out_bit_ ? 1 : 0));  // rotate
-        // Free-running T2 out (mode 4) does not rotate in data; reload pattern
         if (mode == 4) {
-            // keep rotating the same byte
-        } else if (mode == 5 || mode == 6 || mode == 7) {
-            // shift out, CB1 generated internally for mode 5/7 under PHI2/T2
-            sr_ = uint8_t(sr_ << 1);  // logical shift
+            sr_ = uint8_t((sr_ << 1) | (shift_out_bit_ ? 1 : 0));  // rotate
+        } else {
+            sr_ = uint8_t(sr_ << 1);  // logical shift modes 5–7
         }
         output_cb2(shift_out_bit_);
     } else {
@@ -273,6 +285,9 @@ void Via6522::shift_clock() {
 }
 
 void Via6522::tick(int cycles) {
+    // Close any pulse opened during the previous cycle before advancing.
+    if (ca2_pulse_restore_) { ca2_pulse_restore_ = false; output_ca2(true); }
+    if (cb2_pulse_restore_) { cb2_pulse_restore_ = false; output_cb2(true); }
     for (int i = 0; i < cycles; i++) {
         tick_t1();
         tick_t2();
@@ -281,11 +296,11 @@ void Via6522::tick(int cycles) {
         const uint8_t mode = sr_mode(acr_);
         if (shift_count_ != 0) {
             if (mode == 2 || mode == 6) {
-                // PHI2 control: clock every 2 PHI2
-                if (++shift_phase_ >= 2) {
-                    shift_phase_ = 0;
-                    shift_clock();
-                }
+                // Under PHI2 control the register shifts on every cycle.
+                // Halving that rate doubles the length of anything the
+                // shift register gates: on the Vectrex CB2 blanks the beam,
+                // so every vector came out exactly twice as long.
+                shift_clock();
             } else if (mode == 1 || mode == 4 || mode == 5) {
                 // T2 as rate generator: clock when T2 underflows mid-count
                 // Approximate: every (t2ll+2) cycles
@@ -316,10 +331,7 @@ uint8_t Via6522::read(uint8_t reg) {
                 clear_int(kIntCA2);
             if (ca2_handshake(pcr_) || ca2_pulse(pcr_)) {
                 output_ca2(false);
-                if (ca2_pulse(pcr_)) {
-                    // pulse low for ~1 cycle — restore next tick edge
-                    output_ca2(true);
-                }
+                if (ca2_pulse(pcr_)) ca2_pulse_restore_ = true;  // one cycle low
             }
             return v;
         }
@@ -372,7 +384,7 @@ void Via6522::write(uint8_t reg, uint8_t value) {
                 clear_int(kIntCB2);
             if (cb2_handshake(pcr_) || cb2_pulse(pcr_)) {
                 output_cb2(false);
-                if (cb2_pulse(pcr_)) output_cb2(true);
+                if (cb2_pulse(pcr_)) cb2_pulse_restore_ = true;  // one cycle low
             }
             output_pb();
             // PB6 edge counting for T2
@@ -396,7 +408,7 @@ void Via6522::write(uint8_t reg, uint8_t value) {
                 clear_int(kIntCA2);
             if (ca2_handshake(pcr_) || ca2_pulse(pcr_)) {
                 output_ca2(false);
-                if (ca2_pulse(pcr_)) output_ca2(true);
+                if (ca2_pulse(pcr_)) ca2_pulse_restore_ = true;  // one cycle low
             }
             output_pa();
             break;
@@ -415,6 +427,7 @@ void Via6522::write(uint8_t reg, uint8_t value) {
             t1lh_ = value;
             t1_ = uint16_t(t1ll_ | (uint16_t(t1lh_) << 8));
             clear_int(kIntT1);
+            t1_int_armed_ = true;  // a fresh load re-arms the one-shot
             t1_active_ = true;
             t1_pb7_ = 0;
             if (t1_set_pb7(acr_)) output_pb();
@@ -433,6 +446,7 @@ void Via6522::write(uint8_t reg, uint8_t value) {
             t2lh_ = value;
             t2_ = uint16_t(t2ll_ | (uint16_t(t2lh_) << 8));
             clear_int(kIntT2);
+            t2_int_armed_ = true;  // a fresh load re-arms the one-shot
             t2_active_ = true;
             t2_pb6_prev_ = (out_b() & 0x40) != 0;
             break;

@@ -240,7 +240,8 @@ add_executable(dsp
   src/drivers/consoles/a2600.cpp
   src/drivers/consoles/pcengine.cpp
   src/drivers/consoles/a7800.cpp
-  
+  src/drivers/consoles/vectrex.cpp
+
       
   src/core/rom_loader.cpp
   src/frontend/sdl_app.cpp

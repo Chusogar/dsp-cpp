@@ -94,6 +94,7 @@
 #include "drivers/consoles/scv.h"
 #include "drivers/consoles/pcengine.h"
 #include "drivers/consoles/a7800.h"
+#include "drivers/consoles/vectrex.h"
 
 
 #include "frontend/sdl_app.h"
@@ -154,7 +155,7 @@ void print_supported_emulators() {
         "  Consoles:\n"
         "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp,\n"
         "    pv1000, pv2000, coleco, sg1000, gb, nes, lynx, scv, pcengine, sgx,\n"
-        "    a2600, atari2600, vcs, a7800\n"
+        "    a2600, atari2600, vcs, a7800, vectrex\n"
         "\n");
 }
 
@@ -571,6 +572,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	    return std::make_unique<dsp::A2600>();
 	}
 	if (game == "scv") return std::make_unique<dsp::Scv>();
+	if (game == "vectrex") { return std::make_unique<dsp::Vectrex>(); }
 	if (game == "a7800") { return std::make_unique<dsp::A7800>(); }
     
 	

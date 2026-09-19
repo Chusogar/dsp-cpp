@@ -38,6 +38,14 @@ private:
                          uint32_t one, int pilot_pulses, int used_bits,
                          uint32_t pause_ms);
     void emit_pause(uint32_t pause_ms);
+    // Spectrum tapes describe a file with a 17-byte header whose fields sit
+    // at completely different offsets from the SAM's 80-byte one. The SAM
+    // ROM does accept a ZX header (it special-cases type 0 and reads 17
+    // bytes) but then reads the length and load address from the SAM
+    // offsets, so it finds garbage and stores nothing. Rewriting the header
+    // into SAM form here means the ROM sees a tape it fully understands,
+    // without patching the ROM itself.
+    bool emit_zx_header_as_sam(const uint8_t* zx, uint32_t pause_ms);
     uint32_t to_sam(uint32_t zx_tstates);
 
     std::vector<uint32_t> pulses_;   // durations in 3.5 MHz T-states

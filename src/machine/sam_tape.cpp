@@ -73,22 +73,70 @@ void SamTape::emit_data_block(const uint8_t* data, size_t len, uint32_t pilot,
     emit_pause(pause_ms);
 }
 
+bool SamTape::emit_zx_header_as_sam(const uint8_t* zx, uint32_t pause_ms) {
+    const uint8_t zx_type = zx[0];
+    const uint16_t length = uint16_t(zx[11] | (zx[12] << 8));
+    const uint16_t param1 = uint16_t(zx[13] | (zx[14] << 8));
+
+    uint8_t hdr[82] = {};
+    hdr[0] = 1;                       // block flag: header
+    // SAM file types: 16 = BASIC program, 19 = CODE.
+    hdr[1] = (zx_type == 0) ? 16 : 19;
+    for (int i = 0; i < 10; i++) hdr[2 + i] = zx[1 + i];   // name
+
+    // Start address and length are stored as a page byte followed by a
+    // 16-bit offset. Header field offsets are relative to the 80-byte body,
+    // so add one for the flag byte that precedes it.
+    // CODE addresses are stored page-relative: a page number followed by the
+    // offset within that 16K page. A plain address would be read as an
+    // offset into page 0 and land 16K short for every page it should skip.
+    const uint16_t start = (zx_type == 0) ? 0 : param1;
+    hdr[1 + 31] = uint8_t(start >> 14);
+    const uint16_t start_lo = uint16_t(start & 0x3fff);
+    hdr[1 + 32] = uint8_t(start_lo & 0xff);
+    hdr[1 + 33] = uint8_t(start_lo >> 8);
+    hdr[1 + 34] = uint8_t(length >> 14);
+    const uint16_t len_lo = uint16_t(length & 0x3fff);
+    hdr[1 + 35] = uint8_t(len_lo & 0xff);
+    hdr[1 + 36] = uint8_t(len_lo >> 8);
+    if (zx_type == 0 && param1 < 32768) {
+        hdr[1 + 37] = 0;              // BASIC with an auto-run line
+        hdr[1 + 38] = uint8_t(param1 & 0xff);
+        hdr[1 + 39] = uint8_t(param1 >> 8);
+    } else {
+        hdr[1 + 37] = 0xff;           // no auto-run / no exec address
+    }
+
+    uint8_t parity = 0;
+    for (int i = 0; i < 81; i++) parity ^= hdr[i];
+    hdr[81] = parity;
+
+    emit_data_block(hdr, sizeof(hdr), kPilot, kSync1, kSync2, kZero, kOne,
+                    kPilotHeader, 8, pause_ms);
+    return true;
+}
+
 bool SamTape::parse_tap(const std::vector<uint8_t>& data, std::string* error) {
     size_t pos = 0;
     while (pos + 2 <= data.size()) {
         const size_t len = size_t(data[pos]) | (size_t(data[pos + 1]) << 8);
         pos += 2;
         if (len == 0 || pos + len > data.size()) break;
-        // The flag byte picks the pilot length: headers get the long tone.
-        const int pilot = data[pos] < 128 ? kPilotHeader : kPilotData;
-        emit_data_block(data.data() + pos, len, kPilot, kSync1, kSync2, kZero,
-                        kOne, pilot, 8, 1000);
+        if (data[pos] == 0 && len == 19) {
+            emit_zx_header_as_sam(data.data() + pos + 1, 1000);
+        } else {
+            // The flag byte picks the pilot length: headers get the long tone.
+            const int pilot = data[pos] < 128 ? kPilotHeader : kPilotData;
+            emit_data_block(data.data() + pos, len, kPilot, kSync1, kSync2, kZero,
+                            kOne, pilot, 8, 1000);
+        }
         pos += len;
     }
     if (pulses_.empty()) {
         if (error) *error = "no usable blocks in TAP file";
         return false;
     }
+	printf("Fin Tap\n");
     return true;
 }
 
@@ -107,9 +155,13 @@ bool SamTape::parse_tzx(const std::vector<uint8_t>& data, std::string* error) {
                 const size_t len = u16(pos + 2);
                 pos += 4;
                 if (pos + len > data.size()) return true;
-                const int pilot = data[pos] < 128 ? kPilotHeader : kPilotData;
-                emit_data_block(data.data() + pos, len, kPilot, kSync1, kSync2,
-                                kZero, kOne, pilot, 8, pause);
+                if (data[pos] == 0 && len == 19) {
+                    emit_zx_header_as_sam(data.data() + pos + 1, pause);
+                } else {
+                    const int pilot = data[pos] < 128 ? kPilotHeader : kPilotData;
+                    emit_data_block(data.data() + pos, len, kPilot, kSync1, kSync2,
+                                    kZero, kOne, pilot, 8, pause);
+                }
                 pos += len;
                 break;
             }
@@ -188,6 +240,7 @@ bool SamTape::parse_tzx(const std::vector<uint8_t>& data, std::string* error) {
         if (error) *error = "no usable blocks in TZX file";
         return false;
     }
+	printf("Fin Tzx\n");
     return true;
 }
 
@@ -209,11 +262,16 @@ bool SamTape::load(const std::string& path, std::string* error) {
         return false;
     }
     rewind();
-    playing_ = true;   // start rolling so a LOAD finds signal straight away
+    //playing_ = true;   // start rolling so a LOAD finds signal straight away
     return true;
 }
 
 void SamTape::tick(int sam_tstates) {
+	if (index_ >= pulses_.size())
+	{
+		//printf("End!\n");
+	}
+
     if (!playing_ || index_ >= pulses_.size()) return;
     counter_ -= sam_tstates;
     while (counter_ <= 0) {

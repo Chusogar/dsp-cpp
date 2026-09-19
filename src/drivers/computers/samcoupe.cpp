@@ -125,8 +125,8 @@ void SamCoupe::reset() {
     cpu_.reset();
     saa_.reset();
     fdc_.reset();
-    tape_.rewind();
-    if (tape_.inserted()) tape_.play();
+    //tape_.rewind();
+    //if (tape_.inserted()) tape_.play();
     std::fill(framebuffer_.begin(), framebuffer_.end(), clut_rgb_[0]);
 }
 
@@ -146,10 +146,16 @@ void SamCoupe::update_paging() {
 
 void SamCoupe::tape_toggle_play() {
 
-    if (true/*tape_.is_loaded()*/) {
-		tape_.rewind();
-		if (tape_.inserted()) tape_.play();
-		//tape_.play(!tape_.is_playing());
+	if (tape_.inserted()) {
+		if (tape_.playing())
+		{
+			tape_.stop();
+			printf("STOP TAPE\n");
+		} else {
+			printf("PLAY TAPE\n");
+			tape_.rewind();
+			tape_.play();
+		}
 	}
 }
 
@@ -218,7 +224,9 @@ int SamCoupe::visible_screen_page() const {
 }
 
 int SamCoupe::screen_mode() const {
-    return int((vmpr_ >> 5) & 3) + 1;
+	int __mode = int((vmpr_ >> 5) & 3) + 1;
+	//printf("MODE: %d\n", __mode);
+    return __mode;
 }
 
 void SamCoupe::set_dip_switch(int, uint8_t) {}
