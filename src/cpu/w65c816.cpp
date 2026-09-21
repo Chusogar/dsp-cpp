@@ -632,7 +632,7 @@ int W65C816::run(int cycles) {
         switch (op) {
             // --- Control / stack / mode ---
             case 0x00: fetch8(); extra_cycles_ += take_irq(0xffe6, 0xfffe); base_cycles = e_ ? 7 : 8; break;  // BRK
-            case 0x02: fetch8(); base_cycles = 7; break;                                                     // COP
+            case 0x02: fetch8(); base_cycles = e_ ? 7 : 8; break;   // COP
             case 0xdb: stopped_ = true; base_cycles = 3; break;                                               // STP
             case 0xcb: waiting_ = true; base_cycles = 3; break;                                               // WAI
             case 0xea: base_cycles = 2; break;                                                                // NOP
@@ -894,22 +894,22 @@ int W65C816::run(int cycles) {
                 break;
 
             // --- Block move ---
-            case 0x54: {  // MVP (decrementing)
+            case 0x54: {  // MVN: block move with X and Y counting up
                 uint8_t dst_bank = fetch8(), src_bank = fetch8();
                 write((uint32_t(dst_bank) << 16) | y, read((uint32_t(src_bank) << 16) | x));
-                x = uint16_t(x - 1);
-                y = uint16_t(y - 1);
+                x = uint16_t(x + 1);
+                y = uint16_t(y + 1);
                 a = uint16_t(a - 1);
                 dbr = dst_bank;
                 if (a != 0xffff) pc_ = uint16_t(pc_ - 3);
                 base_cycles = 7;
                 break;
             }
-            case 0x44: {  // MVN (incrementing)
+            case 0x44: {  // MVP: block move with X and Y counting down
                 uint8_t dst_bank = fetch8(), src_bank = fetch8();
                 write((uint32_t(dst_bank) << 16) | y, read((uint32_t(src_bank) << 16) | x));
-                x = uint16_t(x + 1);
-                y = uint16_t(y + 1);
+                x = uint16_t(x - 1);
+                y = uint16_t(y - 1);
                 a = uint16_t(a - 1);
                 dbr = dst_bank;
                 if (a != 0xffff) pc_ = uint16_t(pc_ - 3);
@@ -922,7 +922,7 @@ int W65C816::run(int cycles) {
             case 0x2c: op_bit(addr_absolute(), false); base_cycles = 4; break;
             case 0x34: op_bit(addr_direct_x(addr_extra), false); base_cycles = 4; break;
             case 0x3c: op_bit(addr_absolute_x(addr_extra), false); base_cycles = 4; break;
-            case 0x89: op_bit(imm_addr(!p.m), true); base_cycles = 3; break;
+            case 0x89: op_bit(imm_addr(!p.m), true); base_cycles = 2; break;   // BIT #
             case 0x14: op_tsb(addr_direct(addr_extra)); base_cycles = 5; break;
             case 0x0c: op_tsb(addr_absolute()); base_cycles = 6; break;
             case 0x04: op_trb(addr_direct(addr_extra)); base_cycles = 5; break;
