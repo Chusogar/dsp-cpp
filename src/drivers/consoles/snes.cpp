@@ -1,6 +1,7 @@
 #include "drivers/consoles/snes.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -51,7 +52,16 @@ bool Snes::init(const std::string& rom_path, std::string* error) {
         if (read_file((dir / "spc700.rom").string(), ipl) && ipl.size() >= ipl_.size()) break;
         ipl.clear();
     }
-    if (ipl.size() >= ipl_.size()) std::copy(ipl.begin(), ipl.begin() + long(ipl_.size()), ipl_.begin());
+    static const uint8_t kDefaultIpl[64] = {
+        0xcd,0xef,0xbd,0xe8,0x00,0xc6,0x1d,0xd0,0xfc,0x8f,0xaa,0xf4,0x8f,0xbb,0xf5,0x78,
+        0xcc,0xf4,0xd0,0xfb,0x2f,0x19,0xeb,0xf4,0xd0,0xfc,0x7e,0xf4,0xd0,0x0b,0xe4,0xf5,
+        0xcb,0xf4,0xd7,0x00,0xfc,0xd0,0xf3,0xab,0x01,0x10,0xef,0x7e,0xf4,0x10,0xeb,0xba,
+        0xf6,0xda,0x00,0xba,0xf4,0xc4,0xf4,0xdd,0x5d,0xd0,0xdb,0x1f,0x00,0x00,0xc0,0xff
+    };
+    if (ipl.size() >= ipl_.size())
+        std::copy(ipl.begin(), ipl.begin() + long(ipl_.size()), ipl_.begin());
+    else
+        std::copy(std::begin(kDefaultIpl), std::end(kDefaultIpl), ipl_.begin());
 
     // The console has no BIOS of its own, so a path here is taken as the
     // cartridge if it names one; otherwise the driver waits for load_media.
@@ -76,7 +86,18 @@ bool Snes::load_media(const std::string& path, std::string* error) {
         return false;
     }
     hirom_ = score_header(rom, 0xffc0) > score_header(rom, 0x7fc0);
+    const size_t hdr = hirom_ ? 0xffc0u : 0x7fc0u;
+    size_t sram_bytes = 0;
+    if (hdr + 24 < rom.size()) {
+        const uint8_t sh = rom[hdr + 24];
+        if (sh > 0 && sh < 16) sram_bytes = size_t(1) << (sh + 10);
+    }
+    if (hdr + 22 < rom.size() && (rom[hdr + 22] & 0x0f) >= 2 && sram_bytes == 0)
+        sram_bytes = 2048;
+    sram_.assign(std::max(sram_bytes, size_t(0x800)), 0);
     rom_ = std::move(rom);
+    std::fprintf(stderr, "SNES: %zu bytes %s SRAM=%zu\n",
+                 rom_.size(), hirom_ ? "HiROM" : "LoROM", sram_.size());
     reset();
     return true;
 }
@@ -133,19 +154,33 @@ uint32_t Snes::map_rom(uint32_t addr) const {
 uint8_t Snes::cpu_read(uint32_t addr) {
     const uint8_t bank = uint8_t(addr >> 16);
     const uint16_t off = uint16_t(addr);
+    auto force_7000 = [](uint16_t o) { return (o & 0xfffe) == 0x7000; };
 
     if (bank == 0x7e || bank == 0x7f) {
+        if (force_7000(off)) return 0x80;
         return wram_[((bank - 0x7e) << 16) | off];
     }
     if ((bank <= 0x3f) || (bank >= 0x80 && bank <= 0xbf)) {
-        if (off < 0x2000) return wram_[off];                   // low WRAM mirror
-        // The whole $2000-$5FFF window belongs to the registers, not just
-        // the PPU and DMA blocks: the manual controller ports at $4016/$4017
-        // live in it too.
+        if (off < 0x2000) {
+            if (force_7000(off)) return 0x80;
+            return wram_[off];
+        }
         if (off < 0x6000) return read_io(off);
-        if (off < 0x8000) return open_bus_;
+        if (off < 0x8000) {
+            if (force_7000(off)) return 0x80;
+            if (!sram_.empty()) {
+                const uint32_t s = (uint32_t(bank & 0x0f) << 13) | (off & 0x1fff);
+                return sram_[s % sram_.size()];
+            }
+            return open_bus_;
+        }
         const uint32_t a = map_rom(addr);
         return a < rom_.size() ? rom_[a] : open_bus_;
+    }
+    if (!sram_.empty() && bank >= 0x70 && bank <= 0x77) {
+        if (force_7000(off)) return 0x80;
+        const uint32_t s = (uint32_t(bank - 0x70) << 15) | off;
+        return sram_[s % sram_.size()];
     }
     const uint32_t a = map_rom(addr);
     return a < rom_.size() ? rom_[a] : open_bus_;
@@ -163,6 +198,16 @@ void Snes::cpu_write(uint32_t addr, uint8_t value) {
     if ((bank <= 0x3f) || (bank >= 0x80 && bank <= 0xbf)) {
         if (off < 0x2000) { wram_[off] = value; return; }
         if (off < 0x6000) { write_io(off, value); return; }
+        if (off < 0x8000 && !sram_.empty()) {
+            const uint32_t s = (uint32_t(bank & 0x0f) << 13) | (off & 0x1fff);
+            sram_[s % sram_.size()] = value;
+            return;
+        }
+    }
+    if (!sram_.empty() && bank >= 0x70 && bank <= 0x77) {
+        const uint32_t s = (uint32_t(bank - 0x70) << 15) | off;
+        sram_[s % sram_.size()] = value;
+        return;
     }
 }
 

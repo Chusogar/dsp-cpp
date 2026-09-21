@@ -85,6 +85,7 @@ private:
 
     std::vector<uint8_t> rom_;
     bool hirom_ = false;
+    std::vector<uint8_t> sram_;
     std::array<uint8_t, 0x20000> wram_{};   // 128 KB at banks $7E-$7F
     uint32_t wram_addr_ = 0;                // $2181-$2183 port
 

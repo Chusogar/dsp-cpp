@@ -51,6 +51,7 @@ public:
 
     uint32_t clock() const { return clock_; }
     uint32_t pc() const { return (uint32_t(pbr) << 16) | pc_; }
+    void set_pc(uint32_t v) { pbr = uint8_t(v >> 16); pc_ = uint16_t(v); }
     bool emulation() const { return e_; }
 
     // Registers, public for debugging/driver convenience. a/x/y are always
