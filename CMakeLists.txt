@@ -16,6 +16,7 @@ add_executable(dsp
   src/main.cpp
   src/cpu/z80.cpp
   src/cpu/z80ctc.cpp
+  src/cpu/m6800.cpp
   src/cpu/m6809.cpp
   src/cpu/konami.cpp
   src/cpu/m6502.cpp
@@ -33,6 +34,7 @@ add_executable(dsp
   src/cpu/z8002.cpp
   src/cpu/mb88xx.cpp
   src/cpu/w65c816.cpp
+  src/cpu/spc700.cpp
  
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
@@ -77,6 +79,7 @@ add_executable(dsp
   src/video/antic.cpp
   src/video/gtia.cpp
   src/video/maria.cpp
+  src/video/snes_ppu.cpp
   
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
@@ -134,6 +137,7 @@ add_executable(dsp
   src/machine/sam_disk.cpp
   src/machine/wd1772.cpp
   src/machine/sam_tape.cpp
+  src/machine/pia6821.cpp
  
   src/drivers/arcade/bagman.cpp
   src/drivers/arcade/mikie.cpp
@@ -194,6 +198,7 @@ add_executable(dsp
   src/drivers/arcade/renegade.cpp
   src/drivers/arcade/retofinv.cpp
   src/drivers/arcade/slapfight.cpp
+  src/drivers/arcade/williams.cpp
 
   src/drivers/computers/spectrum.cpp
   src/drivers/computers/spectrum_128k.cpp
@@ -241,6 +246,7 @@ add_executable(dsp
   src/drivers/consoles/pcengine.cpp
   src/drivers/consoles/a7800.cpp
   src/drivers/consoles/vectrex.cpp
+  src/drivers/consoles/snes.cpp
 
       
   src/core/rom_loader.cpp

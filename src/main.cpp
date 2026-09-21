@@ -57,6 +57,7 @@
 #include "drivers/arcade/renegade.h"
 #include "drivers/arcade/retofinv.h"
 #include "drivers/arcade/slapfight.h"
+#include "drivers/arcade/williams.h"
 
 // Computers
 #include "drivers/computers/spectrum.h"
@@ -95,6 +96,7 @@
 #include "drivers/consoles/pcengine.h"
 #include "drivers/consoles/a7800.h"
 #include "drivers/consoles/vectrex.h"
+#include "drivers/consoles/snes.h"
 
 
 #include "frontend/sdl_app.h"
@@ -143,7 +145,8 @@ void print_supported_emulators() {
 		"    ajax, typhoon, simpsons\n"
 		"    ambush, shaolins, tehkanwc, appoooh, robowres, arkanoid, renegade\n"
 		"    retofinv, slapfight, tigerheli\n"
-        "\n"
+		"    defender, mayday, colony7, joust, robotron, stargate\n"
+		"\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
         "    cpc464, cpc664, cpc6128, msx, msx2, nms8250, c64,\n"
@@ -155,7 +158,7 @@ void print_supported_emulators() {
         "  Consoles:\n"
         "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp,\n"
         "    pv1000, pv2000, coleco, sg1000, gb, nes, lynx, scv, pcengine, sgx,\n"
-        "    a2600, atari2600, vcs, a7800, vectrex\n"
+        "    a2600, atari2600, vcs, a7800, vectrex, snes\n"
         "\n");
 }
 
@@ -481,6 +484,13 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "retofinv") return std::make_unique<dsp::Retofinv>();
 	if (game == "slapfight") return std::make_unique<dsp::SlapFight>(dsp::SlapFight::Variant::SlapFight);
 	if (game == "tigerheli") return std::make_unique<dsp::SlapFight>(dsp::SlapFight::Variant::TigerHeli);
+
+	if (game == "defender") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Defender);
+	if (game == "mayday") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Mayday);
+	if (game == "colony7") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Colony7);
+	if (game == "joust") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Joust);
+	if (game == "robotron") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Robotron);
+	if (game == "stargate") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Stargate);
 	
 
 	// computers
@@ -579,7 +589,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "pce" || game == "pcengine" || game == "tg16")
 	    return std::make_unique<dsp::PcEngine>();
 
-	
+	if (game == "snes") { return std::make_unique<dsp::Snes>(); }
 	
     return nullptr;
 }

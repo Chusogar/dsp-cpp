@@ -23,15 +23,12 @@ public:
     explicit M6809(uint32_t clock);
 
     void set_memory_handlers(ReadHandler read, WriteHandler write);
-    // Optional opcode map. Konami-1 boards encrypt instruction fetches but
-    // leave operands and data reads alone (m6809.pas `opcode`). When empty,
-    // fetch_opcode uses `read`.
+    // Optional opcode map (Konami-1 encrypted fetches).
     void set_opcode_read(ReadHandler handler) { opcode_read_ = std::move(handler); }
-    // Called after every instruction with the number of elapsed cycles.
     void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
 
     void reset();
-    // Runs until at least `cycles` cycles have elapsed, returns the amount executed.
+    // Runs until at least `cycles` cycles have elapsed; returns cycles executed.
     int run(int cycles);
 
     void set_irq(IrqLine state) { irq_state_ = state; }
@@ -40,8 +37,10 @@ public:
 
     uint32_t clock() const { return clock_; }
     uint16_t pc() const { return pc_; }
+    // NOT in upstream yet — Williams driver needs:
+    void set_pc(uint16_t v) { pc_ = v; }
 
-    // Registers, public to keep debugging and driver hooks simple.
+    // Public registers (debug / driver hooks)
     uint8_t a = 0, b = 0, dp = 0;
     uint16_t x = 0, y = 0, u = 0, s = 0;
     Flags cc;
@@ -86,7 +85,7 @@ private:
     void page_10(uint8_t opcode);
     void page_11(uint8_t opcode);
 
-    // ALU helpers (m680x_* in m6809.inc).
+    // ALU helpers
     uint8_t op_neg(uint8_t value);
     uint8_t op_com(uint8_t value);
     uint8_t op_lsr(uint8_t value);
@@ -115,7 +114,7 @@ private:
     uint32_t clock_;
     uint16_t pc_ = 0;
     bool cwai_ = false;
-    bool stack_init_ = false;  // pila_init: the NMI is masked until S is loaded
+    bool stack_init_ = false;  // NMI masked until S is loaded
 
     IrqLine irq_state_ = IrqLine::Clear;
     IrqLine firq_state_ = IrqLine::Clear;
@@ -123,7 +122,6 @@ private:
     IrqLine nmi_state_ = IrqLine::Clear;
 
     int extra_cycles_ = 0;
-    // Values decoded by the addressing mode of the current instruction.
     uint16_t address_ = 0;
     uint8_t operand_ = 0;
 
