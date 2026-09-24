@@ -6205,6 +6205,7 @@ void test_macii_boot_if_present() {
     for (int x = 0; x < dsp::MacII::kWidth; x++)
         white += (fb[size_t(5) * dsp::MacII::kWidth + size_t(x)] & 0xffffff) == 0xffffff;
     check(white > 400, "System 7 reaches the Finder menu bar");
+    check(unique_pixels(boot) >= 8, "the Finder desktop is drawn in 256 colours");
     std::remove(disk.c_str());
 }
 

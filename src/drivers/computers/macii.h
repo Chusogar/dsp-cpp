@@ -97,6 +97,7 @@ private:
     void tick_devices(int cycles);
     void render();
     void make_context_current();
+    void seed_pram(uint8_t video_mode);
 
     // ---- ADB transceiver (protocol level) ----
     void adb_state_changed();

@@ -108,6 +108,25 @@ MacII::MacII() : via1_(kCpuClock / 20), via2_(kCpuClock / 20) {
     scsi_.set_plus_boot_patch(false);
     scsi_.set_write_through(true);
     scsi_.set_extend_reads(false);
+    seed_pram(0x83);
+}
+
+// Battery-backed PRAM as a Mac II leaves it after its first boot, so the
+// ROM keeps it instead of zapping it: XPRAM signature 'NuMc', SPValid $A8,
+// and the slot 9 record of the Display Card 8*24 (board $0027) with the
+// saved video mode. Mode $80..$84 = 1/2/4/8/24 bpp sResources.
+void MacII::seed_pram(uint8_t video_mode) {
+    pram_.fill(0);
+    static const uint8_t kHead[32] = {
+        0x00, 0x00, 0x4f, 0x48, 0x00, 0x00, 0x00, 0x00, 0x03, 0x88, 0x00, 0xcc, 'N', 'u', 'M', 'c',
+        0xa8, 0x00, 0x00, 0x00, 0xcc, 0x0a, 0xcc, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x63, 0x00,
+    };
+    std::memcpy(pram_.data(), kHead, sizeof kHead);
+    static const uint8_t kSlot9[8] = {0x00, 0x27, 0x80, 0xa6, 0xa6, 0x00, 0xff, 0x00};
+    std::memcpy(pram_.data() + 0x46, kSlot9, sizeof kSlot9);
+    pram_[0x48] = video_mode;
+    static const uint8_t kVideo[5] = {0x01, 0xff, 0xff, 0xff, 0xdf};
+    std::memcpy(pram_.data() + 0x77, kVideo, sizeof kVideo);
 }
 
 MacII::~MacII() {
