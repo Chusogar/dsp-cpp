@@ -16,6 +16,13 @@ class Ncr5380Hdd {
 public:
     void reset();
     bool load_file(const std::string& path, std::string* error);
+    // The Mac Plus needs System 7 boot blocks steered around a ROM85 test;
+    // machines with newer ROMs (Mac II) must keep the boot blocks intact.
+    void set_plus_boot_patch(bool enable) { plus_boot_patch_ = enable; }
+    // Write changed blocks back to the image file (raw images only).
+    void set_write_through(bool enable) { write_through_ = enable; }
+    // Keep DATA IN going past the CDB length (Mac Plus System 7 workaround).
+    void set_extend_reads(bool enable) { extend_reads_ = enable; }
     bool loaded() const { return loaded_; }
     uint32_t blocks() const { return blocks_; }
     uint8_t last_cmd() const { return last_cmd_; }
@@ -57,6 +64,11 @@ private:
         kMsgIn = 7,
     };
 
+    bool plus_boot_patch_ = true;
+    bool write_through_ = false;
+    bool extend_reads_ = true;
+    std::string path_;
+    uint32_t image_offset_ = 0;  // bytes of synthesized header before the file data
     static int cdb_length(uint8_t opcode);
     bool our_id() const { return (odr_ & 0x41) != 0; }  // IDs 0 and 6
     void wrap_plus_boot();

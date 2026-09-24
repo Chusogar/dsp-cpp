@@ -44,6 +44,12 @@ public:
     void write_cb2(bool state);
     // Drive CB2 as shift-register data without raising the CB2 interrupt flag.
     void set_cb2_data(bool bit);
+    // External-clock shift register transfers done by a peripheral in one
+    // step (e.g. the Mac ADB transceiver): shift_in_external() loads SR as
+    // if 8 bits arrived on CB2 (ACR mode 3); shift_out_external() returns
+    // the byte the host is shifting out (ACR mode 7). Both raise the SR flag.
+    void shift_in_external(uint8_t value);
+    uint8_t shift_out_external();
 
     // Combined port levels (outputs forced by DDR, else inputs).
     uint8_t out_a() const;

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(dsp_cpp CXX)
+project(dsp_cpp C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,6 +11,17 @@ endif()
 
 find_package(SDL2 REQUIRED)
 find_package(ZLIB REQUIRED)
+
+# Musashi 68000-68040 core (MIT), used by the Macintosh II driver.
+add_library(musashi STATIC
+  src/cpu/musashi/m68kcpu.c
+  src/cpu/musashi/m68kops.c
+  src/cpu/musashi/m68kdasm.c
+  src/cpu/musashi/softfloat/softfloat.c
+)
+target_include_directories(musashi PUBLIC src/cpu/musashi)
+target_compile_options(musashi PRIVATE -w)
+target_link_libraries(musashi PUBLIC m)
 
 add_executable(dsp
   src/main.cpp
@@ -58,6 +69,7 @@ add_executable(dsp
   src/sound/huc6280_psg.cpp
   src/sound/vlm5030.cpp
   src/sound/es5503.cpp
+  src/sound/asc.cpp
   src/sound/saa1099.cpp
     
   src/video/gfx.cpp
@@ -254,7 +266,7 @@ add_executable(dsp
 )
 
 target_include_directories(dsp PRIVATE src ${SDL2_INCLUDE_DIRS})
-target_link_libraries(dsp PRIVATE ${SDL2_LIBRARIES} ZLIB::ZLIB)
+target_link_libraries(dsp PRIVATE ${SDL2_LIBRARIES} ZLIB::ZLIB musashi)
 target_compile_options(dsp PRIVATE -Wall -Wextra)
 
 enable_testing()
@@ -383,6 +395,7 @@ add_executable(dsp_tests
   src/drivers/computers/apple2gs.cpp
   src/cpu/w65c816.cpp
   src/sound/es5503.cpp
+  src/sound/asc.cpp
   src/drivers/consoles/gameboy.cpp
   src/drivers/arcade/mcr.cpp
   src/drivers/consoles/atari_lynx.cpp
@@ -394,6 +407,7 @@ add_executable(dsp_tests
   src/drivers/computers/atari_st.cpp
   src/drivers/computers/amiga.cpp
   src/drivers/computers/macplus.cpp
+  src/drivers/computers/macii.cpp
   src/drivers/arcade/starwars.cpp
   src/drivers/arcade/asteroid.cpp
   src/drivers/arcade/polepos.cpp
@@ -422,7 +436,7 @@ add_executable(dsp_tests
   src/core/rom_loader.cpp
 )
 target_include_directories(dsp_tests PRIVATE src)
-target_link_libraries(dsp_tests PRIVATE ZLIB::ZLIB)
+target_link_libraries(dsp_tests PRIVATE ZLIB::ZLIB musashi)
 target_compile_options(dsp_tests PRIVATE -Wall -Wextra)
 add_test(NAME dsp_tests COMMAND dsp_tests)
 
@@ -485,6 +499,22 @@ add_executable(a2gs_run EXCLUDE_FROM_ALL
 target_include_directories(a2gs_run PRIVATE src)
 target_link_libraries(a2gs_run PRIVATE ZLIB::ZLIB)
 target_compile_options(a2gs_run PRIVATE -Wall -Wextra)
+
+# Macintosh II headless runner (screenshots, scripted keys/mouse, instruction
+# trace): macii_run ROMSET FRAMES OUTPREFIX [scsi-disk-image]
+add_executable(macii_run EXCLUDE_FROM_ALL
+  tools/macii_run.cpp
+  src/drivers/computers/macii.cpp
+  src/machine/via6522.cpp
+  src/machine/iwm.cpp
+  src/machine/mac_dsk.cpp
+  src/machine/ncr5380_hdd.cpp
+  src/sound/asc.cpp
+  src/core/rom_loader.cpp
+)
+target_include_directories(macii_run PRIVATE src)
+target_link_libraries(macii_run PRIVATE ZLIB::ZLIB musashi)
+target_compile_options(macii_run PRIVATE -Wall -Wextra)
 
 # 65C816 validation against the SingleStepTests vectors
 # (https://github.com/SingleStepTests/65816): w65c816_sst path/to/v1
