@@ -380,6 +380,9 @@ add_executable(dsp_tests
   src/drivers/consoles/nes.cpp
   src/drivers/computers/c64.cpp
   src/drivers/computers/apple2.cpp
+  src/drivers/computers/apple2gs.cpp
+  src/cpu/w65c816.cpp
+  src/sound/es5503.cpp
   src/drivers/consoles/gameboy.cpp
   src/drivers/arcade/mcr.cpp
   src/drivers/consoles/atari_lynx.cpp
@@ -470,3 +473,20 @@ target_compile_options(shuuz_capture PRIVATE -Wall -Wextra)
 add_executable(dsp_zexdoc EXCLUDE_FROM_ALL tools/zexdoc_runner.cpp src/cpu/z80.cpp)
 target_include_directories(dsp_zexdoc PRIVATE src)
 target_compile_options(dsp_zexdoc PRIVATE -Wall -Wextra)
+
+# Apple IIGS headless runner (screenshots, scripted keys/mouse) for boot debugging.
+add_executable(a2gs_run EXCLUDE_FROM_ALL
+  tools/a2gs_run.cpp
+  src/drivers/computers/apple2gs.cpp
+  src/cpu/w65c816.cpp
+  src/sound/es5503.cpp
+  src/core/rom_loader.cpp
+)
+target_include_directories(a2gs_run PRIVATE src)
+target_link_libraries(a2gs_run PRIVATE ZLIB::ZLIB)
+target_compile_options(a2gs_run PRIVATE -Wall -Wextra)
+
+# 65C816 validation against the SingleStepTests vectors
+# (https://github.com/SingleStepTests/65816): w65c816_sst path/to/v1
+add_executable(w65c816_sst EXCLUDE_FROM_ALL tools/w65c816_sst.cpp src/cpu/w65c816.cpp)
+target_include_directories(w65c816_sst PRIVATE src)

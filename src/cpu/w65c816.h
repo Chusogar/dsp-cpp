@@ -15,24 +15,24 @@ namespace dsp {
 // register for code and for data), the movable Direct Page, and the extra
 // addressing modes (stack-relative, 24-bit long, indirect-long).
 //
-// This isn't a port of an existing Pascal core (the reference project this
-// codebase otherwise migrates from has no 65C816 support); it's written
-// directly from the published 65C816 instruction set, cross-checked against
-// MAME's g65816 core for cycle counts and edge cases (page-boundary and
-// emulation-mode quirks, e.g. JSR/JSL stack behavior and the forced
-// bank-wrap of 16-bit indexed addressing within a bank).
+// Written directly from the published 65C816 instruction set. Register and
+// memory results are validated against the SingleStepTests 65816 vectors
+// (emulation and native mode, every opcode), including the emulation-mode
+// direct-page and stack wrap quirks and decimal-mode arithmetic.
 class W65C816 {
 public:
     using ReadHandler = std::function<uint8_t(uint32_t)>;
     using WriteHandler = std::function<void(uint32_t, uint8_t)>;
     using CycleHandler = std::function<void(int)>;
+    // Called for WDM ($42 xx). Returning true means the host handled it.
+    using WdmHandler = std::function<void(uint8_t)>;
+    // Lets the host redirect interrupt/reset vector fetches (the IIGS pulls
+    // them from ROM bank $FF). Receives the bank-0 vector address.
+    using VectorHandler = std::function<uint32_t(uint32_t)>;
 
     struct Flags {
-        // Always meaningful.
         bool n = false, v = false, z = false, c = false, i = true, d = false;
         // Native mode only: m=1 selects 8-bit A/memory, x=1 selects 8-bit X/Y.
-        // In emulation mode these read back as 1 (m) and the "B" break flag
-        // occupies the same bit position as x.
         bool m = true, x = true;
     };
 
@@ -41,10 +41,16 @@ public:
     void set_memory_handlers(ReadHandler read, WriteHandler write);
     void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
     void set_fetch_hook(std::function<void(uint32_t)> hook) { fetch_hook_ = std::move(hook); }
+    void set_wdm_handler(WdmHandler handler) { wdm_handler_ = std::move(handler); }
+    void set_vector_handler(VectorHandler handler) { vector_handler_ = std::move(handler); }
 
     void reset();
     // Runs until at least `cycles` cycles have elapsed, returns the amount executed.
     int run(int cycles);
+    // Executes exactly one instruction (or services one interrupt), returns cycles.
+    int step();
+    // Asks run() to return after the current instruction.
+    void end_timeslice() { end_slice_ = true; }
 
     void set_irq(IrqLine state) { irq_request_ = state; }
     void set_nmi(IrqLine state);
@@ -53,10 +59,16 @@ public:
     uint32_t pc() const { return (uint32_t(pbr) << 16) | pc_; }
     void set_pc(uint32_t v) { pbr = uint8_t(v >> 16); pc_ = uint16_t(v); }
     bool emulation() const { return e_; }
+    void set_emulation(bool e);
+    uint8_t get_p() const;
+    void set_p(uint8_t value);
+    bool waiting() const { return waiting_; }
+    bool stopped() const { return stopped_; }
+    void clear_halt() { stopped_ = waiting_ = false; }
 
     // Registers, public for debugging/driver convenience. a/x/y are always
-    // stored full-width; the high byte is ignored (and forced to 0 on write)
-    // whenever the corresponding m/x flag selects 8-bit mode.
+    // stored full-width; the high byte of X/Y is forced to 0 in 8-bit index
+    // mode, the high byte of A ("B") is preserved in 8-bit accumulator mode.
     uint16_t a = 0, x = 0, y = 0;
     uint16_t sp = 0x01ff;
     uint16_t d = 0;       // Direct Page register
@@ -71,85 +83,71 @@ private:
     uint32_t clock_;
 
     IrqLine irq_request_ = IrqLine::Clear;
-    IrqLine irq_state_ = IrqLine::Clear;
     IrqLine nmi_request_ = IrqLine::Clear;
-    IrqLine nmi_state_ = IrqLine::Clear;
+    bool nmi_latched_ = false;
     bool stopped_ = false;   // STP
     bool waiting_ = false;   // WAI
+    bool end_slice_ = false;
 
     ReadHandler read_;
     WriteHandler write_;
     CycleHandler cycle_handler_;
     std::function<void(uint32_t)> fetch_hook_;
+    WdmHandler wdm_handler_;
+    VectorHandler vector_handler_;
 
-    uint8_t read(uint32_t address) { return read_ ? read_(address & 0xffffff) : 0xff; }
-    void write(uint32_t address, uint8_t value) {
+    int cycles_ = 0;  // cycles of the instruction being executed
+
+    uint8_t rd(uint32_t address) { return read_ ? read_(address & 0xffffff) : 0xff; }
+    void wr(uint32_t address, uint8_t value) {
         if (write_) write_(address & 0xffffff, value);
     }
     uint8_t fetch8();
     uint16_t fetch16();
     uint32_t fetch24();
 
-    uint8_t get_p() const;
-    void set_p(uint8_t value);
-    void set_nz8(uint8_t value);
-    void set_nz16(uint16_t value);
+    // Data access helpers. "Long" addresses are 24-bit and the second byte
+    // of a 16-bit access carries into the next bank. Direct-page and stack
+    // accesses always live in bank 0 and wrap at 64K.
+    uint16_t rd16_long(uint32_t address) { return uint16_t(rd(address) | (rd(address + 1) << 8)); }
+    void wr16_long(uint32_t address, uint16_t v) { wr(address, uint8_t(v)); wr(address + 1, uint8_t(v >> 8)); }
+    uint16_t rd16_bank0(uint16_t address) { return uint16_t(rd(address) | (rd(uint16_t(address + 1)) << 8)); }
+    // Direct page read of byte `offset` (offset may exceed 255 when indexed).
+    // In emulation mode with DL=0 the access wraps inside the direct page.
+    uint32_t dp_addr(uint32_t offset) const;
 
+    void set_nz8(uint8_t value) { p.z = value == 0; p.n = (value & 0x80) != 0; }
+    void set_nz16(uint16_t value) { p.z = value == 0; p.n = (value & 0x8000) != 0; }
+
+    // Stack: push/pull wrap inside page 1 in emulation mode; the *_n variants
+    // are used by the 65816-only instructions, which may leave page 1
+    // temporarily (SP's high byte is forced back to $01 afterwards).
     void push8(uint8_t value);
-    uint8_t pop8();
-    void push16(uint16_t value);
-    uint16_t pop16();
+    uint8_t pull8();
+    void push8n(uint8_t value) { wr(sp, value); sp = uint16_t(sp - 1); }
+    uint8_t pull8n() { sp = uint16_t(sp + 1); return rd(sp); }
+    void fix_sp() { if (e_) sp = uint16_t(0x100 | (sp & 0xff)); }
 
-    int take_irq(uint32_t vector_native, uint32_t vector_emulated);
+    void interrupt(uint16_t vector_native, uint16_t vector_emulated, bool brk);
+    uint16_t read_vector(uint16_t vector);
 
-    // Addressing mode resolvers: each returns the effective 24-bit address
-    // and advances pc_ past the operand bytes. `extra` accumulates any
-    // page-crossing/index penalty cycles for modes where that matters.
-    uint32_t addr_direct(int& extra);
-    uint32_t addr_direct_x(int& extra);
-    uint32_t addr_direct_y(int& extra);
-    uint32_t addr_direct_indirect(int& extra);
-    uint32_t addr_direct_indirect_x(int& extra);
-    uint32_t addr_direct_indirect_y(int& extra);
-    uint32_t addr_direct_indirect_long(int& extra);
-    uint32_t addr_direct_indirect_long_y(int& extra);
-    uint32_t addr_absolute();
-    uint32_t addr_absolute_x(int& extra);
-    uint32_t addr_absolute_y(int& extra);
-    uint32_t addr_absolute_long();
-    uint32_t addr_absolute_long_x();
-    uint32_t addr_stack_relative();
-    uint32_t addr_stack_relative_indirect_y();
+    // Effective-address resolvers (advance pc_ past operands).
+    enum class Mode {
+        Imm, Dp, DpX, DpY, DpInd, DpIndX, DpIndY, DpIndLong, DpIndLongY,
+        Abs, AbsX, AbsY, Long, LongX, Sr, SrIndY
+    };
+    uint32_t ea(Mode mode, bool wide, bool is_write);
 
-    // ALU / RMW helpers, operating in either 8 or 16-bit width depending on
-    // the m (for A/memory ops) or x (for X/Y ops) flag.
-    void op_adc(uint32_t address);
-    void op_sbc(uint32_t address);
-    void op_and(uint32_t address);
-    void op_ora(uint32_t address);
-    void op_eor(uint32_t address);
-    void op_bit(uint32_t address, bool immediate);
-    void op_cmp(uint32_t address);
-    void op_cpx(uint32_t address);
-    void op_cpy(uint32_t address);
-    void op_lda(uint32_t address);
-    void op_ldx(uint32_t address);
-    void op_ldy(uint32_t address);
-    void op_sta(uint32_t address);
-    void op_stx(uint32_t address);
-    void op_sty(uint32_t address);
-    void op_stz(uint32_t address);
-    void op_asl_mem(uint32_t address);
-    void op_lsr_mem(uint32_t address);
-    void op_rol_mem(uint32_t address);
-    void op_ror_mem(uint32_t address);
-    void op_inc_mem(uint32_t address);
-    void op_dec_mem(uint32_t address);
-    void op_trb(uint32_t address);
-    void op_tsb(uint32_t address);
+    // Memory operand access respecting the addressing mode's wrap rules.
+    bool bank0_mode_ = false;  // last ea() was a bank-0 (dp/stack) access
+    uint16_t load(uint32_t address, bool wide);
+    void store(uint32_t address, uint16_t value, bool wide);
+
+    void op_adc(uint16_t value);
+    void op_sbc(uint16_t value);
+    void op_cmp(uint16_t reg, uint16_t value, bool wide);
     void branch(bool condition);
-
-    int extra_cycles_ = 0;
+    void rmw(uint32_t address, int op);
 };
 
 }  // namespace dsp
