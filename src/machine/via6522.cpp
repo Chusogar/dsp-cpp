@@ -503,4 +503,16 @@ void Via6522::write(uint8_t reg, uint8_t value) {
     }
 }
 
+void Via6522::shift_in_external(uint8_t value) {
+    sr_ = value;
+    shift_count_ = 0;
+    set_int(kIntSR);
+}
+
+uint8_t Via6522::shift_out_external() {
+    shift_count_ = 0;
+    set_int(kIntSR);
+    return sr_;
+}
+
 }  // namespace dsp

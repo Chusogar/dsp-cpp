@@ -16,7 +16,7 @@ Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 **OutRun**, **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
 **Altered Beast**).
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
-**MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**,
+**MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
 **EXL-100** / **EXELTEL**, **Sinclair QL**, **Atari ST**, **Commodore Amiga 500**. Consoles: NES, Game Boy / Game Boy
 Color, **Atari 2600**, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
 **Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
@@ -80,6 +80,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | WDC 65C816 CPU | new | Apple IIGS CPU; register/memory results match the SingleStepTests 65816 vectors |
 | Ensoniq ES5503 DOC | new | 32 wavetable oscillators, one-shot/free/sync/swap modes, oscillator IRQs |
 | Apple IIGS driver | new (Apple IIGS Hardware/Firmware References, KEGS) | ROM 03, 4 MB, Super Hi-Res, ADB, SmartPort slot 7, boots GS/OS 6.0.4 to the Finder |
+| Musashi 68k core | [Musashi](https://github.com/kstenerud/Musashi) 4.60 (MIT) | 68020 + 68881 for the Mac II; 68020 bus-fault frames (format $B) and RTE of format $A/$B added |
+| Apple Sound Chip | new (MAME `asc`) | FIFO (22257 Hz, half-empty IRQ) and 4-voice wavetable modes |
+| Macintosh II driver | new (MAME `macii`, `nubus_48gc`; Mini vMac ADB) | 8 MB, HMMU 24/32-bit, Display Card 8•24 at 640×480, NCR 5380 SCSI, ADB, RTC/PRAM; boots System 7.5 to the Finder |
 | Game Boy driver | `src/consolas/gb.pas` | DMG / CGB from cart header `$0143`, optional boot ROMs |
 | VIC-II | `mos6566.pas` | PAL 6569, 384×270, sprites, bad lines |
 | MOS 6526 CIA | `mos6526_old.pas` | Two chips: CIA1 IRQ + keyboard, CIA2 NMI + VIC bank |
@@ -717,6 +720,31 @@ Keys: the host mouse drives the IIGS pointer; Left Alt or the Windows/Command
 key is Open-Apple (Command), Right Alt is Option, F11 is Esc (Esc quits the
 emulator), F10 is the Reset key (Ctrl+F10 = Control-Reset). F3 is a cold boot.
 
+### Macintosh II
+
+`--game macii` emulates a Macintosh II with 8 MB of RAM: 68020 + 68881 (Musashi),
+Apple HMMU (24/32-bit switch on VIA2 PB3), two VIAs, NCR 5380 SCSI with the
+pseudo-DMA windows, Apple Sound Chip, 343-0042-B clock with 256 bytes of PRAM,
+the ADB keyboard and mouse (transceiver on the VIA1 shift register, modelled at
+the protocol level), an idle Z8530 SCC (LocalTalk sees a quiet line) and an
+Apple Macintosh Display Card 8•24 in NuBus slot 9 driving a 640×480 monitor
+(1/2/4/8 bpp and 24-bit).
+
+ROMs (MAME `macii.zip`, the zip itself or a directory): `9779d2c4.rom` (rev B)
+or `97851db6.rom` (rev A), plus the card's declaration ROM `3410868.bin`.
+
+`--disk` attaches a SCSI hard disk image (ID 0). Images with an Apple
+partition map boot with their own driver; a bare HFS volume (starting with the
+`LK` boot blocks) gets a driver descriptor map and a small SCSI driver in front
+of it. Writes go straight back to the image file.
+
+```bash
+./build/dsp --game macii --disk hd.img /path/to/macii.zip
+```
+
+Keys: the host mouse drives the pointer; Left Alt or the Windows/Command key is
+Command, Right Alt is Option, F11 is Esc.
+
 ### Game Boy / Game Boy Color
 
 `--game gb` loads a `.gb` / `.gbc` cartridge (plain or zipped). The machine is
@@ -948,6 +976,14 @@ Apple IIGS has a headless runner (screenshots every N frames, scripted keys and 
 cmake --build build --target w65c816_sst a2gs_run
 ./build/w65c816_sst /path/to/65816/v1
 ./build/a2gs_run /path/to/apple2gs.zip 1500 /tmp/gs System.Disk.po
+```
+
+The Macintosh II runner works the same way (`MACII_EVERY`, `MACII_KEYS`,
+`MACII_MOUSE`, `MACII_TRACE=frame:count`):
+
+```bash
+cmake --build build --target macii_run
+./build/macii_run /path/to/macii.zip 2400 /tmp/mac2 hd.img
 ```
 
 The Z80 core can additionally be validated with the standard instruction exerciser,

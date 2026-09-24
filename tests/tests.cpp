@@ -42,6 +42,7 @@
 #include "drivers/computers/amiga.h"
 #include "machine/amiga_adf.h"
 #include "drivers/computers/macplus.h"
+#include "drivers/computers/macii.h"
 #include "machine/mac_dcmp.h"
 #include "machine/mac_dsk.h"
 #include "machine/iwm.h"
@@ -6163,6 +6164,50 @@ void test_apple2gs_boot_if_present() {
     check(white > 400, "the Finder draws its menu bar");
 }
 
+void test_macii_missing_roms() {
+    dsp::MacII machine;
+    std::string error;
+    check(!machine.init("/tmp/no-such-macii-set", &error), "Mac II without ROMs fails init");
+}
+
+// MAME "macii" set (9779d2c4.rom or 97851db6.rom + 3410868.bin) in
+// /tmp/roms/macii; optionally a System 7 SCSI disk in /tmp/roms/macii-hd.img.
+void test_macii_boot_if_present() {
+    const std::string dir = "/tmp/roms/macii";
+    std::FILE* f = std::fopen((dir + "/3410868.bin").c_str(), "rb");
+    if (!f) return;
+    std::fclose(f);
+    std::string error;
+    dsp::MacII mac;
+    check(mac.init(dir, &error), "Mac II ROM and Display Card 8*24 ROM load");
+    for (int i = 0; i < 600; i++) mac.run_frame();
+    check(mac.debug_pc() != 0, "Mac II 68020 is running after POST");
+    check((mac.peek(0x0b22) & 0x80) != 0, "ROM sets HWCfgFlags hwCbSCSI");
+    check(unique_pixels(mac) >= 2, "the 8*24 card shows the desktop pattern");
+
+    std::FILE* src = std::fopen("/tmp/roms/macii-hd.img", "rb");
+    if (!src) return;
+    // The SCSI disk is written back, so boot a scratch copy.
+    const std::string disk = "/tmp/macii-test-hd.img";
+    std::FILE* dst = std::fopen(disk.c_str(), "wb");
+    static char buf[65536];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, src)) > 0) std::fwrite(buf, 1, n, dst);
+    std::fclose(src);
+    std::fclose(dst);
+    dsp::MacII boot;
+    check(boot.init(dir, &error), "Mac II reloads for the SCSI disk");
+    check(boot.load_media(disk, &error), "SCSI hard disk image attaches");
+    for (int i = 0; i < 2600; i++) boot.run_frame();
+    // Finder menu bar: row 5 is mostly white.
+    const uint32_t* fb = boot.framebuffer();
+    int white = 0;
+    for (int x = 0; x < dsp::MacII::kWidth; x++)
+        white += (fb[size_t(5) * dsp::MacII::kWidth + size_t(x)] & 0xffffff) == 0xffffff;
+    check(white > 400, "System 7 reaches the Finder menu bar");
+    std::remove(disk.c_str());
+}
+
 int main() {
     test_z80_arithmetic();
     test_z80_flags_and_blocks();
@@ -6316,6 +6361,8 @@ int main() {
     test_es5503_oneshot();
     test_apple2gs_missing_roms();
     test_apple2gs_boot_if_present();
+    test_macii_missing_roms();
+    test_macii_boot_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
