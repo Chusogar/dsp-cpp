@@ -3,31 +3,27 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 namespace dsp {
 
-// Ensoniq ES5503 "DOC" -- a 32-oscillator wavetable synthesis chip. Each
-// oscillator continuously reads 8-bit signed samples from a wavetable in
-// the chip's own dedicated RAM at a programmable rate (a 17-bit phase
-// accumulator stepped by the oscillator's 16-bit frequency each output
-// tick), scales by an 8-bit volume, and (depending on its control byte)
-// either free-runs/loops, one-shots and halts, or links to a partner
-// oscillator for amplitude-modulation or hard-sync effects.
-//
-// This is an original implementation written from the chip's well-known
-// public architecture (Ensoniq's own datasheet and the Apple IIGS
-// Hardware/Firmware References describe this register layout and
-// synthesis model); the exact register-offset choices below are this
-// project's own, self-consistent layout rather than a verified-byte-exact
-// transcription of any single reference, since the important part -- the
-// actual wavetable-read/volume/mix synthesis engine -- is what actually
-// produces correct audio.
+// Ensoniq ES5503 "DOC": 32 wavetable oscillators reading 8-bit samples from
+// 128 KB of dedicated RAM (the Apple IIGS fits 64 KB). Register map:
+//   $00-$1F frequency low       $20-$3F frequency high
+//   $40-$5F volume              $60-$7F last sample read (data)
+//   $80-$9F wavetable pointer   $A0-$BF control (halt, mode, IE, channel)
+//   $C0-$DF bank/table size/resolution
+//   $E0 interrupt status        $E1 oscillator enable   $E2 A/D converter
+// A sample value of $00 stops the oscillator. Modes: 0 free-run, 1 one-shot,
+// 2 sync/AM, 3 swap (start the partner when this one halts).
+// Behaviour follows the documented chip semantics (as also implemented by
+// MAME's es5503 device).
 class Es5503 {
 public:
     using IrqHandler = std::function<void(bool)>;
 
     static constexpr int kNumOscillators = 32;
-    static constexpr int kRamSize = 65536;
+    static constexpr int kRamSize = 0x10000;
 
     explicit Es5503(uint32_t clock);
 
@@ -35,36 +31,40 @@ public:
 
     void reset();
 
-    // CPU-facing register file ($00-$E1 per the layout documented above
-    // op_and_control_write/read).
     uint8_t read(uint8_t reg);
     void write(uint8_t reg, uint8_t value);
 
-    // Direct access to the chip's dedicated wavetable RAM bank (mapped
-    // into the host address space by the driver).
     uint8_t ram_read(uint16_t address) const { return ram_[address]; }
     void ram_write(uint16_t address, uint8_t value) { ram_[address] = value; }
 
-    // Advances every active oscillator by one output tick and returns the
-    // mixed sample (already scaled to a reasonable int16 range).
-    int16_t update();
+    // Output sample rate for the current number of enabled oscillators.
+    double output_rate() const { return double(clock_) / 8.0 / double(oscs_enabled_ + 2); }
+    // Generates one DOC output sample (all enabled oscillators, mono mix).
+    int32_t generate();
+    bool irq_asserted() const { return irq_line_; }
 
 private:
     struct Oscillator {
         uint16_t freq = 0;
-        uint8_t volume = 0;
-        uint8_t wave_ptr = 0;   // high byte of the wavetable's start address
-        uint8_t control = 0;    // bit0=halt, bits2-1=mode, bit3=IE
-        uint8_t wave_size = 0;  // table size = 256 << (wave_size & 7) bytes
-        uint32_t accumulator = 0;  // 17.? fixed-point phase (top bits = sample index)
-        bool irq_pending = false;
+        uint16_t wtsize = 256;
+        uint8_t control = 1;
+        uint8_t vol = 0;
+        uint8_t data = 0x80;
+        uint32_t wavetblpointer = 0;
+        uint8_t wavetblsize = 0;
+        uint8_t resolution = 0;
+        uint32_t accumulator = 0;
+        bool irqpend = false;
     };
 
-    int oscillator_count() const { return int(((osc_enable_ & 0x3e) >> 1) + 1) * 2; }
+    void halt_osc(int onum, int type, uint32_t* accumulator, int resshift);
+    void set_irq(bool state);
 
     std::array<uint8_t, kRamSize> ram_{};
     std::array<Oscillator, kNumOscillators> osc_{};
-    uint8_t osc_enable_ = 0xe0;  // bits5-1: (num active pairs - 1); matches a common power-on default
+    int oscs_enabled_ = 1;
+    uint8_t rege0_ = 0xff;
+    bool irq_line_ = false;
     IrqHandler irq_handler_;
     uint32_t clock_;
 };

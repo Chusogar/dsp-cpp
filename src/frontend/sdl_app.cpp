@@ -51,6 +51,9 @@ constexpr struct {
 	{Key::F1, SDL_SCANCODE_F1}, {Key::F2, SDL_SCANCODE_F2}, {Key::F3, SDL_SCANCODE_F3}, {Key::F4, SDL_SCANCODE_F4},
 	{Key::F5, SDL_SCANCODE_F5}, {Key::F6, SDL_SCANCODE_F6}, {Key::F7, SDL_SCANCODE_F7}, {Key::F8, SDL_SCANCODE_F8},
 	{Key::F9, SDL_SCANCODE_F9}, {Key::F10, SDL_SCANCODE_F10}, {Key::F11, SDL_SCANCODE_F11}, {Key::F12, SDL_SCANCODE_F12},
+    {Key::Backslash, SDL_SCANCODE_BACKSLASH}, {Key::Backquote, SDL_SCANCODE_GRAVE},
+    {Key::Delete, SDL_SCANCODE_DELETE}, {Key::LeftGui, SDL_SCANCODE_LGUI},
+    {Key::RightGui, SDL_SCANCODE_RGUI}, {Key::RightAlt, SDL_SCANCODE_RALT},
 };
 
 void collect_inputs(Machine& machine, int pointer_x, int pointer_y, uint32_t mouse_buttons,

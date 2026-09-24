@@ -16,7 +16,7 @@ Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 **OutRun**, **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
 **Altered Beast**).
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
-**MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**,
+**MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**,
 **EXL-100** / **EXELTEL**, **Sinclair QL**, **Atari ST**, **Commodore Amiga 500**. Consoles: NES, Game Boy / Game Boy
 Color, **Atari 2600**, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
 **Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
@@ -77,6 +77,9 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Apple Disk II | new (AppleWin 6-and-2 / MAME `a2diskiing`) | Slot 6 analog card, DOS 3.3 `.dsk`/`.do`, ProDOS `.po`, `.nib` |
 | Apple II video | new | 40/80-col text, lo-res, hi-res, double hi-res, 560×384 |
 | Apple II driver | new (MAME `apple2` / `apple2e`) | II, II+, IIe, IIe Enhanced, language card, IIe MMU, Disk II |
+| WDC 65C816 CPU | new | Apple IIGS CPU; register/memory results match the SingleStepTests 65816 vectors |
+| Ensoniq ES5503 DOC | new | 32 wavetable oscillators, one-shot/free/sync/swap modes, oscillator IRQs |
+| Apple IIGS driver | new (Apple IIGS Hardware/Firmware References, KEGS) | ROM 03, 4 MB, Super Hi-Res, ADB, SmartPort slot 7, boots GS/OS 6.0.4 to the Finder |
 | Game Boy driver | `src/consolas/gb.pas` | DMG / CGB from cart header `$0143`, optional boot ROMs |
 | VIC-II | `mos6566.pas` | PAL 6569, 384×270, sprites, bad lines |
 | MOS 6526 CIA | `mos6526_old.pas` | Two chips: CIA1 IRQ + keyboard, CIA2 NMI + VIC bank |
@@ -685,6 +688,35 @@ IIe, Z / Left Alt is Open-Apple and X is Closed-Apple. F3 still resets the machi
 ./build/dsp --game apple2ee --disk game.dsk /path/to/apple2ee.zip
 ```
 
+### Apple IIGS (ROM 03)
+
+`--game apple2gs` emulates a ROM 03 Apple IIGS with 4 MB of RAM: WDC 65C816,
+FPI/Mega II memory system (bank 00/01/E0/E1 shadowing, language card, slot ROM
+selection), VGC video (40/80-column text, lo-res, double lo-res, hi-res, double
+hi-res and Super Hi-Res 320/640 with per-line palettes and fill mode), the
+Ensoniq DOC, the ADB keyboard and mouse (high-level model of the GLU
+microcontroller), the clock / battery RAM chip, VBL, quarter-second, one-second
+and scan-line interrupts.
+
+ROMs (MAME `apple2gs.zip`, the zip itself or a directory): `341-0728`,
+`341-0748` and `apple2gs.chr`. The ADB microcontroller ROM (`341s0632-2.bin`) is
+not needed.
+
+Disks are served by a SmartPort card in slot 7: every `--disk` becomes one
+unit (the first one boots), so a set of 800K System 6 disks can be mounted at
+once. Accepted formats: ProDOS-order `.po` / `.hdv` / raw block images of any
+size, `.2mg` (ProDOS or DOS order) and 140K DOS-order `.dsk` / `.do`. Writes to
+ProDOS-order images go straight back to the file. The internal 3.5"/5.25" ports
+report empty drives.
+
+```bash
+./build/dsp --game apple2gs --disk System.Disk.po --disk SystemTools1.po /path/to/apple2gs.zip
+```
+
+Keys: the host mouse drives the IIGS pointer; Left Alt or the Windows/Command
+key is Open-Apple (Command), Right Alt is Option, F11 is Esc (Esc quits the
+emulator), F10 is the Reset key (Ctrl+F10 = Control-Reset). F3 is a cold boot.
+
 ### Game Boy / Game Boy Color
 
 `--game gb` loads a `.gb` / `.gbc` cartridge (plain or zipped). The machine is
@@ -906,6 +938,16 @@ ROMs and falls back to FD1089 if only the encrypted pair is present.
 
 ```bash
 ctest --test-dir build          # unit tests (CPU, PAL, graphics, palette, PSG)
+```
+
+The 65C816 core can be checked against the
+[SingleStepTests 65816](https://github.com/SingleStepTests/65816) vectors, and the
+Apple IIGS has a headless runner (screenshots every N frames, scripted keys and mouse):
+
+```bash
+cmake --build build --target w65c816_sst a2gs_run
+./build/w65c816_sst /path/to/65816/v1
+./build/a2gs_run /path/to/apple2gs.zip 1500 /tmp/gs System.Disk.po
 ```
 
 The Z80 core can additionally be validated with the standard instruction exerciser,

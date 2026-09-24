@@ -1,108 +1,160 @@
 #include "sound/es5503.h"
 
 namespace dsp {
+namespace {
+
+constexpr uint16_t kWaveSizes[8] = {256, 512, 1024, 2048, 4096, 8192, 16384, 32768};
+constexpr uint32_t kWaveMasks[8] = {0x1ff00, 0x1fe00, 0x1fc00, 0x1f800, 0x1f000, 0x1e000, 0x1c000, 0x18000};
+constexpr uint32_t kAccMasks[8] = {0xff, 0x1ff, 0x3ff, 0x7ff, 0xfff, 0x1fff, 0x3fff, 0x7fff};
+constexpr int kResShifts[8] = {9, 10, 11, 12, 13, 14, 15, 16};
+
+enum { kModeFree = 0, kModeOneShot = 1, kModeSync = 2, kModeSwap = 3 };
+
+}  // namespace
 
 Es5503::Es5503(uint32_t clock) : clock_(clock) {}
 
 void Es5503::reset() {
     for (auto& o : osc_) o = Oscillator{};
-    osc_enable_ = 0xe0;
+    rege0_ = 0xff;
+    oscs_enabled_ = 1;
+    set_irq(false);
+}
+
+void Es5503::set_irq(bool state) {
+    irq_line_ = state;
+    if (irq_handler_) irq_handler_(state);
+}
+
+void Es5503::halt_osc(int onum, int type, uint32_t* accumulator, int resshift) {
+    Oscillator& o = osc_[size_t(onum)];
+    Oscillator& partner = osc_[size_t(onum ^ 1)];
+    const int mode = (o.control >> 1) & 3;
+    const int omode = (partner.control >> 1) & 3;
+
+    if (mode != kModeFree || type != 0) {
+        o.control |= 1;
+    } else {
+        // Preserve the relative phase when looping.
+        uint32_t wtsize = uint32_t(o.wtsize - 1);
+        uint32_t altram = (*accumulator) >> resshift;
+        altram = altram > wtsize ? altram - wtsize : 0;
+        *accumulator = altram << resshift;
+    }
+
+    if (mode == kModeSwap) {
+        partner.control &= uint8_t(~1);
+        partner.accumulator = 0;
+    } else if (omode == kModeSwap && (onum & 1) == 0) {
+        // Even oscillator of a pair whose partner is in swap mode retriggers.
+        o.control &= uint8_t(~1);
+        uint32_t wtsize = uint32_t(o.wtsize - 1);
+        uint32_t altram = (*accumulator) >> resshift;
+        altram = altram > wtsize ? altram - wtsize : 0;
+        *accumulator = altram << resshift;
+    }
+
+    if (o.control & 0x08) {
+        o.irqpend = true;
+        set_irq(true);
+    }
+}
+
+int32_t Es5503::generate() {
+    int32_t mix = 0;
+    for (int osc = 0; osc <= oscs_enabled_ && osc < kNumOscillators; osc++) {
+        Oscillator& o = osc_[size_t(osc)];
+        if (o.control & 1) continue;
+        const uint32_t wtptr = o.wavetblpointer & kWaveMasks[o.wavetblsize];
+        uint32_t acc = o.accumulator;
+        const uint32_t wtsize = uint32_t(o.wtsize - 1);
+        const int resshift = kResShifts[o.resolution] - o.wavetblsize;
+        const uint32_t sizemask = kAccMasks[o.wavetblsize];
+
+        uint32_t altram = acc >> resshift;
+        uint32_t ramptr = altram & sizemask;
+        acc += o.freq;
+        uint8_t raw = ram_[(ramptr + wtptr) & 0xffff];
+        o.data = raw;
+        if (raw == 0x00) {
+            halt_osc(osc, 1, &acc, resshift);
+        } else {
+            mix += (int32_t(raw) - 0x80) * int32_t(o.vol);
+            if (altram >= wtsize) halt_osc(osc, 0, &acc, resshift);
+        }
+        o.accumulator = acc;
+    }
+    return mix;
 }
 
 uint8_t Es5503::read(uint8_t reg) {
-    if (reg < 0x20) return uint8_t(osc_[reg].freq & 0xff);
-    if (reg < 0x40) return uint8_t(osc_[reg - 0x20].freq >> 8);
-    if (reg < 0x60) return osc_[reg - 0x40].volume;
-    if (reg < 0x80) return osc_[reg - 0x60].wave_ptr;
-    if (reg < 0xa0) {
-        Oscillator& o = osc_[reg - 0x80];
-        uint8_t v = o.control;
-        if (o.irq_pending) v = uint8_t(v | 0x00);  // IRQ flag surfaces via $E1, not here
-        return v;
-    }
-    if (reg < 0xc0) return osc_[reg - 0xa0].wave_size;
-    if (reg == 0xe0) return osc_enable_;
-    if (reg == 0xe1) {
-        // Read-and-partially-clear IRQ status: returns the index of the
-        // lowest-numbered oscillator with a pending interrupt (or 0xff if
-        // none), matching the chip's documented single-flag-at-a-time
-        // acknowledge scheme.
-        for (int i = 0; i < kNumOscillators; i++) {
-            if (osc_[i].irq_pending) {
-                osc_[i].irq_pending = false;
-                return uint8_t(i << 1);
+    if (reg < 0xe0) {
+        const Oscillator& o = osc_[reg & 0x1f];
+        switch (reg & 0xe0) {
+            case 0x00: return uint8_t(o.freq & 0xff);
+            case 0x20: return uint8_t(o.freq >> 8);
+            case 0x40: return o.vol;
+            case 0x60: return o.data;
+            case 0x80: return uint8_t(o.wavetblpointer >> 8);
+            case 0xa0: return o.control;
+            case 0xc0: {
+                uint8_t v = 0;
+                if (o.wavetblpointer & 0x10000) v |= 0x40;
+                v = uint8_t(v | (o.wavetblsize << 3) | o.resolution);
+                return v;
             }
         }
-        return 0xff;
+        return 0;
     }
-    return 0xff;
+    switch (reg) {
+        case 0xe0: {
+            uint8_t retval = rege0_;
+            set_irq(false);
+            for (int i = 0; i <= oscs_enabled_ && i < kNumOscillators; i++) {
+                if (osc_[size_t(i)].irqpend) {
+                    retval = uint8_t(i << 1);
+                    rege0_ = uint8_t(retval | 0x80);
+                    osc_[size_t(i)].irqpend = false;
+                    break;
+                }
+            }
+            for (int i = 0; i <= oscs_enabled_ && i < kNumOscillators; i++) {
+                if (osc_[size_t(i)].irqpend) {
+                    set_irq(true);
+                    break;
+                }
+            }
+            return uint8_t(retval | 0x41);
+        }
+        case 0xe1: return uint8_t((oscs_enabled_ << 1) & 0xff);
+        case 0xe2: return 0x80;  // A/D converter: mid-scale
+    }
+    return 0;
 }
 
 void Es5503::write(uint8_t reg, uint8_t value) {
-    if (reg < 0x20) { osc_[reg].freq = uint16_t((osc_[reg].freq & 0xff00) | value); return; }
-    if (reg < 0x40) { int i = reg - 0x20; osc_[i].freq = uint16_t((osc_[i].freq & 0x00ff) | (value << 8)); return; }
-    if (reg < 0x60) { osc_[reg - 0x40].volume = value; return; }
-    if (reg < 0x80) { osc_[reg - 0x60].wave_ptr = value; return; }
-    if (reg < 0xa0) {
-        Oscillator& o = osc_[reg - 0x80];
-        o.control = value;
-        if (value & 1) o.accumulator = 0;  // halting resets phase, matching typical usage
+    if (reg < 0xe0) {
+        Oscillator& o = osc_[reg & 0x1f];
+        switch (reg & 0xe0) {
+            case 0x00: o.freq = uint16_t((o.freq & 0xff00) | value); break;
+            case 0x20: o.freq = uint16_t((o.freq & 0x00ff) | (value << 8)); break;
+            case 0x40: o.vol = value; break;
+            case 0x60: break;
+            case 0x80: o.wavetblpointer = (o.wavetblpointer & 0x10000) | (uint32_t(value) << 8); break;
+            case 0xa0:
+                if ((o.control & 1) && !(value & 1)) o.accumulator = 0;
+                o.control = value;
+                break;
+            case 0xc0:
+                if (value & 0x40) o.wavetblpointer |= 0x10000; else o.wavetblpointer &= 0xffff;
+                o.wavetblsize = uint8_t((value >> 3) & 7);
+                o.wtsize = kWaveSizes[o.wavetblsize];
+                o.resolution = uint8_t(value & 7);
+                break;
+        }
         return;
     }
-    if (reg < 0xc0) { osc_[reg - 0xa0].wave_size = value; return; }
-    if (reg == 0xe0) { osc_enable_ = value; return; }
-}
-
-int16_t Es5503::update() {
-    int32_t mix = 0;
-    const int active = oscillator_count();
-
-    for (int i = 0; i < active && i < kNumOscillators; i++) {
-        Oscillator& o = osc_[i];
-        if (o.control & 1) continue;  // halted
-
-        const uint32_t table_bytes = 256u << (o.wave_size & 7);
-        // Phase accumulator: integer part (above kFrac bits) indexes the
-        // wavetable; freq is added each tick the same way every wavetable
-        // synth of this era works (a simple DDS/phase-accumulator design).
-        constexpr uint32_t kFrac = 9;
-        o.accumulator += uint32_t(o.freq);
-        uint32_t index = (o.accumulator >> kFrac);
-
-        if (index >= table_bytes) {
-            const int mode = (o.control >> 1) & 3;
-            if (mode == 1) {  // one-shot: play once, then halt
-                o.control = uint8_t(o.control | 1);
-                index = table_bytes - 1;
-                o.accumulator = uint32_t(index) << kFrac;
-                if (o.control & 8) o.irq_pending = true;
-            } else {
-                // free-run (mode 0) and the swap/sync modes (2,3, treated
-                // as free-run here -- cross-oscillator linking isn't
-                // implemented yet) all loop the table.
-                o.accumulator -= uint32_t(table_bytes) << kFrac;
-                index = (o.accumulator >> kFrac);
-                if (o.control & 8) o.irq_pending = true;
-            }
-        }
-
-        uint16_t addr = uint16_t((uint16_t(o.wave_ptr) << 8) + index);
-        int sample = int(ram_[addr]) - 0x80;  // offset-binary -> signed
-        mix += sample * int(o.volume);
-    }
-
-    if (irq_handler_) {
-        bool any = false;
-        for (auto& o : osc_) if (o.irq_pending) { any = true; break; }
-        irq_handler_(any);
-    }
-
-    // Scale down: up to 32 oscillators * 127 sample * 255 volume can be
-    // large, so shift into a comfortable int16 range.
-    int32_t out = mix >> 8;
-    if (out > 32767) out = 32767;
-    if (out < -32768) out = -32768;
-    return int16_t(out);
+    if (reg == 0xe1) oscs_enabled_ = (value >> 1) & 0x1f;
 }
 
 }  // namespace dsp

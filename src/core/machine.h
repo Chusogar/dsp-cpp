@@ -18,6 +18,7 @@ enum class Key {
     Up, Down, Left, Right, Comma, Period, Semicolon, Quote, Slash, Minus,
     Escape, Tab, CapsLock, Home, Cbm, Equals, Plus, Asterisk, At,
     F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+    Backslash, Backquote, Delete, LeftGui, RightGui, RightAlt,
     Count
 };
 

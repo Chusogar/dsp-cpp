@@ -30,6 +30,9 @@
 #include "drivers/arcade/atari_system1.h"
 #include "drivers/arcade/atari_system2.h"
 #include "drivers/computers/apple2.h"
+#include "drivers/computers/apple2gs.h"
+#include "cpu/w65c816.h"
+#include "sound/es5503.h"
 #include "drivers/computers/exelv.h"
 #include "drivers/computers/ql.h"
 #include "machine/ql_mdv.h"
@@ -6036,6 +6039,130 @@ void test_apple2_roms_if_present() {
 
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// WDC 65C816 / Apple IIGS
+// ---------------------------------------------------------------------------
+
+namespace {
+std::vector<uint8_t> w816_memory;
+dsp::W65C816 make_w65c816() {
+    w816_memory.assign(0x1000000, 0);
+    dsp::W65C816 cpu(2800000);
+    cpu.set_memory_handlers([](uint32_t a) { return w816_memory[a & 0xffffff]; },
+                            [](uint32_t a, uint8_t v) { w816_memory[a & 0xffffff] = v; });
+    return cpu;
+}
+void load_816(uint32_t address, std::initializer_list<uint8_t> bytes) {
+    for (uint8_t b : bytes) w816_memory[address++] = b;
+}
+}  // namespace
+
+void test_w65c816_native_mode() {
+    dsp::W65C816 cpu = make_w65c816();
+    w816_memory[0xfffc] = 0x00;
+    w816_memory[0xfffd] = 0x10;
+    // clc / xce / rep #$30 / lda #$1234 / sed / adc #$0999 / cld / sta $2000
+    load_816(0x1000, {0x18, 0xfb, 0xc2, 0x30, 0xa9, 0x34, 0x12, 0xf8, 0x69, 0x99, 0x09, 0xd8, 0x8d, 0x00, 0x20});
+    cpu.reset();
+    check(cpu.emulation(), "65C816 resets in emulation mode");
+    for (int i = 0; i < 8; i++) cpu.step();
+    check(!cpu.emulation(), "XCE switches to native mode");
+    // XCE left the old E flag (1) in carry, so the decimal add includes it.
+    check(cpu.a == 0x2234, "16-bit decimal ADC: 1234 + 0999 + C = 2234");
+    check(w816_memory[0x2000] == 0x34 && w816_memory[0x2001] == 0x22, "16-bit STA stores both bytes");
+
+    // Block move: ldx #$3000 / ldy #$4000 / lda #$0003 / mvn $05,$04
+    load_816(0x100f, {0xa2, 0x00, 0x30, 0xa0, 0x00, 0x40, 0xa9, 0x03, 0x00, 0x54, 0x05, 0x04});
+    load_816(0x043000, {1, 2, 3, 4});
+    for (int i = 0; i < 3 + 4; i++) cpu.step();
+    check(w816_memory[0x054000] == 1 && w816_memory[0x054003] == 4, "MVN copies A+1 bytes across banks");
+    check(cpu.a == 0xffff && cpu.dbr == 0x05, "MVN leaves A=$FFFF and DBR=destination bank");
+}
+
+void test_w65c816_emulation_quirks() {
+    dsp::W65C816 cpu = make_w65c816();
+    w816_memory[0xfffc] = 0x00;
+    w816_memory[0xfffd] = 0x10;
+    // ldx #$10 / lda $f8,x  (direct page wraps inside page 0 in emulation mode)
+    load_816(0x1000, {0xa2, 0x10, 0xb5, 0xf8});
+    w816_memory[0x0008] = 0x5a;
+    w816_memory[0x0108] = 0xa5;
+    cpu.reset();
+    cpu.step();
+    cpu.step();
+    check(cpu.a == 0x5a, "emulation-mode dp,X wraps within the direct page");
+
+    // BRK pushes B=1 in emulation mode, IRQ pushes B=0.
+    dsp::W65C816 brk = make_w65c816();
+    w816_memory[0xfffc] = 0x00;
+    w816_memory[0xfffd] = 0x10;
+    w816_memory[0xfffe] = 0x00;
+    w816_memory[0xffff] = 0x20;
+    load_816(0x1000, {0x00, 0x00});
+    brk.reset();
+    brk.step();
+    check(brk.pc() == 0x2000, "BRK jumps through the emulation IRQ/BRK vector");
+    check((w816_memory[0x01fd] & 0x10) != 0, "BRK pushes the B flag set");
+}
+
+void test_es5503_oneshot() {
+    dsp::Es5503 doc(7159090);
+    bool irq = false;
+    doc.set_irq_handler([&](bool on) { irq = on; });
+    doc.reset();
+    for (int i = 0; i < 256; i++) doc.ram_write(uint16_t(0x100 + i), uint8_t(i < 128 ? 0xc0 : 0x40));
+    doc.write(0xe1, 0x02);          // two oscillators
+    doc.write(0x00, 0x00);          // freq low
+    doc.write(0x20, 0x02);          // freq high: fast step
+    doc.write(0x40, 0xff);          // volume
+    doc.write(0x80, 0x01);          // wavetable at $0100
+    doc.write(0xc0, 0x00);          // 256-byte table, resolution 0
+    doc.write(0xa0, 0x02 | 0x08);   // one-shot, interrupt enable, running
+    int32_t peak = 0;
+    for (int i = 0; i < 4096 && !(doc.read(0xa0) & 1); i++) peak = std::max(peak, std::abs(doc.generate()));
+    check(peak > 0, "DOC oscillator produces samples");
+    check((doc.read(0xa0) & 1) != 0, "one-shot oscillator halts at the end of its table");
+    check(irq, "halting oscillator with IE raises the DOC IRQ");
+    uint8_t e0 = doc.read(0xe0);
+    check((e0 & 0x3e) == 0 && !irq, "reading $E0 reports oscillator 0 and clears the IRQ");
+}
+
+void test_apple2gs_missing_roms() {
+    dsp::Apple2GS machine;
+    std::string error;
+    check(!machine.init("/tmp/no-such-apple2gs-set", &error), "Apple IIGS without ROMs fails init");
+}
+
+void test_apple2gs_boot_if_present() {
+    const std::string dir = "/tmp/roms/apple2gs";
+    std::FILE* f = std::fopen((dir + "/341-0748").c_str(), "rb");
+    if (!f) return;
+    std::fclose(f);
+    dsp::Apple2GS gs;
+    std::string error;
+    check(gs.init(dir, &error), "Apple IIGS ROM 03 loads");
+    for (int i = 0; i < 120; i++) gs.run_frame();
+    // The ROM's "Apple IIgs" banner lives on text page 1, row 0 (col 15).
+    check(gs.peek_slow(0x0400 + 15) == 0xc1 && gs.peek_slow(0x0400 + 16) == 0xf0,
+          "ROM 03 prints the Apple IIgs startup banner");
+
+    const std::string disk = dir + "/System.Disk.po";
+    std::FILE* d = std::fopen(disk.c_str(), "rb");
+    if (!d) return;
+    std::fclose(d);
+    dsp::Apple2GS boot;
+    check(boot.init(dir, &error), "Apple IIGS reloads for GS/OS");
+    check(boot.load_media(disk, &error), "System 6 disk mounts on the slot 7 SmartPort card");
+    boot.reset();
+    for (int i = 0; i < 1500; i++) boot.run_frame();
+    check((boot.peek(0xc029) & 0x80) != 0, "GS/OS switches to Super Hi-Res");
+    // Finder menu bar: row 0-9 of the SHR screen mostly white.
+    const uint32_t* fb = boot.framebuffer();
+    int white = 0;
+    for (int x = 0; x < 640; x++) white += (fb[size_t(4) * 640 + size_t(x)] & 0xffffff) == 0xffffff;
+    check(white > 400, "the Finder draws its menu bar");
+}
+
 int main() {
     test_z80_arithmetic();
     test_z80_flags_and_blocks();
@@ -6184,6 +6311,11 @@ int main() {
     test_mac_boot_if_present();
     test_mac_mouse_tracking_if_present();
     test_mac_mouse_cursor_tracks_if_present();
+    test_w65c816_native_mode();
+    test_w65c816_emulation_quirks();
+    test_es5503_oneshot();
+    test_apple2gs_missing_roms();
+    test_apple2gs_boot_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;
