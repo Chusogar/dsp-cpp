@@ -43,6 +43,7 @@
 #include "machine/amiga_adf.h"
 #include "drivers/computers/macplus.h"
 #include "drivers/computers/macii.h"
+#include "drivers/consoles/vectrex.h"
 #include "machine/mac_dcmp.h"
 #include "machine/mac_dsk.h"
 #include "machine/iwm.h"
@@ -6216,6 +6217,42 @@ void test_macii_boot_if_present() {
     std::remove(disk.c_str());
 }
 
+// MAME "vectrex" set in /tmp/roms/vectrex.zip; Pole Position in
+// /tmp/roms/pole.vec exercises the shift-register text.
+void test_vectrex_if_present() {
+    std::FILE* f = std::fopen("/tmp/roms/vectrex.zip", "rb");
+    if (!f) return;
+    std::fclose(f);
+    std::string error;
+    dsp::Vectrex vx;
+    check(vx.init("/tmp/roms/vectrex.zip", &error), "Vectrex BIOS loads from the MAME zip");
+    auto lit = [](const dsp::Vectrex& m) {
+        int n = 0;
+        const uint32_t* fb = m.framebuffer();
+        for (int i = 0; i < dsp::Vectrex::kWidth * dsp::Vectrex::kHeight; i++) n += (fb[i] & 0xff) > 40;
+        return n;
+    };
+    for (int i = 0; i < 150; i++) vx.run_frame();
+    const int intro = lit(vx);
+    check(intro > 2000 && intro < 12000, "the BIOS intro draws thin vectors, not a blank or washed-out screen");
+
+    std::FILE* c = std::fopen("/tmp/roms/pole.vec", "rb");
+    if (!c) return;
+    std::fclose(c);
+    check(vx.load_media("/tmp/roms/pole.vec", &error), "Pole Position cartridge loads");
+    dsp::MachineInputs in;
+    int peak = 0;
+    for (int i = 1; i <= 1300; i++) {
+        in.player1.button4 = i >= 500 && i < 505;
+        vx.set_inputs(in);
+        vx.run_frame();
+        if (i > 1100) peak = std::max(peak, lit(vx));
+    }
+    // The scrolling "PREPARE TO QUALIFY" used to smear into a solid band
+    // (long persistence, and ACR writes unblanking the beam).
+    check(peak > 3000 && peak < 13000, "Pole Position race screen stays crisp while the text scrolls");
+}
+
 int main() {
     test_z80_arithmetic();
     test_z80_flags_and_blocks();
@@ -6371,6 +6408,7 @@ int main() {
     test_apple2gs_boot_if_present();
     test_macii_missing_roms();
     test_macii_boot_if_present();
+    test_vectrex_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

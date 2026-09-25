@@ -1,5 +1,7 @@
 #include "drivers/consoles/vectrex.h"
 
+#include "core/rom_loader.h"
+
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -34,18 +36,27 @@ Vectrex::Vectrex() : cpu_(kCpuClock), via_(kCpuClock), ay_(kCpuClock) {
 }
 
 bool Vectrex::init(const std::string& rom_path, std::string* error) {
+    // The BIOS can be a bare 8 KB image, or a MAME "vectrex" set (zip or
+    // directory) holding exec_rom.bin.
     std::vector<uint8_t> rom;
     const char* names[] = {"exec_rom.bin", "vectrex.bin", "bios.bin",
                            "exec_rom_intl_284001-1.bin"};
-    if (!read_file(rom_path, rom)) {
-        for (const char* n : names)
-            if (read_file((std::filesystem::path(rom_path) / n).string(), rom)) break;
+    const bool plain = read_file(rom_path, rom) && !(rom.size() >= 2 && rom[0] == 'P' && rom[1] == 'K');
+    if (!plain) {
+        rom.clear();
+        RomLoader loader;
+        std::string open_error;
+        if (loader.open(rom_path, &open_error)) {
+            for (const char* n : names)
+                if (loader.try_read(n, rom) && rom.size() >= bios_.size()) break;
+        }
     }
     if (rom.size() < bios_.size()) {
-        if (error) *error = "Vectrex BIOS (8 KB) not found in " + rom_path;
+        if (error) *error = "Vectrex BIOS (8 KB exec_rom.bin) not found in " + rom_path;
         return false;
     }
     std::copy(rom.begin(), rom.begin() + long(bios_.size()), bios_.begin());
+    if (error) error->clear();
     reset();
     return true;
 }
@@ -198,10 +209,11 @@ void Vectrex::add_segment() {
 void Vectrex::step_one_cycle() {
     via_.tick(1);
 
-    // /BLANK: CB2 high = unblanked. CB2 comes from the shift register when
-    // ACR bit 4 is set, otherwise from the PCR/handshake logic (via_.cb2()
-    // already reflects whichever source drives it).
-    const bool unblanked = via_.cb2();
+    // /BLANK: CB2 high = unblanked. With ACR bit 4 set the shift register
+    // drives CB2 and the beam follows the last bit it shifted out (text is
+    // drawn that way); otherwise the PCR / handshake level does (vecx
+    // via_cb2s / via_cb2h). Switching ACR must not unblank the beam.
+    const bool unblanked = (via_.acr() & 0x10) ? via_.cb2_shift_level() : via_.cb2_handshake_level();
 
     float sdx = 0.0f, sdy = 0.0f;
     if (zero_active_) {
@@ -271,10 +283,62 @@ void Vectrex::on_cycles(int cycles) {
     }
 }
 
-// ---- Rasterization (persistence + antialiased lines) ----
+// ---- Rasterization ----
+//
+// Every vector the beam traced during the frame is drawn once as an
+// antialiased line whose brightness is its Z (intensity) level, the way
+// vecx and MAME present the tube. Strokes redrawn in the same frame add up
+// but saturate at full brightness, and the previous frame fades with a
+// short phosphor decay instead of piling up: a long persistence smeared
+// anything that moves (scrolling text, the ship) into a bright band.
+
+void Vectrex::plot(int x, int y, float v) {
+    if (x < 0 || x >= kWidth || y < 0 || y >= kHeight || v <= 0.0f) return;
+    float& p = frame_[size_t(y) * kWidth + size_t(x)];
+    p = std::min(1.0f, p + v);
+}
+
+void Vectrex::draw_line(float x0, float y0, float x1, float y1, float v) {
+    // Xiaolin Wu style: one sample per pixel along the major axis, the
+    // coverage split between the two pixels across it, plus a faint halo
+    // so a line reads about 1.5 px wide like the real beam.
+    const float dx = x1 - x0, dy = y1 - y0;
+    const float len = std::max(std::fabs(dx), std::fabs(dy));
+    if (len < 0.5f) {  // a dot
+        const int px = int(std::floor(x0)), py = int(std::floor(y0));
+        plot(px, py, v);
+        plot(px + 1, py, v * 0.35f);
+        plot(px - 1, py, v * 0.35f);
+        plot(px, py + 1, v * 0.35f);
+        plot(px, py - 1, v * 0.35f);
+        return;
+    }
+    const int steps = int(std::ceil(len));
+    const bool steep = std::fabs(dy) > std::fabs(dx);
+    for (int i = 0; i <= steps; ++i) {
+        const float t = float(i) / float(steps);
+        const float fx = x0 + dx * t, fy = y0 + dy * t;
+        if (steep) {
+            const int py = int(std::floor(fy + 0.5f));
+            const int px = int(std::floor(fx));
+            const float f = fx - float(px);
+            plot(px, py, v * (1.0f - f));
+            plot(px + 1, py, v * f);
+            plot(px - 1, py, v * 0.2f * (1.0f - f));
+            plot(px + 2, py, v * 0.2f * f);
+        } else {
+            const int px = int(std::floor(fx + 0.5f));
+            const int py = int(std::floor(fy));
+            const float f = fy - float(py);
+            plot(px, py, v * (1.0f - f));
+            plot(px, py + 1, v * f);
+            plot(px, py - 1, v * 0.2f * (1.0f - f));
+            plot(px, py + 2, v * 0.2f * f);
+        }
+    }
+}
 
 void Vectrex::render_vectors() {
-    for (auto& g : glow_) g *= kPersistence;
     if (vectoring_) {
         // Flush the in-progress vector so the frame shows complete strokes;
         // keep accumulating it afterwards.
@@ -282,47 +346,22 @@ void Vectrex::render_vectors() {
         vx0_ = vx1_;
         vy0_ = vy1_;
     }
+    frame_.fill(0.0f);
+    const float sx = float(kWidth) / float(kAlgMaxX);
+    const float sy = float(kHeight) / float(kAlgMaxY);
+    const float cx = float(kWidth) * 0.5f, cy = float(kHeight) * 0.5f;
     for (const auto& s : segments_) {
         if (s.intensity <= 0.0f) continue;  // zsh = 0: invisible stroke
-        const float dx = s.x1 - s.x0, dy = s.y1 - s.y0;
-        const int steps = std::max(1, int(std::max(std::fabs(dx), std::fabs(dy)) * 3.0f) + 1);
-        const float len = std::sqrt(dx * dx + dy * dy) + 1.0f;
-        const float energy = s.intensity * (3.0f / std::pow(len, 0.40f));
-        const float edge = 0.12f;
-        const float sx = float(kWidth) / float(kAlgMaxX);
-        const float sy = float(kHeight) / float(kAlgMaxY);
-        const float cx = float(kWidth) * 0.5f, cy = float(kHeight) * 0.5f;
-        for (int i = 0; i <= steps; ++i) {
-            const float t = float(i) / float(steps);
-            const float fx = cx + (s.x0 + dx * t) * sx;
-            // dy is already rsh - ysh, which carries vecx's Y inversion, so
-            // the raster must not flip it a second time.
-            const float fy = cy + (s.y0 + dy * t) * sy;
-            const int px = int(fx);
-            const int py = int(fy);
-            const float ax = fx - float(px);
-            const float ay = fy - float(py);
-            auto add = [&](int x, int y, float w) {
-                if (x < 0 || x >= kWidth || y < 0 || y >= kHeight || w <= 0.0f) return;
-                glow_[size_t(y) * kWidth + size_t(x)] += energy * w;
-            };
-            add(px, py, (1.0f - ax) * (1.0f - ay));
-            add(px + 1, py, ax * (1.0f - ay));
-            add(px, py + 1, (1.0f - ax) * ay);
-            add(px + 1, py + 1, ax * ay);
-            add(px - 1, py, edge * (1.0f - ax));
-            add(px + 2, py, edge * ax);
-            add(px, py - 1, edge * (1.0f - ay));
-            add(px, py + 2, edge * ay);
-        }
+        // dy is already rsh - ysh, which carries vecx's Y inversion, so the
+        // raster must not flip it a second time.
+        draw_line(cx + s.x0 * sx, cy + s.y0 * sy, cx + s.x1 * sx, cy + s.y1 * sy,
+                  std::min(1.0f, s.intensity * 1.25f));
     }
     segments_.clear();
     for (size_t i = 0; i < glow_.size(); ++i) {
-        float g = glow_[i];
-        if (g > 1.0f) g = 1.0f + 0.15f * std::log1p(g - 1.0f);
-        g = std::min(1.0f, std::max(0.0f, g));
-        g = std::pow(g, 0.90f);
-        const int v = int(g * 255.0f + 0.5f);
+        const float g = std::max(glow_[i] * kPersistence, frame_[i]);
+        glow_[i] = g;
+        const int v = int(std::pow(g, 0.8f) * 255.0f + 0.5f);
         framebuffer_[i] = 0xff000000u | (uint32_t(v) << 16) | (uint32_t(v) << 8) | uint32_t(v);
     }
 }

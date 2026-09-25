@@ -16,7 +16,8 @@ namespace dsp {
 //   DAC sin signo (xsh = ora ^ 0x80, 128 = centro)
 //   dx = xsh - rsh, dy = rsh - ysh  (rsh/ysh/zsh capturados por el mux PB0..PB2)
 //   zsh = (xsh > 0x80) ? xsh - 0x80 : 0
-//   RAMP = PB7 (o T1PB7 si ACR.7); BLANK = !CB2 (SR si ACR.4, si no PCR/handshake)
+//   RAMP = PB7 (o T1PB7 si ACR.7); BLANK = !CB2: último bit del SR si ACR.4,
+//   si no el nivel PCR/handshake (vecx via_cb2s / via_cb2h)
 //   ZERO (CA2 bajo) devuelve el haz al centro cada ciclo (puede dibujar el tramo)
 //   El vector se cierra al blank o al cambiar dx/dy/intensidad.
 class Vectrex : public Machine {
@@ -31,7 +32,8 @@ public:
     static constexpr int kWidth = 512;
     static constexpr int kHeight = 640;
     static constexpr int kSampleRate = 44100;
-    static constexpr float kPersistence = 0.70f;
+    // Fraction of the previous frame still glowing (P31 phosphor fades fast).
+    static constexpr float kPersistence = 0.45f;
 
     Vectrex();
     bool init(const std::string& rom_path, std::string* error) override;
@@ -64,6 +66,8 @@ private:
     void add_segment();
     void step_one_cycle();
     void render_vectors();
+    void draw_line(float x0, float y0, float x1, float y1, float v);
+    void plot(int x, int y, float v);
 
     struct Segment { float x0, y0, x1, y1, intensity; };
 
@@ -106,6 +110,7 @@ private:
     uint8_t vzsh_ = 0;
     std::vector<Segment> segments_;
     std::array<float, size_t(kWidth) * kHeight> glow_{};
+    std::array<float, size_t(kWidth) * kHeight> frame_{};
     std::array<uint32_t, size_t(kWidth) * kHeight> framebuffer_{};
 
     uint8_t buttons_ = 0;

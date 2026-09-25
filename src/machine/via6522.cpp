@@ -54,10 +54,10 @@ void Via6522::reset() {
     sr_ = 0;
     shift_count_ = 0;
     shift_phase_ = 0;
-    shift_out_bit_ = true;
+    shift_out_bit_ = false;
     acr_ = pcr_ = ier_ = ifr_ = 0;
     in_ca1_ = in_ca2_ = in_cb1_ = in_cb2_ = false;
-    out_ca2_ = out_cb1_ = out_cb2_ = true;
+    out_ca2_ = out_cb1_ = out_cb2_ = hs_cb2_ = true;
 }
 
 void Via6522::set_int(uint8_t bits) {
@@ -108,6 +108,11 @@ void Via6522::output_ca2(bool level) {
 }
 
 void Via6522::output_cb2(bool level) {
+    hs_cb2_ = level;
+    output_cb2_sr(level);
+}
+
+void Via6522::output_cb2_sr(bool level) {
     if (out_cb2_ == level) return;
     out_cb2_ = level;
     if (cb2_handler_) cb2_handler_(level);
@@ -273,7 +278,7 @@ void Via6522::shift_clock() {
         } else {
             sr_ = uint8_t(sr_ << 1);  // logical shift modes 5–7
         }
-        output_cb2(shift_out_bit_);
+        output_cb2_sr(shift_out_bit_);
     } else {
         // Shift in from CB2
         sr_ = uint8_t((sr_ << 1) | (in_cb2_ ? 1 : 0));
@@ -476,7 +481,7 @@ void Via6522::write(uint8_t reg, uint8_t value) {
             }
             // Shift modes that force CB2 high as idle
             if (sr_mode(acr_) == 0 || sr_mode(acr_) == 7 || sr_mode(acr_) == 3)
-                output_cb2(true);
+                output_cb2_sr(true);
             break;
         }
         case 0x0C:  // PCR
