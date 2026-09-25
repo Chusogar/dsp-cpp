@@ -298,13 +298,13 @@ int SdlApp::run(Machine& machine) {
             int mx = 0;
             int my = 0;
             mouse_buttons = SDL_GetMouseState(&mx, &my);
-            int win_w = 0;
-            int win_h = 0;
-            SDL_GetWindowSize(window, &win_w, &win_h);
-            if (win_w > 0 && win_h > 0) {
-                pointer_x = mx * width / win_w;
-                pointer_y = my * height / win_h;
-            }
+            // The picture is letterboxed by SDL_RenderSetLogicalSize, so map
+            // through the renderer's viewport and scale, not the window size.
+            float lx = 0.0f;
+            float ly = 0.0f;
+            SDL_RenderWindowToLogical(renderer, mx, my, &lx, &ly);
+            pointer_x = std::clamp(static_cast<int>(lx), 0, width - 1);
+            pointer_y = std::clamp(static_cast<int>(ly), 0, height - 1);
         }
         collect_inputs(machine, pointer_x, pointer_y, mouse_buttons, machine.uses_pointer());
         machine.run_frame();

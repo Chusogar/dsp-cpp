@@ -863,6 +863,30 @@ void MacPlus::set_inputs(const MachineInputs& inputs) {
         pointer_seen_ = true;
         return;
     }
+    // Once the ROM has the SCC mouse interrupts running, the host pointer is
+    // written straight into the cursor globals (Mini vMac does the same):
+    // MTemp and RawMouse get the absolute position and CrsrNew = CrsrCouple
+    // asks the cursor VBL task to redraw it. Quadrature pulses would go
+    // through the system's mouse acceleration and the cursor would drift
+    // away from the host pointer.
+    if ((scc_wr9_ & 0x08) && !overlay_) {
+        const int x = std::clamp(inputs.pointer_x, 0, kWidth - 1);
+        const int y = std::clamp(inputs.pointer_y, 0, kHeight - 1);
+        const uint8_t pos[4] = {uint8_t(y >> 8), uint8_t(y), uint8_t(x >> 8), uint8_t(x)};
+        bool same = true;
+        for (int i = 0; i < 4; i++) same = same && ram_at(0x828 + uint32_t(i)) == pos[i] && ram_at(0x82c + uint32_t(i)) == pos[i];
+        if (!same) {
+            for (int i = 0; i < 4; i++) {
+                ram_at(0x828 + uint32_t(i), pos[i]);  // MTemp
+                ram_at(0x82c + uint32_t(i), pos[i]);  // RawMouse
+            }
+            ram_at(0x8ce, ram_at(0x8cf));  // CrsrNew = CrsrCouple
+        }
+        mouse_count_x_ = mouse_count_y_ = 0;
+        last_pointer_x_ = inputs.pointer_x;
+        last_pointer_y_ = inputs.pointer_y;
+        return;
+    }
     // set_inputs runs once per emulated frame (sdl_app calls it right before
     // run_frame). A host mouse routinely moves more than one Mac pixel in
     // that 1/60s, so the delta is queued here and drained a step at a time

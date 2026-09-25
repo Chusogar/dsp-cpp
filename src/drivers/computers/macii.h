@@ -97,6 +97,7 @@ private:
     void tick_devices(int cycles);
     void render();
     void make_context_current();
+    void seed_pram(uint8_t video_mode);
 
     // ---- ADB transceiver (protocol level) ----
     void adb_state_changed();
@@ -118,6 +119,8 @@ private:
     std::deque<uint8_t> key_events_;
     int mouse_dx_ = 0, mouse_dy_ = 0;
     bool mouse_button_ = false, mouse_button_sent_ = false;
+    bool adb_mouse_polled_ = false;
+    void move_pointer(int x, int y);
 
     // ---- RTC 343-0042-B ----
     void rtc_ce(bool level);

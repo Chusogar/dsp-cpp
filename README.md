@@ -728,7 +728,9 @@ pseudo-DMA windows, Apple Sound Chip, 343-0042-B clock with 256 bytes of PRAM,
 the ADB keyboard and mouse (transceiver on the VIA1 shift register, modelled at
 the protocol level), an idle Z8530 SCC (LocalTalk sees a quiet line) and an
 Apple Macintosh Display Card 8•24 in NuBus slot 9 driving a 640×480 monitor
-(1/2/4/8 bpp and 24-bit).
+(1/2/4/8 bpp and 24-bit). PRAM starts out as on a Mac II that has already
+booted once, with the card set to 256 colours; the Monitors control panel
+changes the depth for the session.
 
 ROMs (MAME `macii.zip`, the zip itself or a directory): `9779d2c4.rom` (rev B)
 or `97851db6.rom` (rev A), plus the card's declaration ROM `3410868.bin`.

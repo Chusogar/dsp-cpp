@@ -5852,11 +5852,8 @@ void test_mac_mouse_cursor_tracks_if_present() {
     const int start_v = mtemp_v();
     const int start_h = mtemp_h();
 
-    // A realistically paced drag (a little over a pixel per frame, like an
-    // actual mouse), not a single-frame flick — mouse_tick caps delivery at
-    // one quadrature step per axis every 10 scanlines, so a synthetic
-    // flick much faster than a real mouse can transiently outrun how fast
-    // the ROM's own ISR re-arms between edges.
+    // Once the system runs, the host pointer is absolute: the drag must
+    // leave the cursor exactly under the host pointer, with no acceleration.
     const int steps = 200;
     for (int s = 1; s <= steps; s++) {
         in.pointer_x = 10 + 240 * s / steps;
@@ -5865,12 +5862,11 @@ void test_mac_mouse_cursor_tracks_if_present() {
         machine.run_frame();
     }
 
-    check(machine.mouse_pulse_count_x() == 240 && machine.mouse_pulse_count_y() == 140,
-          "the full drag is delivered as VIA/SCC pulses");
     const int end_v = mtemp_v();
     const int end_h = mtemp_h();
-    check(std::abs((end_v - start_v) - 140) <= 2 && std::abs((end_h - start_h) - 240) <= 2,
-          "the ROM's own mouse-tracking global (MTemp) follows the drag almost exactly");
+    check(end_v == 150 && end_h == 250 && std::abs((end_v - start_v) - 140) <= 2 &&
+              std::abs((end_h - start_h) - 240) <= 2,
+          "the cursor global (MTemp) lands exactly on the host pointer after the drag");
 }
 
 void test_ql_match_point_if_present() {
@@ -6205,6 +6201,18 @@ void test_macii_boot_if_present() {
     for (int x = 0; x < dsp::MacII::kWidth; x++)
         white += (fb[size_t(5) * dsp::MacII::kWidth + size_t(x)] & 0xffffff) == 0xffffff;
     check(white > 400, "System 7 reaches the Finder menu bar");
+    check(unique_pixels(boot) >= 8, "the Finder desktop is drawn in 256 colours");
+    dsp::MachineInputs in;
+    in.has_pointer = true;
+    in.pointer_x = 400;
+    in.pointer_y = 300;
+    for (int i = 0; i < 5; i++) {
+        boot.set_inputs(in);
+        boot.run_frame();
+    }
+    check(boot.peek(0x0828) == 0x01 && boot.peek(0x0829) == 0x2c && boot.peek(0x082a) == 0x01 &&
+              boot.peek(0x082b) == 0x90,
+          "the Mac II cursor sits exactly under the host pointer (MTemp = 300,400)");
     std::remove(disk.c_str());
 }
 
