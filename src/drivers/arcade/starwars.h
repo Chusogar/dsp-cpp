@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -58,6 +59,10 @@ public:
 
     uint16_t debug_pc() const { return main_cpu_.pc(); }
     size_t debug_avg_lines() const { return avg_.lines().size(); }
+    // Called with the main CPU PC after every instruction (debugging).
+    void debug_set_trace(std::function<void(uint16_t)> trace) { trace_ = std::move(trace); }
+    uint8_t debug_main_read(uint16_t address) { return main_read(address); }
+    int debug_slapstic_bank() const { return slapstic_bank_; }
 
 private:
     uint8_t main_read(uint16_t address);
@@ -68,6 +73,7 @@ private:
     void on_sound_cycles(int cycles);
     void quad_pokey_w(uint16_t offset, uint8_t data);
     void outlatch_w(int bit, bool value);
+    void set_sound_pending(bool pending);
     void update_video();
     void draw_line(int x0, int y0, int x1, int y1, uint32_t color, int intensity);
     uint8_t avg_read(uint16_t address) const;
@@ -106,9 +112,11 @@ private:
     int adc_channel_ = 0;
     // Slapstic (137412-101) state. It watches accesses inside its address
     // window and switches bank on recognised address sequences.
-    uint8_t slapstic_tweak(uint16_t offset);
+    void slapstic_access(uint16_t address);
+    uint8_t main_read_raw(uint16_t address);
     int slapstic_state_ = 0;
     int slapstic_bank_ = 3;
+    int slapstic_loaded_bank_ = 0;
     uint8_t bank_ = 0;
     uint8_t outlatch_ = 0;
     uint8_t sound_latch_ = 0;
@@ -117,7 +125,12 @@ private:
     bool main_pending_ = false;
     uint32_t prng_ = 0x1;
     int64_t audio_accumulator_ = 0;
+    int64_t pokey_sum_ = 0;
+    int64_t pokey_cycles_ = 0;
+    double dc_in_ = 0.0;
+    double dc_out_ = 0.0;
     uint8_t riot_pa_out_ = 0xff;
+    std::function<void(uint16_t)> trace_;
 };
 
 }  // namespace dsp

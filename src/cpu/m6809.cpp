@@ -270,6 +270,8 @@ uint16_t* M6809::index_register(uint8_t postbyte) {
 }
 
 uint16_t M6809::get_indexed() {
+    // The dummy_arg / dummy_vma calls reproduce the ignored bus cycles of
+    // each mode (as MAME's 6809 does) for drivers that watch the bus.
     uint8_t postbyte = fetch();
     uint16_t* reg = index_register(postbyte);
     uint16_t address = 0;
@@ -280,61 +282,82 @@ uint16_t M6809::get_indexed() {
                 address = *reg;
                 *reg = uint16_t(*reg + 1);
                 extra_cycles_ += 4;
+                dummy_arg(0);
+                dummy_vma(2);
                 break;
             case 0x1:  // ,R++
                 address = *reg;
                 *reg = uint16_t(*reg + 2);
                 extra_cycles_ += 5;
+                dummy_arg(0);
+                dummy_vma(3);
                 break;
             case 0x2:  // ,-R
                 *reg = uint16_t(*reg - 1);
                 address = *reg;
                 extra_cycles_ += 4;
+                dummy_arg(0);
+                dummy_vma(2);
                 break;
             case 0x3:  // ,--R
                 *reg = uint16_t(*reg - 2);
                 address = *reg;
                 extra_cycles_ += 5;
+                dummy_arg(0);
+                dummy_vma(3);
                 break;
             case 0x4:  // ,R
                 address = *reg;
                 extra_cycles_ += 2;
+                dummy_arg(0);
                 break;
             case 0x5:  // B,R
                 address = uint16_t(*reg + int8_t(b));
                 extra_cycles_ += 3;
+                dummy_arg(0);
+                dummy_vma(1);
                 break;
             case 0x6:  // A,R
                 address = uint16_t(*reg + int8_t(a));
                 extra_cycles_ += 3;
+                dummy_arg(0);
+                dummy_vma(1);
                 break;
             case 0x8:  // n8,R
                 address = uint16_t(*reg + int8_t(fetch()));
                 extra_cycles_ += 3;
+                dummy_arg(0);
                 break;
             case 0x9:  // n16,R
                 address = uint16_t(*reg + int16_t(fetch_word()));
                 extra_cycles_ += 6;
+                dummy_vma(3);
                 break;
             case 0xb:  // D,R
                 address = uint16_t(*reg + int16_t(d()));
                 extra_cycles_ += 6;
+                dummy_arg(0);
+                dummy_arg(1);
+                dummy_vma(3);
                 break;
             case 0xc: {  // n8,PCR
                 int8_t offset = int8_t(fetch());
                 address = uint16_t(pc_ + offset);
                 extra_cycles_ += 2;
+                dummy_vma(1);
                 break;
             }
             case 0xd: {  // n16,PCR
                 uint16_t offset = fetch_word();
                 address = uint16_t(pc_ + offset);
                 extra_cycles_ += 7;
+                dummy_vma(4);
                 break;
             }
             case 0xf:  // [n16]
                 address = fetch_word();
                 extra_cycles_ += 4;
+                dummy_vma(1);
                 break;
             default:  // undefined on the 6809
                 address = *reg;
@@ -344,12 +367,15 @@ uint16_t M6809::get_indexed() {
         if ((postbyte & 0x10) != 0) {  // indirect
             address = read_word(address);
             extra_cycles_ += 2;
+            dummy_vma(1);
         }
     } else {  // 5 bit offset
         uint8_t offset = uint8_t(postbyte & 0x0f);
         address = ((postbyte & 0x10) == 0) ? uint16_t(*reg + offset)
                                            : uint16_t(*reg - (16 - offset));
         extra_cycles_ += 3;
+        dummy_arg(0);
+        dummy_vma(1);
     }
     return address;
 }

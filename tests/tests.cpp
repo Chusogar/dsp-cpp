@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <cmath>
 #include <set>
 #include <string>
 #include <vector>
@@ -3316,6 +3317,94 @@ void test_polepos_driver() {
         }
         check(lit2, "Pole Position II attract produces non-black pixels");
     }
+}
+
+void test_mos6532_decode_and_pa7_edge() {
+    dsp::Mos6532 riot;
+    uint8_t pb_seen = 0;
+    int irq_asserts = 0;
+    bool irq = false;
+    riot.set_pb([] { return uint8_t(0xff); }, [&pb_seen](uint8_t v) { pb_seen = v; });
+    riot.set_irq_callback([&](dsp::IrqLine line) {
+        const bool now = line != dsp::IrqLine::Clear;
+        if (now && !irq) irq_asserts++;
+        irq = now;
+    });
+    riot.reset();
+    riot.io_write(0x03, 0xff);  // DDRB all outputs
+    riot.io_write(0x02, 0x60);  // PB = $60
+    check(pb_seen == 0x60, "6532 port B write drives the pins");
+    // A2=1, A4=0 is the PA7 edge control, not a port register.
+    riot.io_write(0x07, 0x00);  // positive edge, IRQ enabled
+    riot.io_write(0x06, 0x00);
+    check(pb_seen == 0x60 && riot.io_read(0x02) == 0x60,
+          "6532 edge-control writes leave the ports alone");
+    riot.io_write(0x07, 0x00);  // positive edge, IRQ on
+    riot.set_pa7(true);
+    check(irq && irq_asserts == 1, "6532 PA7 rising edge raises the IRQ");
+    check((riot.io_read(0x05) & 0x40) != 0, "6532 interrupt flags report the PA7 edge");
+    check(!irq, "reading the interrupt flags clears the PA7 IRQ");
+    riot.set_pa7(false);
+    check(!irq, "the falling edge is ignored when the positive edge is selected");
+    // Port reads ignore A3/A4.
+    check(riot.io_read(0x0a) == 0x60 && riot.io_read(0x12) == 0x60, "6532 port B mirrors across A3/A4");
+}
+
+void test_starwars_sound_and_esb_slapstic_if_present() {
+    namespace fs = std::filesystem;
+    if (fs::exists("/tmp/roms/starwars.zip")) {
+        dsp::StarWars sw;
+        std::string error;
+        check(sw.init("/tmp/roms/starwars.zip", &error), "Star Wars loads for the sound test");
+        // Inserting a coin makes the game speak (TMS5220 fed through the RIOT).
+        double sum = 0, sum2 = 0;
+        size_t n = 0;
+        int loud = 0;
+        for (int f = 0; f < 500; f++) {
+            dsp::MachineInputs in;
+            in.coin1 = f >= 100 && f < 104;
+            sw.set_inputs(in);
+            sw.run_frame();
+            std::vector<int16_t> audio;
+            sw.drain_audio(audio);
+            for (int16_t v : audio) {
+                sum += v;
+                sum2 += double(v) * v;
+                n++;
+                if (std::abs(v) > 3000) loud++;
+            }
+        }
+        check(loud > 1000, "Star Wars speech reaches the audio output after a coin");
+        check(n > 0 && std::abs(sum / double(n)) < 200, "Star Wars audio has no DC offset");
+    } else {
+        std::printf("skip: /tmp/roms/starwars.zip not found\n");
+    }
+    if (!fs::exists("/tmp/roms/esb.zip")) {
+        std::printf("skip: /tmp/roms/esb.zip not found\n");
+        return;
+    }
+    dsp::StarWars esb(dsp::StarWars::Game::Esb);
+    std::string error;
+    check(esb.init("/tmp/roms/esb.zip", &error), "Empire Strikes Back loads");
+    // $F392 is the game's "protection failed" trap (JMP to itself until the
+    // watchdog resets): it used to be reached a few seconds into the game.
+    bool trapped = false;
+    esb.debug_set_trace([&trapped](uint16_t pc) { if (pc == 0xf392) trapped = true; });
+    for (int f = 1; f <= 2500 && !trapped; f++) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 100 && f < 104;
+        in.player1.start = f >= 200 && f < 204;
+        in.has_pointer = true;
+        in.pointer_x = 200 + int(150 * std::sin(f / 31.0));
+        in.pointer_y = 150 + int(110 * std::cos(f / 47.0));
+        in.pointer_button1 = (f / 6) % 2;
+        esb.set_inputs(in);
+        esb.run_frame();
+        std::vector<int16_t> audio;
+        esb.drain_audio(audio);
+    }
+    check(!trapped, "ESB plays past the slapstic checks (alternate bank switch via the 6809 dummy cycle)");
+    check(esb.debug_avg_lines() > 100, "ESB keeps drawing during the game");
 }
 
 void test_starwars_missing_roms() {
@@ -7558,6 +7647,8 @@ int main() {
     test_exelv_basic_load_if_present();
     test_trdos_scl_and_beta();
     test_starwars_missing_roms();
+    test_mos6532_decode_and_pa7_edge();
+    test_starwars_sound_and_esb_slapstic_if_present();
     test_polepos_driver();
     test_atari_system1_missing_roms();
     test_t11_reset_and_moves();

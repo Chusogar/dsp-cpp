@@ -1054,6 +1054,19 @@ committed. The MAME parent set `starwars` is enough:
 `136021-208.1h`, AVG PROM `136021-109.4b`, mathbox `136021-110.7h` …
 `136021-113.7l`.
 
+*The Empire Strikes Back* (`--game esb`, MAME set `esb`) runs on the same
+board with a 137412-101 slapstic guarding $8000-$9FFF. The slapstic watches
+every main CPU bus cycle, including the 6809's ignored ("dummy") cycles: the
+game's alternate bank switch needs the $FFFF cycle of an indexed `LDA ,X`, so
+the 6809 core reports those cycles to the driver. Without it the game jumped
+to its protection trap (`JMP $F392`) a few seconds into play.
+
+Sound: the sound CPU gets commands through the RIOT's PA7 edge interrupt and
+drives the TMS5220 through port B (PA2 is the chip's /READY). The POKEYs are
+averaged per output sample (no aliasing), the mix follows MAME (POKEY 0.20,
+TMS5220 0.50) with the DC removed, and the two CPUs run in ~100 µs slices so
+commands are not lost between them.
+
 ### Namco Pole Position / Pole Position II
 
 Z80 + two Z8002s at 3.072 MHz, 256×224, ~60.6 Hz. The Namco 06xx talks to

@@ -28,6 +28,9 @@ public:
 
     void tick(int cycles);
     void set_pa_in_bit(int bit, bool level);
+    // Level of the PA7 input pin, for the edge-detect interrupt (the port
+    // read itself still comes from the PA read callback when one is set).
+    void set_pa7(bool level);
 
 private:
     void update_pa();
@@ -45,6 +48,12 @@ private:
     bool timer_counting_ = true;
     bool ie_timer_ = false;
     bool irq_timer_ = false;
+    // PA7 edge detection: A0 of the control write picks the edge
+    // (1 = positive), A1 enables the interrupt.
+    bool pa7_level_ = true;
+    bool pa7_positive_ = false;
+    bool pa7_ie_ = false;
+    bool pa7_flag_ = false;
 
     PortRead pa_in_cb_, pb_in_cb_;
     PortWrite pa_out_cb_, pb_out_cb_;
