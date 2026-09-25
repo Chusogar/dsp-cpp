@@ -27,6 +27,10 @@ void Mos6532::reset() {
     timer_counting_ = true;
     ie_timer_ = false;
     irq_timer_ = false;
+    pa7_level_ = false;
+    pa7_positive_ = false;
+    pa7_ie_ = false;
+    pa7_flag_ = false;
     update_pa();
     update_pb();
     update_irq();
@@ -47,7 +51,8 @@ void Mos6532::update_pb() {
 }
 
 void Mos6532::update_irq() {
-    if (irq_cb_) irq_cb_((ie_timer_ && irq_timer_) ? IrqLine::Assert : IrqLine::Clear);
+    const bool irq = (ie_timer_ && irq_timer_) || (pa7_ie_ && pa7_flag_);
+    if (irq_cb_) irq_cb_(irq ? IrqLine::Assert : IrqLine::Clear);
 }
 
 uint8_t Mos6532::timer_value() const {
@@ -77,28 +82,30 @@ void Mos6532::tick(int cycles) {
     }
 }
 
+// I/O space decode (A0-A4 with RS high):
+//   A2=0: A1A0 = 0 PA, 1 DDRA, 2 PB, 3 DDRB (A3, A4 ignored).
+//   A2=1 read:  A0=0 timer (A3 = timer IRQ enable), A0=1 interrupt flags.
+//   A2=1 write: A4=1 timer (A1A0 prescale, A3 IRQ enable),
+//               A4=0 PA7 edge control (A0 positive edge, A1 IRQ enable).
 uint8_t Mos6532::io_read(uint8_t offset) {
     offset &= 0x1f;
-    switch (offset & 0x07) {
-        case 0x00:
-            if ((offset & 0x18) == 0 || (offset & 0x18) == 0x18) {
+    if ((offset & 0x04) == 0) {
+        switch (offset & 0x03) {
+            case 0x00: {
                 uint8_t in = pa_in_cb_ ? pa_in_cb_() : pa_in_;
-                in = uint8_t((in & ~pa_ddr_) | (pa_out_ & pa_ddr_));
-                return in;
+                return uint8_t((in & ~pa_ddr_) | (pa_out_ & pa_ddr_));
             }
-            break;
-        case 0x01:
-            return pa_ddr_;
-        case 0x02: {
-            uint8_t in = pb_in_cb_ ? pb_in_cb_() : pb_in_;
-            return uint8_t((in & ~pb_ddr_) | (pb_out_ & pb_ddr_));
+            case 0x01:
+                return pa_ddr_;
+            case 0x02: {
+                uint8_t in = pb_in_cb_ ? pb_in_cb_() : pb_in_;
+                return uint8_t((in & ~pb_ddr_) | (pb_out_ & pb_ddr_));
+            }
+            default:
+                return pb_ddr_;
         }
-        case 0x03:
-            return pb_ddr_;
-        default:
-            break;
     }
-    if ((offset & 0x04) && ((offset & 0x03) == 0)) {
+    if ((offset & 0x01) == 0) {
         const bool ie = (offset & 0x08) != 0;
         const uint8_t value = timer_value();
         irq_timer_ = false;
@@ -107,18 +114,26 @@ uint8_t Mos6532::io_read(uint8_t offset) {
         update_irq();
         return value;
     }
-    if ((offset & 0x05) == 0x05) return irq_timer_ ? kIrqTimer : 0;
-    return 0;
+    // Interrupt flags: bit 7 timer, bit 6 PA7 edge (cleared by this read).
+    const uint8_t flags = uint8_t((irq_timer_ ? kIrqTimer : 0) | (pa7_flag_ ? 0x40 : 0));
+    pa7_flag_ = false;
+    update_irq();
+    return flags;
 }
 
 void Mos6532::io_write(uint8_t offset, uint8_t value) {
     offset &= 0x1f;
-    if ((offset & 0x14) == 0x14) {
-        static const int kShift[4] = {0, 3, 6, 10};
-        timer_shift_ = kShift[offset & 3];
-        timer_start(value);
-        irq_timer_ = false;
-        ie_timer_ = (offset & 0x08) != 0;
+    if (offset & 0x04) {
+        if (offset & 0x10) {
+            static const int kShift[4] = {0, 3, 6, 10};
+            timer_shift_ = kShift[offset & 3];
+            timer_start(value);
+            irq_timer_ = false;
+            ie_timer_ = (offset & 0x08) != 0;
+        } else {
+            pa7_positive_ = (offset & 0x01) != 0;
+            pa7_ie_ = (offset & 0x02) != 0;
+        }
         update_irq();
         return;
     }
@@ -139,6 +154,15 @@ void Mos6532::io_write(uint8_t offset, uint8_t value) {
             pb_ddr_ = value;
             update_pb();
             break;
+    }
+}
+
+void Mos6532::set_pa7(bool level) {
+    if (level == pa7_level_) return;
+    pa7_level_ = level;
+    if (level == pa7_positive_) {
+        pa7_flag_ = true;
+        update_irq();
     }
 }
 

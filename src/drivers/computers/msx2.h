@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -21,13 +22,22 @@ class Msx2 : public Machine {
 public:
     static constexpr uint32_t kMainClock = 3579545;
     static constexpr int kCyclesPerLine = 228;
-    static constexpr int kScanlines = 313;
+    static constexpr int kScanlines = 313;       // 50 Hz (European BIOS)
+    static constexpr int kScanlinesNtsc = 262;   // 60 Hz (Japanese region)
     static constexpr double kFramesPerSecond =
         double(kMainClock) / kCyclesPerLine / kScanlines;
+
+    // Region the BIOS reports in its ID bytes $002B/$002C.  Japanese
+    // cartridges such as Metal Gear read them and reset on anything that is
+    // not a 60 Hz Japanese machine, as they do on a real European MSX2.
+    //   Auto: Japan when the cartridge file name has a Japanese tag
+    //         ("(J)", "[J]", "_J.", "(Japan)"), Europe otherwise.
+    enum class Region : uint8_t { Auto = 0, Europe = 1, Japan = 2 };
     static constexpr int kMapperSegments = 16;
     static constexpr int kMaxCartridge = 0x200000;
 
     Msx2();
+    explicit Msx2(Region region) : Msx2() { region_setting_ = region; }
     bool init(const std::string& rom_path, std::string* error) override;
     void reset() override;
     void run_frame() override;
@@ -36,7 +46,13 @@ public:
     const uint32_t* framebuffer() const override { return vdp_.framebuffer(); }
     int screen_width() const override { return V9938::kScreenWidth; }
     int screen_height() const override { return V9938::kScreenHeight; }
-    double frames_per_second() const override { return kFramesPerSecond; }
+    // The framebuffer is 512 half pixels by 212 lines: shown at 512x424
+    // (each line doubled) so a 256-pixel mode has square pixels, as on a TV.
+    int display_width() const override { return V9938::kScreenWidth; }
+    int display_height() const override { return V9938::kScreenHeight * 2; }
+    double frames_per_second() const override {
+        return double(kMainClock) / kCyclesPerLine / scanlines();
+    }
     void drain_audio(std::vector<int16_t>& out) override;
     int sample_rate() const override { return AY8910::kSampleRate; }
     const char* title() const override { return "MSX2"; }
@@ -51,6 +67,9 @@ public:
     void debug_write_port(uint16_t port, uint8_t value) { write_port(port, value); }
     bool disk_rom_loaded() const { return disk_rom_loaded_; }
     uint8_t debug_vdp_reg(int index) const { return vdp_.register_value(index); }
+    bool japanese() const { return japan_; }
+    void debug_set_instruction_hook(std::function<void(uint16_t)> hook) { z80_.set_instruction_hook(std::move(hook)); }
+    uint8_t debug_port_a() const { return port_a_; }
 
 private:
     uint8_t read_byte(uint16_t address);
@@ -77,6 +96,8 @@ private:
     bool fdc_mapped(uint16_t address) const;
     bool load_cartridge(const std::string& path, std::string* error);
     bool load_tape(const std::string& path, std::string* error);
+    void update_region();
+    int scanlines() const { return japan_ ? kScanlinesNtsc : kScanlines; }
 
     Z80 z80_;
     V9938 vdp_;
@@ -99,6 +120,9 @@ private:
     bool cart_ascii16_ = false;
     bool disk_rom_loaded_ = false;
     bool logo_rom_loaded_ = false;
+    Region region_setting_ = Region::Auto;
+    bool cart_japanese_ = false;  // file name carries a Japanese tag
+    bool japan_ = false;
     uint8_t subslot_[4] = {};
     uint8_t teclado_ = 0;
     bool last_irq_ = false;

@@ -94,6 +94,7 @@ StarWars::StarWars(Game game)
     main_cpu_.set_memory_handlers([this](uint16_t a) { return main_read(a); },
                                   [this](uint16_t a, uint8_t v) { main_write(a, v); });
     main_cpu_.set_cycle_handler([this](int cycles) { on_main_cycles(cycles); });
+    if (game_ == Game::Esb) main_cpu_.set_dummy_read_handler([this](uint16_t a) { slapstic_access(a); });
     sound_cpu_.set_memory_handlers([this](uint16_t a) { return sound_read(a); },
                                    [this](uint16_t a, uint8_t v) { sound_write(a, v); });
     sound_cpu_.set_cycle_handler([this](int cycles) { on_sound_cycles(cycles); });
@@ -102,7 +103,8 @@ StarWars::StarWars(Game game)
     riot_.set_pa(
         [this]() {
             uint8_t value = 0x10;  // not self-test
-            if (!tms_.readyq()) value |= 0x04;
+            // PA2 is the TMS5220 /READY line: high while the chip is busy.
+            if (tms_.readyq()) value |= 0x04;
             if (main_pending_) value |= 0x40;
             if (sound_pending_) value |= 0x80;
             return value;
@@ -218,16 +220,21 @@ void StarWars::reset() {
     riot_.reset();
     avg_.reset();
     bank_ = 0;
-    slapstic_state_ = 0;
+    slapstic_state_ = 0;  // idle until the first $8000 access
     slapstic_bank_ = 3;
+    slapstic_loaded_bank_ = 0;
     outlatch_ = 0;
     sound_latch_ = main_latch_ = 0;
     sound_pending_ = main_pending_ = false;
+    riot_.set_pa7(false);
     analog_x_ = analog_y_ = 0x80;
     adc_value_ = 0x80;
     adc_channel_ = 0;
     prng_ = 0x1;
     audio_accumulator_ = 0;
+    pokey_sum_ = 0;
+    pokey_cycles_ = 0;
+    dc_in_ = dc_out_ = 0.0;
     audio_.clear();
     in0_ = 0xff;
     in1_ = 0x3f;
@@ -243,6 +250,13 @@ uint8_t StarWars::avg_read(uint16_t address) const {
 }
 
 uint8_t StarWars::main_read(uint16_t address) {
+    const uint8_t value = main_read_raw(address);
+    // The slapstic sees the cycle after the data came from the old bank.
+    if (game_ == Game::Esb) slapstic_access(address);
+    return value;
+}
+
+uint8_t StarWars::main_read_raw(uint16_t address) {
     if (address < 0x3000) return vector_ram_[address];
     if (address < 0x4000) return vector_rom_[address - 0x3000];
     if (address >= 0x4300 && address <= 0x431f) return in0_;
@@ -274,10 +288,6 @@ uint8_t StarWars::main_read(uint16_t address) {
     }
     if (game_ == Game::Esb) {
         if (address >= 0x8000 && address <= 0x9fff) {
-            // Every access inside the window drives the slapstic's state
-            // machine, including plain instruction fetches -- that is how
-            // the game unlocks a bank switch.
-            slapstic_tweak(uint16_t(address & 0x1fff));
             return main_rom_[0x14000u + uint32_t(slapstic_bank_) * 0x2000u + (address & 0x1fff)];
         }
         if (address >= 0xa000) {
@@ -290,13 +300,14 @@ uint8_t StarWars::main_read(uint16_t address) {
 }
 
 void StarWars::main_write(uint16_t address, uint8_t value) {
+    if (game_ == Game::Esb) slapstic_access(address);
     if (address < 0x3000) {
         vector_ram_[address] = value;
         return;
     }
     if (address == 0x4400) {
         sound_latch_ = value;
-        sound_pending_ = true;
+        set_sound_pending(true);
         return;
     }
     if (address >= 0x4500 && address <= 0x45ff) {
@@ -325,7 +336,7 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
         return;
     }
     if (address == 0x46e0) {
-        sound_pending_ = false;
+        set_sound_pending(false);
         main_pending_ = false;
         sound_cpu_.reset();
         return;
@@ -344,6 +355,13 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
     }
 }
 
+// Main -> sound command pending: RIOT PA7, whose edge interrupt tells the
+// sound CPU a command is waiting.
+void StarWars::set_sound_pending(bool pending) {
+    sound_pending_ = pending;
+    riot_.set_pa7(pending);
+}
+
 void StarWars::outlatch_w(int bit, bool value) {
     if (value) outlatch_ |= uint8_t(1u << bit);
     else outlatch_ = uint8_t(outlatch_ & ~(1u << bit));
@@ -352,7 +370,7 @@ void StarWars::outlatch_w(int bit, bool value) {
 
 uint8_t StarWars::sound_read(uint16_t address) {
     if (address >= 0x0800 && address <= 0x0fff) {
-        sound_pending_ = false;
+        set_sound_pending(false);
         return sound_latch_;
     }
     if (address >= 0x1000 && address <= 0x107f) return riot_.ram_read(uint8_t(address));
@@ -397,6 +415,7 @@ void StarWars::quad_pokey_w(uint16_t offset, uint8_t data) {
 }
 
 void StarWars::on_main_cycles(int cycles) {
+    if (trace_) trace_(main_cpu_.pc());
     math_.tick(cycles);
     prng_ = ((prng_ << 1) | (1u ^ (((prng_ >> 22) ^ (prng_ >> 4)) & 1u))) & 0x7fffffu;
 }
@@ -407,20 +426,40 @@ void StarWars::on_sound_cycles(int cycles) {
     pokey2_.run(cycles);
     pokey3_.run(cycles);
     riot_.tick(cycles);
+    // Average the POKEYs over each output sample instead of point sampling
+    // them: their square waves run at up to the 1.5 MHz chip clock and
+    // alias badly otherwise.
+    pokey_sum_ += int64_t(pokey0_.update() + pokey1_.update() + pokey2_.update() + pokey3_.update()) * cycles;
+    pokey_cycles_ += cycles;
     audio_accumulator_ += int64_t(cycles) * kSampleRate;
     while (audio_accumulator_ >= kCpuClock) {
         audio_accumulator_ -= kCpuClock;
-        int32_t sample = pokey0_.update() + pokey1_.update() + pokey2_.update() + pokey3_.update();
-        sample += int32_t(tms_.update());
+        const double pokeys = pokey_cycles_ ? double(pokey_sum_) / double(pokey_cycles_) : 0.0;
+        pokey_sum_ = 0;
+        pokey_cycles_ = 0;
+        // MAME mix: each POKEY at 0.20 (applied in the chip), TMS5220 at 0.50.
+        const double mix = pokeys + 0.5 * double(tms_.update());
+        // The POKEY outputs are unipolar: remove the DC like the board's
+        // coupling capacitor (first-order high-pass, ~20 Hz).
+        dc_out_ = 0.997 * (dc_out_ + mix - dc_in_);
+        dc_in_ = mix;
+        const int32_t sample = int32_t(std::lround(dc_out_));
         audio_.push_back(int16_t(std::clamp(sample, int32_t(-32768), int32_t(32767))));
     }
 }
 
 void StarWars::run_frame() {
+    // The two CPUs talk through latches; MAME interleaves them every 100 us
+    // while a command is pending, so run both in short slices (~100 us).
+    constexpr int kSlice = 152;
     for (int irq = 0; irq < kIrqsPerFrame; irq++) {
         main_cpu_.set_irq(IrqLine::Assert);
-        main_cpu_.run(kIrqCycles);
-        sound_cpu_.run(kIrqCycles);
+        int done_main = 0, done_sound = 0;
+        while (done_main < kIrqCycles || done_sound < kIrqCycles) {
+            const int target = std::min(kIrqCycles, std::max(done_main, done_sound) + kSlice);
+            if (done_main < target) done_main += main_cpu_.run(target - done_main);
+            if (done_sound < target) done_sound += sound_cpu_.run(target - done_sound);
+        }
     }
     update_video();
 }
@@ -480,72 +519,107 @@ void StarWars::draw_line(int x0, int y0, int x1, int y1, uint32_t color, int int
     }
 }
 
-// Atari slapstic 137412-101, as fitted to ESB. The chip sits in the address
-// decode path and only switches bank when it sees a specific sequence of
-// addresses, which the game scatters through its code so a straight ROM
-// copy will not run. Values below are the published ones for this part.
+// Atari slapstic 137412-101, as fitted to ESB. The chip sits on the address
+// bus and only switches bank when it sees particular sequences of
+// addresses, which the game scatters through its code so a straight ROM copy
+// will not run. It watches every main CPU bus cycle (inside and outside its
+// $8000-$9FFF window, including the 6809's ignored cycles), following MAME's
+// slapstic model:
+//   * $8000 re-arms the chip; then one of $8080/$8090/$80A0/$80B0 selects
+//     bank 0-3 directly.
+//   * Alternate: $9Exx, then at once an access *outside* the window ending in
+//     $1FFF (the 6809's dummy $FFFF cycle), then at once $9B5C-$9B5F (bank =
+//     low two bits), committed by the next $8080-$80B0 access.
+//   * Bitwise: $954x, then $8080-$80B0 loads the bank, $954x accesses
+//     twiddle its bits (the meaning alternates odd/even), $9550-$9557 commits.
 namespace {
-struct MaskValue { uint16_t mask, value; };
-constexpr bool matches(uint16_t offset, MaskValue mv) { return (offset & mv.mask) == mv.value; }
-constexpr uint16_t kBankSelect[4] = {0x0080, 0x0090, 0x00a0, 0x00b0};
-constexpr MaskValue kAlt1{0x1f00, 0x1e00}, kAlt2{0x1fff, 0x1fff};
-constexpr MaskValue kAlt3{0x1ffc, 0x1b5c}, kAlt4{0x1fcf, 0x0080};
-constexpr MaskValue kBit1{0x1ff0, 0x1540}, kBit2{0x1fcf, 0x0080};
-constexpr MaskValue kBitClr0{0x1ff3, 0x1540}, kBitSet0{0x1ff3, 0x1541};
-constexpr MaskValue kBitClr1{0x1ff3, 0x1542}, kBitSet1{0x1ff3, 0x1543};
-constexpr MaskValue kBitEnd{0x1ff8, 0x1550};
-enum { kIdle = 0, kActive, kAlt1S, kAlt2S, kAlt3S, kBitLoad, kBitSetState };
+enum {
+    kIdle = 0, kActive, kAltValid, kAltSelect, kAltCommit, kBitLoad, kBitSetOdd, kBitSetEven
+};
 }  // namespace
 
-uint8_t StarWars::slapstic_tweak(uint16_t offset) {
+void StarWars::slapstic_access(uint16_t address) {
+    const bool inside = (address & 0xe000) == 0x8000;
+    const uint16_t off = uint16_t(address & 0x1fff);
+    const auto in = [&](uint16_t mask, uint16_t value) { return inside && (off & mask) == value; };
+    const bool reset = inside && off == 0;
     switch (slapstic_state_) {
         case kIdle:
-            // Any access to the very first word arms the chip.
-            if (offset == 0x0000) slapstic_state_ = kActive;
+            if (reset) slapstic_state_ = kActive;
             break;
         case kActive:
-            for (int i = 0; i < 4; i++) {
-                if (offset == kBankSelect[i]) {
-                    slapstic_bank_ = i;
-                    slapstic_state_ = kIdle;
-                    return uint8_t(slapstic_bank_);
-                }
-            }
-            if (matches(offset, kAlt1)) slapstic_state_ = kAlt1S;
-            else if (matches(offset, kBit1)) slapstic_state_ = kBitLoad;
-            break;
-        case kAlt1S:
-            // On this part the second alternate access must fall outside
-            // the window; in practice it is the 6809's dummy VMA fetch.
-            slapstic_state_ = matches(offset, kAlt2) ? kAlt2S : kActive;
-            break;
-        case kAlt2S:
-            slapstic_state_ = matches(offset, kAlt3) ? kAlt3S : kActive;
-            break;
-        case kAlt3S:
-            if (matches(offset, kAlt4)) {
-                slapstic_bank_ = (offset >> 0) & 3;
+            if (!inside) break;
+            if (off == 0x0080 || off == 0x0090 || off == 0x00a0 || off == 0x00b0) {
+                slapstic_bank_ = (off >> 4) & 3;
                 slapstic_state_ = kIdle;
+            } else if (in(0x1f00, 0x1e00)) {
+                slapstic_state_ = kAltValid;
+            } else if (in(0x1ff0, 0x1540)) {
+                slapstic_state_ = kBitLoad;
+            }
+            break;
+        case kAltValid:
+            // The second access must be outside the window.
+            if (reset) slapstic_state_ = kActive;
+            else if (!inside && (address & 0x1fff) == 0x1fff) slapstic_state_ = kAltSelect;
+            else slapstic_state_ = kActive;
+            break;
+        case kAltSelect:
+            if (reset) {
+                slapstic_state_ = kActive;
+            } else if (in(0x1ffc, 0x1b5c)) {
+                slapstic_loaded_bank_ = off & 3;
+                slapstic_state_ = kAltCommit;
             } else {
                 slapstic_state_ = kActive;
             }
             break;
+        case kAltCommit:
+            if (reset) {
+                slapstic_state_ = kActive;
+            } else if (in(0x1fcf, 0x0080)) {
+                slapstic_bank_ = slapstic_loaded_bank_;
+                slapstic_state_ = kIdle;
+            }
+            break;
         case kBitLoad:
-            slapstic_state_ = matches(offset, kBit2) ? kBitSetState : kActive;
+            if (reset) {
+                slapstic_state_ = kActive;
+            } else if (in(0x1fcf, 0x0080)) {
+                slapstic_loaded_bank_ = slapstic_bank_;
+                slapstic_state_ = kBitSetOdd;
+            }
             break;
-        case kBitSetState:
-            // Each recognised address flips one bit of the bank number;
-            // the terminating address commits it.
-            if (matches(offset, kBitClr0)) slapstic_bank_ &= ~1;
-            else if (matches(offset, kBitSet0)) slapstic_bank_ |= 1;
-            else if (matches(offset, kBitClr1)) slapstic_bank_ &= ~2;
-            else if (matches(offset, kBitSet1)) slapstic_bank_ |= 2;
-            else if (matches(offset, kBitEnd)) slapstic_state_ = kIdle;
-            else slapstic_state_ = kActive;
+        case kBitSetOdd:
+        case kBitSetEven: {
+            const bool odd = slapstic_state_ == kBitSetOdd;
+            const int next = odd ? kBitSetEven : kBitSetOdd;
+            // Odd steps: $1540 clears bit 0, $1541 sets it, $1542 clears bit 1,
+            // $1543 sets it.  Even steps use the opposite pairing.
+            if (reset) {
+                slapstic_state_ = kActive;
+            } else if (in(0x1ff3, odd ? 0x1540 : 0x1543)) {
+                slapstic_loaded_bank_ &= ~1;
+                slapstic_state_ = next;
+            } else if (in(0x1ff3, odd ? 0x1541 : 0x1542)) {
+                slapstic_loaded_bank_ |= 1;
+                slapstic_state_ = next;
+            } else if (in(0x1ff3, odd ? 0x1542 : 0x1541)) {
+                slapstic_loaded_bank_ &= ~2;
+                slapstic_state_ = next;
+            } else if (in(0x1ff3, odd ? 0x1543 : 0x1540)) {
+                slapstic_loaded_bank_ |= 2;
+                slapstic_state_ = next;
+            } else if (in(0x1ff8, 0x1550)) {
+                slapstic_bank_ = slapstic_loaded_bank_;
+                slapstic_state_ = kIdle;
+            }
             break;
-        default: slapstic_state_ = kIdle; break;
+        }
+        default:
+            slapstic_state_ = kIdle;
+            break;
     }
-    return uint8_t(slapstic_bank_);
 }
 
 void StarWars::set_inputs(const MachineInputs& inputs) {

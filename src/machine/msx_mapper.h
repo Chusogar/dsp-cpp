@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "sound/konami_scc.h"
+
 namespace dsp {
 
 enum class MsxMapperType {
@@ -54,6 +56,7 @@ public:
         sram_.assign(sram_size(), 0xff);
         write_enable_ = false;
         hal_mode_ = 0;
+        scc_.reset();
     }
 
     MsxMapperType type() const { return type_; }
@@ -77,8 +80,10 @@ public:
             case MsxMapperType::Zemina16:
             case MsxMapperType::SuperGameWorld126:
                 return bank16(address);
-            case MsxMapperType::Konami:
             case MsxMapperType::KonamiScc:
+                if (scc_enabled() && address >= 0x9800 && address < 0xa000) return scc_.read(uint8_t(address));
+                return bank8_special(address);
+            case MsxMapperType::Konami:
             case MsxMapperType::Generic8:
             case MsxMapperType::Zemina8:
             case MsxMapperType::HolyQuran:
@@ -110,8 +115,11 @@ public:
                 ascii16_write(address, value);
                 break;
             case MsxMapperType::Konami:
+                konami4_write(address, value);
+                break;
             case MsxMapperType::KonamiScc:
                 konami_write(address, value);
+                if (scc_enabled() && address >= 0x9800 && address < 0xa000) scc_.write(uint8_t(address), value);
                 break;
             case MsxMapperType::Generic8:
                 generic8_write(address, value);
@@ -181,6 +189,11 @@ public:
         }
     }
 
+    // SCC sound of Konami SCC cartridges (silent for other mappers).
+    int32_t audio_sample(uint32_t clock, int rate) {
+        return type_ == MsxMapperType::KonamiScc ? scc_.update(clock, rate) : 0;
+    }
+
     const char* name() const {
         switch (type_) {
             case MsxMapperType::Plain: return "Plain";
@@ -221,8 +234,10 @@ private:
         const auto has = [&](const char* s) { return f.find(s) != std::string::npos; };
         if (has("asc-08") || has("ascii8")) return MsxMapperType::Ascii8;
         if (has("asc-16") || has("ascii16")) return MsxMapperType::Ascii16;
-        if (has("konscc") || has("konami-scc")) return MsxMapperType::KonamiScc;
-        if (has("konami")) return MsxMapperType::Konami;
+        // Tags only: "Konami" alone is usually the publisher in the file
+        // name and says nothing about which of the two mappers is used.
+        if (has("konscc") || has("konami-scc") || has("konamiscc") || has("konami5")) return MsxMapperType::KonamiScc;
+        if (has("konami4") || has("konami-4")) return MsxMapperType::Konami;
         if (has("generic8")) return MsxMapperType::Generic8;
         if (has("generic16")) return MsxMapperType::Generic16;
         if (has("rtype")) return MsxMapperType::RType;
@@ -250,7 +265,7 @@ private:
             if (data_[i] != 0x32) continue;
             uint16_t a = le16(data_, i + 1);
             switch (a) {
-                case 0x5000: case 0xb000: ++scc; break;
+                case 0x5000: case 0x9000: case 0xb000: ++scc; break;
                 case 0x4000: case 0x8000: case 0xa000: ++konami; ++generic16; break;
                 case 0x6800: case 0x7800: ++ascii8; break;
                 case 0x6000: ++ascii8; ++ascii16; ++konami; break;
@@ -267,6 +282,7 @@ private:
         return data_.size() > 0x10000 ? MsxMapperType::Generic8 : MsxMapperType::Plain;
     }
 
+    bool scc_enabled() const { return (bank_[2] & 0x3f) == 0x3f; }
     size_t bank8_size() const { return data_.size() / 0x2000; }
     size_t bank16_size() const { return data_.size() / 0x4000; }
     uint8_t rom8(size_t bank, uint16_t off) const {
@@ -337,6 +353,13 @@ private:
         if (a >= 0x6000 && a < 0x6800) bank_[0] = v;
         else if (a >= 0x7000 && a < 0x7800) bank_[1] = v;
     }
+    // Konami without SCC: page $4000-$5FFF is fixed to bank 0; the other
+    // three 8 KB pages switch on writes anywhere in $6000/$8000/$A000.
+    void konami4_write(uint16_t a, uint8_t v) {
+        if (a >= 0x6000 && a < 0x8000) bank_[1] = v;
+        else if (a >= 0x8000 && a < 0xa000) bank_[2] = v;
+        else if (a >= 0xa000 && a < 0xc000) bank_[3] = v;
+    }
     void konami_write(uint16_t a, uint8_t v) {
         if (a >= 0x5000 && a < 0x5800) bank_[0] = v;
         else if (a >= 0x7000 && a < 0x7800) bank_[1] = v;
@@ -360,6 +383,7 @@ private:
     MsxMapperType type_ = MsxMapperType::Plain;
     bool write_enable_ = false;
     uint8_t hal_mode_ = 0;
+    KonamiScc scc_;
 };
 
 } // namespace dsp

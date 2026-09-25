@@ -7,8 +7,11 @@
 namespace dsp {
 
 // Yamaha V9938 (MSX2), enough of the chip for the BIOS, BASIC SCREEN 0-8 and
-// MSX-DOS: 128 KiB VRAM, 16-colour palette, bitmap modes, sprites, line IRQ
-// and the command engine (HMMV/HMMM/LMMV/LMMM/LINE/PSET/HMMC/LMMC).
+// MSX-DOS and games: 128 KiB VRAM, 16-colour palette, bitmap modes with
+// display pages and vertical scroll, sprite modes 1 and 2, line IRQ and the
+// command engine (HMMC/YMMM/HMMM/HMMV/LMMC/LMCM/LMMM/LMMV/LINE/SRCH/PSET/
+// POINT, with the transparent logical operations).  Commands address VRAM
+// with absolute coordinates (Y 0-1023 in SCREEN 5/6, 0-511 in 7/8).
 class V9938 {
 public:
     using InterruptHandler = std::function<void(bool asserted)>;
@@ -57,6 +60,7 @@ private:
     bool irq0_enabled() const { return (registers_[1] & 0x20) != 0; }
     bool irq1_enabled() const { return (registers_[0] & 0x10) != 0; }
     uint8_t backdrop() const { return uint8_t(registers_[7] & 0x0f); }
+    uint32_t backdrop_argb() const;
 
     void write_register(int index, uint8_t value);
     void update_interrupt_line();
@@ -70,13 +74,16 @@ private:
     void render_g2(int line, bool g3);
     void render_mc(int line);
     void render_bitmap(int line);
-    void render_sprites(int line, int width);
+    void render_sprites(int line);
+    int scrolled_line(int line) const { return (line + registers_[23]) & 255; }
     void plot(int x, int y, uint8_t color, int width);
 
     uint32_t palette_argb(uint8_t index) const;
     void set_default_palette();
 
+    // VRAM address of pixel (x, y) in command (absolute) coordinates.
     uint32_t pixel_address(int x, int y) const;
+    int command_width() const;
     int screen_width_px() const;
     int bits_per_pixel() const;
     int pixels_per_byte() const;
@@ -92,6 +99,9 @@ private:
     void exec_ymmm();
     void exec_line();
     void exec_pset();
+    void exec_srch();
+    void lmcm_next();
+    int clip_nx(int x, int nx, bool left) const;
     void command_advance(int* x, int* y, int nx, int ny, int* count_x, int step);
     void cpu_data_byte(uint8_t value);
     bool command_advance_dst();
@@ -115,6 +125,7 @@ private:
     bool palette_high_ = false;
 
     int scanline_ = 0;
+    uint8_t hr_phase_ = 0;
     bool in_vblank_ = false;
 
     bool command_ce_ = false;
@@ -125,6 +136,7 @@ private:
     int cmd_x0_ = 0, cmd_sx0_ = 0;
     int cmd_step_x_ = 1, cmd_remaining_x_ = 0;
     uint8_t cmd_clr_ = 0, cmd_arg_ = 0;
+    bool cmd_bd_ = false;  // SRCH found the border colour (S#2 BD)
 };
 
 }  // namespace dsp

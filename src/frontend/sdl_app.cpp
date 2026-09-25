@@ -148,12 +148,21 @@ int SdlApp::run(Machine& machine) {
     int scale = options_.scale;
     if (scale == 3 && width == 352 && (height == 280 || height == 296 || height == 288))
         scale = 2;
+    // Window and logical size follow the display size, which corrects the
+    // aspect ratio of non-square framebuffer pixels (the texture stays at the
+    // framebuffer size and SDL stretches it).
+    const int display_w = machine.display_width();
+    const int display_h = machine.display_height();
+    if (display_w != width || display_h != height) {
+        // Keep the default window on a 1080p desktop.
+        while (scale > 1 && display_h * scale > 960) scale--;
+    }
     const double frame_time_ms = 1000.0 / machine.frames_per_second();
     const std::string title = std::string("DSP C++ - ") + machine.title();
 
     SDL_Window* window =
         SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                         width * scale, height * scale,
+                         display_w * scale, display_h * scale,
                          options_.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
     if (window == nullptr) {
         std::fprintf(stderr, "cannot create window: %s\n", SDL_GetError());
@@ -169,7 +178,7 @@ int SdlApp::run(Machine& machine) {
         SDL_Quit();
         return 1;
     }
-    SDL_RenderSetLogicalSize(renderer, width, height);
+    SDL_RenderSetLogicalSize(renderer, display_w, display_h);
     if (machine.uses_pointer()) SDL_ShowCursor(SDL_ENABLE);
 
     SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
@@ -325,8 +334,8 @@ int SdlApp::run(Machine& machine) {
             float lx = 0.0f;
             float ly = 0.0f;
             SDL_RenderWindowToLogical(renderer, gx - wx, gy - wy, &lx, &ly);
-            pointer_x = std::clamp(static_cast<int>(std::floor(lx)), 0, width - 1);
-            pointer_y = std::clamp(static_cast<int>(std::floor(ly)), 0, height - 1);
+            pointer_x = std::clamp(static_cast<int>(std::floor(lx * width / display_w)), 0, width - 1);
+            pointer_y = std::clamp(static_cast<int>(std::floor(ly * height / display_h)), 0, height - 1);
             // Clicks only count inside the window.
             mouse_buttons = inside ? global_buttons : 0;
             collect_inputs(machine, pointer_x, pointer_y, mouse_buttons, focused, inside && !was_inside);
@@ -340,8 +349,8 @@ int SdlApp::run(Machine& machine) {
             float lx = 0.0f;
             float ly = 0.0f;
             SDL_RenderWindowToLogical(renderer, mx, my, &lx, &ly);
-            pointer_x = std::clamp(static_cast<int>(lx), 0, width - 1);
-            pointer_y = std::clamp(static_cast<int>(ly), 0, height - 1);
+            pointer_x = std::clamp(static_cast<int>(lx * width / display_w), 0, width - 1);
+            pointer_y = std::clamp(static_cast<int>(ly * height / display_h), 0, height - 1);
         }
         if (!relative_mouse)
             collect_inputs(machine, pointer_x, pointer_y, mouse_buttons, machine.uses_pointer());

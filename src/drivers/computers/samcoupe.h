@@ -60,6 +60,11 @@ public:
     const uint32_t* framebuffer() const override { return framebuffer_.data(); }
     int screen_width() const override { return kScreenWidth; }
     int screen_height() const override { return kScreenHeight; }
+    // The framebuffer holds 16 half pixels per 8-pixel cell (MODE 3's 512
+    // pixels) on 312 lines: shown at 768x624 (lines doubled) so the
+    // 256-pixel modes have square pixels.
+    int display_width() const override { return kScreenWidth; }
+    int display_height() const override { return kScreenHeight * 2; }
     double frames_per_second() const override { return kFps; }
     void drain_audio(std::vector<int16_t>& out) override;
     int sample_rate() const override { return kSampleRate; }

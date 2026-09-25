@@ -26,6 +26,13 @@ public:
     // Optional opcode map (Konami-1 encrypted fetches).
     void set_opcode_read(ReadHandler handler) { opcode_read_ = std::move(handler); }
     void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
+    // Optional observer of the bus cycles whose data the 6809 ignores (the
+    // "don't care" reads of indexed addressing: the next opcode byte, and
+    // VMA-less cycles that put $FFFF on the bus).  Only chips that watch the
+    // address bus need it -- the Atari slapstic on Empire Strikes Back keys
+    // its alternate bank switch on one of these $FFFF cycles.
+    using DummyHandler = std::function<void(uint16_t)>;
+    void set_dummy_read_handler(DummyHandler handler) { dummy_read_ = std::move(handler); }
 
     void reset();
     // Runs until at least `cycles` cycles have elapsed; returns cycles executed.
@@ -129,6 +136,9 @@ private:
     ReadHandler opcode_read_;
     WriteHandler write_;
     CycleHandler cycle_handler_;
+    DummyHandler dummy_read_;
+    void dummy_arg(int delta) { if (dummy_read_) dummy_read_(uint16_t(pc_ + delta)); }
+    void dummy_vma(int count) { if (dummy_read_) for (int i = 0; i < count; i++) dummy_read_(0xffff); }
 };
 
 }  // namespace dsp
