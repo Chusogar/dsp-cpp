@@ -394,6 +394,12 @@ add_executable(dsp_tests
   src/drivers/computers/apple2.cpp
   src/drivers/computers/apple2gs.cpp
   src/cpu/w65c816.cpp
+  src/cpu/m6800.cpp
+  src/machine/pia6821.cpp
+  src/drivers/arcade/williams.cpp
+  src/cpu/spc700.cpp
+  src/video/snes_ppu.cpp
+  src/drivers/consoles/snes.cpp
   src/sound/es5503.cpp
   src/sound/asc.cpp
   src/drivers/consoles/gameboy.cpp

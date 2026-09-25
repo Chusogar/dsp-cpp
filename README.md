@@ -44,7 +44,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Lynx Suzy / Mikey | new | Sprite blitter, math coprocessor, timers, LCD DMA, 4-channel sound |
 | Atari Lynx driver | new | 64 KiB DRAM, MAPCTL, LNX/LYX carts, 160×102 LCD |
 | TIA | new | NTSC 160×192 playfield/players/missiles/ball, collisions, two-channel audio |
-| Atari 2600 driver | new | 6507 + TIA + RIOT 6532, 2K/4K/F8/F6/F4(+Superchip) cartridges |
+| Atari 2600 driver | new | 6507 + TIA + RIOT 6532, 2K/4K/F8/F6/F4(+Superchip)/E0/E7/FE/3F cartridges |
 | YM2151 FM, POKEY | `src/snd/fm_2151.pas`, `src/snd/pokey.pas` | Gauntlet sound board |
 | SLAPSTIC | `src/arcade/misc/slapstic.pas` | Types 101-108, bank switched protected ROM |
 | Atari motion objects | `src/arcade/misc/atari_mo.pas` | SLIP based sprite lists |
@@ -794,17 +794,73 @@ The VCS has no BIOS. A 6507 (6502 with a 13-bit bus and no IRQ/NMI pins) runs at
 MOS **6532** RIOT (128 bytes RAM, joystick ports, console switches, interval
 timer). Cartridges occupy `$1000–$1FFF`. 2K dumps are mirrored, 4K is mapped
 straight in, and 8K/16K/32K/64K images use the common F8/F6/F4/F0 hotspots.
-A 128-byte Superchip RAM window is enabled for `*sc*` names or dumps whose size
-is a power of two plus 128.
+Parker Brothers E0, M Network E7 (BurgerTime), Activision FE and Tigervision
+3F carts are recognised by their bank-switching code (Stella's signatures).
+A 128-byte Superchip RAM window is enabled for `*sc*` names, dumps whose size
+is a power of two plus 128, or images whose RAM window is filler in every bank.
+
+The TIA runs one colour clock at a time with the real chip's register write
+delays: players, missiles and ball use divide-by-160 position counters (so
+mid-line RESPx tricks and NUSIZ copies behave as on hardware), HMOVE adds
+extra counter clocks only during HBLANK and draws the 8-pixel black comb, and
+Activision's late HMOVE works. A frame is everything between two VSYNCs; the
+picture starts at the first line with VBLANK off. Beamrider matches Stella
+pixel for pixel. The palette is Stella's NTSC palette.
 
 ```bash
 ./build/dsp --game a2600 /path/to/game.bin
 ./build/dsp --game vcs /path/to/game.a26 --screenshot a2600.bmp --frames 120
 ```
 
-Player 1/2 sticks are the joysticks (active low on SWCHA). Fire is `button1`
-(INPT4/INPT5). Start is RESET, Select is SELECT. DIP bank 0 bit 3 is colour
+Player 1/2 sticks are the left/right joysticks (active low on SWCHA: the left
+stick is D7–D4 = right, left, down, up; the right stick D3–D0). Keyboard:
+arrows + Ctrl/Space for the left stick, `1` is RESET (start a game), `3` is
+SELECT. Fire is `button1` (INPT4/INPT5). DIP bank 0 bit 3 is colour
 (default on); bits 6–7 are the P0/P1 difficulty switches.
+
+### Williams (Defender, Joust, Robotron, Stargate…)
+
+6809 main CPU, 6800 sound CPU, three PIA 6821 and (Joust/Robotron/Stargate)
+the special-chip blitter. PIA1 CB1 follows VA11 and CA1 is COUNT240, as on
+the board; the game code acknowledges its own interrupts.
+
+```bash
+./build/dsp --game joust /path/to/joust.zip
+```
+
+The battery-backed CMOS (settings, high scores) is saved next to the ROM set
+(`joust.zip` → `joust.nv`). With no saved CMOS the games show *FACTORY
+SETTINGS RESTORED* and wait for the operator's **Advance** button: that is
+**F1** (for Joust the driver presses it once by itself on that first boot).
+Coin `5`, start `1`/`2`, Joust flap = Ctrl/Space.
+
+### Super Nintendo / Super Famicom
+
+65C816 + S-PPU + SPC700 (sound CPU only; the S-DSP is not synthesised yet).
+LoROM/HiROM are detected from the header, a 512-byte copier header is
+skipped, and the 64-byte `spc700.rom` IPL is read from the cartridge's folder
+(a built-in copy is used otherwise).
+
+```bash
+./build/dsp --game snes /path/to/game.smc
+```
+
+- Timing: slow ROM/WRAM (8 master clocks), I/O (6/12) and DMA (8 per byte)
+  are charged to the CPU; V=0 is not displayed, HDMA transfers in each
+  line's hblank, NMI at V=225, H/V timer IRQs, $4212 hblank/vblank/joypad
+  bits, H/V counter latch, hardware multiply/divide.
+- PPU: per-mode priorities, sprites with the real OAM layout (palette bits,
+  sizes, 32 sprites / 34 tiles per line, priority rotation, OAM address
+  reload at vblank), both windows on main and sub screen, colour math with
+  sub screen or fixed colour, halving and clip/prevent regions, mosaic,
+  offset-per-tile, direct colour, Mode 7 matrix maths with EXTBG and the
+  out-of-bounds modes, VRAM address remapping, and VRAM writes dropped
+  outside vblank/forced blank (so long DMAs behave like on hardware).
+- The SPC700 passes the SingleStepTests suite for every opcode.
+
+Mazinger Z's intro, title screen (robot and giant Z) and story scenes match
+snes9x pixel for pixel. Pad: arrows, B = Ctrl/Space, Y = Alt/Z, A = X,
+X = C, Start = `1`, Select = `3`.
 
 ### Atari Lynx
 

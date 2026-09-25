@@ -21,12 +21,16 @@
 #include "cpu/m68000.h"
 #include "cpu/t11.h"
 #include "cpu/tms7000.h"
+#include "cpu/spc700.h"
 #include "cpu/upd7801.h"
 #include "cpu/z80.h"
 #include "cpu/z80ctc.h"
 #include "drivers/computers/amstrad_cpc.h"
 #include "drivers/consoles/atari_lynx.h"
 #include "drivers/consoles/a2600.h"
+#include "drivers/consoles/snes.h"
+#include "drivers/arcade/williams.h"
+#include "video/snes_ppu.h"
 #include "drivers/arcade/atari_system1.h"
 #include "drivers/arcade/atari_system2.h"
 #include "drivers/computers/apple2.h"
@@ -42,6 +46,7 @@
 #include "machine/st_floppy.h"
 #include "drivers/computers/amiga.h"
 #include "machine/amiga_adf.h"
+#include "machine/amiga_chipset.h"
 #include "drivers/computers/macplus.h"
 #include "drivers/computers/macii.h"
 #include "drivers/consoles/vectrex.h"
@@ -635,6 +640,58 @@ void test_m68000_branches_and_subroutines() {
     cpu.run(200);
     check(cpu.d[0].l == 4, "bsr/rts execute the subroutine once");
     check(cpu.a[7].l == 0x1000, "rts restores the stack pointer");
+}
+
+// TRAPV takes vector 7 when V is set (Neo Turf Masters checks DIVS overflow
+// with it), and the divide-by-zero trap returns past the DIV instead of
+// running it again.
+void test_m68000_traps() {
+    auto make_plain = []() {
+        m68k_memory.assign(0x10000, 0);
+        dsp::M68000 cpu(12000000, dsp::M68000::Type::M68000);
+        cpu.set_memory_handlers(
+            [](uint32_t address) {
+                return uint16_t((m68k_memory[address & 0xfffe] << 8) | m68k_memory[(address & 0xfffe) + 1]);
+            },
+            [](uint32_t address, uint16_t value) {
+                m68k_memory[address & 0xfffe] = uint8_t(value >> 8);
+                m68k_memory[(address & 0xfffe) + 1] = uint8_t(value);
+            });
+        return cpu;
+    };
+    {
+        dsp::M68000 cpu = make_plain();
+        put_long(0x0000, 0x00001000);
+        put_long(0x0004, 0x00000400);
+        put_long(0x001c, 0x00000500);  // vector 7: TRAPV
+        put_word(0x0400, 0x203c);      // move.l #$10000000,d0
+        put_long(0x0402, 0x10000000);
+        put_word(0x0406, 0x7201);      // moveq #1,d1
+        put_word(0x0408, 0x81c1);      // divs d1,d0 (overflows: V set)
+        put_word(0x040a, 0x4e76);      // trapv
+        put_word(0x040c, 0x60fe);      // bra.s *
+        put_word(0x0500, 0x7e07);      // moveq #7,d7
+        put_word(0x0502, 0x4e73);      // rte
+        cpu.reset();
+        cpu.run(1000);
+        check(cpu.d[7].l == 7 && cpu.pc() == 0x40c, "68000 TRAPV traps on overflow and returns after it");
+    }
+    {
+        dsp::M68000 cpu = make_plain();
+        put_long(0x0000, 0x00001000);
+        put_long(0x0004, 0x00000400);
+        put_long(0x0014, 0x00000500);  // vector 5: divide by zero
+        put_word(0x0400, 0x7200);      // moveq #0,d1
+        put_word(0x0402, 0x7005);      // moveq #5,d0
+        put_word(0x0404, 0x80c1);      // divu d1,d0
+        put_word(0x0406, 0x60fe);      // bra.s *
+        put_word(0x0500, 0x5287);      // addq.l #1,d7
+        put_word(0x0502, 0x4e73);      // rte
+        cpu.reset();
+        cpu.run(2000);
+        check(cpu.d[7].l == 1 && cpu.pc() == 0x406,
+              "68000 divide-by-zero trap stacks the next instruction");
+    }
 }
 
 void test_m68000_interrupt() {
@@ -3525,6 +3582,8 @@ void test_tia_playfield_and_audio() {
     check(line[0] == dsp::Tia::ntsc_color(0x86), "PF0 lights the leftmost pixels");
     check(line[68] == dsp::Tia::ntsc_color(0x00), "the playfield gap is COLUBK");
 
+    // RESP0 mid-line: the main copy appears from the next line on, 5 pixels
+    // after the strobe; a later GRP0 write blanks the rest of that line.
     tia.reset();
     tia.begin_line();
     tia.write(0x01, 0x00);
@@ -3533,14 +3592,53 @@ void test_tia_playfield_and_audio() {
     tia.write(0x1b, 0xff);
     tia.set_hclock(68 + 8);
     tia.write(0x10, 0x00);  // RESP0
+    tia.render_line(line.data());
+    check(line[8 + 5] == dsp::Tia::ntsc_color(0x00),
+          "TIA RESP0 does not draw the main copy on the strobe line");
+    tia.begin_line();
     tia.set_hclock(68 + 40);
     tia.write(0x1b, 0x00);  // GRP0 off for the rest of the line
-    tia.set_hclock(dsp::Tia::kColorClocksPerLine);
     tia.render_line(line.data());
     check(line[8 + 5] == dsp::Tia::ntsc_color(0x1e),
-          "TIA draws GRP0 after a mid-line RESP0");
+          "TIA draws GRP0 5 pixels after a mid-line RESP0");
     check(line[80] == dsp::Tia::ntsc_color(0x00),
           "TIA drops GRP0 after a later mid-line write");
+
+    // NUSIZ copies do appear on the strobe line (16 pixels to the right).
+    tia.reset();
+    tia.begin_line();
+    tia.write(0x06, 0x1e);
+    tia.write(0x04, 0x01);  // two copies, close
+    tia.write(0x1b, 0x80);
+    tia.set_hclock(68 + 20);
+    tia.write(0x10, 0x00);
+    tia.render_line(line.data());
+    check(line[20 + 5 + 16] == dsp::Tia::ntsc_color(0x1e) &&
+              line[20 + 5] == dsp::Tia::ntsc_color(0x00),
+          "TIA draws the close NUSIZ copy on the RESP0 line");
+
+    // HMOVE during HBLANK: black comb over the first 8 pixels and
+    // HMP0 = +1 moves the player one pixel left.
+    tia.reset();
+    tia.begin_line();
+    tia.write(0x09, 0x0e);
+    tia.write(0x06, 0x1e);
+    tia.write(0x1b, 0x80);
+    tia.set_hclock(68 + 40);
+    tia.write(0x10, 0x00);  // player at pixel 45 from the next line
+    tia.write(0x20, 0x10);  // HMP0 = +1
+    tia.render_line(line.data());
+    tia.begin_line();
+    tia.render_line(line.data());
+    check(line[45] == dsp::Tia::ntsc_color(0x1e), "TIA RESP0 lands 5 pixels after the strobe");
+    tia.begin_line();
+    tia.set_hclock(6);
+    tia.write(0x2a, 0x00);  // HMOVE
+    tia.render_line(line.data());
+    check(line[0] == 0xFF000000 && line[7] == 0xFF000000 && line[8] == dsp::Tia::ntsc_color(0x0e),
+          "TIA HMOVE blanks the first 8 pixels of the line");
+    check(line[44] == dsp::Tia::ntsc_color(0x1e) && line[45] == dsp::Tia::ntsc_color(0x0e),
+          "TIA HMOVE with HMP0=+1 moves the player one pixel left");
 
     tia.write(0x15, 0x04);
     tia.write(0x17, 0x07);
@@ -3593,6 +3691,335 @@ void test_a2600_driver() {
     int64_t energy = 0;
     for (int16_t sample : audio) energy += int64_t(sample) * sample;
     check(!audio.empty() && energy > 0, "the 2600 kernel drives TIA audio");
+}
+
+// The left joystick is the high nibble of SWCHA (D7 right, D6 left, D5 down,
+// D4 up), the right joystick the low nibble; the kernel copies SWCHA into
+// COLUBK so the pressed bits show up as the background colour.
+void test_a2600_joystick_swcha() {
+    static const uint8_t kCode[] = {
+        0xA9, 0x00, 0x85, 0x01,        // LDA #0 : STA VBLANK
+        0xAD, 0x80, 0x02, 0x85, 0x09,  // LDA SWCHA : STA COLUBK
+        0x4C, 0x04, 0xF0,              // JMP $F004
+    };
+    std::vector<uint8_t> rom(4096, 0xEA);
+    std::memcpy(rom.data(), kCode, sizeof(kCode));
+    rom[0xffc] = 0x00;
+    rom[0xffd] = 0xf0;
+    namespace fs = std::filesystem;
+    const fs::path path = "/tmp/dsp-a2600-test-kernel/swcha.bin";
+    fs::create_directories(path.parent_path());
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(rom.data()), std::streamsize(rom.size()));
+    }
+    dsp::A2600 machine;
+    std::string error;
+    check(machine.init(path.string(), &error), "2600 SWCHA kernel loads");
+    auto background = [&](const dsp::MachineInputs& in) {
+        machine.set_inputs(in);
+        machine.run_frame();
+        machine.run_frame();
+        return machine.framebuffer()[100 * machine.screen_width() + 80];
+    };
+    dsp::MachineInputs in{};
+    check(background(in) == dsp::Tia::ntsc_color(0xff), "SWCHA idles high");
+    in.player1.up = true;
+    check(background(in) == dsp::Tia::ntsc_color(0xef), "left joystick up clears SWCHA D4");
+    in.player1.up = false;
+    in.player1.right = true;
+    check(background(in) == dsp::Tia::ntsc_color(0x7f), "left joystick right clears SWCHA D7");
+    in.player1.right = false;
+    in.player2.left = true;
+    check(background(in) == dsp::Tia::ntsc_color(0xfb), "right joystick left clears SWCHA D2");
+}
+
+// Real cartridges, compared against Stella: Beamrider's HMOVE comb and its
+// reserve ships (a repeated mid-line RESPx trick), and BurgerTime, which
+// needs the M Network E7 bank switching.
+void test_a2600_carts_if_present() {
+    auto exists = [](const char* path) { return bool(std::ifstream(path)); };
+    for (const char* path : {"/tmp/roms/Beamride.bin", "/tmp/roms/Beamrider.bin"}) {
+        if (!exists(path)) continue;
+        dsp::A2600 machine;
+        std::string error;
+        check(machine.init(path, &error), "Beamrider loads");
+        check(std::strcmp(machine.mapper_name(), "F8") == 0, "Beamrider is an F8 cartridge");
+        dsp::MachineInputs in{};
+        for (int frame = 1; frame <= 300; frame++) {
+            in.player1.start = frame >= 5 && frame < 15;
+            machine.set_inputs(in);
+            machine.run_frame();
+        }
+        const uint32_t* fb = machine.framebuffer();
+        const int w = machine.screen_width();
+        int comb_rows = 0;
+        for (int y = 0; y < machine.screen_height(); y++) {
+            if ((fb[y * w + 7] & 0xffffff) == 0 && (fb[y * w + 8] & 0xffffff) != 0) comb_rows++;
+        }
+        check(comb_rows >= 5, "Beamrider's beams start after the 8-pixel HMOVE comb");
+        // The reserve ships are drawn with repeated mid-line RESP0/RESP1:
+        // Stella shows two ships at pixels 32-36 and 41-45.
+        int ship_rows = 0;
+        for (int y = 150; y < machine.screen_height(); y++) {
+            const uint32_t* row = fb + y * w;
+            auto lit = [&](int x) { return (row[x] & 0xffffff) != 0; };
+            if (lit(32) && lit(36) && lit(41) && lit(45) && !lit(28) && !lit(30) && !lit(39) &&
+                !lit(47))
+                ship_rows++;
+        }
+        check(ship_rows >= 2, "Beamrider draws its two reserve ships where Stella does");
+        break;
+    }
+    for (const char* path : {"/tmp/roms/Burgtime.bin", "/tmp/roms/BurgerTime.bin"}) {
+        if (!exists(path)) continue;
+        dsp::A2600 machine;
+        std::string error;
+        check(machine.init(path, &error), "BurgerTime loads");
+        check(std::strcmp(machine.mapper_name(), "E7") == 0, "BurgerTime is detected as E7");
+        for (int frame = 0; frame < 120; frame++) machine.run_frame();
+        int lit = 0;
+        const uint32_t* fb = machine.framebuffer();
+        for (int i = 0; i < machine.screen_width() * machine.screen_height(); i++) {
+            if ((fb[i] & 0xffffff) != 0) lit++;
+        }
+        check(lit > 2000, "BurgerTime draws its playfield");
+        break;
+    }
+}
+
+// SPC700 instructions that were wrong (checked against SingleStepTests).
+void test_spc700_fixes() {
+    static std::array<uint8_t, 0x10000> mem;
+    dsp::Spc700 cpu;
+    cpu.set_memory_handlers([](uint16_t a) { return mem[a]; },
+                            [](uint16_t a, uint8_t v) { mem[a] = v; });
+    auto run_at = [&](std::initializer_list<uint8_t> code) {
+        mem.fill(0);
+        mem[0xfffe] = 0x00;
+        mem[0xffff] = 0x02;
+        size_t i = 0x200;
+        for (uint8_t b : code) mem[i++] = b;
+        cpu.reset();
+    };
+    run_at({0x2e, 0x10, 0x02});   // CBNE $10,+2
+    mem[0x10] = 5;
+    cpu.a = 5;
+    cpu.step();
+    check(cpu.pc() == 0x203, "SPC700 CBNE falls through when A equals memory");
+    run_at({0x2e, 0x10, 0x02});
+    mem[0x10] = 6;
+    cpu.a = 5;
+    cpu.step();
+    check(cpu.pc() == 0x205, "SPC700 CBNE branches when A differs");
+
+    run_at({0x11});               // TCALL 1 -> vector at $FFDC
+    mem[0xffdc] = 0x00;
+    mem[0xffdd] = 0x04;
+    cpu.sp = 0xef;
+    cpu.step();
+    check(cpu.pc() == 0x400 && cpu.sp == 0xed && mem[0x1ef] == 0x02 && mem[0x1ee] == 0x01,
+          "SPC700 TCALL pushes the return address and jumps through $FFDE-2n");
+
+    run_at({0x9e});               // DIV YA,X
+    cpu.y = 0x01; cpu.a = 0x23; cpu.x = 0x10;
+    cpu.step();
+    check(cpu.a == 0x12 && cpu.y == 0x03, "SPC700 DIV YA,X");
+    run_at({0x9e});
+    cpu.y = 0x40; cpu.a = 0x00; cpu.x = 0x10;
+    cpu.step();
+    check(cpu.a == 0xdd && cpu.y == 0x30, "SPC700 DIV overflow matches the hardware divider");
+}
+
+// S-PPU: sprite palette bits, OAM address reload at vblank and VRAM writes
+// dropped outside vblank.
+void test_snes_ppu() {
+    dsp::SnesPpu ppu;
+    ppu.reset();
+    ppu.write(0x2100, 0x0f);   // display on, full brightness
+    ppu.write(0x2101, 0x00);   // 8x8 sprites, tiles at word 0
+    ppu.write(0x212c, 0x10);   // OBJ on the main screen
+    ppu.write(0x2121, 128 + 2 * 16 + 1);   // palette 2, colour 1 = red
+    ppu.write(0x2122, 0x1f);
+    ppu.write(0x2122, 0x00);
+    ppu.write(0x2115, 0x80);
+    ppu.write(0x2116, 0x00);
+    ppu.write(0x2117, 0x00);
+    ppu.write(0x2118, 0x80);   // tile 0, row 0: leftmost pixel colour 1
+    ppu.write(0x2119, 0x00);
+    auto sprite0 = [&](uint8_t x) {
+        ppu.write(0x2104, x);
+        ppu.write(0x2104, 0);      // Y
+        ppu.write(0x2104, 0);      // tile
+        ppu.write(0x2104, 0x04);   // attributes: palette 2
+    };
+    ppu.write(0x2102, 0);
+    ppu.write(0x2103, 0);
+    sprite0(10);
+    for (int i = 0; i < 12; i++) ppu.write(0x2104, 0xf0);   // later entries
+    ppu.write(0x2102, 0x00);   // high table: all small, X < 256
+    ppu.write(0x2103, 0x01);
+    for (int i = 0; i < 32; i++) ppu.write(0x2104, 0);
+    ppu.write(0x2102, 0);
+    ppu.write(0x2103, 0);
+    ppu.start_vblank();
+    std::array<uint32_t, dsp::SnesPpu::kWidth> line{};
+    ppu.render_line(1, line.data());
+    check(line[10] == 0xffff0000u && line[11] == 0xff000000u,
+          "SNES sprite uses its palette from attribute bits 1-3");
+    for (int i = 0; i < 20; i++) ppu.write(0x2104, 0xf0);   // address runs on...
+    ppu.start_vblank();                                      // ...and is reloaded
+    sprite0(20);
+    ppu.render_line(1, line.data());
+    check(line[20] == 0xffff0000u && line[10] == 0xff000000u,
+          "SNES OAM address is reloaded from OAMADD at vblank");
+
+    ppu.write(0x2116, 0x00);
+    ppu.write(0x2117, 0x10);
+    ppu.set_vram_open(false);
+    ppu.write(0x2118, 0x55);
+    ppu.write(0x2119, 0x66);
+    check(ppu.vram()[0x1000] == 0 , "SNES VRAM ignores writes during active display");
+    ppu.write(0x2100, 0x80);   // forced blank
+    ppu.write(0x2118, 0x55);
+    ppu.write(0x2119, 0x66);
+    check(ppu.vram()[0x1001] == 0x6655, "SNES VRAM accepts writes in forced blank (address kept running)");
+}
+
+// $4202-$4206 multiply / divide.
+void test_snes_math_registers() {
+    static const uint8_t kCode[] = {
+        0x78,                                // SEI
+        0xa9, 0x12, 0x8d, 0x02, 0x42,        // WRMPYA = $12
+        0xa9, 0x34, 0x8d, 0x03, 0x42,        // WRMPYB = $34
+        0xea, 0xea, 0xea, 0xea,
+        0xad, 0x16, 0x42, 0x8d, 0x10, 0x00,  // RDMPYL -> $10
+        0xad, 0x17, 0x42, 0x8d, 0x11, 0x00,  // RDMPYH -> $11
+        0xa9, 0x34, 0x8d, 0x04, 0x42,        // WRDIVL
+        0xa9, 0x12, 0x8d, 0x05, 0x42,        // WRDIVH
+        0xa9, 0x10, 0x8d, 0x06, 0x42,        // WRDIVB = $10
+        0xea, 0xea, 0xea, 0xea, 0xea, 0xea, 0xea, 0xea,
+        0xad, 0x14, 0x42, 0x8d, 0x12, 0x00,  // RDDIVL -> $12
+        0xad, 0x15, 0x42, 0x8d, 0x13, 0x00,  // RDDIVH -> $13
+        0xad, 0x16, 0x42, 0x8d, 0x14, 0x00,  // remainder -> $14
+        0x80, 0xfe,                          // BRA *
+    };
+    std::vector<uint8_t> rom(0x8000, 0);
+    std::memcpy(rom.data(), kCode, sizeof(kCode));
+    rom[0x7ffc] = 0x00;
+    rom[0x7ffd] = 0x80;
+    namespace fs = std::filesystem;
+    const fs::path path = "/tmp/dsp-snes-test/math.smc";
+    fs::create_directories(path.parent_path());
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(rom.data()), std::streamsize(rom.size()));
+    }
+    dsp::Snes snes;
+    std::string error;
+    check(snes.init(path.string(), &error), "SNES math test ROM loads");
+    snes.run_frame();
+    check(snes.debug_wram(0x10) == 0xa8 && snes.debug_wram(0x11) == 0x03,
+          "SNES hardware multiply $12 x $34 = $03A8");
+    check(snes.debug_wram(0x12) == 0x23 && snes.debug_wram(0x13) == 0x01 &&
+              snes.debug_wram(0x14) == 0x04,
+          "SNES hardware divide $1234 / $10 = $123 remainder 4");
+}
+
+// Mazinger Z (checked against snes9x): the title screen with the robot and
+// the giant Z, and the first story scene's dialogue box.
+void test_snes_mazinger_if_present() {
+    const char* path = "/tmp/roms/Mazinger_Z_J_28996.smc";
+    if (!std::ifstream(path)) return;
+    dsp::Snes snes;
+    std::string error;
+    check(snes.init(path, &error), "Mazinger Z loads");
+    dsp::MachineInputs in{};
+    auto count = [&](int y0, int y1, auto pred) {
+        int n = 0;
+        const uint32_t* fb = snes.framebuffer();
+        for (int y = y0; y < y1; y++)
+            for (int x = 0; x < snes.screen_width(); x++)
+                if (pred(fb[y * snes.screen_width() + x])) n++;
+        return n;
+    };
+    for (int frame = 1; frame <= 1600; frame++) {
+        in.player1.start = (frame >= 1100 && frame < 1110) || (frame >= 1300 && frame < 1310);
+        snes.set_inputs(in);
+        snes.run_frame();
+        if (frame == 1000) {
+            const int cyan = count(0, 224, [](uint32_t c) {
+                return ((c >> 16) & 0xff) < 0x60 && ((c >> 8) & 0xff) > 0xc0 && (c & 0xff) > 0xc0;
+            });
+            const int lit = count(0, 224, [](uint32_t c) { return (c & 0xffffff) != 0; });
+            check(cyan > 800, "Mazinger Z title shows the giant cyan Z");
+            check(lit > 40000, "Mazinger Z title screen is drawn (robot and background)");
+        }
+    }
+    const int box = count(160, 224, [](uint32_t c) { return (c & 0xffffff) != 0; });
+    check(box > 1500, "Mazinger Z story scene keeps its dialogue box (long DMA vs VRAM)");
+}
+
+// Joust (Williams): a first boot with blank CMOS restores the factory
+// settings and waits for the operator's Advance button; the driver presses
+// it once, saves the CMOS next to the ROM set, and the attract mode runs
+// with no credits appearing by themselves.
+void test_williams_joust_if_present() {
+    const char* rom = "/tmp/roms/joust.zip";
+    if (!std::ifstream(rom)) return;
+    const std::string nv = "/tmp/dsp-joust-test.nv";
+    std::remove(nv.c_str());
+    auto yellow = [](const dsp::Machine& m) {
+        int n = 0;
+        const uint32_t* fb = m.framebuffer();
+        for (int i = 0; i < m.screen_width() * m.screen_height(); i++) {
+            const uint32_t c = fb[i];
+            if (((c >> 16) & 0xff) > 0xc0 && ((c >> 8) & 0xff) > 0xc0 && (c & 0xff) < 0x60) n++;
+        }
+        return n;
+    };
+    {
+        dsp::Williams joust(dsp::Williams::Game::Joust);
+        std::string error;
+        joust.set_nvram_path(nv);
+        check(joust.init(rom, &error), "Joust loads");
+        int best = 0;
+        for (int frame = 0; frame < 1800; frame++) {
+            joust.run_frame();
+            if (frame > 1300) best = std::max(best, yellow(joust));
+        }
+        check(best > 3000, "Joust gets past FACTORY SETTINGS RESTORED to the title logo");
+    }
+    check(bool(std::ifstream(nv)), "Joust CMOS is saved to disk");
+    std::remove(nv.c_str());
+}
+
+// Neo Turf Masters: starting a round used to hit TRAPV, which the 68000 core
+// treated as an illegal instruction, and the BIOS error handler reset the
+// board. After coin + start the game must still be running its own code.
+void test_neogeo_turfmast_if_present() {
+    const char* path = "/tmp/roms/turfmast.zip";
+    if (!std::ifstream(path) || !std::ifstream("/tmp/roms/neogeo.zip")) return;
+    dsp::NeoGeo neo("turfmast");
+    std::string error;
+    check(neo.init(path, &error), "Neo Turf Masters loads");
+    dsp::MachineInputs in{};
+    // The game calls BIOS routines all the time; the crash left the CPU in
+    // the BIOS error/boot code for seconds on end.
+    int bios_run = 0, longest = 0;
+    for (int frame = 1; frame <= 1800; frame++) {
+        in.coin1 = frame >= 600 && frame < 610;
+        in.player1.start = frame >= 700 && frame < 710;
+        const int r = (frame - 900) % 40;
+        in.player1.button1 = frame >= 900 && (r < 10 || (r >= 20 && r < 25));
+        neo.set_inputs(in);
+        neo.run_frame();
+        if (frame > 1400) {
+            bios_run = neo.debug_pc() >= 0xc00000 ? bios_run + 1 : 0;
+            longest = std::max(longest, bios_run);
+        }
+    }
+    check(longest < 30, "Neo Turf Masters keeps playing after the round starts (no BIOS reset)");
 }
 
 void test_a2600_rom_if_present() {
@@ -5429,6 +5856,15 @@ void test_amiga_kickstart_if_present() {
     check(boot.color00() != 0, "Kickstart programmed Denise COLOR00");
     check(count_lit_pixels(boot) > 80, "Kickstart paints the Denise framebuffer");
     check((boot.intena() & 0x4000) != 0, "Kickstart enabled Paula INTEN");
+
+    // The hand-and-disk picture is drawn with blitter lines and area fill.
+    for (int i = 0; i < 240; i++) boot.run_frame();
+    const uint32_t* fb = boot.framebuffer();
+    const uint32_t bg = fb[0];
+    int drawn = 0;
+    for (int i = 0; i < boot.screen_width() * boot.screen_height(); i++)
+        if (fb[i] != bg) drawn++;
+    check(drawn > 4000, "Kickstart draws the insert-disk hand and floppy");
 }
 
 void test_amiga_bootblock_if_present() {
@@ -6311,6 +6747,36 @@ void test_vectrex_if_present() {
 // /tmp/amiga/North & South.adf: its CIA-B interrupt handler acknowledges
 // with a long read of $BFDD00, which must not clear CIA-A's ICR (A12 is
 // high there), or timer.device loses its interrupt and loading stalls.
+// Descending blits walk backwards through memory: the modulos are
+// subtracted, not added (North & South clears its sprite bank's offset
+// table otherwise when a soldier is selected on the map).
+void test_amiga_blitter_descending_modulo() {
+    std::vector<uint16_t> mem(0x1000, 0);
+    dsp::AmigaChipset chip;
+    chip.set_chip_handlers([&mem](uint32_t a) { return mem[(a >> 1) & 0xFFF]; },
+                           [&mem](uint32_t a, uint16_t v) { mem[(a >> 1) & 0xFFF] = v; });
+    // Source: 3 rows x 2 words, row pitch 8 bytes at 0x100.
+    for (int r = 0; r < 3; r++)
+        for (int w = 0; w < 2; w++) mem[size_t((0x100 + r * 8) / 2 + w)] = uint16_t(0x1000 * (r + 1) + w);
+    chip.write(0x040, 0x09F0);  // A -> D
+    chip.write(0x042, 0x0002);  // DESC
+    chip.write(0x044, 0xFFFF);
+    chip.write(0x046, 0xFFFF);
+    chip.write(0x064, 4);       // A modulo
+    chip.write(0x066, 4);       // D modulo
+    chip.write(0x050, 0);
+    chip.write(0x052, 0x100 + 2 * 8 + 2);  // last word of last row
+    chip.write(0x054, 0);
+    chip.write(0x056, 0x800 + 2 * 8 + 2);
+    chip.write(0x058, uint16_t((3 << 6) | 2));
+    bool ok = true;
+    for (int r = 0; r < 3; r++)
+        for (int w = 0; w < 2; w++)
+            ok = ok && mem[size_t((0x800 + r * 8) / 2 + w)] == uint16_t(0x1000 * (r + 1) + w);
+    for (int i = 0x820 / 2; i < 0x900 / 2; i++) ok = ok && mem[size_t(i)] == 0;
+    check(ok, "Amiga descending blit subtracts the modulos");
+}
+
 void test_amiga_north_south_if_present() {
     const char* rom = "/tmp/roms/a500.zip";
     const char* disk = "/tmp/amiga/North & South.adf";
@@ -6383,6 +6849,7 @@ int main() {
     test_m68000_reset_and_moves();
     test_m68000_branches_and_subroutines();
     test_m68000_interrupt();
+    test_m68000_traps();
     test_m6502_arithmetic();
     test_m6502_stack_and_interrupts();
     test_m6502_pushed_flags();
@@ -6395,6 +6862,14 @@ int main() {
     test_tia_playfield_and_audio();
     test_a2600_driver();
     test_a2600_rom_if_present();
+    test_a2600_joystick_swcha();
+    test_a2600_carts_if_present();
+    test_spc700_fixes();
+    test_snes_ppu();
+    test_snes_math_registers();
+    test_snes_mazinger_if_present();
+    test_williams_joust_if_present();
+    test_neogeo_turfmast_if_present();
     test_slapstic();
     test_ym2151();
     test_pokey();
@@ -6506,6 +6981,7 @@ int main() {
     test_st_north_south_if_present();
     test_amiga_missing_roms();
     test_amiga_adf_format();
+    test_amiga_blitter_descending_modulo();
     test_amiga_kickstart_if_present();
     test_amiga_north_south_if_present();
     test_amiga_bootblock_if_present();
