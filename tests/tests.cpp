@@ -5167,6 +5167,32 @@ void test_rp5c01_fixed_clock() {
     check(rtc.read() == 7, "RP-5C01 RAM bank writes do not replace the clock");
 }
 
+void test_msx2_boot_logo_if_present() {
+    namespace fs = std::filesystem;
+    const char* dir = "/tmp/roms/msx2";
+    if (!fs::exists(std::string(dir) + "/MSX2.ROM")) {
+        std::printf("skip: MSX2.ROM not found\n");
+        return;
+    }
+    dsp::Msx2 msx;
+    std::string error;
+    check(msx.init(dir, &error), "MSX2 boots with MSX2.ROM / MSX2EXT.ROM");
+    for (int frame = 0; frame < 175; frame++) msx.run_frame();
+    // SCREEN 6 logo: palette 0 black (R#8 TP set), 1 blue, 2 grey, 3 white.
+    int black = 0, blue = 0, white = 0, other = 0;
+    const uint32_t* fb = msx.framebuffer();
+    for (int i = 0; i < msx.screen_width() * msx.screen_height(); i++) {
+        const uint32_t c = fb[i] & 0xffffff;
+        if (c == 0x000000) black++;
+        else if (c == 0x0000ff) blue++;
+        else if (c == 0xffffff) white++;
+        else if (c != 0x919191) other++;
+    }
+    check(black > 10000 && white > 10000 && blue > 50000,
+          "the MSX2 logo is white letters on a black band over a blue screen");
+    check(other == 0, "the MSX2 logo uses only its four SCREEN 6 palette colours");
+}
+
 void test_msx2_missing_roms_mapper_and_disk() {
     dsp::Msx2 missing;
     std::string error = "unset";
@@ -7352,6 +7378,7 @@ int main() {
     test_msx_disk_and_fdc();
     test_rp5c01_fixed_clock();
     test_msx2_missing_roms_mapper_and_disk();
+    test_msx2_boot_logo_if_present();
     test_diskii_encode_roundtrip();
     test_apple2_missing_roms_and_dummy();
     test_apple2_roms_if_present();

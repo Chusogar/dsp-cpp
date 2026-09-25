@@ -57,6 +57,7 @@ private:
     bool irq0_enabled() const { return (registers_[1] & 0x20) != 0; }
     bool irq1_enabled() const { return (registers_[0] & 0x10) != 0; }
     uint8_t backdrop() const { return uint8_t(registers_[7] & 0x0f); }
+    uint32_t backdrop_argb() const;
 
     void write_register(int index, uint8_t value);
     void update_interrupt_line();

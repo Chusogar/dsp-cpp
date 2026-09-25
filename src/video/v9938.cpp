@@ -80,6 +80,8 @@ void V9938::write_register(int index, uint8_t value) {
     index &= 63;
     registers_[size_t(index)] = value;
     if (index == 15) status_read_s0_ = (value & 0x0f) == 0;
+    // Selecting a palette entry restarts the two-byte palette write.
+    if (index == 16) palette_high_ = false;
     if (index == 44 && command_ce_) {
         uint8_t kind = uint8_t(command_ >> 4);
         if (kind == 0x0f || kind == 0x0b) cpu_data_byte(value);
@@ -187,6 +189,24 @@ V9938::Mode V9938::current_mode() const {
     }
 }
 
+uint32_t V9938::backdrop_argb() const {
+    const uint8_t r7 = registers_[7];
+    switch (current_mode()) {
+        case kG7: {
+            // SCREEN 8: the backdrop is an 8-bit GRB332 colour.
+            int r = (r7 >> 2) & 7;
+            int g = (r7 >> 5) & 7;
+            int b = ((r7 & 3) << 1) | (r7 & 1);
+            return rgb333(r, g, b);
+        }
+        case kG5:
+            // SCREEN 6 has 4 colours: R#7 bits 1-0 pick the backdrop.
+            return palette_argb(uint8_t(r7 & 0x03));
+        default:
+            return palette_argb(uint8_t(r7 & 0x0f));
+    }
+}
+
 uint32_t V9938::palette_argb(uint8_t index) const {
     uint16_t p = palette_[index & 0x0f];
     int r = (p >> 8) & 7;
@@ -197,7 +217,8 @@ uint32_t V9938::palette_argb(uint8_t index) const {
 
 void V9938::plot(int x, int y, uint8_t color, int width) {
     if (y < 0 || y >= kScreenHeight) return;
-    uint32_t argb = (color == 0 && (registers_[8] & 0x20) == 0) ? palette_argb(backdrop())
+    // Colour 0 is transparent (shows the backdrop) unless R#8 TP is set.
+    uint32_t argb = (color == 0 && (registers_[8] & 0x20) == 0) ? backdrop_argb()
                                                                 : palette_argb(color);
     if (width == 256) {
         int dx = x * 2;
@@ -218,11 +239,12 @@ void V9938::render_text(int line, int columns) {
     int row = line / 8;
     int y_in = line % 8;
     int chars = columns;
-    int px = columns == 80 ? 0 : 8;  // 40-col has 8 px border each side of 240
+    // 40 x 6 = 240 of 256 pixels, 80 x 6 = 480 of 512: centred.
+    int px = columns == 80 ? 16 : 8;
     for (int col = 0; col < chars; col++) {
         uint8_t name = vram_get(nt + uint32_t(row * chars + col));
         uint8_t pattern = vram_get(pt + uint32_t(name) * 8 + uint32_t(y_in));
-        int bits = columns == 80 ? 6 : 8;
+        const int bits = 6;  // TEXT1 and TEXT2 characters are 6 pixels wide
         for (int bit = 0; bit < bits; bit++) {
             bool set = ((pattern >> (7 - bit)) & 1) != 0;
             plot(px + col * bits + bit, line, set ? fg : bg, columns == 80 ? 512 : 256);
@@ -362,7 +384,7 @@ void V9938::render_bitmap(int line) {
                 framebuffer_[size_t(line * kScreenWidth + dx + 1)] = argb;
             }
         } else {
-            plot(x, line, color == 0 ? bg : color, width);
+            plot(x, line, color, width);
         }
     }
 }
@@ -415,7 +437,7 @@ void V9938::render_sprites(int line, int width) {
 }
 
 void V9938::render_scanline(int line) {
-    uint32_t bg = palette_argb(backdrop());
+    uint32_t bg = backdrop_argb();
     for (int x = 0; x < kScreenWidth; x++) framebuffer_[size_t(line * kScreenWidth + x)] = bg;
     if (!display_enabled()) return;
     Mode mode = current_mode();
@@ -441,7 +463,13 @@ void V9938::refresh_line(int line, int total_lines) {
     scanline_ = line;
     int height = visible_height();
     in_vblank_ = line >= height;
-    if (line >= 0 && line < height && line < kScreenHeight) render_scanline(line);
+    if (line >= 0 && line < height && line < kScreenHeight) {
+        render_scanline(line);
+    } else if (line >= height && line < kScreenHeight) {
+        // 192-line modes leave the bottom of the 212-line frame as border.
+        const uint32_t bg = backdrop_argb();
+        for (int x = 0; x < kScreenWidth; x++) framebuffer_[size_t(line * kScreenWidth + x)] = bg;
+    }
     if (line == height) {
         status_[0] |= kStatF;
         update_interrupt_line();
