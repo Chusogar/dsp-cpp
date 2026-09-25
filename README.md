@@ -818,11 +818,14 @@ arrows + Ctrl/Space for the left stick, `1` is RESET (start a game), `3` is
 SELECT. Fire is `button1` (INPT4/INPT5). DIP bank 0 bit 3 is colour
 (default on); bits 6–7 are the P0/P1 difficulty switches.
 
-### Williams (Defender, Joust, Robotron, Stargate…)
+### Williams (Defender, Mayday, Colony 7, Joust, Robotron, Stargate)
 
 6809 main CPU, 6800 sound CPU, three PIA 6821 and (Joust/Robotron/Stargate)
 the special-chip blitter. PIA1 CB1 follows VA11 and CA1 is COUNT240, as on
-the board; the game code acknowledges its own interrupts.
+the board; the game code acknowledges its own interrupts. Inputs are active
+high (MAME port layouts); Mayday's protection read returns the values the
+game stored three bytes on, like MAME. Colony 7 is rotated for its vertical
+monitor.
 
 ```bash
 ./build/dsp --game joust /path/to/joust.zip
@@ -831,8 +834,19 @@ the board; the game code acknowledges its own interrupts.
 The battery-backed CMOS (settings, high scores) is saved next to the ROM set
 (`joust.zip` → `joust.nv`). With no saved CMOS the games show *FACTORY
 SETTINGS RESTORED* and wait for the operator's **Advance** button: that is
-**F1** (for Joust the driver presses it once by itself on that first boot).
-Coin `5`, start `1`/`2`, Joust flap = Ctrl/Space.
+**F1**, and the driver presses it once by itself on that first boot.
+
+Coin `5`, start `1`/`2`. Buttons: B1 = Ctrl/Space, B2 = Alt/Z, B3 = X,
+B4 = C, Select = `3`.
+
+| Game | Controls |
+|------|----------|
+| Joust | left/right, flap = B1 |
+| Robotron | move = arrows, fire = player 2 stick (R/F/D/G) |
+| Stargate | up/down, fire B1, thrust B2, smart bomb B3, reverse B4, hyperspace `3`, inviso = player 2 B1 (A) |
+| Defender | up/down, fire B1, thrust B2, smart bomb B3, hyperspace B4, reverse `3` |
+| Mayday | up/down, fire B1, thrust right/B2, smart bomb B3, hyperspace B4, reverse `3` |
+| Colony 7 | 8-way stick, fire B1 (also starts the game), smart bomb B2, warp B3 |
 
 ### Super Nintendo / Super Famicom
 

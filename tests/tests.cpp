@@ -4022,6 +4022,42 @@ void test_neogeo_turfmast_if_present() {
     check(longest < 30, "Neo Turf Masters keeps playing after the round starts (no BIOS reset)");
 }
 
+// The other Williams sets: with blank CMOS each one must get past the
+// self-test / FACTORY SETTINGS RESTORED screens (plain text) to its colour
+// attract mode, and Colony 7 comes out rotated for its vertical monitor.
+void test_williams_sets_if_present() {
+    struct Set { const char* zip; dsp::Williams::Game game; };
+    const Set sets[] = {
+        {"/tmp/roms/stargate.zip", dsp::Williams::Game::Stargate},
+        {"/tmp/roms/robotron.zip", dsp::Williams::Game::Robotron},
+        {"/tmp/roms/colony7.zip", dsp::Williams::Game::Colony7},
+        {"/tmp/roms/mayday.zip", dsp::Williams::Game::Mayday},
+    };
+    for (const Set& set : sets) {
+        if (!std::ifstream(set.zip)) continue;
+        const std::string nv = "/tmp/dsp-williams-test.nv";
+        std::remove(nv.c_str());
+        dsp::Williams game(set.game);
+        game.set_nvram_path(nv);
+        std::string error;
+        check(game.init(set.zip, &error), (std::string("Williams set loads: ") + set.zip).c_str());
+        size_t most_colours = 0;
+        for (int frame = 1; frame <= 2400; frame++) {
+            game.run_frame();
+            if (frame >= 1200 && frame % 100 == 0) {
+                const uint32_t* fb = game.framebuffer();
+                std::set<uint32_t> colours(fb, fb + game.screen_width() * game.screen_height());
+                most_colours = std::max(most_colours, colours.size());
+            }
+        }
+        check(most_colours >= 6,
+              (std::string("Williams set reaches its colour attract mode: ") + set.zip).c_str());
+        if (set.game == dsp::Williams::Game::Colony7)
+            check(game.screen_width() < game.screen_height(), "Colony 7 is shown upright");
+        std::remove(nv.c_str());
+    }
+}
+
 void test_a2600_rom_if_present() {
     auto try_path = [](const char* path) {
         std::ifstream probe(path);
@@ -6869,6 +6905,7 @@ int main() {
     test_snes_math_registers();
     test_snes_mazinger_if_present();
     test_williams_joust_if_present();
+    test_williams_sets_if_present();
     test_neogeo_turfmast_if_present();
     test_slapstic();
     test_ym2151();

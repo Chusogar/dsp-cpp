@@ -41,9 +41,11 @@ public:
     void run_frame() override;
     void set_inputs(const MachineInputs& inputs) override;
     void set_dip_switch(int bank, uint8_t value) override;
-    const uint32_t* framebuffer() const override { return vis_fb_.data(); }
-    int screen_width() const override { return kVisWidth; }
-    int screen_height() const override { return kVisHeight; }
+    const uint32_t* framebuffer() const override {
+        return rotated() ? rot_fb_.data() : vis_fb_.data();
+    }
+    int screen_width() const override { return rotated() ? kVisHeight : kVisWidth; }
+    int screen_height() const override { return rotated() ? kVisWidth : kVisHeight; }
     double frames_per_second() const override { return kFramesPerSecond; }
     void drain_audio(std::vector<int16_t>& out) override;
     int sample_rate() const override { return kSampleRate; }
@@ -51,6 +53,8 @@ public:
 
 private:
     bool has_blitter() const { return game_ >= Game::Joust; }
+    // Colony 7 has a vertical monitor (MAME ROT270).
+    bool rotated() const { return game_ == Game::Colony7; }
 
     uint8_t main_read(uint16_t a);
     void main_write(uint16_t a, uint8_t v);
@@ -101,6 +105,7 @@ private:
     // Full Williams bitmap then crop like actualiza_trozo_final
     std::array<uint32_t, size_t(kFbWidth) * kFbHeight> full_fb_{};
     std::array<uint32_t, size_t(kVisWidth) * kVisHeight> vis_fb_{};
+    std::array<uint32_t, size_t(kVisWidth) * kVisHeight> rot_fb_{};
     std::vector<int16_t> audio_;
 
     // Battery-backed CMOS persistence and the operator "Advance" button.
@@ -112,8 +117,7 @@ private:
     bool advance_ = false;
     int auto_advance_ = -1;
     int frame_count_ = 0;
-    bool defender_irq_ready_ = false;
-    bool joust_cmos_valid() const;
+    int cmos_burst_ = 0;   // CMOS bytes changed during the current frame
     void load_nvram();
     void save_nvram();
 

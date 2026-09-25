@@ -251,10 +251,12 @@ bool Williams::init(const std::string& rom_path, std::string* error) {
             [this]() { return uint8_t(0x01 | (advance_ ? 0x02 : 0) | (in2_ & 0x30) | dsw_a_); },
             nullptr, nullptr, [this](uint8_t v) { sound_latch_w(v); });
     } else {
-        pia0_.set_in_out([this]() { return uint8_t(~in0_); }, [this]() { return uint8_t(~in1_); },
-                         nullptr, nullptr);
-        pia1_.set_in_out([this]() { return uint8_t(0xff ^ (in2_ & 0x30)); }, nullptr, nullptr,
-                         [this](uint8_t v) { sound_latch_w(v); });
+        // Inputs are active high (MAME defender): IN2 bit 0 Auto Up, bit 1
+        // Advance, bit 2 High Score Reset, coins in bits 4-6.
+        pia0_.set_in_out([this]() { return in0_; }, [this]() { return in1_; }, nullptr, nullptr);
+        pia1_.set_in_out(
+            [this]() { return uint8_t(0x01 | (advance_ ? 0x02 : 0) | (in2_ & 0x70)); }, nullptr,
+            nullptr, [this](uint8_t v) { sound_latch_w(v); });
     }
     pia1_.set_irq([this](bool) { update_main_irq(); }, [this](bool) { update_main_irq(); });
     // pia6821_2: DAC on port A; IRQ → sound
@@ -318,9 +320,10 @@ void Williams::main_write(uint16_t a, uint8_t v) {
 
 uint8_t Williams::defender_read(uint16_t a) {
     if (a <= 0xbfff || a >= 0xd000) {
-        if (game_ == Game::Mayday) {
-            if (a == 0xa193) return mem_[0xa190];
-            if (a == 0xa194) return mem_[0xa191];
+        if (game_ == Game::Mayday && (a == 0xa190 || a == 0xa191)) {
+            // Protection (MAME mayday_protection_r): the check compares
+            // against values the game stored three bytes further on.
+            return mem_[a + 3];
         }
         return mem_[a];
     }
@@ -362,9 +365,13 @@ void Williams::defender_write(uint16_t a, uint8_t v) {
         }
         if (o == 0x3ff) return;
         if (o >= 0x400 && o <= 0x7ff) {
-            nvram_[o & 0xff] = uint8_t(0xf0 | v);
-            nvram_dirty_ = true;
-            nvram_idle_ = 0;
+            const uint8_t n = uint8_t(0xf0 | v);
+            if (nvram_[o & 0xff] != n) {
+                nvram_[o & 0xff] = n;
+                ++cmos_burst_;
+                nvram_dirty_ = true;
+                nvram_idle_ = 0;
+            }
             return;
         }
         if (o >= 0xc00) {
@@ -427,6 +434,7 @@ void Williams::joust_write(uint16_t a, uint8_t v) {
         const uint8_t n = uint8_t(0xf0 | v);
         if (nvram_[a & 0x3ff] != n) {
             nvram_[a & 0x3ff] = n;
+            ++cmos_burst_;
             nvram_dirty_ = true;
             nvram_idle_ = 0;
         }
@@ -571,6 +579,13 @@ void Williams::present_frame() {
                 full_fb_[size_t(src_y) * kFbWidth + size_t(src_x)];
         }
     }
+    if (rotated()) {
+        // ROT270: rotate the picture a quarter turn anticlockwise.
+        for (int y = 0; y < kVisHeight; ++y)
+            for (int x = 0; x < kVisWidth; ++x)
+                rot_fb_[size_t(kVisWidth - 1 - x) * kVisHeight + size_t(y)] =
+                    vis_fb_[size_t(y) * kVisWidth + size_t(x)];
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -580,26 +595,14 @@ void Williams::present_frame() {
 void Williams::run_frame() {
     ++frame_count_;
 
-    // Defender-board games (no blitter): boot aids carried over from the
-    // original port; the Joust-family boards run the real code unaided.
-    if (!has_blitter() && !defender_irq_ready_ && frame_count_ > 40) {
-        // Bank-safe IRQ stub until the game installs its vector at D90C:
-        // increments $49 and $5D (flags the boot/attract spin loops test).
-        const uint8_t handler[] = {0x7c, 0x00, 0x49, 0x7c, 0x00, 0x5d, 0x3b};
-        std::memcpy(mem_.data() + 0xa08f, handler, sizeof(handler));
-        pia1_.write(3, 0x05);
-        pia1_.write(1, 0x15);
-        defender_irq_ready_ = true;
-        update_main_irq();
-    }
-
-    // Joust: on the first boot without saved CMOS the game restores the
-    // factory settings and waits for the operator's "Advance" button. Do
-    // that press once for the player, a second after the restore.
-    if (auto_advance_ < 0 && !nvram_loaded_ && game_ == Game::Joust && joust_cmos_valid())
+    // On a first boot without saved CMOS the Williams games restore the
+    // factory settings (a burst of CMOS writes) and wait for the operator's
+    // "Advance" button. Press it once for the player, a second later.
+    if (auto_advance_ < 0 && !nvram_loaded_ && cmos_burst_ >= 100)
         auto_advance_ = 60;
+    cmos_burst_ = 0;
     if (auto_advance_ > 0) --auto_advance_;
-    advance_ = service_ || (auto_advance_ >= 0 && auto_advance_ < 10 && auto_advance_ > 0);
+    advance_ = service_ || (auto_advance_ > 0 && auto_advance_ < 10);
 
     // Video timing (MAME williams): 260 lines. PIA1 CB1 follows VA11 (it
     // toggles every 32 lines of the 256-line counter) and CA1 is COUNT240,
@@ -621,27 +624,6 @@ void Williams::run_frame() {
             const int snd_ran = sound_.run(snd_budget);
             frame_snd_ = frame_snd_ + tframes_snd_ - double(snd_ran);
             if (frame_snd_ < 0) frame_snd_ = tframes_snd_;
-            if (!has_blitter()) {
-                // Defender boot needs a safety ack (its handler is stubby).
-                if (pia1_.irq_a_state() || pia1_.irq_b_state()) {
-                    pia1_.read(0);
-                    pia1_.read(2);
-                    update_main_irq();
-                }
-                if (defender_irq_ready_) {
-                    const uint16_t pc = main_.pc();
-                    if (pc >= 0xca4c && pc <= 0xca4f) main_.set_pc(0xca51);
-                    if (pc >= 0xca46 && pc <= 0xca53) {
-                        if (main_.y == 0 || main_.y > 2) main_.y = 1;
-                    }
-                    // E7C3: LDA $5D / BEQ * — vblank flag (direct page relative)
-                    if (pc == 0xe7c3 || pc == 0xe7c5) {
-                        mem_[0x5d] = 1;
-                        mem_[0xa05d] = 1;
-                        main_.set_pc(0xe7c7);
-                    }
-                }
-            }
         }
 
         update_video_line(scanline_);
@@ -654,16 +636,6 @@ void Williams::run_frame() {
     for (int i = 0; i < samples; ++i)
         audio_.push_back(
             int16_t(std::clamp(dac_.update(), int32_t(-32768), int32_t(32767))));
-}
-
-bool Williams::joust_cmos_valid() const {
-    // The game's own check ($3D29): nibble sum of $CC00-$CC23 plus $37
-    // against the byte stored as two nibbles at $CC8C/$CC8D.
-    uint8_t sum = 0;
-    for (int i = 0x00; i < 0x24; ++i) sum = uint8_t(sum + (nvram_[size_t(i)] & 0x0f));
-    sum = uint8_t(sum + 0x37);
-    const uint8_t stored = uint8_t(((nvram_[0x8c] & 0x0f) << 4) | (nvram_[0x8d] & 0x0f));
-    return sum == stored;
 }
 
 void Williams::load_nvram() {
@@ -706,16 +678,18 @@ void Williams::set_inputs(const MachineInputs& in) {
             if (in.player1.button4) in0_ |= 0x08;  // hyperspace
             if (in.player2.start) in0_ |= 0x10;
             if (in.player1.start) in0_ |= 0x20;
+            if (in.player1.select) in0_ |= 0x40;  // reverse
             if (in.player1.down) in0_ |= 0x80;
             if (in.player1.up) in1_ |= 0x01;
             break;
         case Game::Mayday:
-            if (in.player1.button1) in0_ |= 0x01;
-            if (in.player1.right) in0_ |= 0x02;
-            if (in.player1.button3) in0_ |= 0x04;
-            if (in.player1.button4) in0_ |= 0x08;
+            if (in.player1.button1) in0_ |= 0x01;                       // fire
+            if (in.player1.right || in.player1.button2) in0_ |= 0x02;   // thrust
+            if (in.player1.button3) in0_ |= 0x04;                       // smart bomb
+            if (in.player1.button4) in0_ |= 0x08;                       // hyperspace
             if (in.player2.start) in0_ |= 0x10;
             if (in.player1.start) in0_ |= 0x20;
+            if (in.player1.select) in0_ |= 0x40;                        // reverse
             if (in.player1.down) in0_ |= 0x80;
             if (in.player1.up) in1_ |= 0x01;
             break;
@@ -726,9 +700,9 @@ void Williams::set_inputs(const MachineInputs& in) {
             if (in.player1.up) in0_ |= 0x08;
             if (in.player2.start) in0_ |= 0x10;
             if (in.player1.start) in0_ |= 0x20;
-            if (in.player1.button2) in0_ |= 0x40;
-            if (in.player1.button1) in0_ |= 0x80;
-            if (in.player1.button3) in1_ |= 0x01;
+            if (in.player1.button1) in0_ |= 0x40;  // fire (also starts the game)
+            if (in.player1.button2) in0_ |= 0x80;  // smart bomb
+            if (in.player1.button3) in1_ |= 0x01;  // warp
             break;
         case Game::Joust:
             if (in.player2.start) in0_ |= 0x10;
@@ -753,14 +727,16 @@ void Williams::set_inputs(const MachineInputs& in) {
             if (in.player2.right) in1_ |= 0x02;
             break;
         case Game::Stargate:
-            if (in.player1.button1) in0_ |= 0x01;
-            if (in.player1.button2) in0_ |= 0x02;
-            if (in.player1.button3) in0_ |= 0x04;
+            if (in.player1.button1) in0_ |= 0x01;  // fire
+            if (in.player1.button2) in0_ |= 0x02;  // thrust
+            if (in.player1.button3) in0_ |= 0x04;  // smart bomb
+            if (in.player1.select) in0_ |= 0x08;   // hyperspace
             if (in.player2.start) in0_ |= 0x10;
             if (in.player1.start) in0_ |= 0x20;
-            if (in.player1.button4) in0_ |= 0x40;
+            if (in.player1.button4) in0_ |= 0x40;  // reverse
             if (in.player1.down) in0_ |= 0x80;
             if (in.player1.up) in1_ |= 0x01;
+            if (in.player2.button1) in1_ |= 0x02;  // inviso
             break;
     }
     if (in.coin1) in2_ |= 0x10;
