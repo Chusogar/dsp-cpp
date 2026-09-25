@@ -3094,6 +3094,54 @@ void test_exelv_k7_games_if_present() {
     }
 }
 
+void test_exelv_basic_load_if_present() {
+    namespace fs = std::filesystem;
+    const char* bios = "/tmp/roms/exl100.zip";
+    const char* basic = "/tmp/roms/exelvision/exelbas.rom";
+    const char* k7 = "/tmp/roms/exelvision/Kung-Fu (198x)(Exelvision)(FR)[b3].k7";
+    if (!fs::exists(bios) || !fs::exists(basic) || !fs::exists(k7)) {
+        std::printf("skip: EXL-100 BIOS, Exel Basic or Kung-Fu .k7 not found\n");
+        return;
+    }
+    std::string error;
+    dsp::Exelv exl(dsp::Exelv::Model::Exl100);
+    exl.init(bios, &error);
+    exl.load_media(basic, &error);
+    exl.load_media(k7, &error);
+    exl.set_tape_save_path("/tmp/dsp-exelv-tape/unused.k7");
+    exl.reset();
+    // LOAD"1" <Enter> <Esc> ... RUN <Enter>. The quote is the host chord
+    // Shift+3, which the driver sends as SHIFT then 3 like the real keyboard.
+    struct Press { int frame; dsp::Key key; bool shift; };
+    const Press presses[] = {
+        {150, dsp::Key::L, false}, {160, dsp::Key::O, false}, {170, dsp::Key::A, false},
+        {180, dsp::Key::D, false}, {190, dsp::Key::Num3, true}, {200, dsp::Key::Num1, false},
+        {210, dsp::Key::Num3, true}, {220, dsp::Key::Enter, false}, {270, dsp::Key::Escape, false},
+        {420, dsp::Key::R, false}, {430, dsp::Key::U, false}, {440, dsp::Key::N, false},
+        {450, dsp::Key::Enter, false},
+    };
+    bool quote_seen = false;
+    for (int frame = 1; frame <= 1500; frame++) {
+        dsp::MachineInputs in{};
+        for (const Press& p : presses) {
+            if (frame >= p.frame && frame < p.frame + 3) {
+                in.keys[size_t(p.key)] = true;
+                if (p.shift) in.keys[size_t(dsp::Key::LeftShift)] = true;
+            }
+        }
+        exl.set_inputs(in);
+        exl.run_frame();
+        if (exl.debug_last_key() == '"') quote_seen = true;
+    }
+    check(quote_seen, "Shift+3 on the host keyboard types a quote in Exel Basic");
+    int red = 0;
+    const uint32_t* fb = exl.framebuffer();
+    for (int i = 0; i < exl.screen_width() * exl.screen_height(); i++) {
+        if ((fb[i] & 0xffffff) == 0xff0000) red++;
+    }
+    check(red > 300, "Exel Basic LOAD\"1\" loads Kung-Fu from the .k7 and RUN shows its title");
+}
+
 void test_polepos_driver() {
     dsp::PolePos missing(dsp::PolePos::Game::PolePosition);
     check(std::strcmp(missing.title(), "Pole Position") == 0, "Pole Position title");
@@ -7265,6 +7313,7 @@ int main() {
     test_exelv_tape_codec();
     test_exelv_tape_bios_if_present();
     test_exelv_k7_games_if_present();
+    test_exelv_basic_load_if_present();
     test_trdos_scl_and_beta();
     test_starwars_missing_roms();
     test_polepos_driver();

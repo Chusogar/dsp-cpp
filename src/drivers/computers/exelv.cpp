@@ -300,6 +300,8 @@ void Exelv::reset() {
     last_key_ = 0;
     tape_.rewind();
     tape_idle_frames_ = 0;
+    chord_phase_ = 0;
+    chord_key_ = chord_mod_ = 0xff;
     p64_ = 0;
     hle_io_sent_ = false;
     hle_io_delay_ = int(maincpu_.cpu_clock() / 5);  // ~0.2 s
@@ -528,23 +530,50 @@ void Exelv::on_main_cycles(int cycles) {
     }
 }
 
-uint8_t Exelv::scan_key_channel() const {
+uint8_t Exelv::scan_key_channel() {
+    // The EXL-100 modifiers (SHIFT, CTL, FCT) are pressed and released
+    // before the key they modify; the IR keyboard sends one channel at a
+    // time. A host chord such as Shift+3 is turned into that sequence: the
+    // modifier's channel once, then the key.
+    constexpr uint8_t kShift = 4 * 8 + 0, kCtl = 1 * 8 + 0, kFct = 1 * 8 + 7;
+    uint8_t modifier = 0xff;
+    uint8_t key = 0xff;
     for (int row = 0; row < 8; row++) {
         for (int col = 0; col < 8; col++) {
-            const Key key = kMatrix[row][col];
-            if (key == Key::Count) continue;
-            bool down = inputs_.key(key);
-            if (key == Key::LeftShift) down = down || inputs_.key(Key::RightShift);
-            if (key == Key::LeftCtrl) down = down || inputs_.key(Key::RightCtrl);
-            if (down) return uint8_t(row * 8 + col);
+            const Key k = kMatrix[row][col];
+            if (k == Key::Count) continue;
+            bool down = inputs_.key(k);
+            if (k == Key::LeftShift) down = down || inputs_.key(Key::RightShift);
+            if (k == Key::LeftCtrl) down = down || inputs_.key(Key::RightCtrl);
+            if (!down) continue;
+            const uint8_t channel = uint8_t(row * 8 + col);
+            if (channel == kShift || channel == kCtl || channel == kFct) {
+                if (modifier == 0xff) modifier = channel;
+            } else if (key == 0xff) {
+                key = channel;
+            }
         }
     }
-    if (inputs_.player1.up) return 1;
-    if (inputs_.player1.right) return 2;
-    if (inputs_.player1.down) return 3;
-    if (inputs_.player1.left) return 4;
-    if (inputs_.player1.button1) return 6;  // space
-    return 0xff;
+    if (key == 0xff) {
+        if (inputs_.player1.up) key = 1;
+        else if (inputs_.player1.right) key = 2;
+        else if (inputs_.player1.down) key = 3;
+        else if (inputs_.player1.left) key = 4;
+        else if (inputs_.player1.button1) key = 6;  // space
+    }
+    // The chord's key is sent once even if the host released it meanwhile.
+    if (chord_phase_ == 2 && chord_key_ != 0xff) return chord_key_;
+    if (key == 0xff || modifier == 0xff) {
+        if (chord_phase_ == 1 && chord_key_ != 0xff) return chord_mod_;
+        chord_phase_ = 0;
+        return key != 0xff ? key : modifier;
+    }
+    if (chord_phase_ == 0) {
+        chord_phase_ = 1;
+        chord_mod_ = modifier;
+        chord_key_ = key;
+    }
+    return chord_phase_ == 1 ? chord_mod_ : key;
 }
 
 void Exelv::tick_keyboard(int cpu_cycles) {
@@ -610,6 +639,14 @@ void Exelv::tick_keyboard(int cpu_cycles) {
         return;
     }
     if (k_ch_bit_ == 8) {
+        // A chord's modifier is sent once and released before the key.
+        if (k_ch_byte_ == 1 && chord_phase_ == 1) {
+            chord_phase_ = 2;
+            k_channels_[0] = 0xff;
+        } else if (k_ch_byte_ == 1 && chord_phase_ == 2 && k_channels_[1] == chord_key_) {
+            chord_key_ = 0xff;  // sent; from now on it repeats only while held
+            k_channels_[0] = scan_key_channel();
+        }
         assert_ir(false);
         k_ch_bit_ = 0;
         if (k_ch_byte_ == 1) {

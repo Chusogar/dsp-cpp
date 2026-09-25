@@ -350,9 +350,12 @@ the leader get one. On tape each bit is two square-wave cycles, MSB first: about
 1260 Hz for 0 and 2440 Hz for 1 (half periods of 976/503 CPU cycles, ~940 bit/s). A
 `.wav` is decoded into the same bytes.
 
-There is no motor relay, so the tape only moves while the BIOS tape routine runs
-(type `LOAD` in Exel Basic and the tape plays by itself); F6 pauses it and a reset
-rewinds it. Loading is fast by default: the BIOS read-byte routine gets the bytes
+There is no motor relay, so the tape only moves while the BIOS tape routine runs;
+F6 pauses it and a reset rewinds it. In Exel Basic, `LOAD"1"` (device 1 is the
+cassette) shows `ESC -> Lect.`: press Esc and the program loads, then `RUN` (some
+tapes, like the Donkey Kong recording, start by themselves). `SAVE"1"` records.
+The EXL-100 keyboard wants SHIFT, CTL and FCT pressed and released before the key
+they modify; a host chord such as Shift+3 (`"`) is sent that way automatically. Loading is fast by default: the BIOS read-byte routine gets the bytes
 directly, so a 25 KiB game loads in about two seconds instead of four minutes.
 `SAVE` is recorded from port B bit 3 and appended to `<tape>-save.k7` next to the
 mounted cassette (or `exelvision-save.k7` in the current directory).

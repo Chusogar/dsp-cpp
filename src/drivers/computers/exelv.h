@@ -111,7 +111,7 @@ private:
     void flush_tape_recording();
     void fast_load_hook();
     void tick_keyboard(int cpu_cycles);
-    uint8_t scan_key_channel() const;
+    uint8_t scan_key_channel();
     bool load_bios(const std::string& rom_path, std::string* error);
     bool load_cart_bytes(std::vector<uint8_t> data, std::string* error);
 
@@ -148,6 +148,9 @@ private:
     std::string tape_save_path_;
     uint64_t main_cycles_ = 0;
     int tape_idle_frames_ = 0;
+    int chord_phase_ = 0;  // 1: sending the modifier, 2: the key
+    uint8_t chord_mod_ = 0xff;
+    uint8_t chord_key_ = 0xff;
     int sub_debt_ = 0;
 
     MachineInputs inputs_{};
