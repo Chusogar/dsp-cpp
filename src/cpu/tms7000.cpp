@@ -160,6 +160,7 @@ void Tms7000::reset() {
         idle_state_ = false;
     }
     irq_state_[0] = irq_state_[1] = false;
+    irq_hold_[0] = irq_hold_[1] = false;
     std::fill(std::begin(io_control_), std::end(io_control_), 0);
     std::fill(std::begin(port_latch_), std::end(port_latch_), 0);
     std::fill(std::begin(port_ddr_), std::end(port_ddr_), 0);
@@ -191,18 +192,18 @@ void Tms7000::reset() {
 
 void Tms7000::set_input_line(int extline, IrqLine state) {
     if (extline != kInt1 && extline != kInt3) return;
-    const bool pulse = (state == IrqLine::Hold || state == IrqLine::Pulse);
+    // Hold/Pulse keep the line asserted until the interrupt is taken (MAME
+    // HOLD_LINE); Assert/Clear follow the pin level, and the IOCNT0 flag
+    // tracks it: a pulse that ends before the CPU takes it is lost.
+    const bool hold = (state == IrqLine::Hold || state == IrqLine::Pulse);
     const bool irqstate = (state != IrqLine::Clear);
-    if (irqstate && !irq_state_[extline]) {
-        irq_state_[extline] = true;
-        io_control_[0] |= uint8_t(0x02 << (4 * extline));
+    irq_hold_[extline] = hold;
+    if (irq_state_[extline] == irqstate) return;
+    irq_state_[extline] = irqstate;
+    flag_ext_interrupt(extline);
+    if (irqstate) {
         if (extline == kInt3) timer_capture_latch_[0] = uint16_t(timer_decrementer_[0]);
         check_interrupts();
-    }
-    if (!irqstate || pulse) {
-        // INT1/INT3 flags are latched in IOCNT0; the pin going idle must not
-        // drop a pending request the BIOS has not enabled yet.
-        irq_state_[extline] = false;
     }
 }
 
@@ -221,6 +222,14 @@ void Tms7000::check_interrupts() {
         const int bank = irqline > 2 ? 1 : 0;
         if (((io_control_[bank] >> shift) & 3) == 3) {
             io_control_[bank] &= uint8_t(~(0x02 << shift));
+            if (irqline == 0 || irqline == 2) {
+                const int ext = irqline / 2;
+                if (irq_hold_[ext]) {
+                    irq_hold_[ext] = false;
+                    irq_state_[ext] = false;
+                }
+                flag_ext_interrupt(ext);
+            }
             do_interrupt(irqline);
             return;
         }
@@ -271,11 +280,14 @@ void Tms7000::timer_tick_low(int tmr) {
 }
 
 void Tms7000::tick_timers(int cpu_cycles) {
-    const int crystal = cpu_cycles * int(divider_);
+    // The internal timer source is the machine clock / 8 (fOSC/16 on the
+    // usual divide-by-2 parts). EXELTEL runs its TMS7040/7042 divided by 4
+    // from 9.8304 MHz and its I/O CPU shares the EXL-100 7041 program, whose
+    // IR keyboard decoder only works with the same timer rate.
     for (int tmr = 0; tmr < 2; tmr++) {
         if ((timer_control_[tmr] & 0xe0) != 0x80) continue;
-        const int period = 16 * ((timer_control_[tmr] & 0x1f) + 1);
-        timer_crystal_acc_[tmr] += crystal;
+        const int period = 8 * ((timer_control_[tmr] & 0x1f) + 1);
+        timer_crystal_acc_[tmr] += cpu_cycles;
         while (timer_crystal_acc_[tmr] >= period) {
             timer_crystal_acc_[tmr] -= period;
             timer_tick_low(tmr);

@@ -304,8 +304,8 @@ switch, so the diagnostics advance with 2.
 ### Exelvision EXL-100 and EXELTEL
 
 French home computers from 1984/1986. They are not in dsp-emulator; this port
-follows MAME `exelv.cpp`. Each machine has a custom TMS7020 (EXL-100) or TMS7040
-(EXELTEL) at 4.9152 MHz with the SWAP R opcode replaced by LVDP (VRAM peek), a
+follows MAME `exelv.cpp`. Each machine has a custom TMS7020 (EXL-100, 4.9152 MHz / 2) or
+TMS7040 (EXELTEL, 9.8304 MHz / 4) with the SWAP R opcode replaced by LVDP (VRAM peek), a
 TMS7041/7042 I/O CPU talking through a 74LS374 mailbox, a TMS3556 VDP
 (40×25 text / 320×250 bitmap, 8 colours, 32 KiB VRAM) and a TMS5220C speech
 synthesizer. The keyboard and joysticks are infrared.
@@ -325,11 +325,19 @@ ROMs are **not** shipped. MAME split sets from [mdk.cab](https://mdk.cab/downloa
 Exelvision pack. The mdk.cab files match the MAME hashes. The TMS7040 also
 matches DCExel’s `exeltel_rom.zip` (CRC `2792f02f`).
 
-The TMS7042 I/O ROM has never been redumped. Running MAME’s image posts mailbox
-`$04` and the TMS7040 hangs at `$FA29`, so this driver ignores that CRC and HLE’s
-mailbox `$08` plus the PA.0 handshake. EXL-100 BIOS-only boot shows the
-Exelvision butterfly logo. EXELTEL turns the TMS3556 on in bitmap mode (red
-active area, cyan border); a full menu still needs a real 7042 dump.
+MAME’s `exeltel_7042.bin` is the EXL-100 7041 program with its second and
+third KiB swapped (a dumping address-line mix-up). The driver swaps them back and
+patches the two EXELTEL differences the TMS7040 relies on: the character
+generator (command `$0B`) starts at character 1, and command `$01` is a NOP that
+clears the I/O CPU busy flag. With it the EXELTEL boots to its menu (Téléphone,
+Répondeur, Communication, …) and the infrared keyboard works. The 64 KiB system
+ROM is paged at `$0200-$7FFF` (port B bit 2, P56/P57, P64 bit 6): page 2 is the
+telematics environment, page 3 the questionnaire/calculator half, and an EXL-100
+cartridge answers on page 6. The TMS7042 timer runs at the machine clock / 8, the
+same rate as on the EXL-100, so the shared IR decoder works on both.
+
+Cartridges of 8 or 16 KiB are mirrored across `$0200-$7FFF` (their `$AA`
+signature is read at `$7FFC`); `$7E00`-byte images start at `$0200`.
 
 Load a cartridge with `--tape` or by placing a `.bin`/`.rom` beside the BIOS.
 Exel Basic (`exelbas`) is the usual way to get a prompt on the EXL-100.
@@ -340,8 +348,12 @@ Exel Basic (`exelbas`) is the usual way to get a prompt on the EXL-100.
 ./build/dsp --game exeltel /path/to/exeltel.zip
 ```
 
-The host keyboard is the infrared keyboard (AZERTY layout as in MAME). Cursor
-keys and Left Ctrl (CTL) work; FCT is Right Ctrl. Cassette motor control is not
+The host keyboard is the infrared keyboard (key positions as in MAME’s input
+ports). The MC14497 frame (AGC pulse, start bit, six bi-phase bits) is sent to the
+I/O CPU’s INT1 with the MAME timings and is decoded by the real 7041/7042
+program; a held key repeats every 90 ms. Cursor keys, Space and Enter also come
+from the joystick controls. CTL is Left/Right Ctrl, FCT is Left Alt, `* \` is
+Right Alt. Cassette motor control is not
 emulated; port B bit 3 still feeds a 1-bit DAC into the speaker.
 
 ### Taito SJ (Elevator Action, Jungle King)

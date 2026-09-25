@@ -164,7 +164,12 @@ void Tms3556::draw_line_text_common(uint32_t* ln) {
             } else {
                 bg = uint8_t(bg_color_);
             }
-            dbl_w = name_hi & 0x2;
+            // Software never pairs inverse video with double width: EXELTEL
+            // highlights menu entries with $1E and Capitaine Menkar draws
+            // $1F cells, both inverse with bit 1 set and no duplicated
+            // characters, which double width (left half / right half of
+            // consecutive cells) needs. Only honour bit 1 on normal video.
+            dbl_w = (name_hi & 0x4) ? 0 : (name_hi & 0x2);
             dbl_h = name_hi & 0x1;
         } else {
             bg = uint8_t(name_hi & 0x7);

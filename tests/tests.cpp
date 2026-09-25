@@ -2862,6 +2862,68 @@ void test_exelv_dummy_bios() {
     check(tel.debug_pc() >= 0xf000, "dummy EXELTEL BIOS idles in TMS7040 ROM");
 }
 
+void test_tms7000_int1_level() {
+    dsp::Tms7000 cpu(4915200, dsp::Tms7000::Chip::Tms7041);
+    std::vector<uint8_t> rom(0x1000, 0x00);
+    rom[0xffe] = 0xf0;
+    rom[0xfff] = 0x00;
+    cpu.set_internal_rom(rom.data(), rom.size());
+    cpu.reset();
+    // The EXL-100 I/O CPU samples the IR receiver through the IOCNT0 INT1
+    // flag, which follows the pin while the interrupt is masked (MAME).
+    cpu.set_input_line(dsp::Tms7000::kInt1, dsp::IrqLine::Assert);
+    check((cpu.iocnt0() & 0x02) != 0, "tms7000 INT1 flag is set while the pin is asserted");
+    cpu.set_input_line(dsp::Tms7000::kInt1, dsp::IrqLine::Clear);
+    check((cpu.iocnt0() & 0x02) == 0, "tms7000 INT1 flag drops with the pin");
+    cpu.set_input_line(dsp::Tms7000::kInt1, dsp::IrqLine::Hold);
+    check((cpu.iocnt0() & 0x02) != 0, "tms7000 held INT1 stays pending until taken");
+}
+
+void test_exelv_games_if_present() {
+    namespace fs = std::filesystem;
+    const char* bios = "/tmp/roms/exl100.zip";
+    const char* cart = "/tmp/roms/exelvision/Guppy (198x)(Exelvision)(FR).rom";
+    if (!fs::exists(bios) || !fs::exists(cart)) {
+        std::printf("skip: EXL-100 BIOS or Guppy not found\n");
+        return;
+    }
+    dsp::Exelv exl(dsp::Exelv::Model::Exl100);
+    std::string error;
+    check(exl.init(bios, &error), "EXL-100 starts with its BIOS");
+    check(exl.sub_present(), "EXL-100 runs the TMS7041 I/O CPU");
+    check(exl.load_media(cart, &error), "Guppy cartridge loads");
+    dsp::MachineInputs in{};
+    for (int frame = 1; frame <= 330; frame++) {
+        in.keys[size_t(dsp::Key::Z)] = frame >= 300 && frame < 305;
+        exl.set_inputs(in);
+        exl.run_frame();
+    }
+    check(exl.debug_pc() < 0xf800, "the mirrored 8 KiB Guppy cartridge is started by the BIOS");
+    check(exl.debug_last_key() == 'Z', "an infrared key press reaches the main CPU as its code");
+
+    const char* tel_bios = "/tmp/roms/exeltel.zip";
+    if (!fs::exists(tel_bios)) {
+        std::printf("skip: EXELTEL BIOS not found\n");
+        return;
+    }
+    dsp::Exelv tel(dsp::Exelv::Model::Exeltel);
+    check(tel.init(tel_bios, &error), "EXELTEL starts with its BIOS");
+    check(tel.sub_present(), "EXELTEL runs the repaired TMS7042 dump");
+    for (int frame = 1; frame <= 230; frame++) {
+        in = {};
+        in.keys[size_t(dsp::Key::Down)] = frame >= 200 && frame < 205;
+        tel.set_inputs(in);
+        tel.run_frame();
+    }
+    int magenta = 0;
+    const uint32_t* fb = tel.framebuffer();
+    for (int i = 0; i < tel.screen_width() * tel.screen_height(); i++) {
+        if ((fb[i] & 0xffffff) == 0xff00ff) magenta++;
+    }
+    check(magenta > 20000, "EXELTEL reaches its telematics menu (system ROM page 2)");
+    check(tel.debug_last_key() == 0x82, "EXELTEL reads the infrared cursor-down key");
+}
+
 void test_polepos_driver() {
     dsp::PolePos missing(dsp::PolePos::Game::PolePosition);
     check(std::strcmp(missing.title(), "Pole Position") == 0, "Pole Position title");
@@ -7028,6 +7090,8 @@ int main() {
     test_tms5220_synthesis();
     test_tms5220_stop_frame_ramp();
     test_exelv_dummy_bios();
+    test_tms7000_int1_level();
+    test_exelv_games_if_present();
     test_trdos_scl_and_beta();
     test_starwars_missing_roms();
     test_polepos_driver();

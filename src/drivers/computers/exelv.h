@@ -58,6 +58,9 @@ public:
     uint8_t debug_a() const { return maincpu_.a(); }
     uint16_t debug_sub_pc() const { return subcpu_.pc(); }
     uint8_t debug_wx319() const { return wx319_; }
+    // Last key code the I/O CPU posted to the main CPU (after function $01),
+    // not counting the release code $04.
+    uint8_t debug_last_key() const { return last_key_; }
     Tms3556& vdp() { return vdp_; }
     Tms7000& maincpu() { return maincpu_; }
     Tms7000& subcpu() { return subcpu_; }
@@ -82,6 +85,7 @@ private:
     uint8_t tms7041_portd_r();
     void tms7041_portd_w(uint8_t data);
     uint8_t cart_r(uint16_t offset) const;
+    int exeltel_page() const;
 
     void on_main_cycles(int cycles);
     void tick_keyboard(int cpu_cycles);
@@ -109,8 +113,14 @@ private:
     bool sub_present_ = false;
     bool bios_loaded_ = false;
     bool hle_io_sent_ = false;
-    bool hle_io_lowered_ = false;
     int hle_io_delay_ = 0;
+    int main_debt_ = 0;
+    bool page_bit1_ = false;
+    bool page_bit2_ = false;
+    uint8_t p64_ = 0;
+    uint8_t last_sent_ = 0;
+    uint8_t last_key_ = 0;
+    int sub_debt_ = 0;
 
     MachineInputs inputs_{};
     uint8_t k_channels_[3] = {0xff, 0xff, 0x3e};
@@ -118,7 +128,7 @@ private:
     uint8_t k_ch_bit_ = 0;
     bool k_bit_bit_ = false;
     bool k_bit_num_ = false;
-    int k_timer_us_ = 0;
+    int k_timer_cycles_ = 0;
     bool k_started_ = false;
     int64_t k_boot_cycles_ = 0;
 
