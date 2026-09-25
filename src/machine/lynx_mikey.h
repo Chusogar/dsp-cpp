@@ -8,7 +8,8 @@ namespace dsp {
 
 // Atari Lynx Mikey: eight general timers (HBL/VBL/UART plus four audio
 // channels), INTSET/INTRST, 16-colour 12-bit palette, LCD DMA control,
-// parallel I/O for the cartridge shift register, UART stub and CPUSLEEP.
+// parallel I/O for the cartridge shift register, the ComLynx UART (with its
+// TX->RX loopback) and CPUSLEEP.
 class LynxMikey {
 public:
     static constexpr int kSampleRate = 44100;
@@ -96,6 +97,36 @@ private:
     uint8_t audio_read(int channel, int offset) const;
     void audio_write(int channel, int offset, uint8_t value);
     static int prescale(int clock_sel);
+    void uart_clock();
+    void uart_loopback(int data);
+    void uart_update_irq();
+
+    // ComLynx UART. Timer 4 is the baud generator: every 8 of its borrows
+    // is one bit time, and a frame (start, 8 data, parity, stop) is 11
+    // bits. RX and TX share the one ComLynx wire, so every byte sent is
+    // also received. The serial interrupt is level sensitive: it stays
+    // asserted while TX is idle / RX holds a byte and that source is enabled.
+    static constexpr int kUartFrameBits = 11;
+    static constexpr int kUartRxNextDelay = 44;
+    static constexpr int kUartInactive = -1;
+    static constexpr int kUartBreak = 0x8000;
+    static constexpr int kUartQueue = 32;
+    int uart_div_ = 0;
+    int uart_tx_countdown_ = kUartInactive;
+    int uart_rx_countdown_ = kUartInactive;
+    int uart_tx_data_ = 0;
+    int uart_rx_data_ = 0;
+    bool uart_rx_ready_ = false;
+    bool uart_tx_irq_en_ = false;
+    bool uart_rx_irq_en_ = false;
+    bool uart_parity_en_ = false;
+    bool uart_parity_even_ = false;
+    bool uart_send_break_ = false;
+    bool uart_overrun_ = false;
+    bool uart_framing_ = false;
+    std::array<int, kUartQueue> uart_queue_{};
+    int uart_queue_out_ = 0;
+    int uart_queue_count_ = 0;
 
     std::array<uint8_t, 0x100> data_{};
     std::array<Timer, kTimerCount> timers_{};

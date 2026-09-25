@@ -84,6 +84,7 @@
 #include "machine/bagman_pal.h"
 #include "machine/beta128.h"
 #include "machine/kabuki.h"
+#include "machine/lynx_mikey.h"
 #include "machine/lynx_suzy.h"
 #include "machine/msx_dsk.h"
 #include "machine/diskii.h"
@@ -970,6 +971,70 @@ void test_atari_lynx_bios() {
     check(lynx.debug_pc() == 0xff80, "the Atari BIOS reset vector is $FF80");
     for (int frame = 0; frame < 2; frame++) lynx.run_frame();
     check(lynx.debug_iodir() == 0x03, "the Atari BIOS programs IODIR before overlaying MAPCTL");
+}
+
+void test_lynx_comlynx_loopback() {
+    dsp::LynxMikey mikey;
+    bool irq = false;
+    mikey.set_irq_callback([&](bool asserted) { irq = asserted; });
+    check((mikey.read(0x8b) & 0x04) == 0, "NOEXP reads low with no ComLynx cable");
+    mikey.write(0x10, 0x01);  // timer 4 backup: 2 us per borrow
+    mikey.write(0x11, 0x18);  // reload + count, 1 us clock
+    mikey.write(0x8c, 0x40);  // RX interrupt enable
+    check((mikey.read(0x8c) & 0xa0) == 0xa0, "an idle UART reports TXRDY and TXEMPTY");
+    mikey.write(0x8d, 0x5a);
+    check((mikey.read(0x8c) & 0x80) == 0, "a byte being sent clears TXRDY");
+    check((mikey.read(0x8c) & 0x40) == 0, "nothing is received before a frame time");
+    mikey.tick(4 * 2 * 8 * 16);  // 16 bit times
+    check((mikey.read(0x8c) & 0x40) != 0, "the sent byte loops back onto the ComLynx RX");
+    check(irq && (mikey.interrupt() & 0x10) != 0, "RX ready raises the serial interrupt");
+    check(mikey.read(0x8d) == 0x5a, "SERDAT returns the looped-back byte");
+    mikey.write(0x80, 0x10);
+    check((mikey.interrupt() & 0x10) == 0, "reading SERDAT drops the RX interrupt level");
+    mikey.write(0x8c, 0x80);  // TX interrupt enable while TX is idle
+    check((mikey.interrupt() & 0x10) != 0, "an idle transmitter holds the TX interrupt asserted");
+    mikey.write(0x80, 0x10);
+    mikey.tick(4);
+    check((mikey.interrupt() & 0x10) != 0, "the serial interrupt is level sensitive");
+}
+
+void test_lynx_california_games_if_present() {
+    // California Games polls the ComLynx loopback when leaving the title and
+    // hung on the spinning plate without a working UART.
+    const char* rom = "/tmp/roms/California_Games_USA_Europe.lnx";
+    if (!std::filesystem::exists(rom)) {
+        std::printf("skip: %s not found\n", rom);
+        return;
+    }
+    dsp::AtariLynx lynx;
+    std::string error;
+    check(lynx.init(rom, &error), "California Games loads");
+    if (!std::filesystem::exists("/tmp/roms/BIOS_Atari_Lynx_USA_Europe.zip")) {
+        std::printf("skip: Lynx BIOS zip not found\n");
+        return;
+    }
+    check(lynx.bios_loaded(), "a zipped No-Intro Lynx BIOS next to the game is found");
+    dsp::MachineInputs in{};
+    const int presses[] = {300, 500, 650, 800};
+    auto green_pixels = [&]() {
+        int green = 0;
+        const uint32_t* fb = lynx.framebuffer();
+        for (int i = 0; i < 160 * 102; i++) {
+            const uint32_t p = fb[i];
+            const int r = (p >> 16) & 0xff, g = (p >> 8) & 0xff, b = p & 0xff;
+            if (g > 100 && g > r + 40 && g > b + 40) green++;
+        }
+        return green;
+    };
+    for (int frame = 1; frame <= 1100; frame++) {
+        in.player1.button1 = false;
+        for (int start : presses) {
+            if (frame >= start && frame < start + 8) in.player1.button1 = true;
+        }
+        lynx.set_inputs(in);
+        lynx.run_frame();
+    }
+    check(green_pixels() > 4000, "California Games reaches the BMX course after the menu");
 }
 
 void test_slapstic() {
@@ -6895,6 +6960,8 @@ int main() {
     test_lynx_suzy_blit();
     test_atari_lynx_bars();
     test_atari_lynx_bios();
+    test_lynx_comlynx_loopback();
+    test_lynx_california_games_if_present();
     test_tia_playfield_and_audio();
     test_a2600_driver();
     test_a2600_rom_if_present();

@@ -195,6 +195,27 @@ void AtariLynx::search_bios(const std::string& rom_path) {
         return load_bios(path.string(), &ignored);
     };
 
+    // No-Intro style dumps ("[BIOS] Atari Lynx (USA, Europe).lnx", often
+    // zipped) are recognised by name and verified by CRC / reset vector.
+    auto scan_dir = [this](const fs::path& dir) {
+        std::error_code scan_ec;
+        for (const auto& item : fs::directory_iterator(dir, scan_ec)) {
+            if (!item.is_regular_file(scan_ec)) continue;
+            const std::string name = lower_copy(item.path().filename().string());
+            if (name.find("bios") == std::string::npos || name.find("lynx") == std::string::npos) {
+                continue;
+            }
+            if (item.file_size(scan_ec) > 0x10000) continue;
+            std::vector<uint8_t> data;
+            std::string ignored;
+            if (!read_plain_or_zip_file(item.path().string(), data, 0x200, &ignored)) continue;
+            if (data.size() == 0x200 && looks_like_bios(data, "") && install_bios(data, &ignored)) {
+                return true;
+            }
+        }
+        return false;
+    };
+
     const fs::path input(rom_path);
     if (fs::is_regular_file(input, ec) && is_bios_filename(rom_path)) {
         if (try_path(input)) return;
@@ -212,12 +233,15 @@ void AtariLynx::search_bios(const std::string& rom_path) {
             };
             if (loader.load(entries, dest, &ignored) && install_bios(dest, &ignored)) return;
         }
+        scan_dir(input);
         return;
     }
     if (fs::is_regular_file(input, ec)) {
+        const fs::path dir = input.has_parent_path() ? input.parent_path() : fs::path(".");
         for (const char* name : kBiosNames) {
-            if (try_path(input.parent_path() / name)) return;
+            if (try_path(dir / name)) return;
         }
+        scan_dir(dir);
     }
 }
 
