@@ -24,7 +24,66 @@ void LynxMikey::reset() {
     interrupt_ = 0;
     disp_addr_ = 0;
     vb_rest_ = false;
+    uart_div_ = 0;
+    uart_tx_countdown_ = kUartInactive;
+    uart_rx_countdown_ = kUartInactive;
+    uart_tx_data_ = 0;
+    uart_rx_data_ = 0;
+    uart_rx_ready_ = false;
+    uart_tx_irq_en_ = uart_rx_irq_en_ = false;
+    uart_parity_en_ = uart_parity_even_ = uart_send_break_ = false;
+    uart_overrun_ = uart_framing_ = false;
+    uart_queue_out_ = 0;
+    uart_queue_count_ = 0;
     update_irq();
+}
+
+void LynxMikey::uart_loopback(int data) {
+    if (uart_queue_count_ >= kUartQueue) return;
+    // Start a reception unless one is already under way.
+    if (uart_queue_count_ == 0) uart_rx_countdown_ = kUartFrameBits;
+    // The looped-back byte goes to the front of the queue.
+    uart_queue_out_ = (uart_queue_out_ + kUartQueue - 1) % kUartQueue;
+    uart_queue_[size_t(uart_queue_out_)] = data;
+    uart_queue_count_++;
+}
+
+void LynxMikey::uart_clock() {
+    if (uart_rx_countdown_ == 0) {
+        if (uart_queue_count_ > 0) {
+            uart_rx_data_ = uart_queue_[size_t(uart_queue_out_)];
+            uart_queue_out_ = (uart_queue_out_ + 1) % kUartQueue;
+            uart_queue_count_--;
+        }
+        uart_rx_countdown_ =
+            uart_queue_count_ > 0 ? kUartFrameBits + kUartRxNextDelay : kUartInactive;
+        if (uart_rx_ready_) uart_overrun_ = true;
+        uart_rx_ready_ = true;
+    } else if (uart_rx_countdown_ > 0) {
+        uart_rx_countdown_--;
+    }
+
+    if (uart_tx_countdown_ == 0) {
+        if (uart_send_break_) {
+            uart_tx_data_ = kUartBreak;
+            uart_tx_countdown_ = kUartFrameBits;
+            uart_loopback(uart_tx_data_);
+        } else {
+            uart_tx_countdown_ = kUartInactive;
+        }
+    } else if (uart_tx_countdown_ > 0) {
+        uart_tx_countdown_--;
+    }
+}
+
+void LynxMikey::uart_update_irq() {
+    const bool tx = uart_tx_irq_en_ && uart_tx_countdown_ == kUartInactive;
+    const bool rx = uart_rx_irq_en_ && uart_rx_ready_;
+    if ((tx || rx) && (interrupt_ & 0x10) == 0) {
+        interrupt_ = uint8_t(interrupt_ | 0x10);
+        if (wake_cb_) wake_cb_();
+        update_irq();
+    }
 }
 
 int LynxMikey::prescale(int clock_sel) {
@@ -64,6 +123,13 @@ void LynxMikey::signal_irq(int which) {
             break;
         case 5:
             count_down_linked(7);
+            break;
+        case 4:
+            // Timer 4 clocks the UART: 8 borrows per bit.
+            if (++uart_div_ >= 8) {
+                uart_div_ = 0;
+                uart_clock();
+            }
             break;
         case 7:
             if (audio_[0].linked() && audio_[0].count_en() && !audio_[0].done()) {
@@ -252,6 +318,7 @@ void LynxMikey::tick(int cpu_cycles) {
             }
         }
     }
+    uart_update_irq();
 }
 
 uint32_t LynxMikey::pal_argb(int index) const {
@@ -292,17 +359,27 @@ uint8_t LynxMikey::read(uint8_t offset) {
             uint8_t value = 0;
             value |= (direction & 0x01) ? (data_[0x8b] & 0x01) : 0x01;
             value |= (direction & 0x02) ? (data_[0x8b] & 0x02) : 0x00;
-            value |= 0x04;  // no expansion / ComLynx disabled
+            // NOEXP: an input reads low with no ComLynx cable plugged in.
+            value |= (direction & 0x04) ? (data_[0x8b] & 0x04) : 0x00;
             if (direction & 0x08) {
                 value |= ((data_[0x8b] & 0x08) && vb_rest_) ? 0x00 : 0x08;
             }
             value |= (direction & 0x10) ? (data_[0x8b] & 0x10) : 0x10;
             return value;
         }
-        case 0x8c:
-            return 0xa0;  // TXRDY | TXEMPTY, UART idle
+        case 0x8c: {
+            uint8_t value = 0;
+            if (uart_tx_countdown_ == kUartInactive) value |= 0xa0;  // TXRDY | TXEMPTY
+            if (uart_rx_ready_) value |= 0x40;
+            if (uart_overrun_) value |= 0x08;
+            if (uart_framing_) value |= 0x04;
+            if (uart_rx_data_ & kUartBreak) value |= 0x02;
+            if (uart_rx_data_ & 0x100) value |= 0x01;
+            return value;
+        }
         case 0x8d:
-            return 0x00;
+            uart_rx_ready_ = false;
+            return uint8_t(uart_rx_data_);
         default:
             return data_[offset];
     }
@@ -322,6 +399,7 @@ void LynxMikey::write(uint8_t offset, uint8_t value) {
         case 0x80:
             interrupt_ = uint8_t(interrupt_ & ~value);
             update_irq();
+            uart_update_irq();
             break;
         case 0x81:
             interrupt_ = uint8_t(interrupt_ | value);
@@ -336,6 +414,27 @@ void LynxMikey::write(uint8_t offset, uint8_t value) {
         case 0x8b:
             data_[offset] = value;
             break;
+        case 0x8c:
+            data_[offset] = value;
+            uart_tx_irq_en_ = (value & 0x80) != 0;
+            uart_rx_irq_en_ = (value & 0x40) != 0;
+            uart_parity_en_ = (value & 0x10) != 0;
+            uart_send_break_ = (value & 0x02) != 0;
+            uart_parity_even_ = (value & 0x01) != 0;
+            if (value & 0x08) uart_overrun_ = uart_framing_ = false;
+            if (uart_send_break_) {
+                uart_tx_countdown_ = kUartFrameBits;
+                uart_loopback(kUartBreak);
+            }
+            uart_update_irq();
+            break;
+        case 0x8d: {
+            data_[offset] = value;
+            uart_tx_data_ = value;
+            uart_tx_countdown_ = kUartFrameBits;
+            uart_loopback(value);
+            break;
+        }
         case 0x91:
             data_[offset] = value;
             break;

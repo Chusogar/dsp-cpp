@@ -304,8 +304,8 @@ switch, so the diagnostics advance with 2.
 ### Exelvision EXL-100 and EXELTEL
 
 French home computers from 1984/1986. They are not in dsp-emulator; this port
-follows MAME `exelv.cpp`. Each machine has a custom TMS7020 (EXL-100) or TMS7040
-(EXELTEL) at 4.9152 MHz with the SWAP R opcode replaced by LVDP (VRAM peek), a
+follows MAME `exelv.cpp`. Each machine has a custom TMS7020 (EXL-100, 4.9152 MHz / 2) or
+TMS7040 (EXELTEL, 9.8304 MHz / 4) with the SWAP R opcode replaced by LVDP (VRAM peek), a
 TMS7041/7042 I/O CPU talking through a 74LS374 mailbox, a TMS3556 VDP
 (40×25 text / 320×250 bitmap, 8 colours, 32 KiB VRAM) and a TMS5220C speech
 synthesizer. The keyboard and joysticks are infrared.
@@ -325,23 +325,55 @@ ROMs are **not** shipped. MAME split sets from [mdk.cab](https://mdk.cab/downloa
 Exelvision pack. The mdk.cab files match the MAME hashes. The TMS7040 also
 matches DCExel’s `exeltel_rom.zip` (CRC `2792f02f`).
 
-The TMS7042 I/O ROM has never been redumped. Running MAME’s image posts mailbox
-`$04` and the TMS7040 hangs at `$FA29`, so this driver ignores that CRC and HLE’s
-mailbox `$08` plus the PA.0 handshake. EXL-100 BIOS-only boot shows the
-Exelvision butterfly logo. EXELTEL turns the TMS3556 on in bitmap mode (red
-active area, cyan border); a full menu still needs a real 7042 dump.
+MAME’s `exeltel_7042.bin` is the EXL-100 7041 program with its second and
+third KiB swapped (a dumping address-line mix-up). The driver swaps them back and
+patches the two EXELTEL differences the TMS7040 relies on: the character
+generator (command `$0B`) starts at character 1, and command `$01` is a NOP that
+clears the I/O CPU busy flag. With it the EXELTEL boots to its menu (Téléphone,
+Répondeur, Communication, …) and the infrared keyboard works. The 64 KiB system
+ROM is paged at `$0200-$7FFF` (port B bit 2, P56/P57, P64 bit 6): page 2 is the
+telematics environment, page 3 the questionnaire/calculator half, and an EXL-100
+cartridge answers on page 6. The TMS7042 timer runs at the machine clock / 8, the
+same rate as on the EXL-100, so the shared IR decoder works on both.
+
+Cartridges of 8 or 16 KiB are mirrored across `$0200-$7FFF` (their `$AA`
+signature is read at `$7FFC`); `$7E00`-byte images start at `$0200`.
 
 Load a cartridge with `--tape` or by placing a `.bin`/`.rom` beside the BIOS.
 Exel Basic (`exelbas`) is the usual way to get a prompt on the EXL-100.
 
+Cassettes: `--tape` also takes DCExel `.k7` images and `.wav` recordings (8/16-bit
+PCM). A `.k7` holds the bytes the BIOS tape routine (TRAP 14) writes: 255 × `$55`
+leader, `$70` sync, 4-byte name, 5-byte header (flags, end address, start
+address), the data and the checksum twice, one block after another; images without
+the leader get one. On tape each bit is two square-wave cycles, MSB first: about
+1260 Hz for 0 and 2440 Hz for 1 (half periods of 976/503 CPU cycles, ~940 bit/s). A
+`.wav` is decoded into the same bytes.
+
+There is no motor relay, so the tape only moves while the BIOS tape routine runs;
+F6 pauses it and a reset rewinds it. In Exel Basic, `LOAD"1"` (device 1 is the
+cassette) shows `ESC -> Lect.`: press Esc (Esc goes to the computer; Shift+Esc quits
+the emulator) and the program loads, then `RUN` (some
+tapes, like the Donkey Kong recording, start by themselves). `SAVE"1"` records.
+The EXL-100 keyboard wants SHIFT, CTL and FCT pressed and released before the key
+they modify; a host chord such as Shift+3 (`"`) is sent that way automatically. Loading is fast by default: the BIOS read-byte routine gets the bytes
+directly, so a 25 KiB game loads in about two seconds instead of four minutes.
+`SAVE` is recorded from port B bit 3 and appended to `<tape>-save.k7` next to the
+mounted cassette (or `exelvision-save.k7` in the current directory).
+
 ```bash
 ./build/dsp --game exl100 /path/to/exl100.zip
 ./build/dsp --game exl100 --tape /path/to/exelbas.bin /path/to/exl100.zip
+./build/dsp --game exl100 --tape exelbas.bin --tape "Kung-Fu.k7" /path/to/exl100.zip
 ./build/dsp --game exeltel /path/to/exeltel.zip
 ```
 
-The host keyboard is the infrared keyboard (AZERTY layout as in MAME). Cursor
-keys and Left Ctrl (CTL) work; FCT is Right Ctrl. Cassette motor control is not
+The host keyboard is the infrared keyboard (key positions as in MAME’s input
+ports). The MC14497 frame (AGC pulse, start bit, six bi-phase bits) is sent to the
+I/O CPU’s INT1 with the MAME timings and is decoded by the real 7041/7042
+program; a held key repeats every 90 ms. Cursor keys, Space and Enter also come
+from the joystick controls. CTL is Left/Right Ctrl, FCT is Left Alt, `* \` is
+Right Alt. Cassette motor control is not
 emulated; port B bit 3 still feeds a 1-bit DAC into the speaker.
 
 ### Taito SJ (Elevator Action, Jungle King)
@@ -726,7 +758,7 @@ report empty drives.
 ```
 
 Keys: the host mouse drives the IIGS pointer; Left Alt or the Windows/Command
-key is Open-Apple (Command), Right Alt is Option, F11 is Esc (Esc quits the
+key is Open-Apple (Command), Right Alt is Option, F11 is Esc (Shift+Esc quits the
 emulator), F10 is the Reset key (Ctrl+F10 = Control-Reset). F3 is a cold boot.
 
 ### Macintosh II
@@ -818,11 +850,14 @@ arrows + Ctrl/Space for the left stick, `1` is RESET (start a game), `3` is
 SELECT. Fire is `button1` (INPT4/INPT5). DIP bank 0 bit 3 is colour
 (default on); bits 6–7 are the P0/P1 difficulty switches.
 
-### Williams (Defender, Joust, Robotron, Stargate…)
+### Williams (Defender, Mayday, Colony 7, Joust, Robotron, Stargate)
 
 6809 main CPU, 6800 sound CPU, three PIA 6821 and (Joust/Robotron/Stargate)
 the special-chip blitter. PIA1 CB1 follows VA11 and CA1 is COUNT240, as on
-the board; the game code acknowledges its own interrupts.
+the board; the game code acknowledges its own interrupts. Inputs are active
+high (MAME port layouts); Mayday's protection read returns the values the
+game stored three bytes on, like MAME. Colony 7 is rotated for its vertical
+monitor.
 
 ```bash
 ./build/dsp --game joust /path/to/joust.zip
@@ -831,8 +866,19 @@ the board; the game code acknowledges its own interrupts.
 The battery-backed CMOS (settings, high scores) is saved next to the ROM set
 (`joust.zip` → `joust.nv`). With no saved CMOS the games show *FACTORY
 SETTINGS RESTORED* and wait for the operator's **Advance** button: that is
-**F1** (for Joust the driver presses it once by itself on that first boot).
-Coin `5`, start `1`/`2`, Joust flap = Ctrl/Space.
+**F1**, and the driver presses it once by itself on that first boot.
+
+Coin `5`, start `1`/`2`. Buttons: B1 = Ctrl/Space, B2 = Alt/Z, B3 = X,
+B4 = C, Select = `3`.
+
+| Game | Controls |
+|------|----------|
+| Joust | left/right, flap = B1 |
+| Robotron | move = arrows, fire = player 2 stick (R/F/D/G) |
+| Stargate | up/down, fire B1, thrust B2, smart bomb B3, reverse B4, hyperspace `3`, inviso = player 2 B1 (A) |
+| Defender | up/down, fire B1, thrust B2, smart bomb B3, hyperspace B4, reverse `3` |
+| Mayday | up/down, fire B1, thrust right/B2, smart bomb B3, hyperspace B4, reverse `3` |
+| Colony 7 | 8-way stick, fire B1 (also starts the game), smart bomb B2, warp B3 |
 
 ### Super Nintendo / Super Famicom
 
@@ -919,7 +965,7 @@ as `super_cassette_vision.pas`. The host keyboard supplies 0–9, Q, W and P
 | 5, 6 | Insert coin 1 / 2 |
 | P | Pause (F2 on the Spectrum, whose keyboard uses every letter) |
 | F3 | Reset |
-| Esc | Quit |
+| Esc | Quit (on computers with a keyboard Esc is a key: Shift+Esc or closing the window quits) |
 
 ### DIP switches (`--dip`)
 

@@ -243,6 +243,7 @@ private:
     uint8_t sr_ = 0;
     bool idle_state_ = false;
     bool irq_state_[2] = {false, false};
+    bool irq_hold_[2] = {false, false};
     uint8_t io_control_[3] = {};
     uint8_t port_latch_[4] = {};
     uint8_t port_ddr_[4] = {};

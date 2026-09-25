@@ -234,7 +234,12 @@ int SdlApp::run(Machine& machine) {
 				//		SDL_GetScancodeName(event.key.keysym.scancode));
 
                 switch (event.key.keysym.sym) {
-                    case SDLK_ESCAPE: running = false; break;
+                    case SDLK_ESCAPE:
+                        // Computers get Esc as a key; Shift+Esc quits them.
+                        if (!machine.uses_keyboard() || (event.key.keysym.mod & KMOD_SHIFT)) {
+                            running = false;
+                        }
+                        break;
                     case SDLK_F3: machine.reset(); break;
                     case SDLK_F2:
                         paused = !paused;
@@ -285,7 +290,10 @@ int SdlApp::run(Machine& machine) {
                         break;
                     }
                     if (event.type == SDL_KEYDOWN) {
-                        if (event.key.keysym.sym == SDLK_ESCAPE) running = false;
+                        if (event.key.keysym.sym == SDLK_ESCAPE &&
+                            (!machine.uses_keyboard() || (event.key.keysym.mod & KMOD_SHIFT))) {
+                            running = false;
+                        }
                         if (event.key.keysym.sym == SDLK_F2 ||
                             (event.key.keysym.sym == SDLK_p && !machine.uses_keyboard())) {
                             paused = true;
