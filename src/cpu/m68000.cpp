@@ -1603,7 +1603,8 @@ void M68000::group_8(uint16_t instruction) {
             cycles_ += (type_ == Type::M68010 ? 108 : 140) + calc_ea_t_bw(dir);
             const uint16_t divisor = read_w(dir);
             if (divisor == 0) {
-                pc_.l = ppc_.l;
+                // Traps stack the address of the next instruction.
+                ppc_.l = pc_.l;
                 exception(5, 38);  // divide by zero
                 break;
             }
@@ -1707,7 +1708,8 @@ void M68000::group_8(uint16_t instruction) {
             cycles_ += (type_ == Type::M68010 ? 122 : 158) + calc_ea_t_bw(dir);
             const int32_t divisor = int32_t(int16_t(read_w(dir)));
             if (divisor == 0) {
-                pc_.l = ppc_.l;
+                // Traps stack the address of the next instruction.
+                ppc_.l = pc_.l;
                 exception(5, 38);  // divide by zero
                 break;
             }
@@ -2175,7 +2177,7 @@ void M68000::group_4(uint16_t instruction) {
             const int16_t value = int16_t(d[dest].wl());
             cc.n = value < 0;
             if (value < 0 || value > bound) {
-                pc_.l = ppc_.l;
+                ppc_.l = pc_.l;   // stack the next instruction
                 exception(6, 30);
             }
             break;
@@ -2595,6 +2597,30 @@ void M68000::group_4(uint16_t instruction) {
                         pc_.set_wh(getword(a[7].l));
                         pc_.set_wl(getword(a[7].l + 2));
                         a[7].l += 4;
+                        break;
+                    case 0x36:  // trapv: vector 7 when V is set, else a no-op
+                        if (cc.v) {
+                            cycles_ += 34;
+                            const uint16_t flags = get_flags();
+                            set_flags(uint16_t(flags | 0x2000));
+                            cc.t = false;
+                            // Stack the address of the next instruction.
+                            if (type_ != Type::M68000) {
+                                a[7].l -= 2;
+                                putword(a[7].l, uint16_t(7 << 2));
+                            }
+                            a[7].l -= 6;
+                            putword(a[7].l + 4, pc_.wl());
+                            putword(a[7].l + 2, pc_.wh());
+                            putword(a[7].l, flags);
+                            opcode_ = false;
+                            const uint32_t vec_addr = vbr_ + 7u * 4u;
+                            pc_.set_wh(getword(vec_addr));
+                            pc_.set_wl(getword(vec_addr + 2));
+                            opcode_ = true;
+                        } else {
+                            cycles_ += 4;
+                        }
                         break;
                     case 0x37:  // rtr
                         cycles_ += 20;

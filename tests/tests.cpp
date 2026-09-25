@@ -642,6 +642,58 @@ void test_m68000_branches_and_subroutines() {
     check(cpu.a[7].l == 0x1000, "rts restores the stack pointer");
 }
 
+// TRAPV takes vector 7 when V is set (Neo Turf Masters checks DIVS overflow
+// with it), and the divide-by-zero trap returns past the DIV instead of
+// running it again.
+void test_m68000_traps() {
+    auto make_plain = []() {
+        m68k_memory.assign(0x10000, 0);
+        dsp::M68000 cpu(12000000, dsp::M68000::Type::M68000);
+        cpu.set_memory_handlers(
+            [](uint32_t address) {
+                return uint16_t((m68k_memory[address & 0xfffe] << 8) | m68k_memory[(address & 0xfffe) + 1]);
+            },
+            [](uint32_t address, uint16_t value) {
+                m68k_memory[address & 0xfffe] = uint8_t(value >> 8);
+                m68k_memory[(address & 0xfffe) + 1] = uint8_t(value);
+            });
+        return cpu;
+    };
+    {
+        dsp::M68000 cpu = make_plain();
+        put_long(0x0000, 0x00001000);
+        put_long(0x0004, 0x00000400);
+        put_long(0x001c, 0x00000500);  // vector 7: TRAPV
+        put_word(0x0400, 0x203c);      // move.l #$10000000,d0
+        put_long(0x0402, 0x10000000);
+        put_word(0x0406, 0x7201);      // moveq #1,d1
+        put_word(0x0408, 0x81c1);      // divs d1,d0 (overflows: V set)
+        put_word(0x040a, 0x4e76);      // trapv
+        put_word(0x040c, 0x60fe);      // bra.s *
+        put_word(0x0500, 0x7e07);      // moveq #7,d7
+        put_word(0x0502, 0x4e73);      // rte
+        cpu.reset();
+        cpu.run(1000);
+        check(cpu.d[7].l == 7 && cpu.pc() == 0x40c, "68000 TRAPV traps on overflow and returns after it");
+    }
+    {
+        dsp::M68000 cpu = make_plain();
+        put_long(0x0000, 0x00001000);
+        put_long(0x0004, 0x00000400);
+        put_long(0x0014, 0x00000500);  // vector 5: divide by zero
+        put_word(0x0400, 0x7200);      // moveq #0,d1
+        put_word(0x0402, 0x7005);      // moveq #5,d0
+        put_word(0x0404, 0x80c1);      // divu d1,d0
+        put_word(0x0406, 0x60fe);      // bra.s *
+        put_word(0x0500, 0x5287);      // addq.l #1,d7
+        put_word(0x0502, 0x4e73);      // rte
+        cpu.reset();
+        cpu.run(2000);
+        check(cpu.d[7].l == 1 && cpu.pc() == 0x406,
+              "68000 divide-by-zero trap stacks the next instruction");
+    }
+}
+
 void test_m68000_interrupt() {
     dsp::M68000 cpu = make_m68k();
     put_long(0x0000, 0x00001000);
@@ -3942,6 +3994,34 @@ void test_williams_joust_if_present() {
     std::remove(nv.c_str());
 }
 
+// Neo Turf Masters: starting a round used to hit TRAPV, which the 68000 core
+// treated as an illegal instruction, and the BIOS error handler reset the
+// board. After coin + start the game must still be running its own code.
+void test_neogeo_turfmast_if_present() {
+    const char* path = "/tmp/roms/turfmast.zip";
+    if (!std::ifstream(path) || !std::ifstream("/tmp/roms/neogeo.zip")) return;
+    dsp::NeoGeo neo("turfmast");
+    std::string error;
+    check(neo.init(path, &error), "Neo Turf Masters loads");
+    dsp::MachineInputs in{};
+    // The game calls BIOS routines all the time; the crash left the CPU in
+    // the BIOS error/boot code for seconds on end.
+    int bios_run = 0, longest = 0;
+    for (int frame = 1; frame <= 1800; frame++) {
+        in.coin1 = frame >= 600 && frame < 610;
+        in.player1.start = frame >= 700 && frame < 710;
+        const int r = (frame - 900) % 40;
+        in.player1.button1 = frame >= 900 && (r < 10 || (r >= 20 && r < 25));
+        neo.set_inputs(in);
+        neo.run_frame();
+        if (frame > 1400) {
+            bios_run = neo.debug_pc() >= 0xc00000 ? bios_run + 1 : 0;
+            longest = std::max(longest, bios_run);
+        }
+    }
+    check(longest < 30, "Neo Turf Masters keeps playing after the round starts (no BIOS reset)");
+}
+
 void test_a2600_rom_if_present() {
     auto try_path = [](const char* path) {
         std::ifstream probe(path);
@@ -6769,6 +6849,7 @@ int main() {
     test_m68000_reset_and_moves();
     test_m68000_branches_and_subroutines();
     test_m68000_interrupt();
+    test_m68000_traps();
     test_m6502_arithmetic();
     test_m6502_stack_and_interrupts();
     test_m6502_pushed_flags();
@@ -6788,6 +6869,7 @@ int main() {
     test_snes_math_registers();
     test_snes_mazinger_if_present();
     test_williams_joust_if_present();
+    test_neogeo_turfmast_if_present();
     test_slapstic();
     test_ym2151();
     test_pokey();

@@ -765,10 +765,12 @@ void NeoGeo::write_word(uint32_t address, uint16_t value) {
     }
     if (address >= 0x200000 && address < 0x300000) {
         if (address >= 0x2ffff0) {
-            cart_bank_ = uint32_t(value & 0xff) * 0x100000;
+            // Bank n maps ROM offset (n + 1) MiB at $200000 (MAME
+            // main_cpu_bank_select_w): bank 0 is the second MiB, right
+            // after the fixed program. Out-of-range banks fall back to it.
             if (p_rom_.size() > 0x100000) {
-                const uint32_t max_bank = uint32_t((p_rom_.size() - 1) / 0x100000) * 0x100000;
-                if (cart_bank_ > max_bank) cart_bank_ = max_bank;
+                cart_bank_ = (uint32_t(value & 0x07) + 1) * 0x100000;
+                if (cart_bank_ >= p_rom_.size()) cart_bank_ = 0x100000;
             } else {
                 cart_bank_ = 0;
             }
