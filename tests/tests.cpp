@@ -5430,6 +5430,15 @@ void test_amiga_kickstart_if_present() {
     check(boot.color00() != 0, "Kickstart programmed Denise COLOR00");
     check(count_lit_pixels(boot) > 80, "Kickstart paints the Denise framebuffer");
     check((boot.intena() & 0x4000) != 0, "Kickstart enabled Paula INTEN");
+
+    // The hand-and-disk picture is drawn with blitter lines and area fill.
+    for (int i = 0; i < 240; i++) boot.run_frame();
+    const uint32_t* fb = boot.framebuffer();
+    const uint32_t bg = fb[0];
+    int drawn = 0;
+    for (int i = 0; i < boot.screen_width() * boot.screen_height(); i++)
+        if (fb[i] != bg) drawn++;
+    check(drawn > 4000, "Kickstart draws the insert-disk hand and floppy");
 }
 
 void test_amiga_bootblock_if_present() {
