@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "core/machine.h"
+#include "drivers/computers/exelv_tape.h"
 #include "cpu/tms7000.h"
 #include "sound/tms5220.h"
 #include "video/tms3556.h"
@@ -32,6 +33,7 @@ public:
     static constexpr int kSampleRate = Tms5220::kSampleRate;
 
     explicit Exelv(Model model);
+    ~Exelv() override;
 
     bool init(const std::string& rom_path, std::string* error) override;
     void reset() override;
@@ -50,7 +52,23 @@ public:
 
     const char* title() const override;
     bool uses_keyboard() const override { return true; }
+    // Cartridge (.bin/.rom) or cassette (.k7, or a .wav recording).
     bool load_media(const std::string& path, std::string* error) override;
+    // F6: pause / resume the cassette. The tape otherwise only moves while
+    // the BIOS tape routine (TRAP 14) runs, as there is no motor relay.
+    void tape_toggle_play() override { tape_playing_ = !tape_playing_; }
+    bool tape_loaded() const override { return tape_.loaded(); }
+    const ExelTape& tape() const { return tape_; }
+    // Fast load (default): the BIOS read-byte routine gets the .k7 bytes
+    // directly instead of timing ~1 ms per bit on port A.
+    void set_tape_fast(bool fast) { tape_fast_ = fast; }
+    // Where SAVE recordings are appended (default: next to the mounted
+    // tape, or exelvision-save.k7).
+    void set_tape_save_path(const std::string& path) { tape_save_path_ = path; }
+    const std::string& tape_save_path() const { return tape_save_path_; }
+    uint8_t debug_ram(uint16_t address) const {
+        return address >= 0xc000 && address <= 0xc7ff ? ram_[address - 0xc000] : 0xff;
+    }
 
     bool bios_loaded() const { return bios_loaded_; }
     bool sub_present() const { return sub_present_; }
@@ -88,6 +106,10 @@ private:
     int exeltel_page() const;
 
     void on_main_cycles(int cycles);
+    bool in_tape_read() const;
+    bool in_tape_write() const;
+    void flush_tape_recording();
+    void fast_load_hook();
     void tick_keyboard(int cpu_cycles);
     uint8_t scan_key_channel() const;
     bool load_bios(const std::string& rom_path, std::string* error);
@@ -120,6 +142,12 @@ private:
     uint8_t p64_ = 0;
     uint8_t last_sent_ = 0;
     uint8_t last_key_ = 0;
+    ExelTape tape_;
+    bool tape_playing_ = true;
+    bool tape_fast_ = true;
+    std::string tape_save_path_;
+    uint64_t main_cycles_ = 0;
+    int tape_idle_frames_ = 0;
     int sub_debt_ = 0;
 
     MachineInputs inputs_{};

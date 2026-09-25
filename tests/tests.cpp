@@ -2924,6 +2924,176 @@ void test_exelv_games_if_present() {
     check(tel.debug_last_key() == 0x82, "EXELTEL reads the infrared cursor-down key");
 }
 
+void test_exelv_tape_codec() {
+    dsp::ExelTape tape;
+    // An image that starts at the name gets a leader and the $70 sync byte.
+    check(tape.load({'N', 'A', 'M', 'E', 0x12, 0x34}), "an Exelvision .k7 loads");
+    check(tape.bytes().size() == 255 + 1 + 6 && tape.bytes()[255] == 0x70,
+          "a .k7 without leader gets 255 x $55 and the sync byte");
+    // Play it and decode the waveform like the recorder does.
+    std::vector<int> halves;
+    bool level = tape.level();
+    int run = 0;
+    while (!tape.at_end()) {
+        const bool now = tape.advance(1);
+        run++;
+        if (now != level || tape.at_end()) {
+            halves.push_back(run);
+            run = 0;
+            level = now;
+        }
+    }
+    // The first half is low, like the writer; the player starts high.
+    const std::vector<uint8_t> decoded = dsp::ExelTape::decode_halves(halves);
+    check(decoded == tape.bytes(), "the .k7 waveform decodes back to the same bytes");
+    check(halves.size() > 10 && halves[1] > 900 && halves[1] < 1050,
+          "a 0 bit half period is about 976 CPU cycles (1260 Hz)");
+}
+
+void test_exelv_tape_bios_if_present() {
+    namespace fs = std::filesystem;
+    const char* bios = "/tmp/roms/exl100.zip";
+    if (!fs::exists(bios)) {
+        std::printf("skip: EXL-100 BIOS not found\n");
+        return;
+    }
+    // A cartridge that saves $C100-$C10F through the BIOS (TRAP 14), then one
+    // that loads it back at the recorded address.
+    auto make_cart = [](bool load) {
+        std::vector<uint8_t> c(0x7e00, 0xff);
+        int pc = 0x6000;
+        auto emit = [&](std::initializer_list<int> bytes) {
+            for (int b : bytes) c[size_t(pc++ - 0x200)] = uint8_t(b);
+        };
+        emit({0x52, 0x50, 0x0d});  // MOV %>50,B / LDSP
+        if (!load) {
+            emit({0x88, 0xc1, 0x00, 0x1c, 0x88, 0xc1, 0x0f, 0x1e, 0x72, 0x00, 0x1f, 0x72, 0x00, 0x20});
+            emit({0x52, 0x10});
+            const int loop = pc;
+            emit({0x62, 0x28, 0x30, 0xab, 0xc0, 0xff});
+            emit({0xca, (loop - (pc + 2)) & 0xff});
+            emit({0x22, 'E', 0x8b, 0xc0, 0x25, 0x22, 'X', 0x8b, 0xc0, 0x26,
+                  0x22, 'E', 0x8b, 0xc0, 0x27, 0x22, 'L', 0x8b, 0xc0, 0x28});
+        } else {
+            emit({0x72, 0x0b, 0x20});  // load, any name, header sets the address
+        }
+        emit({0xf1, 0x12, 0x20, 0x8b, 0xc2, 0x00, 0xe0, 0xfe});  // TRAP 14 / flags -> $C200
+        c[0x7ffc - 0x200] = 0xaa;
+        c[0x7ffd - 0x200] = 0x8c;
+        c[0x7ffe - 0x200] = 0x60;
+        c[0x7fff - 0x200] = 0x00;
+        return c;
+    };
+    const fs::path dir = "/tmp/dsp-exelv-tape";
+    fs::create_directories(dir);
+    const fs::path k7 = dir / "test.k7";
+    fs::remove(k7);
+    std::string error;
+    {
+        const fs::path cart = dir / "save.bin";
+        auto bytes = make_cart(false);
+        std::ofstream(cart, std::ios::binary).write(reinterpret_cast<const char*>(bytes.data()),
+                                                    std::streamsize(bytes.size()));
+        dsp::Exelv exl(dsp::Exelv::Model::Exl100);
+        check(exl.init(bios, &error), "EXL-100 starts for the tape test");
+        exl.load_media(cart.string(), &error);
+        exl.set_tape_save_path(k7.string());
+        exl.reset();
+        for (int frame = 0; frame < 250; frame++) exl.run_frame();
+    }
+    std::ifstream in(k7, std::ios::binary);
+    std::vector<uint8_t> saved((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const uint8_t expected_tail[] = {0x70, 'L', 'E', 'X', 'E', 0x00, 0x0f, 0xc1, 0x00, 0xc1};
+    check(saved.size() == 255 + 1 + 4 + 5 + 16 + 2 &&
+              std::equal(std::begin(expected_tail), std::end(expected_tail), saved.begin() + 255),
+          "a BIOS SAVE is recorded as a .k7 (leader, sync, name, header, data, checksum)");
+    {
+        const fs::path cart = dir / "load.bin";
+        auto bytes = make_cart(true);
+        std::ofstream(cart, std::ios::binary).write(reinterpret_cast<const char*>(bytes.data()),
+                                                    std::streamsize(bytes.size()));
+        dsp::Exelv exl(dsp::Exelv::Model::Exl100);
+        exl.init(bios, &error);
+        exl.load_media(cart.string(), &error);
+        check(exl.load_media(k7.string(), &error) && exl.tape_loaded(), ".k7 mounts as a cassette");
+        exl.set_tape_fast(false);  // play the real waveform on port A bit 4
+        exl.set_tape_save_path((dir / "unused.k7").string());
+        exl.reset();
+        for (int frame = 0; frame < 250; frame++) exl.run_frame();
+        bool same = true;
+        for (int i = 0; i < 16; i++) same = same && exl.debug_ram(uint16_t(0xc100 + i)) == 0x31 + i;
+        check(same, "the BIOS LOAD reads the .k7 back into memory");
+        check((exl.debug_ram(0xc200) & 0xe0) == 0, "the load reports no name, checksum or timeout error");
+    }
+}
+
+void test_exelv_k7_games_if_present() {
+    namespace fs = std::filesystem;
+    const char* bios = "/tmp/roms/exl100.zip";
+    const char* k7 = "/tmp/roms/exelvision/Kung-Fu (198x)(Exelvision)(FR)[b3].k7";
+    const char* wav = "/tmp/roms/exelvision/Donkey Kong (1990)(Edition PUSSY)(FR).wav";
+    if (!fs::exists(bios) || !fs::exists(k7)) {
+        std::printf("skip: EXL-100 BIOS or Kung-Fu .k7 not found\n");
+        return;
+    }
+    // A loader cartridge: TRAP 14 twice, like Exel Basic loading a program
+    // (system variables to RAM, then the program to VRAM).
+    std::vector<uint8_t> c(0x7e00, 0xff);
+    const uint8_t code[] = {0x52, 0x50, 0x0d, 0x72, 0x0b, 0x20, 0xf1, 0x12, 0x20, 0x8b, 0xc2, 0x00,
+                            0x72, 0x0f, 0x20, 0xf1, 0x12, 0x20, 0x8b, 0xc2, 0x01, 0xe0, 0xfe};
+    std::copy(std::begin(code), std::end(code), c.begin() + (0x6000 - 0x200));
+    c[0x7ffc - 0x200] = 0xaa;
+    c[0x7ffd - 0x200] = 0x8c;
+    c[0x7ffe - 0x200] = 0x60;
+    c[0x7fff - 0x200] = 0x00;
+    const fs::path cart = "/tmp/dsp-exelv-tape/loader.bin";
+    fs::create_directories(cart.parent_path());
+    std::ofstream(cart, std::ios::binary).write(reinterpret_cast<const char*>(c.data()),
+                                                std::streamsize(c.size()));
+    std::string error;
+    dsp::Exelv exl(dsp::Exelv::Model::Exl100);
+    exl.init(bios, &error);
+    exl.load_media(cart.string(), &error);
+    check(exl.load_media(k7, &error), "Kung-Fu .k7 mounts");
+    exl.set_tape_save_path("/tmp/dsp-exelv-tape/unused.k7");
+    exl.reset();
+    int frames = 0;
+    while (frames < 600 && exl.debug_pc() != 0x6015) {
+        exl.run_frame();
+        frames++;
+    }
+    check(exl.debug_pc() == 0x6015 && frames < 300, "the 25 KiB Kung-Fu program fast-loads in seconds");
+    check((exl.debug_ram(0xc201) & 0xe0) == 0, "Kung-Fu loads with a good checksum");
+    const uint8_t* vram = exl.vdp().vram();
+    check(vram[0x0f00] == 0xa0 && vram[0x7306] == 0x00 && vram[0x7307] == 0x40,
+          "Kung-Fu's BASIC program lands in VRAM $0F00-$7307");
+
+    if (fs::exists(wav)) {
+        dsp::ExelTape tape;
+        std::ifstream in(wav, std::ios::binary);
+        std::vector<uint8_t> file((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        check(tape.load_wav(file, &error), "a cassette .wav decodes");
+        // Two blocks with leader, sync and a matching checksum.
+        const auto& b = tape.bytes();
+        size_t i = 0, blocks = 0;
+        bool sums = true;
+        while (i < b.size()) {
+            while (i < b.size() && b[i] == 0x55) i++;
+            if (i + 10 > b.size() || b[i] != 0x70) break;
+            const int start = b[i + 9] << 8 | b[i + 8];
+            const int end = b[i + 7] << 8 | b[i + 6];
+            const size_t n = size_t(end - start + 1);
+            if (i + 11 + n > b.size()) break;  // the last copy of the checksum may be cut
+            uint8_t sum = 0;
+            for (size_t k = 0; k < n; k++) sum = uint8_t(sum + b[i + 10 + k]);
+            sums = sums && sum == b[i + 10 + n];
+            blocks++;
+            i += 12 + n;
+        }
+        check(blocks == 2 && sums, "the Donkey Kong .wav yields two blocks with good checksums");
+    }
+}
+
 void test_polepos_driver() {
     dsp::PolePos missing(dsp::PolePos::Game::PolePosition);
     check(std::strcmp(missing.title(), "Pole Position") == 0, "Pole Position title");
@@ -7092,6 +7262,9 @@ int main() {
     test_exelv_dummy_bios();
     test_tms7000_int1_level();
     test_exelv_games_if_present();
+    test_exelv_tape_codec();
+    test_exelv_tape_bios_if_present();
+    test_exelv_k7_games_if_present();
     test_trdos_scl_and_beta();
     test_starwars_missing_roms();
     test_polepos_driver();

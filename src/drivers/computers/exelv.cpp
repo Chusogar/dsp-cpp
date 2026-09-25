@@ -248,6 +248,24 @@ bool Exelv::load_media(const std::string& path, std::string* error) {
     std::vector<uint8_t> data;
     namespace fs = std::filesystem;
     std::error_code ec;
+    const std::string ext = lower_copy(fs::path(path).extension().string());
+    if (ext == ".k7" || ext == ".wav") {
+        if (!read_plain_file(path, data)) {
+            if (error) *error = "cannot read cassette " + path;
+            return false;
+        }
+        const bool ok = ext == ".wav" ? tape_.load_wav(data, error) : tape_.load(std::move(data));
+        if (!ok) {
+            if (error && error->empty()) *error = "empty cassette " + path;
+            return false;
+        }
+        if (tape_save_path_.empty()) {
+            fs::path save = fs::path(path);
+            save.replace_filename(save.stem().string() + "-save.k7");
+            tape_save_path_ = save.string();
+        }
+        return true;
+    }
     if (fs::is_regular_file(path, ec)) {
         std::ifstream probe(path, std::ios::binary);
         char magic[4] = {};
@@ -280,6 +298,8 @@ void Exelv::reset() {
     page_bit1_ = page_bit2_ = false;
     last_sent_ = 0;
     last_key_ = 0;
+    tape_.rewind();
+    tape_idle_frames_ = 0;
     p64_ = 0;
     hle_io_sent_ = false;
     hle_io_delay_ = int(maincpu_.cpu_clock() / 5);  // ~0.2 s
@@ -398,11 +418,15 @@ void Exelv::mailbox_wx318_w(uint8_t data) { wx318_ = data; }
 
 uint8_t Exelv::tms7020_porta_r() {
     uint8_t data = (tms7041_portb_ & 0x80) ? 0x01 : 0x00;
-    data |= 0x10;  // cassette idle high
+    // PA.4: cassette input, high when idle.
+    if (!tape_.loaded() || tape_.level()) data |= 0x10;
     return data;
 }
 
 void Exelv::tms7020_portb_w(uint8_t data) {
+    // Every write of the BIOS byte writer is a half-period boundary, even
+    // when bit 3 does not change (the first half after an idle low line).
+    if (in_tape_write()) tape_.record_edge(main_cycles_, (data & 0x08) != 0);
     tms7020_portb_ = data;
     // With no I/O CPU, acknowledge "byte read" (PB.1) on PA.0 like the 7041.
     if (!sub_present_) tms7041_portb_ = uint8_t((tms7041_portb_ & 0x7f) | ((data & 0x02) ? 0x80 : 0));
@@ -447,7 +471,52 @@ void Exelv::tms7041_portd_w(uint8_t data) {
     tms7041_portd_ = data;
 }
 
+bool Exelv::in_tape_read() const {
+    // TRAP 14 tape code in the internal ROM (load, save and bit timing).
+    const uint16_t pc = maincpu_.pc();
+    if (model_ == Model::Exl100) return pc >= 0xfca1 && pc < 0xfea0;
+    return pc >= 0xfac0 && pc < 0xfcdb;
+}
+
+bool Exelv::in_tape_write() const {
+    const uint16_t pc = maincpu_.pc();
+    if (model_ == Model::Exl100) return pc >= 0xfde5 && pc < 0xfe10;
+    return pc >= 0xfc20 && pc < 0xfc4b;
+}
+
+void Exelv::flush_tape_recording() {
+    std::vector<uint8_t> bytes = tape_.take_recording();
+    if (bytes.empty()) return;
+    const std::string path = tape_save_path_.empty() ? "exelvision-save.k7" : tape_save_path_;
+    std::ofstream out(path, std::ios::binary | std::ios::app);
+    out.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+}
+
+void Exelv::fast_load_hook() {
+    // BIOS TRAP 14 addresses: start of the leader/sync search, the first
+    // instruction after the $70 sync byte, and the read-byte routine.
+    const bool exl = model_ == Model::Exl100;
+    const uint16_t sync_start = exl ? 0xfca8 : 0xfadc;
+    const uint16_t after_sync = exl ? 0xfcfe : 0xfb32;
+    const uint16_t read_byte = exl ? 0xfe82 : 0xfcbd;
+    const uint16_t pc = maincpu_.pc();
+    if (pc == sync_start) {
+        if (tape_.seek_sync()) maincpu_.set_pc(after_sync);
+    } else if (pc == read_byte) {
+        const int value = tape_.next_byte();
+        if (value < 0) return;  // end of tape: let the BIOS time out
+        maincpu_.set_a(uint8_t(value));
+        // RETS: the low byte of the return address is on top of the stack.
+        const uint8_t sp = maincpu_.sp();
+        maincpu_.set_pc(uint16_t((maincpu_.ram_at(uint8_t(sp - 1)) << 8) | maincpu_.ram_at(sp)));
+        maincpu_.set_sp(uint8_t(sp - 2));
+    }
+}
+
 void Exelv::on_main_cycles(int cycles) {
+    main_cycles_ += uint64_t(cycles);
+    if (tape_fast_ && tape_playing_ && tape_.loaded()) fast_load_hook();
+    if (tape_playing_ && tape_.loaded() && in_tape_read()) tape_.advance(cycles);
     speech_.tick(cycles);
     const uint32_t cpu_clock = maincpu_.cpu_clock();
     audio_accumulator_ += int64_t(cycles) * kSampleRate;
@@ -603,7 +672,18 @@ void Exelv::run_frame() {
             }
         }
     }
+    // Write a SAVE out once the BIOS has left the tape routine for a second.
+    if (tape_.recording()) {
+        if (in_tape_read()) {
+            tape_idle_frames_ = 0;
+        } else if (++tape_idle_frames_ >= int(kFramesPerSecond)) {
+            flush_tape_recording();
+            tape_idle_frames_ = 0;
+        }
+    }
 }
+
+Exelv::~Exelv() { flush_tape_recording(); }
 
 void Exelv::set_inputs(const MachineInputs& inputs) { inputs_ = inputs; }
 

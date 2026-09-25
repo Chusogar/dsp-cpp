@@ -225,6 +225,7 @@ add_executable(dsp
   src/drivers/computers/apple2.cpp
   src/drivers/computers/apple2gs.cpp
   src/drivers/computers/exelv.cpp
+  src/drivers/computers/exelv_tape.cpp
   src/drivers/computers/ql.cpp
   src/drivers/computers/atari_st.cpp
   src/drivers/computers/amiga.cpp
@@ -409,6 +410,7 @@ add_executable(dsp_tests
   src/drivers/consoles/scv.cpp
   src/drivers/consoles/pv2000.cpp
   src/drivers/computers/exelv.cpp
+  src/drivers/computers/exelv_tape.cpp
   src/drivers/computers/ql.cpp
   src/drivers/computers/atari_st.cpp
   src/drivers/computers/amiga.cpp
