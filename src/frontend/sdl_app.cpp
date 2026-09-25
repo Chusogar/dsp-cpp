@@ -57,7 +57,7 @@ constexpr struct {
 };
 
 void collect_inputs(Machine& machine, int pointer_x, int pointer_y, uint32_t mouse_buttons,
-                    bool has_pointer) {
+                    bool has_pointer, bool relative = false, int dx = 0, int dy = 0) {
     const Uint8* keys = SDL_GetKeyboardState(nullptr);
     MachineInputs inputs;
     inputs.player1.up = keys[SDL_SCANCODE_UP];
@@ -91,6 +91,9 @@ void collect_inputs(Machine& machine, int pointer_x, int pointer_y, uint32_t mou
         inputs.pointer_y = pointer_y;
         inputs.pointer_button1 = (mouse_buttons & SDL_BUTTON_LMASK) != 0;
         inputs.pointer_button2 = (mouse_buttons & SDL_BUTTON_RMASK) != 0;
+        inputs.pointer_relative = relative;
+        inputs.pointer_dx = dx;
+        inputs.pointer_dy = dy;
     }
 
     if (machine.uses_keyboard()) {
@@ -201,17 +204,40 @@ int SdlApp::run(Machine& machine) {
     // Accumulator for sub-ms frame pacing when muted (avoids integer truncation drift).
     double frame_debt_ms = 0.0;
 
+    // Relative-mouse machines: a click in the window captures the mouse
+    // (hidden host cursor, motion deltas); the middle button or losing focus
+    // releases it.
+    const bool relative_mouse = machine.uses_pointer() && machine.uses_relative_pointer();
+    bool mouse_captured = false;
+    float rel_acc_x = 0.0f, rel_acc_y = 0.0f;
+    bool swallow_click = false;
+    bool prev_left = false;
+
     auto update_title = [&]() {
         std::string t = std::string("DSP C++ - ") + machine.title();
+        if (relative_mouse)
+            t += mouse_captured ? " [mouse captured - middle button releases]" : " [click to capture the mouse]";
         if (paused) t += " [PAUSED]";
         if (turbo) t += " [TURBO]";
         SDL_SetWindowTitle(window, t.c_str());
     };
 
+    auto set_capture = [&](bool on) {
+        if (!relative_mouse || on == mouse_captured) return;
+        mouse_captured = on;
+        SDL_SetRelativeMouseMode(on ? SDL_TRUE : SDL_FALSE);
+        rel_acc_x = rel_acc_y = 0.0f;
+        int rx = 0, ry = 0;
+        SDL_GetRelativeMouseState(&rx, &ry);  // drop motion from before the switch
+        update_title();
+    };
+    if (relative_mouse) update_title();
+
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) running = false;
+
             if (event.type == SDL_KEYDOWN) {
 				
 				//printf("KEYDOWN sym=%d scan=%d name=%s\n",
@@ -294,7 +320,39 @@ int SdlApp::run(Machine& machine) {
         int pointer_x = 0;
         int pointer_y = 0;
         uint32_t mouse_buttons = 0;
-        if (machine.uses_pointer()) {
+        if (relative_mouse) {
+            // Polled once per frame (the pacing loop above may swallow
+            // events): a fresh left click inside the window captures, the
+            // middle button or losing focus releases.
+            int mx = 0, my = 0;
+            mouse_buttons = SDL_GetMouseState(&mx, &my);
+            const bool focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+            const bool left = (mouse_buttons & SDL_BUTTON_LMASK) != 0;
+            if (!mouse_captured && focused && left && !prev_left && SDL_GetMouseFocus() == window) {
+                set_capture(true);
+                swallow_click = true;  // the capturing click is not sent
+            } else if (mouse_captured && (!focused || (mouse_buttons & SDL_BUTTON_MMASK))) {
+                set_capture(false);
+            }
+            prev_left = left;
+            int rx = 0, ry = 0;
+            SDL_GetRelativeMouseState(&rx, &ry);
+            if (mouse_captured) {
+                int win_w = 1, win_h = 1;
+                SDL_GetWindowSize(window, &win_w, &win_h);
+                // Window pixels to machine screen pixels.
+                rel_acc_x += float(rx) * float(width) / float(std::max(1, win_w));
+                rel_acc_y += float(ry) * float(height) / float(std::max(1, win_h));
+            }
+            if (swallow_click) {
+                if (!left) swallow_click = false;
+                mouse_buttons &= ~uint32_t(SDL_BUTTON_LMASK);
+            }
+            const int dx = static_cast<int>(rel_acc_x), dy = static_cast<int>(rel_acc_y);
+            rel_acc_x -= float(dx);
+            rel_acc_y -= float(dy);
+            collect_inputs(machine, 0, 0, mouse_captured ? mouse_buttons : 0, mouse_captured, true, dx, dy);
+        } else if (machine.uses_pointer()) {
             int mx = 0;
             int my = 0;
             mouse_buttons = SDL_GetMouseState(&mx, &my);
@@ -306,7 +364,8 @@ int SdlApp::run(Machine& machine) {
             pointer_x = std::clamp(static_cast<int>(lx), 0, width - 1);
             pointer_y = std::clamp(static_cast<int>(ly), 0, height - 1);
         }
-        collect_inputs(machine, pointer_x, pointer_y, mouse_buttons, machine.uses_pointer());
+        if (!relative_mouse)
+            collect_inputs(machine, pointer_x, pointer_y, mouse_buttons, machine.uses_pointer());
         machine.run_frame();
 
         samples.clear();

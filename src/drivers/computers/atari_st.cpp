@@ -194,7 +194,13 @@ void AtariSt::ikbd_mouse_packet(int dx, int dy, bool left, bool right) {
 
 void AtariSt::ikbd_mouse(const MachineInputs& inputs) {
     if (!inputs.has_pointer) return;
-    if (!pointer_seen_) {
+    int dx_host = 0, dy_host = 0;
+    if (inputs.pointer_relative) {
+        // Captured host mouse: plain motion, no absolute position to track.
+        dx_host = inputs.pointer_dx;
+        dy_host = inputs.pointer_dy;
+        pointer_seen_ = true;
+    } else if (!pointer_seen_) {
         last_pointer_x_ = inputs.pointer_x;
         last_pointer_y_ = inputs.pointer_y;
         last_pointer_b1_ = inputs.pointer_button1;
@@ -206,12 +212,20 @@ void AtariSt::ikbd_mouse(const MachineInputs& inputs) {
         if (inputs.pointer_button1 || inputs.pointer_button2)
             ikbd_mouse_packet(0, 0, inputs.pointer_button1, inputs.pointer_button2);
         return;
+    } else {
+        dx_host = inputs.pointer_x - last_pointer_x_;
+        dy_host = inputs.pointer_y - last_pointer_y_;
+        last_pointer_x_ = inputs.pointer_x;
+        last_pointer_y_ = inputs.pointer_y;
+        // Uncaptured absolute pointer: the ST only gets relative packets and
+        // each program clamps its own cursor, so the two drift apart. While
+        // the host pointer rests on a window edge keep pushing outwards; the
+        // ST cursor stops on the same edge and both line up again.
+        if (inputs.pointer_x <= 0) dx_host -= 16;
+        if (inputs.pointer_x >= kWidth - 1) dx_host += 16;
+        if (inputs.pointer_y <= 0) dy_host -= 16;
+        if (inputs.pointer_y >= kHeight - 1) dy_host += 16;
     }
-
-    const int dx_host = inputs.pointer_x - last_pointer_x_;
-    const int dy_host = inputs.pointer_y - last_pointer_y_;
-    last_pointer_x_ = inputs.pointer_x;
-    last_pointer_y_ = inputs.pointer_y;
 
     // The shifter framebuffer is 640×400 with low/med doubled. IKBD deltas are
     // TOS screen pixels (320×200 low, 640×200 med, 640×400 high).

@@ -233,6 +233,14 @@ tracks are encoded as MFM for Kickstart's trackdisk DSKDMA.
 ./build/dsp --game amiga --disk workbench.adf /path/to/a500.zip
 ```
 
+Mouse (Amiga and Atari ST): both machines only ever see relative mouse motion,
+and every program keeps its own pointer, so the window captures the mouse
+instead of showing a second (host) cursor: click in the window to capture it
+(the host cursor hides and the emulated pointer follows the motion), press the
+middle button or switch windows to release it. The mouse sits in Amiga port 0
+(left button on CIA-A /FIR0, right on POTGOR), cursor keys + Left Ctrl/Space are
+a joystick in port 1.
+
 ### Atari System 1 (Indiana Jones, Marble Madness, Peter Pack Rat, Road Runner)
 
 Atari System 1 is a 7.16 MHz 68000 behind a SLAPSTIC (105 on Indiana Jones, 103

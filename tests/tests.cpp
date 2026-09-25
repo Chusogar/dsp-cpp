@@ -5017,13 +5017,13 @@ void test_st_ikbd_mouse() {
     dsp::AtariSt machine;
     dsp::MachineInputs in;
     in.has_pointer = true;
-    in.pointer_x = 400;
+    in.pointer_x = 100;
     in.pointer_y = 300;
     machine.set_inputs(in);
     check(machine.ikbd_pending_bytes().empty(),
           "the first pointer sample does not throw GEM's mouse off-screen");
 
-    in.pointer_x = 404;  // +4 host px → +2 TOS pixels in low res
+    in.pointer_x = 104;  // +4 host px → +2 TOS pixels in low res
     machine.set_inputs(in);
     auto q = machine.ikbd_pending_bytes();
     check(q.size() == 3, "a small move is one relative IKBD packet");
@@ -5057,6 +5057,26 @@ void test_st_ikbd_mouse() {
     check(q[p] == 0xf8 && int8_t(q[p + 1]) == 127 && q[p + 2] == 0 && q[p + 3] == 0xf8 &&
               int8_t(q[p + 4]) == 73 && q[p + 5] == 0,
           "200 TOS pixels split as 127 then 73");
+
+    // Resting on the window edge keeps pushing, so the ST cursor meets the
+    // same edge and the two pointers line up again.
+    const size_t before_edge = machine.ikbd_pending_bytes().size();
+    in.pointer_x = 0;
+    machine.set_inputs(in);
+    machine.set_inputs(in);
+    q = machine.ikbd_pending_bytes();
+    check(q.size() > before_edge && int8_t(q[q.size() - 2]) < 0, "the left window edge keeps pushing left");
+
+    // Captured mouse: relative deltas straight through.
+    dsp::AtariSt rel;
+    dsp::MachineInputs r;
+    r.has_pointer = true;
+    r.pointer_relative = true;
+    r.pointer_dx = 6;  // screen pixels → 3 low-res pixels
+    r.pointer_dy = 4;  // → 2
+    rel.set_inputs(r);
+    q = rel.ikbd_pending_bytes();
+    check(q.size() == 3 && q[0] == 0xf8 && q[1] == 3 && q[2] == 2, "captured motion becomes one IKBD packet");
 }
 
 void test_st_blitter() {
@@ -6253,6 +6273,52 @@ void test_vectrex_if_present() {
     check(peak > 3000 && peak < 13000, "Pole Position race screen stays crisp while the text scrolls");
 }
 
+// Kickstart 1.3 (/tmp/roms/a500.zip) with North & South in
+// /tmp/amiga/North & South.adf: its CIA-B interrupt handler acknowledges
+// with a long read of $BFDD00, which must not clear CIA-A's ICR (A12 is
+// high there), or timer.device loses its interrupt and loading stalls.
+void test_amiga_north_south_if_present() {
+    const char* rom = "/tmp/roms/a500.zip";
+    const char* disk = "/tmp/amiga/North & South.adf";
+    std::FILE* rf = std::fopen(rom, "rb");
+    std::FILE* df = std::fopen(disk, "rb");
+    if (!rf || !df) {
+        if (rf) std::fclose(rf);
+        if (df) std::fclose(df);
+        return;
+    }
+    std::fclose(rf);
+    std::fclose(df);
+    dsp::Amiga500 a;
+    std::string error;
+    check(a.init(rom, &error), "Kickstart loads for North & South");
+    check(a.load_media(disk, &error), "North & South ADF mounts");
+    check(a.uses_pointer() && a.uses_relative_pointer(), "the Amiga takes a captured relative mouse");
+    dsp::MachineInputs in;
+    in.has_pointer = true;
+    in.pointer_relative = true;
+    for (int i = 0; i < 1300; i++) {
+        a.set_inputs(in);
+        a.run_frame();
+    }
+    int blue = 0;
+    const uint32_t* fb = a.framebuffer();
+    for (int i = 0; i < a.screen_width() * a.screen_height(); i++) {
+        const int r = int((fb[i] >> 16) & 0xff), g = int((fb[i] >> 8) & 0xff), b = int(fb[i] & 0xff);
+        if (b > 100 && b > r && b > g) blue++;
+    }
+    check(blue > 30000, "North & South loads past the Infogrames logo to the blue title");
+    // Mouse counters: 2 counts per lores pixel across, 1 down.
+    const uint16_t before = uint16_t((a.peek(0xdff00a) << 8) | a.peek(0xdff00b));
+    in.pointer_dx = 10;
+    in.pointer_dy = 5;
+    a.set_inputs(in);
+    const uint16_t after = uint16_t((a.peek(0xdff00a) << 8) | a.peek(0xdff00b));
+    check(uint8_t((after & 0xff) - (before & 0xff)) == 20 && uint8_t((after >> 8) - (before >> 8)) == 5,
+          "JOY0DAT counts the mouse motion");
+    check(a.peek(0xbfdd01) == 0xff, "$BFDD01 selects no CIA (CIA-A needs A12 low)");
+}
+
 int main() {
     test_z80_arithmetic();
     test_z80_flags_and_blocks();
@@ -6394,6 +6460,7 @@ int main() {
     test_amiga_missing_roms();
     test_amiga_adf_format();
     test_amiga_kickstart_if_present();
+    test_amiga_north_south_if_present();
     test_amiga_bootblock_if_present();
     test_mac_dcmp();
     test_mac_gcr_and_dsk();

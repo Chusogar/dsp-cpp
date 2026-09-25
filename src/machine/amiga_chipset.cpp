@@ -124,12 +124,13 @@ uint16_t AmigaChipset::read(uint16_t reg) {
             // for a non-zero horizontal position can leave the wait.
             return uint16_t(uint16_t(vpos_ & 0xFF) << 8) | 0x80;
         case 0x00A:
+            return joy0dat_;
         case 0x00C:
-            return 0;
+            return joy1dat_;
         case 0x010:
             return adkcon_;
         case 0x016:
-            return 0xFF00;
+            return rmb_ ? uint16_t(0xFF00 & ~0x0400) : uint16_t(0xFF00);
         case 0x018:
             return 0x3000;
         case 0x01A: {
@@ -156,6 +157,9 @@ uint16_t AmigaChipset::read(uint16_t reg) {
 void AmigaChipset::write(uint16_t reg, uint16_t value) {
     const uint16_t r = uint16_t(reg & 0x1FE);
     switch (r) {
+        case 0x036:  // JOYTEST
+            if (joytest_) joytest_(value);
+            break;
         case 0x020:
             poke_ptr(dskpt_, true, value);
             break;
