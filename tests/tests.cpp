@@ -3526,6 +3526,8 @@ void test_tia_playfield_and_audio() {
     check(line[0] == dsp::Tia::ntsc_color(0x86), "PF0 lights the leftmost pixels");
     check(line[68] == dsp::Tia::ntsc_color(0x00), "the playfield gap is COLUBK");
 
+    // RESP0 mid-line: the main copy appears from the next line on, 5 pixels
+    // after the strobe; a later GRP0 write blanks the rest of that line.
     tia.reset();
     tia.begin_line();
     tia.write(0x01, 0x00);
@@ -3534,14 +3536,53 @@ void test_tia_playfield_and_audio() {
     tia.write(0x1b, 0xff);
     tia.set_hclock(68 + 8);
     tia.write(0x10, 0x00);  // RESP0
+    tia.render_line(line.data());
+    check(line[8 + 5] == dsp::Tia::ntsc_color(0x00),
+          "TIA RESP0 does not draw the main copy on the strobe line");
+    tia.begin_line();
     tia.set_hclock(68 + 40);
     tia.write(0x1b, 0x00);  // GRP0 off for the rest of the line
-    tia.set_hclock(dsp::Tia::kColorClocksPerLine);
     tia.render_line(line.data());
     check(line[8 + 5] == dsp::Tia::ntsc_color(0x1e),
-          "TIA draws GRP0 after a mid-line RESP0");
+          "TIA draws GRP0 5 pixels after a mid-line RESP0");
     check(line[80] == dsp::Tia::ntsc_color(0x00),
           "TIA drops GRP0 after a later mid-line write");
+
+    // NUSIZ copies do appear on the strobe line (16 pixels to the right).
+    tia.reset();
+    tia.begin_line();
+    tia.write(0x06, 0x1e);
+    tia.write(0x04, 0x01);  // two copies, close
+    tia.write(0x1b, 0x80);
+    tia.set_hclock(68 + 20);
+    tia.write(0x10, 0x00);
+    tia.render_line(line.data());
+    check(line[20 + 5 + 16] == dsp::Tia::ntsc_color(0x1e) &&
+              line[20 + 5] == dsp::Tia::ntsc_color(0x00),
+          "TIA draws the close NUSIZ copy on the RESP0 line");
+
+    // HMOVE during HBLANK: black comb over the first 8 pixels and
+    // HMP0 = +1 moves the player one pixel left.
+    tia.reset();
+    tia.begin_line();
+    tia.write(0x09, 0x0e);
+    tia.write(0x06, 0x1e);
+    tia.write(0x1b, 0x80);
+    tia.set_hclock(68 + 40);
+    tia.write(0x10, 0x00);  // player at pixel 45 from the next line
+    tia.write(0x20, 0x10);  // HMP0 = +1
+    tia.render_line(line.data());
+    tia.begin_line();
+    tia.render_line(line.data());
+    check(line[45] == dsp::Tia::ntsc_color(0x1e), "TIA RESP0 lands 5 pixels after the strobe");
+    tia.begin_line();
+    tia.set_hclock(6);
+    tia.write(0x2a, 0x00);  // HMOVE
+    tia.render_line(line.data());
+    check(line[0] == 0xFF000000 && line[7] == 0xFF000000 && line[8] == dsp::Tia::ntsc_color(0x0e),
+          "TIA HMOVE blanks the first 8 pixels of the line");
+    check(line[44] == dsp::Tia::ntsc_color(0x1e) && line[45] == dsp::Tia::ntsc_color(0x0e),
+          "TIA HMOVE with HMP0=+1 moves the player one pixel left");
 
     tia.write(0x15, 0x04);
     tia.write(0x17, 0x07);
@@ -3594,6 +3635,101 @@ void test_a2600_driver() {
     int64_t energy = 0;
     for (int16_t sample : audio) energy += int64_t(sample) * sample;
     check(!audio.empty() && energy > 0, "the 2600 kernel drives TIA audio");
+}
+
+// The left joystick is the high nibble of SWCHA (D7 right, D6 left, D5 down,
+// D4 up), the right joystick the low nibble; the kernel copies SWCHA into
+// COLUBK so the pressed bits show up as the background colour.
+void test_a2600_joystick_swcha() {
+    static const uint8_t kCode[] = {
+        0xA9, 0x00, 0x85, 0x01,        // LDA #0 : STA VBLANK
+        0xAD, 0x80, 0x02, 0x85, 0x09,  // LDA SWCHA : STA COLUBK
+        0x4C, 0x04, 0xF0,              // JMP $F004
+    };
+    std::vector<uint8_t> rom(4096, 0xEA);
+    std::memcpy(rom.data(), kCode, sizeof(kCode));
+    rom[0xffc] = 0x00;
+    rom[0xffd] = 0xf0;
+    namespace fs = std::filesystem;
+    const fs::path path = "/tmp/dsp-a2600-test-kernel/swcha.bin";
+    fs::create_directories(path.parent_path());
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(rom.data()), std::streamsize(rom.size()));
+    }
+    dsp::A2600 machine;
+    std::string error;
+    check(machine.init(path.string(), &error), "2600 SWCHA kernel loads");
+    auto background = [&](const dsp::MachineInputs& in) {
+        machine.set_inputs(in);
+        machine.run_frame();
+        machine.run_frame();
+        return machine.framebuffer()[100 * machine.screen_width() + 80];
+    };
+    dsp::MachineInputs in{};
+    check(background(in) == dsp::Tia::ntsc_color(0xff), "SWCHA idles high");
+    in.player1.up = true;
+    check(background(in) == dsp::Tia::ntsc_color(0xef), "left joystick up clears SWCHA D4");
+    in.player1.up = false;
+    in.player1.right = true;
+    check(background(in) == dsp::Tia::ntsc_color(0x7f), "left joystick right clears SWCHA D7");
+    in.player1.right = false;
+    in.player2.left = true;
+    check(background(in) == dsp::Tia::ntsc_color(0xfb), "right joystick left clears SWCHA D2");
+}
+
+// Real cartridges, compared against Stella: Beamrider's HMOVE comb and its
+// reserve ships (a repeated mid-line RESPx trick), and BurgerTime, which
+// needs the M Network E7 bank switching.
+void test_a2600_carts_if_present() {
+    auto exists = [](const char* path) { return bool(std::ifstream(path)); };
+    for (const char* path : {"/tmp/roms/Beamride.bin", "/tmp/roms/Beamrider.bin"}) {
+        if (!exists(path)) continue;
+        dsp::A2600 machine;
+        std::string error;
+        check(machine.init(path, &error), "Beamrider loads");
+        check(std::strcmp(machine.mapper_name(), "F8") == 0, "Beamrider is an F8 cartridge");
+        dsp::MachineInputs in{};
+        for (int frame = 1; frame <= 300; frame++) {
+            in.player1.start = frame >= 5 && frame < 15;
+            machine.set_inputs(in);
+            machine.run_frame();
+        }
+        const uint32_t* fb = machine.framebuffer();
+        const int w = machine.screen_width();
+        int comb_rows = 0;
+        for (int y = 0; y < machine.screen_height(); y++) {
+            if ((fb[y * w + 7] & 0xffffff) == 0 && (fb[y * w + 8] & 0xffffff) != 0) comb_rows++;
+        }
+        check(comb_rows >= 5, "Beamrider's beams start after the 8-pixel HMOVE comb");
+        // The reserve ships are drawn with repeated mid-line RESP0/RESP1:
+        // Stella shows two ships at pixels 32-36 and 41-45.
+        int ship_rows = 0;
+        for (int y = 150; y < machine.screen_height(); y++) {
+            const uint32_t* row = fb + y * w;
+            auto lit = [&](int x) { return (row[x] & 0xffffff) != 0; };
+            if (lit(32) && lit(36) && lit(41) && lit(45) && !lit(28) && !lit(30) && !lit(39) &&
+                !lit(47))
+                ship_rows++;
+        }
+        check(ship_rows >= 2, "Beamrider draws its two reserve ships where Stella does");
+        break;
+    }
+    for (const char* path : {"/tmp/roms/Burgtime.bin", "/tmp/roms/BurgerTime.bin"}) {
+        if (!exists(path)) continue;
+        dsp::A2600 machine;
+        std::string error;
+        check(machine.init(path, &error), "BurgerTime loads");
+        check(std::strcmp(machine.mapper_name(), "E7") == 0, "BurgerTime is detected as E7");
+        for (int frame = 0; frame < 120; frame++) machine.run_frame();
+        int lit = 0;
+        const uint32_t* fb = machine.framebuffer();
+        for (int i = 0; i < machine.screen_width() * machine.screen_height(); i++) {
+            if ((fb[i] & 0xffffff) != 0) lit++;
+        }
+        check(lit > 2000, "BurgerTime draws its playfield");
+        break;
+    }
 }
 
 void test_a2600_rom_if_present() {
@@ -6435,6 +6571,8 @@ int main() {
     test_tia_playfield_and_audio();
     test_a2600_driver();
     test_a2600_rom_if_present();
+    test_a2600_joystick_swcha();
+    test_a2600_carts_if_present();
     test_slapstic();
     test_ym2151();
     test_pokey();

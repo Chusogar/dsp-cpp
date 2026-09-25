@@ -111,6 +111,107 @@ bool A2600::load_from_directory(const std::string& directory, std::vector<uint8_
     return false;
 }
 
+namespace {
+
+bool contains(const std::vector<uint8_t>& data, size_t size, const uint8_t* pattern, size_t len,
+              int needed = 1) {
+    int found = 0;
+    for (size_t i = 0; i + len <= size; i++) {
+        if (std::memcmp(&data[i], pattern, len) == 0 && ++found >= needed) return true;
+    }
+    return false;
+}
+
+template <size_t N, size_t L>
+bool contains_any(const std::vector<uint8_t>& data, size_t size, const uint8_t (&patterns)[N][L]) {
+    for (const auto& pattern : patterns) {
+        if (contains(data, size, pattern, L)) return true;
+    }
+    return false;
+}
+
+// Superchip carts leave the RAM window of every 4K bank as a repeated
+// 128-byte block (the write port and the read port show the same filler).
+bool probably_superchip(const std::vector<uint8_t>& data, size_t size) {
+    if (size < 8192 || size % 4096 != 0) return false;
+    for (size_t bank = 0; bank < size; bank += 4096) {
+        if (std::memcmp(&data[bank], &data[bank + 128], 128) != 0) return false;
+    }
+    return true;
+}
+
+// Signatures after Stella's CartDetector.
+bool probably_e0(const std::vector<uint8_t>& data, size_t size) {
+    static const uint8_t kSig[][3] = {
+        {0x8D, 0xE0, 0x1F}, {0x8D, 0xE0, 0x5F}, {0x8D, 0xE9, 0xFF}, {0x0C, 0xE0, 0x1F},
+        {0xAD, 0xE0, 0x1F}, {0xAD, 0xE9, 0xFF}, {0xAD, 0xED, 0xFF}, {0xAD, 0xF3, 0xBF},
+    };
+    return contains_any(data, size, kSig);
+}
+
+bool probably_e7(const std::vector<uint8_t>& data, size_t size) {
+    static const uint8_t kSig[][3] = {
+        {0xAD, 0xE2, 0xFF}, {0xAD, 0xE5, 0xFF}, {0xAD, 0xE5, 0x1F}, {0xAD, 0xE7, 0x1F},
+        {0x0C, 0xE7, 0x1F}, {0x8D, 0xE7, 0xFF}, {0x8D, 0xE7, 0x1F},
+    };
+    return contains_any(data, size, kSig);
+}
+
+bool probably_fe(const std::vector<uint8_t>& data, size_t size) {
+    static const uint8_t kSig[][5] = {
+        {0x20, 0x00, 0xD0, 0xC6, 0xC5},
+        {0x20, 0xC3, 0xF8, 0xA5, 0x82},
+        {0xD0, 0xFB, 0x20, 0x73, 0xFE},
+        {0x20, 0x00, 0xF0, 0x84, 0xD6},
+    };
+    return contains_any(data, size, kSig);
+}
+
+bool probably_3f(const std::vector<uint8_t>& data, size_t size) {
+    static const uint8_t kSig[] = {0x85, 0x3F};
+    return contains(data, size, kSig, sizeof(kSig), 2);
+}
+
+}  // namespace
+
+const char* A2600::mapper_name() const {
+    switch (mapper_) {
+        case Mapper::Flat: return "4K";
+        case Mapper::F8: return superchip_ ? "F8SC" : "F8";
+        case Mapper::F6: return superchip_ ? "F6SC" : "F6";
+        case Mapper::F4: return superchip_ ? "F4SC" : "F4";
+        case Mapper::F0: return "F0";
+        case Mapper::E0: return "E0";
+        case Mapper::E7: return "E7";
+        case Mapper::FE: return "FE";
+        case Mapper::T3F: return "3F";
+    }
+    return "?";
+}
+
+void A2600::detect_mapper(const std::vector<uint8_t>& data, size_t size) {
+    mapper_ = Mapper::Flat;
+    if (size <= 4096) return;
+    if (size <= 8192) {
+        if (probably_superchip(data, size)) superchip_ = true, mapper_ = Mapper::F8;
+        else if (probably_e0(data, size)) mapper_ = Mapper::E0;
+        else if (probably_3f(data, size)) mapper_ = Mapper::T3F;
+        else if (probably_fe(data, size)) mapper_ = Mapper::FE;
+        else mapper_ = Mapper::F8;
+    } else if (size <= 16384) {
+        if (probably_superchip(data, size)) superchip_ = true, mapper_ = Mapper::F6;
+        else if (probably_e7(data, size)) mapper_ = Mapper::E7;
+        else if (probably_3f(data, size)) mapper_ = Mapper::T3F;
+        else mapper_ = Mapper::F6;
+    } else if (size <= 32768) {
+        if (probably_superchip(data, size)) superchip_ = true, mapper_ = Mapper::F4;
+        else if (probably_3f(data, size)) mapper_ = Mapper::T3F;
+        else mapper_ = Mapper::F4;
+    } else {
+        mapper_ = probably_3f(data, size) ? Mapper::T3F : Mapper::F0;
+    }
+}
+
 bool A2600::install_cartridge(const std::vector<uint8_t>& data, std::string* error) {
     if (data.empty() || data.size() > kMaxCartridge) {
         if (error) *error = "cartridge is empty or larger than 64 KiB";
@@ -136,57 +237,127 @@ bool A2600::install_cartridge(const std::vector<uint8_t>& data, std::string* err
     }
     rom_mask_ = padded - 1;
 
-    bank_count_ = int(padded / 4096);
-    if (bank_count_ < 1) bank_count_ = 1;
-    if (padded <= 4096) {
-        mapper_ = Mapper::Flat;
-        bank_count_ = 1;
-    } else if (padded <= 8192) {
-        mapper_ = Mapper::F8;
-        bank_count_ = 2;
-    } else if (padded <= 16384) {
-        mapper_ = Mapper::F6;
-        bank_count_ = 4;
-    } else if (padded <= 32768) {
-        mapper_ = Mapper::F4;
-        bank_count_ = 8;
-    } else {
-        mapper_ = Mapper::F0;
-        bank_count_ = 16;
+    detect_mapper(rom_, padded);
+    switch (mapper_) {
+        case Mapper::Flat: bank_count_ = 1; break;
+        case Mapper::E0:
+        case Mapper::E7: bank_count_ = 8; break;
+        case Mapper::T3F: bank_count_ = int(padded / 2048); break;
+        default: bank_count_ = std::max(1, int(padded / 4096)); break;
     }
-    bank_ = bank_count_ - 1;
     superchip_ram_.fill(0);
+    e7_ram_.fill(0);
     return true;
 }
 
 void A2600::reset() {
     tia_.reset();
     riot_.reset();
-    cpu_.set_halted(false);
-    cpu_.reset();
-    visible_y_ = 0;
+    pending_count_ = 0;
+    line_in_frame_ = 0;
+    first_visible_ = -1;
+    last_row_ = -1;
     prev_vsync_ = false;
     audio_.clear();
     framebuffer_.fill(0xFF000000);
-    if (bank_count_ > 1) bank_ = bank_count_ - 1;
+    switch (mapper_) {
+        case Mapper::E0: e0_slice_ = {4, 5, 6, 7}; break;
+        case Mapper::E7: bank_ = 0; e7_ram_page_ = 0; break;
+        case Mapper::FE: bank_ = 0; fe_pending_ = false; break;
+        case Mapper::T3F: bank_ = 0; break;
+        default: bank_ = bank_count_ - 1; break;
+    }
+    cpu_.set_halted(false);
+    cpu_.reset();
 }
 
 void A2600::on_cpu_cycles(int cycles) {
-    tia_.add_cpu_cycles(cycles);
     riot_.tick(cycles);
+    if (pending_count_ == 0) {
+        advance(cycles * 3);
+        return;
+    }
+    // A store's write cycle is the instruction's last one. HMOVE is judged
+    // at the start of that cycle (an HMOVE ending a line must not count as
+    // the next line's early HMOVE); the other registers take the new value
+    // at its end.
+    advance((cycles - 1) * 3);
+    bool wsync = false;
+    for (int i = 0; i < pending_count_; i++) {
+        if (pending_[size_t(i)].reg == 0x2a) tia_.write(0x2a, pending_[size_t(i)].value);
+    }
+    advance(3);
+    for (int i = 0; i < pending_count_; i++) {
+        const PendingWrite w = pending_[size_t(i)];
+        if (w.reg == 0x02) wsync = true;
+        else if (w.reg == 0x03) end_line();  // RSYNC (rarely used)
+        else if (w.reg != 0x2a) tia_.write(w.reg, w.value);
+    }
+    pending_count_ = 0;
+    // WSYNC: RDY holds the CPU until the next line starts.
+    if (wsync && tia_.hclock() != 0) {
+        const int wait = Tia::kColorClocksPerLine - tia_.hclock();
+        advance(wait);
+        riot_.tick(wait / 3);
+    }
+}
+
+void A2600::advance(int clocks) {
+    while (clocks > 0) {
+        const int step = std::min(clocks, Tia::kColorClocksPerLine - tia_.hclock());
+        tia_.run(step);
+        clocks -= step;
+        if (tia_.line_done()) end_line();
+    }
+}
+
+void A2600::end_line() {
+    // Two ticks of the 31.4 kHz audio clock per scanline.
+    tia_.clock_audio();
+    tia_.emit_audio(kCyclesPerLine / 2, kCpuClock, audio_);
+    tia_.clock_audio();
+    tia_.emit_audio(kCyclesPerLine / 2, kCpuClock, audio_);
+
+    // Show the picture from the first line of the frame with VBLANK off, so
+    // blanked lines inside the picture stay black instead of shifting it.
+    const bool vsync = tia_.vsync();
+    if (!tia_.blanked() && first_visible_ < 0) first_visible_ = line_in_frame_;
+    if (first_visible_ >= 0) {
+        const int row = line_in_frame_ - first_visible_;
+        if (row >= 0 && row < kScreenHeight) {
+            const auto& line = tia_.line();
+            std::copy(line.begin(), line.end(), &framebuffer_[size_t(row) * kScreenWidth]);
+            last_row_ = row;
+        }
+    }
+    line_in_frame_++;
+    tia_.begin_line();
+
+    // A new frame starts with VSYNC; runaway frames are cut at 320 lines.
+    if ((vsync && !prev_vsync_ && line_in_frame_ > 1) || line_in_frame_ >= 320) {
+        for (int row = last_row_ + 1; row < kScreenHeight; row++) {
+            std::fill_n(&framebuffer_[size_t(row) * kScreenWidth], kScreenWidth, 0xFF000000);
+        }
+        line_in_frame_ = 0;
+        first_visible_ = -1;
+        last_row_ = -1;
+        frame_done_ = true;
+    }
+    prev_vsync_ = vsync;
 }
 
 uint8_t A2600::read_swcha() const {
-    // Active low: P1 bits 0-3 right/left/down/up, P2 bits 4-7.
+    // Active low: left joystick in D7-D4 (right, left, down, up), right
+    // joystick in D3-D0.
     uint8_t value = 0xff;
     auto apply = [&](const InputState& p, int shift) {
-        if (p.right) value = uint8_t(value & ~(1u << shift));
-        if (p.left) value = uint8_t(value & ~(1u << (shift + 1)));
-        if (p.down) value = uint8_t(value & ~(1u << (shift + 2)));
-        if (p.up) value = uint8_t(value & ~(1u << (shift + 3)));
+        if (p.up) value = uint8_t(value & ~(1u << shift));
+        if (p.down) value = uint8_t(value & ~(1u << (shift + 1)));
+        if (p.left) value = uint8_t(value & ~(1u << (shift + 2)));
+        if (p.right) value = uint8_t(value & ~(1u << (shift + 3)));
     };
-    apply(inputs_.player1, 0);
-    apply(inputs_.player2, 4);
+    apply(inputs_.player1, 4);
+    apply(inputs_.player2, 0);
     return value;
 }
 
@@ -230,9 +401,18 @@ void A2600::touch_hotspot(uint16_t offset) {
             if (offset >= 0xff4 && offset <= 0xffb) next = int(offset - 0xff4);
             break;
         case Mapper::F0:
-            if (offset >= 0xff0 && offset <= 0xff7) next = int(offset - 0xff0);
+            if (offset == 0xff0) next = (bank_ + 1) % bank_count_;
             break;
-        case Mapper::Flat:
+        case Mapper::E0:
+            if (offset >= 0xfe0 && offset <= 0xff7) {
+                e0_slice_[size_t((offset - 0xfe0) >> 3)] = offset & 7;
+            }
+            break;
+        case Mapper::E7:
+            if (offset >= 0xfe0 && offset <= 0xfe7) next = offset & 7;
+            else if (offset >= 0xfe8 && offset <= 0xfeb) e7_ram_page_ = offset & 3;
+            break;
+        default:
             break;
     }
     if (next >= 0 && next < bank_count_) bank_ = next;
@@ -241,33 +421,80 @@ void A2600::touch_hotspot(uint16_t offset) {
 uint8_t A2600::read_cartridge(uint16_t offset) {
     offset &= 0x0fff;
     touch_hotspot(offset);
+    switch (mapper_) {
+        case Mapper::Flat:
+            return rom_[offset & rom_mask_];
+        case Mapper::E0:
+            return rom_[(size_t(e0_slice_[offset >> 10]) << 10 | (offset & 0x3ff)) & rom_mask_];
+        case Mapper::E7:
+            if (offset < 0x800) {
+                if (bank_ == 7) return offset >= 0x400 ? e7_ram_[offset & 0x3ff] : 0xff;
+                return rom_[(size_t(bank_) << 11 | offset) & rom_mask_];
+            }
+            if (offset < 0xa00) {
+                return offset >= 0x900 ? e7_ram_[0x400 + e7_ram_page_ * 256 + (offset & 0xff)] : 0xff;
+            }
+            return rom_[(size_t(7) << 11 | (offset & 0x7ff)) & rom_mask_];
+        case Mapper::T3F:
+            if (offset < 0x800) return rom_[(size_t(bank_) << 11 | offset) & rom_mask_];
+            return rom_[(rom_.size() - 0x800 + (offset & 0x7ff)) & rom_mask_];
+        default:
+            break;
+    }
     if (superchip_) {
-        if (offset < 0x80) return 0;
+        if (offset < 0x80) return 0xff;
         if (offset < 0x100) return superchip_ram_[offset - 0x80];
     }
-    if (mapper_ == Mapper::Flat) return rom_[offset & rom_mask_];
-    const size_t base = size_t(bank_) * 0x1000;
-    return rom_[(base + offset) & rom_mask_];
+    return rom_[(size_t(bank_) * 0x1000 + offset) & rom_mask_];
 }
 
 void A2600::write_cartridge(uint16_t offset, uint8_t value) {
     offset &= 0x0fff;
     touch_hotspot(offset);
+    if (mapper_ == Mapper::E7) {
+        if (offset < 0x400 && bank_ == 7) e7_ram_[offset] = value;
+        else if (offset >= 0x800 && offset < 0x900)
+            e7_ram_[0x400 + e7_ram_page_ * 256 + (offset & 0xff)] = value;
+        return;
+    }
     if (superchip_ && offset < 0x80) superchip_ram_[offset] = value;
 }
 
-uint8_t A2600::read_byte(uint16_t address) {
-    address &= 0x1fff;
-    if (address & 0x1000) return read_cartridge(address);
-    if (address & 0x80) {
-        if (address & 0x200) return riot_.io_read(uint8_t(address & 0x1f));
-        return riot_.ram_read(uint8_t(address & 0x7f));
+uint8_t A2600::read_byte(uint16_t full_address) {
+    const uint16_t address = full_address & 0x1fff;
+    uint8_t value;
+    if (address & 0x1000) value = read_cartridge(address);
+    else if (address & 0x80) {
+        if (address & 0x200) value = riot_.io_read(uint8_t(address & 0x1f));
+        else value = riot_.ram_read(uint8_t(address & 0x7f));
+    } else {
+        value = tia_.read(uint8_t(address & 0x0f));
     }
-    return tia_.read(uint8_t(address & 0x0f));
+    if (mapper_ == Mapper::FE && fe_jsr_) {
+        fe_jsr_ = false;
+        bank_ = (full_address & 0x2000) ? 0 : 1;
+        if (address & 0x1000) value = read_cartridge(address);
+    } else if (mapper_ == Mapper::FE) {
+        // RTS pulls the return address: the byte after the $01FE access is
+        // its high byte, whose bit 5 (address bit 13) picks the bank.
+        if (fe_pending_) {
+            bank_ = (value & 0x20) ? 0 : 1;
+            fe_pending_ = false;
+        } else if (full_address == 0x01fe) {
+            fe_pending_ = true;
+        }
+    }
+    return value;
 }
 
-void A2600::write_byte(uint16_t address, uint8_t value) {
-    address &= 0x1fff;
+void A2600::write_byte(uint16_t full_address, uint8_t value) {
+    const uint16_t address = full_address & 0x1fff;
+    if (mapper_ == Mapper::FE) {
+        // JSR pushes the return address to $01FF/$01FE and then jumps: the
+        // target's address bit 13 picks the bank.
+        fe_pending_ = false;
+        fe_jsr_ = full_address == 0x01fe;
+    }
     if (address & 0x1000) {
         write_cartridge(address, value);
         return;
@@ -277,27 +504,24 @@ void A2600::write_byte(uint16_t address, uint8_t value) {
         else riot_.ram_write(uint8_t(address & 0x7f), value);
         return;
     }
-    tia_.write(uint8_t(address & 0x3f), value);
-    if (tia_.wsync()) cpu_.set_halted(true);
+    // Tigervision: any write to $00-$3F selects the 2K bank at $1000.
+    if (mapper_ == Mapper::T3F && (address & 0x1fc0) == 0) {
+        bank_ = value % std::max(1, bank_count_);
+    }
+    if (pending_count_ < int(pending_.size())) {
+        pending_[size_t(pending_count_++)] = {uint8_t(address & 0x3f), value};
+    } else {
+        tia_.write(uint8_t(address & 0x3f), value);
+    }
 }
 
 void A2600::run_frame() {
-    for (int line = 0; line < kScanlines; line++) {
-        tia_.begin_line();
-        tia_.clear_wsync();
-        cpu_.set_halted(false);
-        cpu_.run(kCyclesPerLine);
-        tia_.clock_audio();
-        tia_.emit_audio(kCyclesPerLine, kCpuClock, audio_);
-
-        const bool vsync = tia_.vsync();
-        if (vsync && !prev_vsync_) visible_y_ = 0;
-        prev_vsync_ = vsync;
-        if (!tia_.blanked() && visible_y_ < kScreenHeight) {
-            tia_.render_line(&framebuffer_[size_t(visible_y_) * kScreenWidth]);
-            visible_y_++;
-        }
-    }
+    frame_done_ = false;
+    // One frame is everything up to the next VSYNC; cap the work in case a
+    // cartridge never strobes it.
+    const int limit = kCyclesPerLine * 330;
+    int executed = 0;
+    while (!frame_done_ && executed < limit) executed += cpu_.run(1);
 }
 
 }  // namespace dsp

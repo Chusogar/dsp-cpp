@@ -44,7 +44,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Lynx Suzy / Mikey | new | Sprite blitter, math coprocessor, timers, LCD DMA, 4-channel sound |
 | Atari Lynx driver | new | 64 KiB DRAM, MAPCTL, LNX/LYX carts, 160×102 LCD |
 | TIA | new | NTSC 160×192 playfield/players/missiles/ball, collisions, two-channel audio |
-| Atari 2600 driver | new | 6507 + TIA + RIOT 6532, 2K/4K/F8/F6/F4(+Superchip) cartridges |
+| Atari 2600 driver | new | 6507 + TIA + RIOT 6532, 2K/4K/F8/F6/F4(+Superchip)/E0/E7/FE/3F cartridges |
 | YM2151 FM, POKEY | `src/snd/fm_2151.pas`, `src/snd/pokey.pas` | Gauntlet sound board |
 | SLAPSTIC | `src/arcade/misc/slapstic.pas` | Types 101-108, bank switched protected ROM |
 | Atari motion objects | `src/arcade/misc/atari_mo.pas` | SLIP based sprite lists |
@@ -794,16 +794,28 @@ The VCS has no BIOS. A 6507 (6502 with a 13-bit bus and no IRQ/NMI pins) runs at
 MOS **6532** RIOT (128 bytes RAM, joystick ports, console switches, interval
 timer). Cartridges occupy `$1000–$1FFF`. 2K dumps are mirrored, 4K is mapped
 straight in, and 8K/16K/32K/64K images use the common F8/F6/F4/F0 hotspots.
-A 128-byte Superchip RAM window is enabled for `*sc*` names or dumps whose size
-is a power of two plus 128.
+Parker Brothers E0, M Network E7 (BurgerTime), Activision FE and Tigervision
+3F carts are recognised by their bank-switching code (Stella's signatures).
+A 128-byte Superchip RAM window is enabled for `*sc*` names, dumps whose size
+is a power of two plus 128, or images whose RAM window is filler in every bank.
+
+The TIA runs one colour clock at a time with the real chip's register write
+delays: players, missiles and ball use divide-by-160 position counters (so
+mid-line RESPx tricks and NUSIZ copies behave as on hardware), HMOVE adds
+extra counter clocks only during HBLANK and draws the 8-pixel black comb, and
+Activision's late HMOVE works. A frame is everything between two VSYNCs; the
+picture starts at the first line with VBLANK off. Beamrider matches Stella
+pixel for pixel. The palette is Stella's NTSC palette.
 
 ```bash
 ./build/dsp --game a2600 /path/to/game.bin
 ./build/dsp --game vcs /path/to/game.a26 --screenshot a2600.bmp --frames 120
 ```
 
-Player 1/2 sticks are the joysticks (active low on SWCHA). Fire is `button1`
-(INPT4/INPT5). Start is RESET, Select is SELECT. DIP bank 0 bit 3 is colour
+Player 1/2 sticks are the left/right joysticks (active low on SWCHA: the left
+stick is D7–D4 = right, left, down, up; the right stick D3–D0). Keyboard:
+arrows + Ctrl/Space for the left stick, `1` is RESET (start a game), `3` is
+SELECT. Fire is `button1` (INPT4/INPT5). DIP bank 0 bit 3 is colour
 (default on); bits 6–7 are the P0/P1 difficulty switches.
 
 ### Atari Lynx
