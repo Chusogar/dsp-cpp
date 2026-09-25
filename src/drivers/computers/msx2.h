@@ -46,6 +46,10 @@ public:
     const uint32_t* framebuffer() const override { return vdp_.framebuffer(); }
     int screen_width() const override { return V9938::kScreenWidth; }
     int screen_height() const override { return V9938::kScreenHeight; }
+    // The framebuffer is 512 half pixels by 212 lines: shown at 512x424
+    // (each line doubled) so a 256-pixel mode has square pixels, as on a TV.
+    int display_width() const override { return V9938::kScreenWidth; }
+    int display_height() const override { return V9938::kScreenHeight * 2; }
     double frames_per_second() const override {
         return double(kMainClock) / kCyclesPerLine / scanlines();
     }

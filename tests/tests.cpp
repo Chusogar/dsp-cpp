@@ -5415,6 +5415,8 @@ void test_msx2_missing_roms_mapper_and_disk() {
           "MSX2 init reports why the BIOS is missing");
     check(std::strcmp(missing.title(), "MSX2") == 0, "MSX2 title");
     check(missing.screen_width() == 512 && missing.screen_height() == 212, "MSX2 screen is 512x212");
+    check(missing.display_width() == 512 && missing.display_height() == 424,
+          "MSX2 is shown at 512x424 (square pixels, 4:3-ish)");
     check(missing.uses_keyboard(), "MSX2 reads the host keyboard");
 
     const std::string dir = "/tmp/dsp-msx2-test";

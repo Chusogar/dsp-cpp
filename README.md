@@ -596,6 +596,10 @@ decoded at both type 1 (`$7FF8`) and type 2 (`$7FB8`) addresses.
 The host keyboard is the MSX matrix (same layout as MSX1). Joysticks are on the
 AY-3-8910 port A. F6 toggles cassette play when a `.cas`/`.tzx` is loaded.
 
+The V9938 picture is 512 half pixels by 212 lines; the window shows it at
+512×424 (lines doubled) so 256-pixel modes have square pixels. The default
+window is 1024×848 (scale 2); `--scale N` changes it.
+
 **Cartridges** (`.rom`, `.mx1`, `.mx2`, plain or zipped) are loaded with
 `--tape`. The mapper is picked from the Z80 `LD (nn),A` writes to the mapper
 registers, as openMSX does: Konami (Metal Gear, Nemesis: $6000/$8000/$A000,

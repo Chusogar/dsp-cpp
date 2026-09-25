@@ -86,6 +86,12 @@ public:
     virtual const uint32_t* framebuffer() const = 0;
     virtual int screen_width() const = 0;
     virtual int screen_height() const = 0;
+    // Size the picture should be shown at on the host (window and aspect
+    // ratio).  Defaults to the framebuffer size; drivers whose framebuffer
+    // pixels are not square (e.g. the MSX2's 512-wide half pixels on 212
+    // lines) return the corrected size and the front end scales to it.
+    virtual int display_width() const { return screen_width(); }
+    virtual int display_height() const { return screen_height(); }
     virtual double frames_per_second() const = 0;
 
     // Consumes the audio samples generated so far (mono, signed 16 bit).
