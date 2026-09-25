@@ -51,13 +51,20 @@ public:
 
     uint16_t debug_pc() const { return cpu_.pc(); }
     int debug_bank() const { return bank_; }
+    const char* mapper_name() const;
 
 private:
-    enum class Mapper { Flat, F8, F6, F4, F0 };
+    // Flat 2K/4K; Atari F8/F6/F4 (+Superchip RAM); Parker Bros E0;
+    // M Network E7; Activision FE; Tigervision 3F; Atari F0 (Megaboy).
+    enum class Mapper { Flat, F8, F6, F4, F0, E0, E7, FE, T3F };
 
     uint8_t read_byte(uint16_t address);
     void write_byte(uint16_t address, uint8_t value);
     void on_cpu_cycles(int cycles);
+    // Advance the TIA (and the frame/line bookkeeping) by colour clocks.
+    void advance(int clocks);
+    void end_line();
+    void detect_mapper(const std::vector<uint8_t>& data, size_t size);
 
     uint8_t read_cartridge(uint16_t offset);
     void write_cartridge(uint16_t offset, uint8_t value);
@@ -82,12 +89,29 @@ private:
     int bank_count_ = 1;
     bool superchip_ = false;
     std::array<uint8_t, 128> superchip_ram_{};
+    // E0: three switchable 1K slices, the fourth fixed to the last 1K.
+    std::array<int, 4> e0_slice_{};
+    // E7: 2K ROM bank (or 1K RAM when bank 7) at $1000, 256-byte RAM page.
+    int e7_ram_page_ = 0;
+    std::array<uint8_t, 2048> e7_ram_{};
+    // FE: bank chosen by the high byte following a stack access at $01FE.
+    bool fe_pending_ = false;
+    bool fe_jsr_ = false;
+
+    // TIA register writes wait for the end of the CPU instruction: the
+    // 6502 core reports an instruction's cycles only after it has executed.
+    struct PendingWrite { uint8_t reg, value; };
+    std::array<PendingWrite, 4> pending_{};
+    int pending_count_ = 0;
 
     MachineInputs inputs_{};
     uint8_t dips_ = 0x08;  // colour, amateur difficulty
 
-    int visible_y_ = 0;
+    int line_in_frame_ = 0;
+    int first_visible_ = -1;
+    int last_row_ = -1;
     bool prev_vsync_ = false;
+    bool frame_done_ = false;
     std::array<uint32_t, kScreenWidth * kScreenHeight> framebuffer_{};
     std::vector<int16_t> audio_;
 };

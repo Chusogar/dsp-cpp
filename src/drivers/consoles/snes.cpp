@@ -116,7 +116,16 @@ void Snes::reset() {
     irq_pending_ = false;
     nmi_pending_ = false;
     line_ = 0;
+    line_cycle_ = 0;
+    wrmpya_ = 0xff;
+    wrdiv_ = 0xffff;
+    rddiv_ = rdmpy_ = 0;
+    ophct_ = opvct_ = 0;
+    ophct_high_ = opvct_high_ = false;
+    counter_latched_ = false;
     wram_addr_ = 0;
+    extra_clocks_ = 0;
+    in_dma_ = false;
     pad1_ = pad1_shift_ = 0;
     joy_latch_ = 0;
     aram_.fill(0);
@@ -151,7 +160,27 @@ uint32_t Snes::map_rom(uint32_t addr) const {
     return a % rom_.size();
 }
 
+void Snes::account_access(uint32_t addr) {
+    if (in_dma_) return;
+    const uint8_t bank = uint8_t(addr >> 16);
+    const uint16_t off = uint16_t(addr);
+    const bool fast_rom = (bank & 0x80) && (memsel_ & 1);
+    int clocks;
+    if (!(bank & 0x40)) {
+        if (off < 0x2000) clocks = 8;
+        else if (off < 0x4000) clocks = 6;
+        else if (off < 0x4200) clocks = 12;
+        else if (off < 0x6000) clocks = 6;
+        else if (off < 0x8000) clocks = 8;
+        else clocks = fast_rom ? 6 : 8;
+    } else {
+        clocks = (bank == 0x7e || bank == 0x7f) ? 8 : (fast_rom ? 6 : 8);
+    }
+    extra_clocks_ += clocks - 6;
+}
+
 uint8_t Snes::cpu_read(uint32_t addr) {
+    account_access(addr);
     const uint8_t bank = uint8_t(addr >> 16);
     const uint16_t off = uint16_t(addr);
     auto force_7000 = [](uint16_t o) { return (o & 0xfffe) == 0x7000; };
@@ -187,6 +216,7 @@ uint8_t Snes::cpu_read(uint32_t addr) {
 }
 
 void Snes::cpu_write(uint32_t addr, uint8_t value) {
+    account_access(addr);
     const uint8_t bank = uint8_t(addr >> 16);
     const uint16_t off = uint16_t(addr);
     open_bus_ = value;
@@ -289,7 +319,37 @@ void Snes::run_apu(int main_cycles) {
     }
 }
 
+int Snes::current_hdot() const {
+    // 1364 master clocks per line, 4 per dot; the CPU cycle count assumes
+    // 6 master clocks per cycle.
+    return std::min(339, line_cycle_ * 6 / 4);
+}
+
 uint8_t Snes::read_io(uint16_t addr) {
+    switch (addr) {
+        case 0x2137:   // SLHV: latch the H/V counters
+            ophct_ = uint16_t(current_hdot());
+            opvct_ = uint16_t(line_);
+            counter_latched_ = true;
+            return open_bus_;
+        case 0x213c: {
+            const uint8_t v = ophct_high_ ? uint8_t((ophct_ >> 8) & 1) : uint8_t(ophct_);
+            ophct_high_ = !ophct_high_;
+            return v;
+        }
+        case 0x213d: {
+            const uint8_t v = opvct_high_ ? uint8_t((opvct_ >> 8) & 1) : uint8_t(opvct_);
+            opvct_high_ = !opvct_high_;
+            return v;
+        }
+        case 0x213f: {   // STAT78: reading resets the counter flip-flops
+            const uint8_t v = uint8_t((ppu_.read(addr) & 0xbf) | (counter_latched_ ? 0x40 : 0));
+            ophct_high_ = opvct_high_ = false;
+            counter_latched_ = false;
+            return v;
+        }
+        default: break;
+    }
     if (addr >= 0x2100 && addr <= 0x213f) return ppu_.read(addr);
     if (addr >= 0x2140 && addr <= 0x217f) return apu_read(addr & 3);
     switch (addr) {
@@ -306,10 +366,19 @@ uint8_t Snes::read_io(uint16_t addr) {
         case 0x4211: {   // TIMEUP: reading acknowledges the timer interrupt
             const uint8_t v = uint8_t(irq_pending_ ? 0x80 : 0);
             irq_pending_ = false;
+            cpu_.set_irq(IrqLine::Clear);
             return v;
         }
-        case 0x4212:   // HVBJOY: vblank, hblank and the auto-joypad busy bit
-            return uint8_t((in_vblank_ ? 0x80 : 0) | (line_ >= kVisibleLines ? 0x40 : 0));
+        case 0x4212: {   // HVBJOY: vblank, hblank and the auto-joypad busy bit
+            const int dot = current_hdot();
+            const bool hblank = dot < 22 || dot >= 274;
+            const bool joy_busy = (nmitimen_ & 1) && line_ >= 225 && line_ <= 227;
+            return uint8_t((in_vblank_ ? 0x80 : 0) | (hblank ? 0x40 : 0) | (joy_busy ? 0x01 : 0));
+        }
+        case 0x4214: return uint8_t(rddiv_);
+        case 0x4215: return uint8_t(rddiv_ >> 8);
+        case 0x4216: return uint8_t(rdmpy_);
+        case 0x4217: return uint8_t(rdmpy_ >> 8);
         case 0x4213: return wrio_;                  // RDIO echoes back WRIO
         case 0x4218: return uint8_t(pad1_);         // JOY1L
         case 0x4219: return uint8_t(pad1_ >> 8);    // JOY1H
@@ -338,7 +407,15 @@ uint8_t Snes::read_io(uint16_t addr) {
     }
 }
 
+bool Snes::vram_open_after(int master_clocks) const {
+    // Where the beam will be `master_clocks` from now (1364 per line).
+    const int clocks = line_cycle_ * 6 + extra_clocks_ + master_clocks;
+    const int line = (line_ + clocks / 1364) % kLinesTotal;
+    return line > kVisibleLines;
+}
+
 void Snes::write_io(uint16_t addr, uint8_t value) {
+    if (addr == 0x2118 || addr == 0x2119) ppu_.set_vram_open(in_dma_ ? dma_vram_open_ : in_vblank_);
     if (addr >= 0x2100 && addr <= 0x213f) { ppu_.write(addr, value); return; }
     if (addr >= 0x2140 && addr <= 0x217f) { apu_write(addr & 3, value); return; }
     switch (addr) {
@@ -356,10 +433,39 @@ void Snes::write_io(uint16_t addr, uint8_t value) {
             return;
         case 0x4200:
             // Disabling both timer sources also drops a pending timer IRQ.
-            if ((value & 0x30) == 0) irq_pending_ = false;
+            if ((value & 0x30) == 0) {
+                irq_pending_ = false;
+                cpu_.set_irq(IrqLine::Clear);
+            }
+            // Enabling NMI during vblank with the flag still set fires it.
+            if (!(nmitimen_ & 0x80) && (value & 0x80) && (rdnmi_ & 0x80)) cpu_.set_nmi(IrqLine::Pulse);
             nmitimen_ = value;
             return;
-        case 0x4201: wrio_ = value; return;
+        case 0x4201:
+            // A 1->0 transition on bit 7 latches the H/V counters.
+            if ((wrio_ & 0x80) && !(value & 0x80)) {
+                ophct_ = uint16_t(current_hdot());
+                opvct_ = uint16_t(line_);
+                counter_latched_ = true;
+            }
+            wrio_ = value;
+            return;
+        case 0x4202: wrmpya_ = value; return;
+        case 0x4203:
+            rdmpy_ = uint16_t(wrmpya_ * value);
+            rddiv_ = value;   // the multiplier also lands in RDDIV
+            return;
+        case 0x4204: wrdiv_ = uint16_t((wrdiv_ & 0xff00) | value); return;
+        case 0x4205: wrdiv_ = uint16_t((wrdiv_ & 0x00ff) | (value << 8)); return;
+        case 0x4206:
+            if (value == 0) {
+                rddiv_ = 0xffff;
+                rdmpy_ = wrdiv_;
+            } else {
+                rddiv_ = uint16_t(wrdiv_ / value);
+                rdmpy_ = uint16_t(wrdiv_ % value);
+            }
+            return;
         case 0x4207: htime_ = uint16_t((htime_ & 0x100) | value); return;
         case 0x4208: htime_ = uint16_t((htime_ & 0x0ff) | ((value & 1) << 8)); return;
         case 0x4209: vtime_ = uint16_t((vtime_ & 0x100) | value); return;
@@ -408,16 +514,22 @@ void Snes::run_dma(uint8_t channels) {
     };
     static const int kPatternLen[8] = {1, 2, 2, 4, 4, 4, 2, 4};
 
+    // DMA halts the CPU: 8 master clocks a byte plus 8 per channel.
+    in_dma_ = true;
     for (int ch = 0; ch < 8; ch++) {
         if (!(channels & (1 << ch))) continue;
         DmaChannel& c = dma_[size_t(ch)];
         const int mode = c.control & 7;
         const bool to_cpu = (c.control & 0x80) != 0;
+        const int bytes = int(c.count ? c.count : 0x10000);
         const int step = (c.control & 0x08) ? 0 : ((c.control & 0x10) ? -1 : 1);
         uint32_t count = c.count ? c.count : 0x10000;
         int unit = 0;
+        int done = 0;
         while (count--) {
             const uint16_t reg = uint16_t(0x2100 + c.dest + kPattern[mode][unit]);
+            // Long transfers run on into the picture, where VRAM drops writes.
+            dma_vram_open_ = vram_open_after(8 * done++);
             if (to_cpu) {
                 cpu_write(c.src, read_io(reg));
             } else {
@@ -426,8 +538,10 @@ void Snes::run_dma(uint8_t channels) {
             c.src = (c.src & 0xff0000) | uint16_t(uint16_t(c.src) + step);
             unit = (unit + 1) % kPatternLen[mode];
         }
+        extra_clocks_ += 8 + 8 * bytes;
         c.count = 0;
     }
+    in_dma_ = false;
 }
 
 void Snes::run_hdma_init() {
@@ -442,6 +556,9 @@ void Snes::run_hdma_init() {
 }
 
 void Snes::run_hdma_line() {
+    if (hdmaen_) extra_clocks_ += 18;
+    in_dma_ = true;
+    struct Guard { bool& f; ~Guard() { f = false; } } guard{in_dma_};
     static const uint8_t kPattern[8][4] = {
         {0, 0, 0, 0}, {0, 1, 0, 1}, {0, 0, 0, 0}, {0, 0, 1, 1},
         {0, 1, 2, 3}, {0, 1, 0, 1}, {0, 0, 0, 0}, {0, 0, 1, 1},
@@ -479,6 +596,7 @@ void Snes::run_hdma_line() {
                 write_io(uint16_t(0x2100 + c.dest + kPattern[mode][i]),
                          cpu_read(addr + uint32_t(i)));
             }
+            extra_clocks_ += 8 + 8 * kPatternLen[mode];
             if (indirect) c.indirect = uint16_t(c.indirect + kPatternLen[mode]);
             else c.table = uint16_t(c.table + kPatternLen[mode]);
         }
@@ -487,29 +605,66 @@ void Snes::run_hdma_line() {
     }
 }
 
+void Snes::raise_timer_irq() {
+    irq_pending_ = true;
+    cpu_.set_irq(IrqLine::Assert);   // held until $4211 is read
+}
+
+void Snes::run_cpu_line() {
+    // H/V timer IRQ: $4200 bits 4-5 select H (every line at HTIME), V (at
+    // VTIME, dot 0) or both. The line is split at the trigger point.
+    const int mode = (nmitimen_ >> 4) & 3;
+    int trigger = -1;
+    if (mode == 1) trigger = htime_ <= 339 ? htime_ : -1;
+    else if (mode == 2) trigger = line_ == vtime_ ? 0 : -1;
+    else if (mode == 3) trigger = (line_ == vtime_ && htime_ <= 339) ? htime_ : -1;
+    const int trigger_cycle = trigger < 0 ? -1 : trigger * 4 / 6;
+
+    // line_cycle_ carries the previous line's overshoot.
+    bool fired = false;
+    while (line_cycle_ < kCyclesPerLine) {
+        if (!fired && trigger_cycle >= 0 && line_cycle_ >= trigger_cycle) {
+            raise_timer_irq();
+            fired = true;
+        }
+        int slice = kCyclesPerLine - line_cycle_;
+        if (!fired && trigger_cycle > line_cycle_) slice = std::min(slice, trigger_cycle - line_cycle_);
+        int ran = cpu_.run(std::min(slice, 32));
+        if (ran <= 0) break;
+        ran += extra_clocks_ / 6;
+        extra_clocks_ %= 6;
+        // A long DMA can stall the CPU across whole frames; the stall is
+        // paid off line by line rather than skipping NMIs.
+        line_cycle_ += ran;
+        run_apu(ran);
+    }
+    line_cycle_ -= kCyclesPerLine;
+    if (line_cycle_ < 0) line_cycle_ = 0;
+}
+
 void Snes::run_frame() {
-    in_vblank_ = false;
-    run_hdma_init();
+    // V=0 is not displayed; lines 1-224 are the picture (rows 0-223) and
+    // vertical blank starts at V=225. HDMA is set up at the top of the frame
+    // and transfers during the horizontal blank of lines 0-224, so what it
+    // writes at the end of one line shows on the next.
     for (line_ = 0; line_ < kLinesTotal; line_++) {
-        if (line_ == kVisibleLines) {
+        if (line_ == 0) {
+            in_vblank_ = false;
+            rdnmi_ &= uint8_t(~0x80);
+            run_hdma_init();
+        }
+        if (line_ == kVisibleLines + 1) {
             in_vblank_ = true;
+            ppu_.start_vblank();
             rdnmi_ |= 0x80;
-            if (nmitimen_ & 0x80) cpu_.set_nmi(IrqLine::Assert);
+            if (nmitimen_ & 0x80) cpu_.set_nmi(IrqLine::Pulse);
             if (nmitimen_ & 0x01) pad1_shift_ = pad1_;   // auto joypad read
         }
-        if (line_ < kVisibleLines) {
-            ppu_.render_line(line_, &framebuffer_[size_t(line_) * kWidth]);
-            run_hdma_line();
+        if (line_ >= 1 && line_ <= kVisibleLines) {
+            ppu_.render_line(line_, &framebuffer_[size_t(line_ - 1) * kWidth]);
         }
-        int remaining = kCyclesPerLine;
-        while (remaining > 0) {
-            const int ran = cpu_.run(std::min(remaining, 64));
-            if (ran <= 0) break;
-            remaining -= ran;
-            run_apu(ran);
-        }
-        // Released only after the CPU has had a line to take it.
-        if (line_ == kVisibleLines) cpu_.set_nmi(IrqLine::Clear);
+        run_cpu_line();
+        if (line_ <= kVisibleLines) run_hdma_line();
     }
 }
 

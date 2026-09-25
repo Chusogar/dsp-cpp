@@ -47,6 +47,8 @@ public:
     const char* title() const override { return "Super Nintendo"; }
     bool load_media(const std::string& path, std::string* error) override;
 
+    uint8_t debug_wram(uint32_t addr) const { return wram_[addr & 0x1ffff]; }
+
 private:
     uint8_t cpu_read(uint32_t addr);
     void cpu_write(uint32_t addr, uint8_t value);
@@ -99,7 +101,31 @@ private:
     bool irq_pending_ = false;    // $4211 TIMEUP, cleared when read
     bool nmi_pending_ = false;
     bool in_vblank_ = false;
-    int line_ = 0;
+    int line_ = 0;               // V counter (0..261); lines 1..224 are shown
+    int line_cycle_ = 0;         // CPU cycles into the current line
+
+    // Hardware multiplier / divider ($4202-$4206 -> $4214-$4217).
+    uint8_t wrmpya_ = 0xff;
+    uint16_t wrdiv_ = 0xffff;
+    uint16_t rddiv_ = 0;
+    uint16_t rdmpy_ = 0;
+
+    // PPU H/V counter latch ($2137 -> $213C/$213D, flip-flops reset by $213F).
+    uint16_t ophct_ = 0, opvct_ = 0;
+    bool ophct_high_ = false, opvct_high_ = false;
+    bool counter_latched_ = false;
+
+    // Master clocks beyond the 6 per CPU cycle the core assumes: slow ROM,
+    // WRAM and SRAM take 8, the $4000-$41FF joypad ports 12, DMA 8 a byte.
+    int extra_clocks_ = 0;
+    bool in_dma_ = false;
+    bool dma_vram_open_ = true;
+    bool vram_open_after(int master_clocks) const;
+    void account_access(uint32_t addr);
+
+    void run_cpu_line();
+    void raise_timer_irq();
+    int current_hdot() const;
 
     // Controller shift registers.
     uint16_t pad1_ = 0;
