@@ -69,6 +69,7 @@ private:
     WriteHandler write_;
     uint16_t pc_ = 0xffc0;
     Psw psw_;
+    bool halted_ = false;   // SLEEP / STOP
 };
 
 }  // namespace dsp

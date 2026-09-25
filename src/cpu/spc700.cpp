@@ -24,6 +24,7 @@ const uint8_t kCycles[256] = {
 }  // namespace
 
 void Spc700::reset() {
+    halted_ = false;
     a = x = y = 0;
     sp = 0xef;
     psw_ = Psw{};
@@ -83,6 +84,7 @@ void Spc700::branch(bool take, int& cycles) {
 }
 
 int Spc700::step() {
+    if (halted_) return 2;
     const uint8_t op = fetch();
     int cycles = kCycles[op];
 
@@ -93,13 +95,15 @@ int Spc700::step() {
     auto addr_abs = [&]() { return fetch16(); };
     auto addr_absx = [&]() { return uint16_t(fetch16() + x); };
     auto addr_absy = [&]() { return uint16_t(fetch16() + y); };
+    // Pointers and 16-bit operands in the direct page wrap inside it.
+    auto dp_next = [&](uint16_t t) { return uint16_t((t & 0xff00) | uint8_t(t + 1)); };
     auto addr_idx = [&]() {           // [dp+X] : pointer then fetch
         const uint16_t p = dp(uint8_t(fetch() + x));
-        return uint16_t(rd(p) | (rd(uint16_t(p + 1)) << 8));
+        return uint16_t(rd(p) | (rd(dp_next(p)) << 8));
     };
     auto addr_idy = [&]() {           // [dp]+Y
         const uint16_t p = addr_dp();
-        return uint16_t((rd(p) | (rd(uint16_t(p + 1)) << 8)) + y);
+        return uint16_t((rd(p) | (rd(dp_next(p)) << 8)) + y);
     };
     // dp.bit addressing packs the bit number into the opcode's top three bits.
     auto bit_addr = [&](uint8_t& bit) {
@@ -110,7 +114,7 @@ int Spc700::step() {
 
     switch (op) {
         case 0x00: break;                                    // NOP
-        case 0xef: case 0xff: pc_--; break;                  // SLEEP / STOP: hold
+        case 0xef: case 0xff: halted_ = true; break;         // SLEEP / STOP
         case 0x8f: { const uint8_t v = fetch(); wr(addr_dp(), v); break; }   // MOV dp,#i
         case 0xfa: { const uint16_t s = addr_dp(); wr(addr_dp(), rd(s)); break; }  // MOV dd,ds
 
@@ -236,20 +240,20 @@ int Spc700::step() {
 
         // --- 16-bit (YA and word memory) ---
         case 0xba: { const uint16_t t = addr_dp();            // MOVW YA,dp
-                     a = rd(t); y = rd(uint16_t(t + 1));
+                     a = rd(t); y = rd(dp_next(t));
                      setnz16(uint16_t(a | (y << 8))); break; }
         case 0xda: { const uint16_t t = addr_dp();            // MOVW dp,YA
-                     wr(t, a); wr(uint16_t(t + 1), y); break; }
+                     wr(t, a); wr(dp_next(t), y); break; }
         case 0x3a: { const uint16_t t = addr_dp();            // INCW dp
-                     uint16_t v = uint16_t(rd(t) | (rd(uint16_t(t + 1)) << 8));
-                     v++; wr(t, uint8_t(v)); wr(uint16_t(t + 1), uint8_t(v >> 8));
+                     uint16_t v = uint16_t(rd(t) | (rd(dp_next(t)) << 8));
+                     v++; wr(t, uint8_t(v)); wr(dp_next(t), uint8_t(v >> 8));
                      setnz16(v); break; }
         case 0x1a: { const uint16_t t = addr_dp();            // DECW dp
-                     uint16_t v = uint16_t(rd(t) | (rd(uint16_t(t + 1)) << 8));
-                     v--; wr(t, uint8_t(v)); wr(uint16_t(t + 1), uint8_t(v >> 8));
+                     uint16_t v = uint16_t(rd(t) | (rd(dp_next(t)) << 8));
+                     v--; wr(t, uint8_t(v)); wr(dp_next(t), uint8_t(v >> 8));
                      setnz16(v); break; }
         case 0x7a: { const uint16_t t = addr_dp();            // ADDW YA,dp
-                     const uint16_t m = uint16_t(rd(t) | (rd(uint16_t(t + 1)) << 8));
+                     const uint16_t m = uint16_t(rd(t) | (rd(dp_next(t)) << 8));
                      const uint16_t ya = uint16_t(a | (y << 8));
                      const uint32_t r = uint32_t(ya) + m;
                      psw_.c = r > 0xffff;
@@ -257,7 +261,7 @@ int Spc700::step() {
                      psw_.v = (~(ya ^ m) & (ya ^ uint16_t(r)) & 0x8000) != 0;
                      a = uint8_t(r); y = uint8_t(r >> 8); setnz16(uint16_t(r)); break; }
         case 0x9a: { const uint16_t t = addr_dp();            // SUBW YA,dp
-                     const uint16_t m = uint16_t(rd(t) | (rd(uint16_t(t + 1)) << 8));
+                     const uint16_t m = uint16_t(rd(t) | (rd(dp_next(t)) << 8));
                      const uint16_t ya = uint16_t(a | (y << 8));
                      const int32_t r = int32_t(ya) - m;
                      psw_.c = r >= 0;
@@ -265,18 +269,25 @@ int Spc700::step() {
                      psw_.v = ((ya ^ m) & (ya ^ uint16_t(r)) & 0x8000) != 0;
                      a = uint8_t(r); y = uint8_t(uint16_t(r) >> 8); setnz16(uint16_t(r)); break; }
         case 0x5a: { const uint16_t t = addr_dp();            // CMPW YA,dp
-                     const uint16_t m = uint16_t(rd(t) | (rd(uint16_t(t + 1)) << 8));
+                     const uint16_t m = uint16_t(rd(t) | (rd(dp_next(t)) << 8));
                      const uint16_t ya = uint16_t(a | (y << 8));
                      const int32_t r = int32_t(ya) - m;
                      psw_.c = r >= 0; setnz16(uint16_t(r)); break; }
         case 0xcf: { const uint16_t r = uint16_t(a) * y;      // MUL YA
                      a = uint8_t(r); y = uint8_t(r >> 8); setnz(y); break; }
         case 0x9e: {                                          // DIV YA,X
-                     const uint16_t ya = uint16_t(a | (y << 8));
-                     psw_.h = (x & 0x0f) <= (y & 0x0f);
+                     // The hardware's shift-subtract divider: results past
+                     // 8 bits come out as below (bsnes).
+                     const uint32_t ya = uint32_t(a | (y << 8));
+                     psw_.h = (y & 0x0f) >= (x & 0x0f);
                      psw_.v = y >= x;
-                     if (x == 0) { a = 0xff; y = 0; }
-                     else { a = uint8_t(ya / x); y = uint8_t(ya % x); }
+                     if (y < (x << 1)) {
+                         a = uint8_t(ya / x);
+                         y = uint8_t(ya % x);
+                     } else {
+                         a = uint8_t(255 - (ya - (uint32_t(x) << 9)) / (256 - x));
+                         y = uint8_t(x + (ya - (uint32_t(x) << 9)) % (256 - x));
+                     }
                      setnz(a); break; }
 
         // --- branches ---
@@ -289,7 +300,7 @@ int Spc700::step() {
         case 0x50: branch(!psw_.v, cycles); break;
         case 0x30: branch(psw_.n, cycles); break;
         case 0x10: branch(!psw_.n, cycles); break;
-        case 0x2e: { const uint8_t m = rd(addr_dp()); branch(a == m, cycles); break; }  // CBNE? (BEQ dp)
+        case 0x2e: { const uint8_t m = rd(addr_dp()); branch(a != m, cycles); break; }  // CBNE dp,rel
         case 0xde: { const uint8_t m = rd(addr_dpx()); branch(a != m, cycles); break; }
         case 0x6e: { const uint16_t t = addr_dp();            // DBNZ dp,rel
                      const uint8_t v = uint8_t(rd(t) - 1); wr(t, v);
@@ -299,6 +310,14 @@ int Spc700::step() {
         // --- calls and returns ---
         case 0x3f: { const uint16_t t = fetch16();            // CALL
                      push(uint8_t(pc_ >> 8)); push(uint8_t(pc_)); pc_ = t; break; }
+        case 0x01: case 0x11: case 0x21: case 0x31: case 0x41: case 0x51: case 0x61: case 0x71:
+        case 0x81: case 0x91: case 0xa1: case 0xb1: case 0xc1: case 0xd1: case 0xe1: case 0xf1: {
+            // TCALL n: call through the vector table at $FFDE - 2n.
+            const uint16_t v = uint16_t(0xffde - 2 * (op >> 4));
+            push(uint8_t(pc_ >> 8)); push(uint8_t(pc_));
+            pc_ = uint16_t(rd(v) | (rd(uint16_t(v + 1)) << 8));
+            break;
+        }
         case 0x4f: { const uint8_t t = fetch();               // PCALL
                      push(uint8_t(pc_ >> 8)); push(uint8_t(pc_));
                      pc_ = uint16_t(0xff00 | t); break; }
@@ -332,11 +351,11 @@ int Spc700::step() {
         case 0xa0: psw_.i = true; break;
         case 0xc0: psw_.i = false; break;
         case 0x9f: a = uint8_t((a >> 4) | (a << 4)); setnz(a); break;   // XCN
-        case 0xdf: if ((a & 0x0f) > 9 || psw_.h) { a = uint8_t(a + 6); }       // DAA
-                   if (a > 0x99 || psw_.c) { a = uint8_t(a + 0x60); psw_.c = true; }
+        case 0xdf: if (psw_.c || a > 0x99) { a = uint8_t(a + 0x60); psw_.c = true; }   // DAA
+                   if (psw_.h || (a & 0x0f) > 9) a = uint8_t(a + 6);
                    setnz(a); break;
-        case 0xbe: if ((a & 0x0f) > 9 || psw_.h) { a = uint8_t(a - 6); }       // DAS
-                   if (a > 0x99 || !psw_.c) { a = uint8_t(a - 0x60); psw_.c = false; }
+        case 0xbe: if (!psw_.c || a > 0x99) { a = uint8_t(a - 0x60); psw_.c = false; } // DAS
+                   if (!psw_.h || (a & 0x0f) > 9) a = uint8_t(a - 6);
                    setnz(a); break;
 
         // --- single-bit operations on dp ---

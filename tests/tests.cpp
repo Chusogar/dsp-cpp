@@ -21,12 +21,15 @@
 #include "cpu/m68000.h"
 #include "cpu/t11.h"
 #include "cpu/tms7000.h"
+#include "cpu/spc700.h"
 #include "cpu/upd7801.h"
 #include "cpu/z80.h"
 #include "cpu/z80ctc.h"
 #include "drivers/computers/amstrad_cpc.h"
 #include "drivers/consoles/atari_lynx.h"
 #include "drivers/consoles/a2600.h"
+#include "drivers/consoles/snes.h"
+#include "video/snes_ppu.h"
 #include "drivers/arcade/atari_system1.h"
 #include "drivers/arcade/atari_system2.h"
 #include "drivers/computers/apple2.h"
@@ -3732,6 +3735,178 @@ void test_a2600_carts_if_present() {
     }
 }
 
+// SPC700 instructions that were wrong (checked against SingleStepTests).
+void test_spc700_fixes() {
+    static std::array<uint8_t, 0x10000> mem;
+    dsp::Spc700 cpu;
+    cpu.set_memory_handlers([](uint16_t a) { return mem[a]; },
+                            [](uint16_t a, uint8_t v) { mem[a] = v; });
+    auto run_at = [&](std::initializer_list<uint8_t> code) {
+        mem.fill(0);
+        mem[0xfffe] = 0x00;
+        mem[0xffff] = 0x02;
+        size_t i = 0x200;
+        for (uint8_t b : code) mem[i++] = b;
+        cpu.reset();
+    };
+    run_at({0x2e, 0x10, 0x02});   // CBNE $10,+2
+    mem[0x10] = 5;
+    cpu.a = 5;
+    cpu.step();
+    check(cpu.pc() == 0x203, "SPC700 CBNE falls through when A equals memory");
+    run_at({0x2e, 0x10, 0x02});
+    mem[0x10] = 6;
+    cpu.a = 5;
+    cpu.step();
+    check(cpu.pc() == 0x205, "SPC700 CBNE branches when A differs");
+
+    run_at({0x11});               // TCALL 1 -> vector at $FFDC
+    mem[0xffdc] = 0x00;
+    mem[0xffdd] = 0x04;
+    cpu.sp = 0xef;
+    cpu.step();
+    check(cpu.pc() == 0x400 && cpu.sp == 0xed && mem[0x1ef] == 0x02 && mem[0x1ee] == 0x01,
+          "SPC700 TCALL pushes the return address and jumps through $FFDE-2n");
+
+    run_at({0x9e});               // DIV YA,X
+    cpu.y = 0x01; cpu.a = 0x23; cpu.x = 0x10;
+    cpu.step();
+    check(cpu.a == 0x12 && cpu.y == 0x03, "SPC700 DIV YA,X");
+    run_at({0x9e});
+    cpu.y = 0x40; cpu.a = 0x00; cpu.x = 0x10;
+    cpu.step();
+    check(cpu.a == 0xdd && cpu.y == 0x30, "SPC700 DIV overflow matches the hardware divider");
+}
+
+// S-PPU: sprite palette bits, OAM address reload at vblank and VRAM writes
+// dropped outside vblank.
+void test_snes_ppu() {
+    dsp::SnesPpu ppu;
+    ppu.reset();
+    ppu.write(0x2100, 0x0f);   // display on, full brightness
+    ppu.write(0x2101, 0x00);   // 8x8 sprites, tiles at word 0
+    ppu.write(0x212c, 0x10);   // OBJ on the main screen
+    ppu.write(0x2121, 128 + 2 * 16 + 1);   // palette 2, colour 1 = red
+    ppu.write(0x2122, 0x1f);
+    ppu.write(0x2122, 0x00);
+    ppu.write(0x2115, 0x80);
+    ppu.write(0x2116, 0x00);
+    ppu.write(0x2117, 0x00);
+    ppu.write(0x2118, 0x80);   // tile 0, row 0: leftmost pixel colour 1
+    ppu.write(0x2119, 0x00);
+    auto sprite0 = [&](uint8_t x) {
+        ppu.write(0x2104, x);
+        ppu.write(0x2104, 0);      // Y
+        ppu.write(0x2104, 0);      // tile
+        ppu.write(0x2104, 0x04);   // attributes: palette 2
+    };
+    ppu.write(0x2102, 0);
+    ppu.write(0x2103, 0);
+    sprite0(10);
+    for (int i = 0; i < 12; i++) ppu.write(0x2104, 0xf0);   // later entries
+    ppu.write(0x2102, 0x00);   // high table: all small, X < 256
+    ppu.write(0x2103, 0x01);
+    for (int i = 0; i < 32; i++) ppu.write(0x2104, 0);
+    ppu.write(0x2102, 0);
+    ppu.write(0x2103, 0);
+    ppu.start_vblank();
+    std::array<uint32_t, dsp::SnesPpu::kWidth> line{};
+    ppu.render_line(1, line.data());
+    check(line[10] == 0xffff0000u && line[11] == 0xff000000u,
+          "SNES sprite uses its palette from attribute bits 1-3");
+    for (int i = 0; i < 20; i++) ppu.write(0x2104, 0xf0);   // address runs on...
+    ppu.start_vblank();                                      // ...and is reloaded
+    sprite0(20);
+    ppu.render_line(1, line.data());
+    check(line[20] == 0xffff0000u && line[10] == 0xff000000u,
+          "SNES OAM address is reloaded from OAMADD at vblank");
+
+    ppu.write(0x2116, 0x00);
+    ppu.write(0x2117, 0x10);
+    ppu.set_vram_open(false);
+    ppu.write(0x2118, 0x55);
+    ppu.write(0x2119, 0x66);
+    check(ppu.vram()[0x1000] == 0 , "SNES VRAM ignores writes during active display");
+    ppu.write(0x2100, 0x80);   // forced blank
+    ppu.write(0x2118, 0x55);
+    ppu.write(0x2119, 0x66);
+    check(ppu.vram()[0x1001] == 0x6655, "SNES VRAM accepts writes in forced blank (address kept running)");
+}
+
+// $4202-$4206 multiply / divide.
+void test_snes_math_registers() {
+    static const uint8_t kCode[] = {
+        0x78,                                // SEI
+        0xa9, 0x12, 0x8d, 0x02, 0x42,        // WRMPYA = $12
+        0xa9, 0x34, 0x8d, 0x03, 0x42,        // WRMPYB = $34
+        0xea, 0xea, 0xea, 0xea,
+        0xad, 0x16, 0x42, 0x8d, 0x10, 0x00,  // RDMPYL -> $10
+        0xad, 0x17, 0x42, 0x8d, 0x11, 0x00,  // RDMPYH -> $11
+        0xa9, 0x34, 0x8d, 0x04, 0x42,        // WRDIVL
+        0xa9, 0x12, 0x8d, 0x05, 0x42,        // WRDIVH
+        0xa9, 0x10, 0x8d, 0x06, 0x42,        // WRDIVB = $10
+        0xea, 0xea, 0xea, 0xea, 0xea, 0xea, 0xea, 0xea,
+        0xad, 0x14, 0x42, 0x8d, 0x12, 0x00,  // RDDIVL -> $12
+        0xad, 0x15, 0x42, 0x8d, 0x13, 0x00,  // RDDIVH -> $13
+        0xad, 0x16, 0x42, 0x8d, 0x14, 0x00,  // remainder -> $14
+        0x80, 0xfe,                          // BRA *
+    };
+    std::vector<uint8_t> rom(0x8000, 0);
+    std::memcpy(rom.data(), kCode, sizeof(kCode));
+    rom[0x7ffc] = 0x00;
+    rom[0x7ffd] = 0x80;
+    namespace fs = std::filesystem;
+    const fs::path path = "/tmp/dsp-snes-test/math.smc";
+    fs::create_directories(path.parent_path());
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(rom.data()), std::streamsize(rom.size()));
+    }
+    dsp::Snes snes;
+    std::string error;
+    check(snes.init(path.string(), &error), "SNES math test ROM loads");
+    snes.run_frame();
+    check(snes.debug_wram(0x10) == 0xa8 && snes.debug_wram(0x11) == 0x03,
+          "SNES hardware multiply $12 x $34 = $03A8");
+    check(snes.debug_wram(0x12) == 0x23 && snes.debug_wram(0x13) == 0x01 &&
+              snes.debug_wram(0x14) == 0x04,
+          "SNES hardware divide $1234 / $10 = $123 remainder 4");
+}
+
+// Mazinger Z (checked against snes9x): the title screen with the robot and
+// the giant Z, and the first story scene's dialogue box.
+void test_snes_mazinger_if_present() {
+    const char* path = "/tmp/roms/Mazinger_Z_J_28996.smc";
+    if (!std::ifstream(path)) return;
+    dsp::Snes snes;
+    std::string error;
+    check(snes.init(path, &error), "Mazinger Z loads");
+    dsp::MachineInputs in{};
+    auto count = [&](int y0, int y1, auto pred) {
+        int n = 0;
+        const uint32_t* fb = snes.framebuffer();
+        for (int y = y0; y < y1; y++)
+            for (int x = 0; x < snes.screen_width(); x++)
+                if (pred(fb[y * snes.screen_width() + x])) n++;
+        return n;
+    };
+    for (int frame = 1; frame <= 1600; frame++) {
+        in.player1.start = (frame >= 1100 && frame < 1110) || (frame >= 1300 && frame < 1310);
+        snes.set_inputs(in);
+        snes.run_frame();
+        if (frame == 1000) {
+            const int cyan = count(0, 224, [](uint32_t c) {
+                return ((c >> 16) & 0xff) < 0x60 && ((c >> 8) & 0xff) > 0xc0 && (c & 0xff) > 0xc0;
+            });
+            const int lit = count(0, 224, [](uint32_t c) { return (c & 0xffffff) != 0; });
+            check(cyan > 800, "Mazinger Z title shows the giant cyan Z");
+            check(lit > 40000, "Mazinger Z title screen is drawn (robot and background)");
+        }
+    }
+    const int box = count(160, 224, [](uint32_t c) { return (c & 0xffffff) != 0; });
+    check(box > 1500, "Mazinger Z story scene keeps its dialogue box (long DMA vs VRAM)");
+}
+
 void test_a2600_rom_if_present() {
     auto try_path = [](const char* path) {
         std::ifstream probe(path);
@@ -6573,6 +6748,10 @@ int main() {
     test_a2600_rom_if_present();
     test_a2600_joystick_swcha();
     test_a2600_carts_if_present();
+    test_spc700_fixes();
+    test_snes_ppu();
+    test_snes_math_registers();
+    test_snes_mazinger_if_present();
     test_slapstic();
     test_ym2151();
     test_pokey();

@@ -818,6 +818,34 @@ arrows + Ctrl/Space for the left stick, `1` is RESET (start a game), `3` is
 SELECT. Fire is `button1` (INPT4/INPT5). DIP bank 0 bit 3 is colour
 (default on); bits 6–7 are the P0/P1 difficulty switches.
 
+### Super Nintendo / Super Famicom
+
+65C816 + S-PPU + SPC700 (sound CPU only; the S-DSP is not synthesised yet).
+LoROM/HiROM are detected from the header, a 512-byte copier header is
+skipped, and the 64-byte `spc700.rom` IPL is read from the cartridge's folder
+(a built-in copy is used otherwise).
+
+```bash
+./build/dsp --game snes /path/to/game.smc
+```
+
+- Timing: slow ROM/WRAM (8 master clocks), I/O (6/12) and DMA (8 per byte)
+  are charged to the CPU; V=0 is not displayed, HDMA transfers in each
+  line's hblank, NMI at V=225, H/V timer IRQs, $4212 hblank/vblank/joypad
+  bits, H/V counter latch, hardware multiply/divide.
+- PPU: per-mode priorities, sprites with the real OAM layout (palette bits,
+  sizes, 32 sprites / 34 tiles per line, priority rotation, OAM address
+  reload at vblank), both windows on main and sub screen, colour math with
+  sub screen or fixed colour, halving and clip/prevent regions, mosaic,
+  offset-per-tile, direct colour, Mode 7 matrix maths with EXTBG and the
+  out-of-bounds modes, VRAM address remapping, and VRAM writes dropped
+  outside vblank/forced blank (so long DMAs behave like on hardware).
+- The SPC700 passes the SingleStepTests suite for every opcode.
+
+Mazinger Z's intro, title screen (robot and giant Z) and story scenes match
+snes9x pixel for pixel. Pad: arrows, B = Ctrl/Space, Y = Alt/Z, A = X,
+X = C, Start = `1`, Select = `3`.
+
 ### Atari Lynx
 
 The handheld is a 65C02 (G65SC02 inside **Mikey**) at 16 MHz with wait states, 64 KiB
