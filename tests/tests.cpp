@@ -5128,6 +5128,29 @@ void test_st_blitter() {
     for (int i = 0; i < 16; i++) {
         check(machine.peek(0x2000 + uint32_t(i)) == 0, "XOR blit of matching words clears dest");
     }
+
+    // Descending copy with FXSR+NFSR, skew 0 (how TOS 1.04 draws the Atari
+    // logo in Desktop Info): the last word comes from the extra first read,
+    // the buffer still shifts although NFSR skips the fetch.
+    machine.poke_word(0x1000, 0x1111);
+    machine.poke_word(0x1002, 0x2222);
+    machine.poke_word(0x3000, 0);
+    machine.poke_word(0x3002, 0);
+    machine.poke_word(0xff8a20, uint16_t(-2));
+    machine.poke_word(0xff8a22, uint16_t(-2));
+    machine.poke_word(0xff8a24, 0);
+    machine.poke_word(0xff8a26, 0x1002);
+    machine.poke_word(0xff8a2e, uint16_t(-2));
+    machine.poke_word(0xff8a30, uint16_t(-2));
+    machine.poke_word(0xff8a32, 0);
+    machine.poke_word(0xff8a34, 0x3002);
+    machine.poke_word(0xff8a36, 2);
+    machine.poke_word(0xff8a38, 1);
+    machine.poke(0xff8a3b, 3);
+    machine.poke(0xff8a3d, 0xc0);
+    machine.poke(0xff8a3c, 0x80);
+    check(machine.peek(0x3002) == 0x22 && machine.peek(0x3000) == 0x11,
+          "FXSR+NFSR descending blit copies both words, not the last one twice");
 }
 
 void test_st_boot_if_present() {

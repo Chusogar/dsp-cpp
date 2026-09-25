@@ -681,6 +681,13 @@ void AtariSt::run_blitter() {
                 if (!skip_src) {
                     fetch_src();
                     fetched = true;
+                } else {
+                    // NFSR skips the read but the source buffer still shifts,
+                    // so the last word uses the previously fetched one.
+                    // Without the shift a descending blit (TOS's Desktop
+                    // Info Atari logo) repeated the same word.
+                    if (blit_sxinc_ < 0) buffer >>= 16;
+                    else buffer <<= 16;
                 }
             }
 
