@@ -44,6 +44,7 @@ public:
     const char* title() const override { return "Atari ST"; }
     bool uses_keyboard() const override { return true; }
     bool uses_pointer() const override { return true; }
+    bool uses_relative_pointer() const override { return true; }
 
     uint32_t debug_pc() const { return cpu_.pc(); }
     uint32_t debug_a(int r) const { return cpu_.a[size_t(r)].l; }
@@ -113,6 +114,8 @@ private:
     int pointer_frac_x_ = 0;
     int pointer_frac_y_ = 0;
     bool pointer_seen_ = false;
+    bool seed_valid_ = false;
+    int seed_x_ = 0, seed_y_ = 0;
     bool last_pointer_b1_ = false;
     bool last_pointer_b2_ = false;
     uint32_t video_count_ = 0;

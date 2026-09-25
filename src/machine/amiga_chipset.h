@@ -30,6 +30,14 @@ public:
     void render_line(uint32_t* framebuffer, int vpos);
     void render(uint32_t* framebuffer);
 
+    // Game port 0/1 counters (JOY0DAT/JOY1DAT) and the right mouse button
+    // on port 0 pin 9, read back through POTGOR bit 10 (DATLY, active low).
+    void set_joy0dat(uint16_t v) { joy0dat_ = v; }
+    void set_joy1dat(uint16_t v) { joy1dat_ = v; }
+    void set_right_button(bool pressed) { rmb_ = pressed; }
+    // JOYTEST writes the upper six bits of both counters on both ports.
+    void set_joytest_handler(std::function<void(uint16_t)> h) { joytest_ = std::move(h); }
+
     void set_ciaa_irq(bool v) { ciaa_irq_ = v; }
     void set_ciab_irq(bool v) { ciab_irq_ = v; }
 
@@ -45,6 +53,8 @@ public:
     uint16_t color(int i) const { return color_[size_t(i) & 31]; }
     uint32_t sprpt0() const { return sprpt_[0]; }
     uint16_t sprpos0() const { return sprpos_[0]; }
+    uint16_t sprpos(int i) const { return sprpos_[size_t(i) & 7]; }
+    uint16_t sprctl(int i) const { return sprctl_[size_t(i) & 7]; }
     uint16_t sprctl0() const { return sprctl_[0]; }
     uint16_t dsklen() const { return dsklen_; }
     uint32_t dskpt() const { return dskpt_; }
@@ -102,6 +112,9 @@ private:
 
     int vpos_ = 0;
     bool lof_ = false;
+    uint16_t joy0dat_ = 0, joy1dat_ = 0;
+    bool rmb_ = false;
+    std::function<void(uint16_t)> joytest_;
     bool ciaa_irq_ = false;
     bool ciab_irq_ = false;
     bool cop_stopped_ = true;

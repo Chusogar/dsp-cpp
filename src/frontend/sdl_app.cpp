@@ -3,6 +3,7 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -57,7 +58,7 @@ constexpr struct {
 };
 
 void collect_inputs(Machine& machine, int pointer_x, int pointer_y, uint32_t mouse_buttons,
-                    bool has_pointer) {
+                    bool has_pointer, bool resync = false) {
     const Uint8* keys = SDL_GetKeyboardState(nullptr);
     MachineInputs inputs;
     inputs.player1.up = keys[SDL_SCANCODE_UP];
@@ -91,6 +92,7 @@ void collect_inputs(Machine& machine, int pointer_x, int pointer_y, uint32_t mou
         inputs.pointer_y = pointer_y;
         inputs.pointer_button1 = (mouse_buttons & SDL_BUTTON_LMASK) != 0;
         inputs.pointer_button2 = (mouse_buttons & SDL_BUTTON_RMASK) != 0;
+        inputs.pointer_resync = resync;
     }
 
     if (machine.uses_keyboard()) {
@@ -201,6 +203,16 @@ int SdlApp::run(Machine& machine) {
     // Accumulator for sub-ms frame pacing when muted (avoids integer truncation drift).
     double frame_debt_ms = 0.0;
 
+    // Relative-mouse machines (ST, Amiga): the host cursor is hidden over
+    // the window so the emulated pointer is the only one on screen, and the
+    // position keeps being tracked (clamped to the picture) when the mouse
+    // goes past the window edge, which pushes the emulated pointer onto the
+    // same edge. No relative mode / pointer warping: that misbehaves on some
+    // X servers and remote desktops.
+    const bool relative_mouse = machine.uses_pointer() && machine.uses_relative_pointer();
+    if (relative_mouse) SDL_ShowCursor(SDL_DISABLE);
+    bool was_inside = false;
+
     auto update_title = [&]() {
         std::string t = std::string("DSP C++ - ") + machine.title();
         if (paused) t += " [PAUSED]";
@@ -212,6 +224,7 @@ int SdlApp::run(Machine& machine) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) running = false;
+
             if (event.type == SDL_KEYDOWN) {
 				
 				//printf("KEYDOWN sym=%d scan=%d name=%s\n",
@@ -294,7 +307,22 @@ int SdlApp::run(Machine& machine) {
         int pointer_x = 0;
         int pointer_y = 0;
         uint32_t mouse_buttons = 0;
-        if (machine.uses_pointer()) {
+        if (relative_mouse) {
+            int gx = 0, gy = 0, wx = 0, wy = 0;
+            const uint32_t global_buttons = SDL_GetGlobalMouseState(&gx, &gy);
+            SDL_GetWindowPosition(window, &wx, &wy);
+            const bool focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+            const bool inside = SDL_GetMouseFocus() == window;
+            float lx = 0.0f;
+            float ly = 0.0f;
+            SDL_RenderWindowToLogical(renderer, gx - wx, gy - wy, &lx, &ly);
+            pointer_x = std::clamp(static_cast<int>(std::floor(lx)), 0, width - 1);
+            pointer_y = std::clamp(static_cast<int>(std::floor(ly)), 0, height - 1);
+            // Clicks only count inside the window.
+            mouse_buttons = inside ? global_buttons : 0;
+            collect_inputs(machine, pointer_x, pointer_y, mouse_buttons, focused, inside && !was_inside);
+            was_inside = inside;
+        } else if (machine.uses_pointer()) {
             int mx = 0;
             int my = 0;
             mouse_buttons = SDL_GetMouseState(&mx, &my);
@@ -306,7 +334,8 @@ int SdlApp::run(Machine& machine) {
             pointer_x = std::clamp(static_cast<int>(lx), 0, width - 1);
             pointer_y = std::clamp(static_cast<int>(ly), 0, height - 1);
         }
-        collect_inputs(machine, pointer_x, pointer_y, mouse_buttons, machine.uses_pointer());
+        if (!relative_mouse)
+            collect_inputs(machine, pointer_x, pointer_y, mouse_buttons, machine.uses_pointer());
         machine.run_frame();
 
         samples.clear();

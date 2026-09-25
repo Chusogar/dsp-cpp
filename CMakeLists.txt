@@ -408,6 +408,7 @@ add_executable(dsp_tests
   src/drivers/computers/amiga.cpp
   src/drivers/computers/macplus.cpp
   src/drivers/computers/macii.cpp
+  src/drivers/consoles/vectrex.cpp
   src/drivers/arcade/starwars.cpp
   src/drivers/arcade/asteroid.cpp
   src/drivers/arcade/polepos.cpp

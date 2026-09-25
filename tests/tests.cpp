@@ -38,11 +38,13 @@
 #include "machine/ql_mdv.h"
 #include "machine/ql_win.h"
 #include "drivers/computers/atari_st.h"
+#include "machine/mc68901.h"
 #include "machine/st_floppy.h"
 #include "drivers/computers/amiga.h"
 #include "machine/amiga_adf.h"
 #include "drivers/computers/macplus.h"
 #include "drivers/computers/macii.h"
+#include "drivers/consoles/vectrex.h"
 #include "machine/mac_dcmp.h"
 #include "machine/mac_dsk.h"
 #include "machine/iwm.h"
@@ -5016,17 +5018,27 @@ void test_st_ikbd_mouse() {
     dsp::AtariSt machine;
     dsp::MachineInputs in;
     in.has_pointer = true;
-    in.pointer_x = 400;
+    in.pointer_x = 100;
     in.pointer_y = 300;
     machine.set_inputs(in);
     check(machine.ikbd_pending_bytes().empty(),
           "the first pointer sample does not throw GEM's mouse off-screen");
 
-    in.pointer_x = 404;  // +4 host px → +2 TOS pixels in low res
+    // The first real movement lines the ST cursor up: six packets into the
+    // top-left corner, then the host position (104,300 -> 52,150).
+    in.pointer_x = 104;
     machine.set_inputs(in);
     auto q = machine.ikbd_pending_bytes();
-    check(q.size() == 3, "a small move is one relative IKBD packet");
-    check(q[0] == 0xf8 && q[1] == 2 && q[2] == 0, "low-res IKBD X is halved to shifter pixels");
+    check(q.size() == 18 + 6 && q[0] == 0xf8 && int8_t(q[1]) == -127 && int8_t(q[2]) == -127,
+          "the first movement slams the cursor into the corner");
+    check(q[18] == 0xf8 && q[19] == 52 && q[20] == 127 && q[21] == 0xf8 && q[22] == 0 && q[23] == 23,
+          "then moves it to the host position");
+
+    in.pointer_x = 108;  // +4 host px → +2 TOS pixels in low res
+    machine.set_inputs(in);
+    q = machine.ikbd_pending_bytes();
+    check(q.size() == 27, "a small move is one relative IKBD packet");
+    check(q[24] == 0xf8 && q[25] == 2 && q[26] == 0, "low-res IKBD X is halved to shifter pixels");
 
     const size_t after_move = q.size();
     in.pointer_button1 = true;
@@ -5056,6 +5068,26 @@ void test_st_ikbd_mouse() {
     check(q[p] == 0xf8 && int8_t(q[p + 1]) == 127 && q[p + 2] == 0 && q[p + 3] == 0xf8 &&
               int8_t(q[p + 4]) == 73 && q[p + 5] == 0,
           "200 TOS pixels split as 127 then 73");
+
+    // Resting on the window edge keeps pushing, so the ST cursor meets the
+    // same edge and the two pointers line up again.
+    const size_t before_edge = machine.ikbd_pending_bytes().size();
+    in.pointer_x = 0;
+    machine.set_inputs(in);
+    machine.set_inputs(in);
+    q = machine.ikbd_pending_bytes();
+    check(q.size() > before_edge && int8_t(q[q.size() - 2]) < 0, "the left window edge keeps pushing left");
+
+    // Relative deltas (MachineInputs::pointer_relative) go straight through.
+    dsp::AtariSt rel;
+    dsp::MachineInputs r;
+    r.has_pointer = true;
+    r.pointer_relative = true;
+    r.pointer_dx = 6;  // screen pixels → 3 low-res pixels
+    r.pointer_dy = 4;  // → 2
+    rel.set_inputs(r);
+    q = rel.ikbd_pending_bytes();
+    check(q.size() == 3 && q[0] == 0xf8 && q[1] == 3 && q[2] == 2, "relative motion becomes one IKBD packet");
 }
 
 void test_st_blitter() {
@@ -5096,6 +5128,29 @@ void test_st_blitter() {
     for (int i = 0; i < 16; i++) {
         check(machine.peek(0x2000 + uint32_t(i)) == 0, "XOR blit of matching words clears dest");
     }
+
+    // Descending copy with FXSR+NFSR, skew 0 (how TOS 1.04 draws the Atari
+    // logo in Desktop Info): the last word comes from the extra first read,
+    // the buffer still shifts although NFSR skips the fetch.
+    machine.poke_word(0x1000, 0x1111);
+    machine.poke_word(0x1002, 0x2222);
+    machine.poke_word(0x3000, 0);
+    machine.poke_word(0x3002, 0);
+    machine.poke_word(0xff8a20, uint16_t(-2));
+    machine.poke_word(0xff8a22, uint16_t(-2));
+    machine.poke_word(0xff8a24, 0);
+    machine.poke_word(0xff8a26, 0x1002);
+    machine.poke_word(0xff8a2e, uint16_t(-2));
+    machine.poke_word(0xff8a30, uint16_t(-2));
+    machine.poke_word(0xff8a32, 0);
+    machine.poke_word(0xff8a34, 0x3002);
+    machine.poke_word(0xff8a36, 2);
+    machine.poke_word(0xff8a38, 1);
+    machine.poke(0xff8a3b, 3);
+    machine.poke(0xff8a3d, 0xc0);
+    machine.poke(0xff8a3c, 0x80);
+    check(machine.peek(0x3002) == 0x22 && machine.peek(0x3000) == 0x11,
+          "FXSR+NFSR descending blit copies both words, not the last one twice");
 }
 
 void test_st_boot_if_present() {
@@ -5165,7 +5220,7 @@ void test_st_boot_if_present() {
     }
     const int mx = be16(gcur);
     const int my = be16(gcur + 2);
-    check(mx > 159 && mx < 220 && my == 99, "a small move+click keeps the GEM mouse on-screen");
+    check(mx == 210 && my == 150, "the first move lines the GEM mouse up with the host pointer (420,300 -> 210,150)");
 
     // Fresh boot: double-click drive A. Open-bus $FF at $FF8A3C used to hang
     // Line-A in `tst.b (a5); bmi.s` after GEM recognised the clicks.
@@ -5193,9 +5248,9 @@ void test_st_boot_if_present() {
         desk.set_inputs(mouse);
         desk.run_frame();
     }
-    // Host 500,300 → 230,158 is TOS 24,28, the drive-A icon in low res.
-    mouse.pointer_x = 230;
-    mouse.pointer_y = 158;
+    // The drive-A icon is at TOS 24,28 in low res: host 48,56.
+    mouse.pointer_x = 48;
+    mouse.pointer_y = 56;
     for (int i = 0; i < 20; i++) {
         desk.set_inputs(mouse);
         desk.run_frame();
@@ -6216,6 +6271,100 @@ void test_macii_boot_if_present() {
     std::remove(disk.c_str());
 }
 
+// MAME "vectrex" set in /tmp/roms/vectrex.zip; Pole Position in
+// /tmp/roms/pole.vec exercises the shift-register text.
+void test_vectrex_if_present() {
+    std::FILE* f = std::fopen("/tmp/roms/vectrex.zip", "rb");
+    if (!f) return;
+    std::fclose(f);
+    std::string error;
+    dsp::Vectrex vx;
+    check(vx.init("/tmp/roms/vectrex.zip", &error), "Vectrex BIOS loads from the MAME zip");
+    auto lit = [](const dsp::Vectrex& m) {
+        int n = 0;
+        const uint32_t* fb = m.framebuffer();
+        for (int i = 0; i < dsp::Vectrex::kWidth * dsp::Vectrex::kHeight; i++) n += (fb[i] & 0xff) > 40;
+        return n;
+    };
+    for (int i = 0; i < 150; i++) vx.run_frame();
+    const int intro = lit(vx);
+    check(intro > 2000 && intro < 12000, "the BIOS intro draws thin vectors, not a blank or washed-out screen");
+
+    std::FILE* c = std::fopen("/tmp/roms/pole.vec", "rb");
+    if (!c) return;
+    std::fclose(c);
+    check(vx.load_media("/tmp/roms/pole.vec", &error), "Pole Position cartridge loads");
+    dsp::MachineInputs in;
+    int peak = 0;
+    for (int i = 1; i <= 1300; i++) {
+        in.player1.button4 = i >= 500 && i < 505;
+        vx.set_inputs(in);
+        vx.run_frame();
+        if (i > 1100) peak = std::max(peak, lit(vx));
+    }
+    // The scrolling "PREPARE TO QUALIFY" used to smear into a solid band
+    // (long persistence, and ACR writes unblanking the beam).
+    check(peak > 3000 && peak < 13000, "Pole Position race screen stays crisp while the text scrolls");
+}
+
+// Kickstart 1.3 (/tmp/roms/a500.zip) with North & South in
+// /tmp/amiga/North & South.adf: its CIA-B interrupt handler acknowledges
+// with a long read of $BFDD00, which must not clear CIA-A's ICR (A12 is
+// high there), or timer.device loses its interrupt and loading stalls.
+void test_amiga_north_south_if_present() {
+    const char* rom = "/tmp/roms/a500.zip";
+    const char* disk = "/tmp/amiga/North & South.adf";
+    std::FILE* rf = std::fopen(rom, "rb");
+    std::FILE* df = std::fopen(disk, "rb");
+    if (!rf || !df) {
+        if (rf) std::fclose(rf);
+        if (df) std::fclose(df);
+        return;
+    }
+    std::fclose(rf);
+    std::fclose(df);
+    dsp::Amiga500 a;
+    std::string error;
+    check(a.init(rom, &error), "Kickstart loads for North & South");
+    check(a.load_media(disk, &error), "North & South ADF mounts");
+    check(a.uses_pointer() && a.uses_relative_pointer(), "the Amiga mouse is a relative device");
+    dsp::MachineInputs in;
+    in.has_pointer = true;
+    in.pointer_relative = true;
+    for (int i = 0; i < 1300; i++) {
+        a.set_inputs(in);
+        a.run_frame();
+    }
+    int blue = 0;
+    const uint32_t* fb = a.framebuffer();
+    for (int i = 0; i < a.screen_width() * a.screen_height(); i++) {
+        const int r = int((fb[i] >> 16) & 0xff), g = int((fb[i] >> 8) & 0xff), b = int(fb[i] & 0xff);
+        if (b > 100 && b > r && b > g) blue++;
+    }
+    check(blue > 30000, "North & South loads past the Infogrames logo to the blue title");
+    // Mouse counters: one count per lores pixel.
+    const uint16_t before = uint16_t((a.peek(0xdff00a) << 8) | a.peek(0xdff00b));
+    in.pointer_dx = 10;
+    in.pointer_dy = 5;
+    a.set_inputs(in);
+    const uint16_t after = uint16_t((a.peek(0xdff00a) << 8) | a.peek(0xdff00b));
+    check(uint8_t((after & 0xff) - (before & 0xff)) == 10 && uint8_t((after >> 8) - (before >> 8)) == 5,
+          "JOY0DAT counts the mouse motion");
+    check(a.peek(0xbfdd01) == 0xff, "$BFDD01 selects no CIA (CIA-A needs A12 low)");
+}
+
+// TOS 1.04 (Desk > Desktop Info...) stops timer B, writes TBDR and spins
+// until TBDR reads back the value: a stopped timer loads its counter.
+void test_mfp_stopped_timer_data() {
+    dsp::Mc68901 mfp;
+    mfp.reset();
+    mfp.write(0x0d, 0x00);  // TBCR: stop
+    mfp.write(0x10, 0x4e);  // TBDR
+    check(mfp.read(0x10) == 0x4e, "MFP: writing TBDR with timer B stopped loads the counter");
+    mfp.write(0x10, 0x21);
+    check(mfp.read(0x10) == 0x21, "MFP: a second write while stopped reloads it again");
+}
+
 int main() {
     test_z80_arithmetic();
     test_z80_flags_and_blocks();
@@ -6351,12 +6500,14 @@ int main() {
     test_st_missing_roms();
     test_st_floppy_formats();
     test_st_ikbd_mouse();
+    test_mfp_stopped_timer_data();
     test_st_blitter();
     test_st_boot_if_present();
     test_st_north_south_if_present();
     test_amiga_missing_roms();
     test_amiga_adf_format();
     test_amiga_kickstart_if_present();
+    test_amiga_north_south_if_present();
     test_amiga_bootblock_if_present();
     test_mac_dcmp();
     test_mac_gcr_and_dsk();
@@ -6371,6 +6522,7 @@ int main() {
     test_apple2gs_boot_if_present();
     test_macii_missing_roms();
     test_macii_boot_if_present();
+    test_vectrex_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

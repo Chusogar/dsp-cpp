@@ -40,6 +40,8 @@ public:
     int sample_rate() const override { return kSampleRate; }
     const char* title() const override { return "Commodore Amiga 500"; }
     bool uses_keyboard() const override { return true; }
+    bool uses_pointer() const override { return true; }
+    bool uses_relative_pointer() const override { return true; }
 
     uint32_t debug_pc() const { return cpu_.pc(); }
     uint8_t peek(uint32_t address) const { return const_cast<Amiga500*>(this)->read_byte(address); }
@@ -57,6 +59,8 @@ public:
     uint16_t color_reg(int i) const { return chipset_.color(i); }
     uint32_t sprpt0() const { return chipset_.sprpt0(); }
     uint16_t sprpos0() const { return chipset_.sprpos0(); }
+    uint16_t sprpos(int i) const { return chipset_.sprpos(i); }
+    uint16_t sprctl(int i) const { return chipset_.sprctl(i); }
     uint16_t sprctl0() const { return chipset_.sprctl0(); }
     uint16_t dsklen() const { return chipset_.dsklen(); }
     uint32_t dskpt() const { return chipset_.dskpt(); }
@@ -100,6 +104,15 @@ private:
     int side_ = 0;
     bool motor_ = false;
     bool selected_ = false;
+    // Mouse in game port 0: 8-bit quadrature counters, buttons.
+    void update_joy0();
+    static constexpr int kMaxCountsPerFrame = 60;
+    uint8_t mouse_x_ = 0, mouse_y_ = 0;
+    int last_px_ = 0, last_py_ = 0, pend_x_ = 0, pend_y_ = 0;
+    bool pointer_seen_ = false;
+    bool seed_valid_ = false;
+    int seed_x_ = 0, seed_y_ = 0, sync_frames_ = 0;
+    bool lmb_ = false, fire1_ = false;
     bool disk_changed_ = true;
     uint8_t prev_prb_ = 0xFF;
     int prb_writes_ = 0;

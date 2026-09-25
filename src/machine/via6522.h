@@ -56,6 +56,11 @@ public:
     uint8_t out_b() const;
     bool ca2() const { return out_ca2_; }
     bool cb2() const { return out_cb2_; }
+    // CB2 split by source, as the Vectrex blanking needs it: the level the
+    // PCR / handshake logic drives, and the last bit the shift register
+    // put out (it holds that bit until the next shift).
+    bool cb2_handshake_level() const { return hs_cb2_; }
+    bool cb2_shift_level() const { return shift_out_bit_; }
 
     uint8_t ddr_a() const { return ddr_a_; }
     uint8_t ddr_b() const { return ddr_b_; }
@@ -89,6 +94,7 @@ private:
     void output_pb();
     void output_ca2(bool level);
     void output_cb2(bool level);
+    void output_cb2_sr(bool level);
 
     uint8_t input_pa();
     uint8_t input_pb();
@@ -123,7 +129,7 @@ private:
     uint8_t sr_ = 0;
     uint8_t shift_count_ = 0;  // remaining bits (0 = idle)
     int shift_phase_ = 0;      // cycles until next edge
-    bool shift_out_bit_ = true;
+    bool shift_out_bit_ = false;
 
     // Control
     uint8_t acr_ = 0, pcr_ = 0, ier_ = 0, ifr_ = 0;
@@ -132,6 +138,7 @@ private:
     bool in_ca1_ = false, in_ca2_ = false;
     bool in_cb1_ = false, in_cb2_ = false;
     bool out_ca2_ = true, out_cb1_ = true, out_cb2_ = true;
+    bool hs_cb2_ = true;
 
     PortRead pa_in_, pb_in_;
     PortWrite pa_out_, pb_out_;

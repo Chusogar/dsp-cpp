@@ -44,6 +44,11 @@ Amiga500::Amiga500() : cpu_(kCpuClock) {
         return floppy_.encode_track(c, side_);
     });
     ciaa_.set_port_a([this]() { return cia_a_pra_in(); }, nullptr);
+    chipset_.set_joytest_handler([this](uint16_t v) {
+        mouse_x_ = uint8_t((mouse_x_ & 0x03) | (v & 0xfc));
+        mouse_y_ = uint8_t((mouse_y_ & 0x03) | ((v >> 8) & 0xfc));
+        update_joy0();
+    });
     ciaa_.set_irq_handler([this](bool v) {
         chipset_.set_ciaa_irq(v);
         update_ipl();
@@ -123,6 +128,8 @@ bool Amiga500::overlay() const {
 uint8_t Amiga500::cia_a_pra_in() const {
     // bit2 /CHNG, bit3 /WPRO, bit4 /TK0, bit5 /RDY  (active low)
     uint8_t v = 0xFF;
+    if (lmb_) v = uint8_t(v & ~0x40);    // /FIR0: left mouse button
+    if (fire1_) v = uint8_t(v & ~0x80);  // /FIR1: joystick fire (port 1)
     if (!floppy_.loaded() || disk_changed_) v = uint8_t(v & ~0x04);
     if (cyl_ == 0) v = uint8_t(v & ~0x10);
     // /RDY is only driven while the drive is selected. With /MTR high
@@ -182,9 +189,12 @@ uint8_t Amiga500::read_byte(uint32_t address) {
         return chip_[address & (kChipSize - 1)];
     }
     if (address >= 0x00BF0000u && address <= 0x00BFFFFFu) {
+        // CIA-A is selected by A12 low and sits on the odd (low) byte, CIA-B
+        // by A13 low on the even byte. A long read of $BFDD00 (CIA-B ICR)
+        // must not touch CIA-A's ICR at $BFDD01: A12 is high there.
         const uint8_t reg = uint8_t((address >> 8) & 0x0F);
-        if (address & 1) return ciaa_.read(reg);
-        return ciab_.read(reg);
+        if (address & 1) return (address & 0x1000) ? uint8_t(0xFF) : ciaa_.read(reg);
+        return (address & 0x2000) ? uint8_t(0xFF) : ciab_.read(reg);
     }
     if (address >= 0x00DFF000u && address <= 0x00DFFFFFu) {
         const uint16_t w = chipset_.read(uint16_t(address & 0x1FE));
@@ -212,10 +222,11 @@ void Amiga500::write_byte(uint32_t address, uint8_t value) {
     }
     if (address >= 0x00BF0000u && address <= 0x00BFFFFFu) {
         const uint8_t reg = uint8_t((address >> 8) & 0x0F);
-        if (address & 1)
-            ciaa_.write(reg, value);
-        else
+        if (address & 1) {
+            if (!(address & 0x1000)) ciaa_.write(reg, value);
+        } else if (!(address & 0x2000)) {
             ciab_.write(reg, value);
+        }
         return;
     }
     if (address >= 0x00DFF000u && address <= 0x00DFFFFFu) {
@@ -294,7 +305,101 @@ void Amiga500::run_frame() {
     chipset_.render(framebuffer_.data());
 }
 
-void Amiga500::set_inputs(const MachineInputs&) {}
+void Amiga500::update_joy0() { chipset_.set_joy0dat(uint16_t((mouse_y_ << 8) | mouse_x_)); }
+
+void Amiga500::set_inputs(const MachineInputs& inputs) {
+    // Joystick in port 1 (JOY1DAT: right = bit1, left = bit9, up/down are
+    // XORed with them into bits 8/0).
+    {
+        const bool r = inputs.player1.right, l = inputs.player1.left;
+        const bool u = inputs.player1.up, d = inputs.player1.down;
+        uint16_t j = 0;
+        if (r) j = uint16_t(j | 0x0002);
+        if (l) j = uint16_t(j | 0x0200);
+        if (d != r) j = uint16_t(j | 0x0001);
+        if (u != l) j = uint16_t(j | 0x0100);
+        chipset_.set_joy1dat(j);
+        fire1_ = inputs.player1.button1;
+    }
+    if (!inputs.has_pointer) {
+        pointer_seen_ = false;  // re-seed when the pointer comes back
+        seed_valid_ = false;
+        sync_frames_ = 0;
+        lmb_ = false;
+        chipset_.set_right_button(false);
+        return;
+    }
+    lmb_ = inputs.pointer_button1;
+    chipset_.set_right_button(inputs.pointer_button2);
+    // One mouse count per lores pixel on both axes (the pointer sprite moves
+    // one lores pixel per count).
+    if (inputs.pointer_resync) {
+        // The mouse came back into the window: line up again on its next move.
+        pointer_seen_ = false;
+        seed_valid_ = false;
+        sync_frames_ = 0;
+    }
+    int dx = 0, dy = 0;
+    if (sync_frames_ > 0) {
+        // Lining the pointer up: a few frames of full-speed motion up and
+        // left pin it in the corner (programs clamp there), then it moves to
+        // where the host pointer is.
+        mouse_x_ = uint8_t(mouse_x_ - kMaxCountsPerFrame);
+        mouse_y_ = uint8_t(mouse_y_ - kMaxCountsPerFrame);
+        update_joy0();
+        if (--sync_frames_ == 0) {
+            pend_x_ = inputs.pointer_x;
+            pend_y_ = inputs.pointer_y;
+            last_px_ = inputs.pointer_x;
+            last_py_ = inputs.pointer_y;
+        }
+        return;
+    }
+    if (inputs.pointer_relative) {
+        dx = inputs.pointer_dx;
+        dy = inputs.pointer_dy;
+    } else {
+        const int x = inputs.pointer_x, y = inputs.pointer_y;
+        if (!pointer_seen_) {
+            // Wait for the first real movement (the OS or game may still be
+            // starting), then line the pointer up with the host one.
+            if (!seed_valid_ || (x == seed_x_ && y == seed_y_)) {
+                seed_valid_ = true;
+                seed_x_ = x;
+                seed_y_ = y;
+                return;
+            }
+            pointer_seen_ = true;
+            pend_x_ = pend_y_ = 0;
+            sync_frames_ = 12;  // 12 x 60 counts: past any edge
+            return;
+        }
+        dx = x - last_px_;
+        dy = y - last_py_;
+        last_px_ = x;
+        last_py_ = y;
+        // The host pointer stops at the window edge; keep pushing so the
+        // Amiga pointer (clamped by the OS or the game) stops on that edge
+        // too and both line up again.
+        if (x <= 0) dx -= 16;
+        if (x >= AmigaChipset::kWidth - 1) dx += 16;
+        if (y <= 0) dy -= 16;
+        if (y >= AmigaChipset::kHeight - 1) dy += 16;
+    }
+    // The counters are 8 bits: more than 127 counts between two reads wrap
+    // into the opposite direction. Games often read them only every other
+    // frame (25 Hz), so at most 60 counts are added per frame and a fast
+    // flick is spread over the following frames.
+    pend_x_ += dx;
+    pend_y_ += dy;
+    const int sx = std::clamp(pend_x_, -kMaxCountsPerFrame, kMaxCountsPerFrame);
+    const int sy = std::clamp(pend_y_, -kMaxCountsPerFrame, kMaxCountsPerFrame);
+    pend_x_ -= sx;
+    pend_y_ -= sy;
+    mouse_x_ = uint8_t(mouse_x_ + sx);
+    mouse_y_ = uint8_t(mouse_y_ + sy);
+    update_joy0();
+}
 
 void Amiga500::set_dip_switch(int, uint8_t) {}
 

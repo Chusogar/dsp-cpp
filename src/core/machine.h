@@ -50,6 +50,15 @@ struct MachineInputs {
     int pointer_y = 0;
     bool pointer_button1 = false;
     bool pointer_button2 = false;
+    // Captured (relative) mouse: motion since the previous frame in screen
+    // pixels, for drivers that report uses_relative_pointer(). When set,
+    // pointer_x/pointer_y are meaningless.
+    bool pointer_relative = false;
+    // Set on the frame the host pointer enters the window: relative-mouse
+    // drivers line their pointer up again (see uses_relative_pointer()).
+    bool pointer_resync = false;
+    int pointer_dx = 0;
+    int pointer_dy = 0;
 
     bool key(Key value) const { return keys[size_t(value)]; }
 };
@@ -89,6 +98,14 @@ public:
 
     // True when the driver aims with MachineInputs::pointer_*.
     virtual bool uses_pointer() const { return false; }
+
+    // True for machines whose mouse is a relative device read by each
+    // program in its own units (Atari ST, Amiga). The front end hides the
+    // host cursor over the window, keeps reporting the (clamped) position
+    // while the mouse is outside it, and flags pointer_resync when it comes
+    // back in, so the emulated pointer is the only one on screen and lines
+    // up with where the host mouse is.
+    virtual bool uses_relative_pointer() const { return false; }
 
     // Attaches a tape, disk or cartridge image. Machines without removable
     // media reject it.
