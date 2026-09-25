@@ -42,6 +42,7 @@
 #include "machine/st_floppy.h"
 #include "drivers/computers/amiga.h"
 #include "machine/amiga_adf.h"
+#include "machine/amiga_chipset.h"
 #include "drivers/computers/macplus.h"
 #include "drivers/computers/macii.h"
 #include "drivers/consoles/vectrex.h"
@@ -6311,6 +6312,36 @@ void test_vectrex_if_present() {
 // /tmp/amiga/North & South.adf: its CIA-B interrupt handler acknowledges
 // with a long read of $BFDD00, which must not clear CIA-A's ICR (A12 is
 // high there), or timer.device loses its interrupt and loading stalls.
+// Descending blits walk backwards through memory: the modulos are
+// subtracted, not added (North & South clears its sprite bank's offset
+// table otherwise when a soldier is selected on the map).
+void test_amiga_blitter_descending_modulo() {
+    std::vector<uint16_t> mem(0x1000, 0);
+    dsp::AmigaChipset chip;
+    chip.set_chip_handlers([&mem](uint32_t a) { return mem[(a >> 1) & 0xFFF]; },
+                           [&mem](uint32_t a, uint16_t v) { mem[(a >> 1) & 0xFFF] = v; });
+    // Source: 3 rows x 2 words, row pitch 8 bytes at 0x100.
+    for (int r = 0; r < 3; r++)
+        for (int w = 0; w < 2; w++) mem[size_t((0x100 + r * 8) / 2 + w)] = uint16_t(0x1000 * (r + 1) + w);
+    chip.write(0x040, 0x09F0);  // A -> D
+    chip.write(0x042, 0x0002);  // DESC
+    chip.write(0x044, 0xFFFF);
+    chip.write(0x046, 0xFFFF);
+    chip.write(0x064, 4);       // A modulo
+    chip.write(0x066, 4);       // D modulo
+    chip.write(0x050, 0);
+    chip.write(0x052, 0x100 + 2 * 8 + 2);  // last word of last row
+    chip.write(0x054, 0);
+    chip.write(0x056, 0x800 + 2 * 8 + 2);
+    chip.write(0x058, uint16_t((3 << 6) | 2));
+    bool ok = true;
+    for (int r = 0; r < 3; r++)
+        for (int w = 0; w < 2; w++)
+            ok = ok && mem[size_t((0x800 + r * 8) / 2 + w)] == uint16_t(0x1000 * (r + 1) + w);
+    for (int i = 0x820 / 2; i < 0x900 / 2; i++) ok = ok && mem[size_t(i)] == 0;
+    check(ok, "Amiga descending blit subtracts the modulos");
+}
+
 void test_amiga_north_south_if_present() {
     const char* rom = "/tmp/roms/a500.zip";
     const char* disk = "/tmp/amiga/North & South.adf";
@@ -6506,6 +6537,7 @@ int main() {
     test_st_north_south_if_present();
     test_amiga_missing_roms();
     test_amiga_adf_format();
+    test_amiga_blitter_descending_modulo();
     test_amiga_kickstart_if_present();
     test_amiga_north_south_if_present();
     test_amiga_bootblock_if_present();

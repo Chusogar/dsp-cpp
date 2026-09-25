@@ -84,6 +84,7 @@ uint16_t AmigaChipset::chip_read(uint32_t addr) const {
     return 0;
 }
 
+
 void AmigaChipset::chip_write(uint32_t addr, uint16_t value) {
     if (write16_) write16_(addr, value);
 }
@@ -476,43 +477,68 @@ void AmigaChipset::blit() {
     std::vector<std::pair<uint32_t, uint16_t>> deferred;
 
     if (line) {
-        // Line mode: plot `height` pixels along BLTAPT error-term DDA into D/C.
-        int xsign = (bltcon1_ & 0x10) ? -1 : 1;
-        int ysign = (bltcon1_ & 0x08) ? -1 : 1;
-        const bool sud = (bltcon1_ & 0x04) != 0;  // sometimes up/down vs left/right
-        (void)xsign;
-        (void)ysign;
-        (void)sud;
-        uint16_t adat = bltadat_;
-        if (ashift) {
-            if (desc)
-                adat = uint16_t(adat << ashift);
-            else
-                adat = uint16_t(adat >> ashift);
-        }
+        // Line mode (HRM / WinUAE blitter_line): BLTAPT low word is the
+        // Bresenham accumulator (starts at 2*dy-dx, sign in BLTCON1 bit 6),
+        // BLTBMOD = 4*dy is added while it is negative, BLTAMOD = 4*(dy-dx)
+        // otherwise. The pixel is BLTADAT >> ASH inside the word at BLTCPT;
+        // BLTBDAT is the texture (rotated by BSH). The octant bits pick the
+        // major axis (SUD) and directions (SUL, AUL). SING draws one dot per
+        // raster line, for area-fill outlines. BLTSIZE height = length.
+        int16_t acc = int16_t(bltapt_ & 0xFFFF);
+        bool sign = (bltcon1_ & 0x40) != 0;
+        const bool sing = (bltcon1_ & 0x02) != 0;
+        const bool sud = (bltcon1_ & 0x10) != 0;
+        const bool sul = (bltcon1_ & 0x08) != 0;
+        const bool aul = (bltcon1_ & 0x04) != 0;
+        int ash = ashift;
+        int bsh = bshift;
+        uint32_t cur = cpt;
+        uint32_t dout = dpt;
+        bool onedot = false;
+        auto incx = [&]() { if (++ash == 16) { ash = 0; cur += 2; } };
+        auto decx = [&]() { if (ash-- == 0) { ash = 15; cur -= 2; } };
+        auto incy = [&]() { cur = uint32_t(int32_t(cur) + bltcmod_); onedot = false; };
+        auto decy = [&]() { cur = uint32_t(int32_t(cur) - bltcmod_); onedot = false; };
         for (int i = 0; i < height; i++) {
-            uint16_t c = usec ? chip_read(cpt) : bltcdat_;
-            uint16_t d = minterm(adat, bltbdat_, c, mt);
-            if (used) chip_write(dpt, d);
+            const uint16_t a = uint16_t((bltadat_ & bltafwm_) >> ash);
+            const uint16_t b = ((bltbdat_ >> bsh) & 1) ? 0xFFFF : 0x0000;
+            const uint16_t c = usec ? chip_read(cur & ~1u) : bltcdat_;
+            const uint16_t d = minterm(a, b, c, mt);
             if (d) bzero_ = false;
-            // Single-pixel line: step D/C by one word in the major direction.
-            if (bltcon1_ & 0x04) {
-                cpt = uint32_t(int32_t(cpt) + bltcmod_);
-                dpt = uint32_t(int32_t(dpt) + bltdmod_);
-            } else {
-                cpt = uint32_t(int32_t(cpt) + delta);
-                dpt = uint32_t(int32_t(dpt) + delta);
+            if (used && (!sing || !onedot)) chip_write(dout & ~1u, d);
+            onedot = true;
+            // Step the accumulator and the position.
+            if (!sign) acc = int16_t(acc + bltamod_);
+            else acc = int16_t(acc + bltbmod_);
+            if (!sign) {
+                if (sud) { if (sul) decy(); else incy(); }
+                else { if (sul) decx(); else incx(); }
             }
+            if (sud) { if (aul) decx(); else incx(); }
+            else { if (aul) decy(); else incy(); }
+            sign = acc < 0;
+            bsh = (bsh - 1) & 15;
+            dout = cur;
         }
-        bltapt_ = apt;
-        bltbpt_ = bpt;
-        bltcpt_ = cpt;
-        bltdpt_ = dpt;
+        bltapt_ = (bltapt_ & 0xFFFF0000u) | uint16_t(acc);
+        bltcpt_ = cur;
+        bltdpt_ = cur;
+        bltcon0_ = uint16_t((bltcon0_ & 0x0FFF) | (ash << 12));
+        bltcon1_ = uint16_t((bltcon1_ & 0x0FBF) | (bsh << 12) | (sign ? 0x40 : 0));
         return;
     }
 
+    // Area fill (descending mode only): BLTCON1 IFE (bit 3) / EFE (bit 4),
+    // FCI (bit 2) is the fill carry at the start of every line. Bits are
+    // processed from bit 0 up, words from right to left.
+    const bool ife = (bltcon1_ & 0x08) != 0;
+    const bool efe = (bltcon1_ & 0x10) != 0;
+    const bool fill = desc && (ife || efe);
+    const bool fci = (bltcon1_ & 0x04) != 0;
+
     for (int y = 0; y < height; y++) {
         uint32_t a_hold = 0, b_hold = 0;
+        bool carry = fci;
         for (int x = 0; x < width; x++) {
             uint16_t a_in = bltadat_;
             if (usea) {
@@ -558,17 +584,28 @@ void AmigaChipset::blit() {
                 cpt = uint32_t(int32_t(cpt) + delta);
             }
 
-            const uint16_t d = minterm(a_shifted, b_shifted, c, mt);
+            uint16_t d = minterm(a_shifted, b_shifted, c, mt);
+            if (fill) {
+                uint16_t out = 0;
+                for (int bit = 0; bit < 16; bit++) {
+                    const bool in = (d >> bit) & 1;
+                    carry = carry != in;
+                    if (efe ? carry : (carry || in)) out = uint16_t(out | (1u << bit));
+                }
+                d = out;
+            }
             if (d) bzero_ = false;
             if (used) {
                 deferred.push_back({dpt, d});
                 dpt = uint32_t(int32_t(dpt) + delta);
             }
         }
-        apt = uint32_t(int32_t(apt) + bltamod_);
-        bpt = uint32_t(int32_t(bpt) + bltbmod_);
-        cpt = uint32_t(int32_t(cpt) + bltcmod_);
-        dpt = uint32_t(int32_t(dpt) + bltdmod_);
+        // In descending mode the modulos are subtracted, like the word step.
+        const int msign = desc ? -1 : 1;
+        apt = uint32_t(int32_t(apt) + msign * bltamod_);
+        bpt = uint32_t(int32_t(bpt) + msign * bltbmod_);
+        cpt = uint32_t(int32_t(cpt) + msign * bltcmod_);
+        dpt = uint32_t(int32_t(dpt) + msign * bltdmod_);
     }
     for (const auto& w : deferred) chip_write(w.first, w.second);
     bltapt_ = apt;
