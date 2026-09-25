@@ -352,7 +352,8 @@ the leader get one. On tape each bit is two square-wave cycles, MSB first: about
 
 There is no motor relay, so the tape only moves while the BIOS tape routine runs;
 F6 pauses it and a reset rewinds it. In Exel Basic, `LOAD"1"` (device 1 is the
-cassette) shows `ESC -> Lect.`: press Esc and the program loads, then `RUN` (some
+cassette) shows `ESC -> Lect.`: press Esc (Esc goes to the computer; Shift+Esc quits
+the emulator) and the program loads, then `RUN` (some
 tapes, like the Donkey Kong recording, start by themselves). `SAVE"1"` records.
 The EXL-100 keyboard wants SHIFT, CTL and FCT pressed and released before the key
 they modify; a host chord such as Shift+3 (`"`) is sent that way automatically. Loading is fast by default: the BIOS read-byte routine gets the bytes
@@ -757,7 +758,7 @@ report empty drives.
 ```
 
 Keys: the host mouse drives the IIGS pointer; Left Alt or the Windows/Command
-key is Open-Apple (Command), Right Alt is Option, F11 is Esc (Esc quits the
+key is Open-Apple (Command), Right Alt is Option, F11 is Esc (Shift+Esc quits the
 emulator), F10 is the Reset key (Ctrl+F10 = Control-Reset). F3 is a cold boot.
 
 ### Macintosh II
@@ -964,7 +965,7 @@ as `super_cassette_vision.pas`. The host keyboard supplies 0–9, Q, W and P
 | 5, 6 | Insert coin 1 / 2 |
 | P | Pause (F2 on the Spectrum, whose keyboard uses every letter) |
 | F3 | Reset |
-| Esc | Quit |
+| Esc | Quit (on computers with a keyboard Esc is a key: Shift+Esc or closing the window quits) |
 
 ### DIP switches (`--dip`)
 
