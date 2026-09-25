@@ -214,6 +214,20 @@ bool Williams::init(const std::string& rom_path, std::string* error) {
 
     build_palette_lookup();
 
+    // CMOS lives next to the ROM set: joust.zip -> joust.nv.
+    if (nvram_path_.empty()) {
+        std::string p = rom_path;
+        while (!p.empty() && (p.back() == '/' || p.back() == '\\')) p.pop_back();
+        const size_t slash = p.find_last_of("/\\");
+        const size_t dot = p.find_last_of('.');
+        if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) p.erase(dot);
+        nvram_path_ = p.empty() ? std::string() : p + ".nv";
+    }
+    nvram_.fill(0);
+    load_nvram();
+    nvram_dirty_ = false;
+    auto_advance_ = -1;
+
     // Pascal: change_ram_calls(williams_getbyte, williams_putbyte)
     main_.set_memory_handlers([this](uint16_t a) { return main_read(a); },
                               [this](uint16_t a, uint8_t v) { main_write(a, v); });
@@ -234,7 +248,7 @@ bool Williams::init(const std::string& rom_path, std::string* error) {
         }
         // IN2: bit0 Auto-Up default on; coins $10/$20
         pia1_.set_in_out(
-            [this]() { return uint8_t(0x01 | (in2_ & 0x30) | dsw_a_); },
+            [this]() { return uint8_t(0x01 | (advance_ ? 0x02 : 0) | (in2_ & 0x30) | dsw_a_); },
             nullptr, nullptr, [this](uint8_t v) { sound_latch_w(v); });
     } else {
         pia0_.set_in_out([this]() { return uint8_t(~in0_); }, [this]() { return uint8_t(~in1_); },
@@ -349,6 +363,8 @@ void Williams::defender_write(uint16_t a, uint8_t v) {
         if (o == 0x3ff) return;
         if (o >= 0x400 && o <= 0x7ff) {
             nvram_[o & 0xff] = uint8_t(0xf0 | v);
+            nvram_dirty_ = true;
+            nvram_idle_ = 0;
             return;
         }
         if (o >= 0xc00) {
@@ -408,7 +424,12 @@ void Williams::joust_write(uint16_t a, uint8_t v) {
     }
     if (a == 0xcbff) return;  // watchdog
     if (a >= 0xcc00 && a <= 0xcfff) {
-        nvram_[a & 0x3ff] = uint8_t(0xf0 | v);
+        const uint8_t n = uint8_t(0xf0 | v);
+        if (nvram_[a & 0x3ff] != n) {
+            nvram_[a & 0x3ff] = n;
+            nvram_dirty_ = true;
+            nvram_idle_ = 0;
+        }
         return;
     }
 }
@@ -557,58 +578,38 @@ void Williams::present_frame() {
 // ---------------------------------------------------------------------------
 
 void Williams::run_frame() {
-    static int fr;
-    ++fr;
-    if (has_blitter()) {
-        if (fr >= 2000 && fr < 2300) in2_ |= 0x10;
-        if (fr >= 2800 && fr < 3200) in0_ |= 0x20;
-        if (fr >= 4500 && fr < 4800) in0_ |= 0x20;
-        // Force IRQ soft-timers (CLR $0D / DEC $0E in handler) to expire
-        if (fr > 3500 && (fr % 30) == 0) {
-            mem_[0x0d] = 0;
-            mem_[0x0e] = 0;
-            mem_[0xa00d] = 0;
-            mem_[0xa00e] = 0;
-        }
-    }
+    ++frame_count_;
 
-    // Bank-safe IRQ stub until game installs vector at D90C.
-    // Increments $49 and $5D (flags boot/attract spin on).
-    static bool irq_ready;
-    if (!irq_ready && fr > 40 && !has_blitter()) {
-        const uint8_t handler[] = {
-            0x7c, 0x00, 0x49,
-            0x7c, 0x00, 0x5d,
-            0x3b
-        };
+    // Defender-board games (no blitter): boot aids carried over from the
+    // original port; the Joust-family boards run the real code unaided.
+    if (!has_blitter() && !defender_irq_ready_ && frame_count_ > 40) {
+        // Bank-safe IRQ stub until the game installs its vector at D90C:
+        // increments $49 and $5D (flags the boot/attract spin loops test).
+        const uint8_t handler[] = {0x7c, 0x00, 0x49, 0x7c, 0x00, 0x5d, 0x3b};
         std::memcpy(mem_.data() + 0xa08f, handler, sizeof(handler));
         pia1_.write(3, 0x05);
         pia1_.write(1, 0x15);
-        irq_ready = true;
-        update_main_irq();
-    }
-    if (!irq_ready && has_blitter() && fr > 2) irq_ready = true;
-    // Joust family never ORs bit0 onto CRA in ROM image; enable CA1/CB1 IRQs
-    // after boot so VBlank advances timers/attract (CRA/CRB was left at $3C/$34).
-    // One-shot CB1 enable (game writes CRB=$35 at E07C)
-    static bool crb_on;
-    if (has_blitter() && fr == 450 && !crb_on) {
-        pia1_.write(3, 0x35);
-        crb_on = true;
+        defender_irq_ready_ = true;
         update_main_irq();
     }
 
+    // Joust: on the first boot without saved CMOS the game restores the
+    // factory settings and waits for the operator's "Advance" button. Do
+    // that press once for the player, a second after the restore.
+    if (auto_advance_ < 0 && !nvram_loaded_ && game_ == Game::Joust && joust_cmos_valid())
+        auto_advance_ = 60;
+    if (auto_advance_ > 0) --auto_advance_;
+    advance_ = service_ || (auto_advance_ >= 0 && auto_advance_ < 10 && auto_advance_ > 0);
 
+    // Video timing (MAME williams): 260 lines. PIA1 CB1 follows VA11 (it
+    // toggles every 32 lines of the 256-line counter) and CA1 is COUNT240,
+    // high from line 240 until the counter wraps to 0. The game's IRQ
+    // handler acknowledges the PIA itself.
     for (scanline_ = 0; scanline_ < kScanlines; ++scanline_) {
-        if (scanline_ == 0 || scanline_ == 32 || scanline_ == 64 || scanline_ == 96 ||
-            scanline_ == 128 || scanline_ == 160 || scanline_ == 192 || scanline_ == 224)
-            pia1_.cb1_w((scanline_ & 0x20) != 0);
-
-        if (scanline_ == 239) {
-            present_frame();
-            pia1_.ca1_w(true);
-        }
-        if (scanline_ == 240) pia1_.ca1_w(false);
+        if (scanline_ < 256 && (scanline_ & 0x1f) == 0) pia1_.cb1_w((scanline_ & 0x20) != 0);
+        if (scanline_ == 0) pia1_.ca1_w(false);
+        if (scanline_ == 240) pia1_.ca1_w(true);
+        if (scanline_ == 239) present_frame();
 
         // Pascal: m6809.run(frame_main); frame_main := frame_main + tframes - contador
         for (int h = 0; h < kCpuSync; ++h) {
@@ -620,41 +621,25 @@ void Williams::run_frame() {
             const int snd_ran = sound_.run(snd_budget);
             frame_snd_ = frame_snd_ + tframes_snd_ - double(snd_ran);
             if (frame_snd_ < 0) frame_snd_ = tframes_snd_;
-            // Pascal does not auto-ack PIA — game reads port (handler F6 $C80E).
-            // Defender boot needs a safety ack (handler is stubby).
             if (!has_blitter()) {
+                // Defender boot needs a safety ack (its handler is stubby).
                 if (pia1_.irq_a_state() || pia1_.irq_b_state()) {
                     pia1_.read(0);
                     pia1_.read(2);
                     update_main_irq();
                 }
-            }
-            if (has_blitter()) {
-                const uint16_t pc = main_.pc();
-                if (pc >= 0x3d69 && pc <= 0x3d74)
-                    main_.set_pc(0x3d76);
-                // E0F0: TST ,X / BNE * — wait while *X != 0 (X=A9C0 or AC21)
-                if (pc >= 0xe0f0 && pc <= 0xe0f4) {
-                    mem_[0xa9c0] = 0;
-                    mem_[0xac21] = 0;
-                    mem_[main_.x] = 0;
-                    main_.set_pc(0xe0f5);
-                }
-            }
-            if (irq_ready && !has_blitter()) {
-                const uint16_t pc = main_.pc();
-                if (pc >= 0xca4c && pc <= 0xca4f)
-                    main_.set_pc(0xca51);
-                if (pc >= 0xca46 && pc <= 0xca53) {
-                    if (main_.y == 0 || main_.y > 2)
-                        main_.y = 1;
-                }
-                // E7C3: LDA $5D / BEQ * — vblank flag (direct page relative)
-                if (pc == 0xe7c3 || pc == 0xe7c5) {
-                    mem_[0x5d] = 1;
-                    mem_[0xa05d] = 1;  // if DP=$A0
-                    // Force past the wait if still stuck
-                    main_.set_pc(0xe7c7);
+                if (defender_irq_ready_) {
+                    const uint16_t pc = main_.pc();
+                    if (pc >= 0xca4c && pc <= 0xca4f) main_.set_pc(0xca51);
+                    if (pc >= 0xca46 && pc <= 0xca53) {
+                        if (main_.y == 0 || main_.y > 2) main_.y = 1;
+                    }
+                    // E7C3: LDA $5D / BEQ * — vblank flag (direct page relative)
+                    if (pc == 0xe7c3 || pc == 0xe7c5) {
+                        mem_[0x5d] = 1;
+                        mem_[0xa05d] = 1;
+                        main_.set_pc(0xe7c7);
+                    }
                 }
             }
         }
@@ -662,15 +647,44 @@ void Williams::run_frame() {
         update_video_line(scanline_);
     }
 
-    if ((fr % 150) == 1) {
-        std::fprintf(stderr, "f=%d pc=%04x bank=%u A=%02x Y=%04x\n",
-                     fr, int(main_.pc()), unsigned(ram_bank_), int(main_.a), int(main_.y));
-    }
+    // Battery-backed CMOS: write it out a second after it last changed.
+    if (nvram_dirty_ && ++nvram_idle_ >= 60) save_nvram();
 
     const int samples = int(kSampleRate / kFramesPerSecond);
     for (int i = 0; i < samples; ++i)
         audio_.push_back(
             int16_t(std::clamp(dac_.update(), int32_t(-32768), int32_t(32767))));
+}
+
+bool Williams::joust_cmos_valid() const {
+    // The game's own check ($3D29): nibble sum of $CC00-$CC23 plus $37
+    // against the byte stored as two nibbles at $CC8C/$CC8D.
+    uint8_t sum = 0;
+    for (int i = 0x00; i < 0x24; ++i) sum = uint8_t(sum + (nvram_[size_t(i)] & 0x0f));
+    sum = uint8_t(sum + 0x37);
+    const uint8_t stored = uint8_t(((nvram_[0x8c] & 0x0f) << 4) | (nvram_[0x8d] & 0x0f));
+    return sum == stored;
+}
+
+void Williams::load_nvram() {
+    nvram_loaded_ = false;
+    if (nvram_path_.empty()) return;
+    std::ifstream in(nvram_path_, std::ios::binary);
+    if (!in) return;
+    in.read(reinterpret_cast<char*>(nvram_.data()), std::streamsize(nvram_.size()));
+    nvram_loaded_ = in.gcount() == std::streamsize(nvram_.size());
+}
+
+void Williams::save_nvram() {
+    nvram_dirty_ = false;
+    nvram_idle_ = 0;
+    if (nvram_path_.empty()) return;
+    std::ofstream out(nvram_path_, std::ios::binary | std::ios::trunc);
+    if (out) out.write(reinterpret_cast<const char*>(nvram_.data()), std::streamsize(nvram_.size()));
+}
+
+Williams::~Williams() {
+    if (nvram_dirty_) save_nvram();
 }
 
 void Williams::drain_audio(std::vector<int16_t>& out) {
@@ -751,6 +765,7 @@ void Williams::set_inputs(const MachineInputs& in) {
     }
     if (in.coin1) in2_ |= 0x10;
     if (in.coin2) in2_ |= 0x20;
+    service_ = in.service;
 }
 
 void Williams::set_dip_switch(int bank, uint8_t value) {

@@ -41,6 +41,8 @@ struct MachineInputs {
     InputState player2;
     bool coin1 = false;
     bool coin2 = false;
+    // Operator service button (e.g. Williams "Advance"), F1 in the front end.
+    bool service = false;
     std::array<bool, size_t(Key::Count)> keys{};
 
     // Light gun / mouse, in screen pixels. `has_pointer` is set when the

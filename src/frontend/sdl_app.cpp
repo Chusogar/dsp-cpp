@@ -84,6 +84,7 @@ void collect_inputs(Machine& machine, int pointer_x, int pointer_y, uint32_t mou
     inputs.player2.select = keys[SDL_SCANCODE_4];
 
     inputs.coin1 = keys[SDL_SCANCODE_5];
+    inputs.service = keys[SDL_SCANCODE_F1];
     inputs.coin2 = keys[SDL_SCANCODE_6];
 
     if (machine.uses_pointer() && has_pointer) {

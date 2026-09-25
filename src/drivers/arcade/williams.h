@@ -31,6 +31,10 @@ public:
     static constexpr int kSampleRate = 44100;
 
     explicit Williams(Game game = Game::Defender);
+    ~Williams() override;
+    // Where the CMOS is kept; call before init() (default: the ROM path with
+    // ".nv" in place of its extension).
+    void set_nvram_path(const std::string& path) { nvram_path_ = path; }
 
     bool init(const std::string& rom_path, std::string* error) override;
     void reset() override;
@@ -98,6 +102,20 @@ private:
     std::array<uint32_t, size_t(kFbWidth) * kFbHeight> full_fb_{};
     std::array<uint32_t, size_t(kVisWidth) * kVisHeight> vis_fb_{};
     std::vector<int16_t> audio_;
+
+    // Battery-backed CMOS persistence and the operator "Advance" button.
+    std::string nvram_path_;
+    bool nvram_loaded_ = false;
+    bool nvram_dirty_ = false;
+    int nvram_idle_ = 0;
+    bool service_ = false;
+    bool advance_ = false;
+    int auto_advance_ = -1;
+    int frame_count_ = 0;
+    bool defender_irq_ready_ = false;
+    bool joust_cmos_valid() const;
+    void load_nvram();
+    void save_nvram();
 
     // Pascal residual cycle budgets (tframes)
     double frame_main_ = 0;

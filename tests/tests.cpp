@@ -29,6 +29,7 @@
 #include "drivers/consoles/atari_lynx.h"
 #include "drivers/consoles/a2600.h"
 #include "drivers/consoles/snes.h"
+#include "drivers/arcade/williams.h"
 #include "video/snes_ppu.h"
 #include "drivers/arcade/atari_system1.h"
 #include "drivers/arcade/atari_system2.h"
@@ -3907,6 +3908,40 @@ void test_snes_mazinger_if_present() {
     check(box > 1500, "Mazinger Z story scene keeps its dialogue box (long DMA vs VRAM)");
 }
 
+// Joust (Williams): a first boot with blank CMOS restores the factory
+// settings and waits for the operator's Advance button; the driver presses
+// it once, saves the CMOS next to the ROM set, and the attract mode runs
+// with no credits appearing by themselves.
+void test_williams_joust_if_present() {
+    const char* rom = "/tmp/roms/joust.zip";
+    if (!std::ifstream(rom)) return;
+    const std::string nv = "/tmp/dsp-joust-test.nv";
+    std::remove(nv.c_str());
+    auto yellow = [](const dsp::Machine& m) {
+        int n = 0;
+        const uint32_t* fb = m.framebuffer();
+        for (int i = 0; i < m.screen_width() * m.screen_height(); i++) {
+            const uint32_t c = fb[i];
+            if (((c >> 16) & 0xff) > 0xc0 && ((c >> 8) & 0xff) > 0xc0 && (c & 0xff) < 0x60) n++;
+        }
+        return n;
+    };
+    {
+        dsp::Williams joust(dsp::Williams::Game::Joust);
+        std::string error;
+        joust.set_nvram_path(nv);
+        check(joust.init(rom, &error), "Joust loads");
+        int best = 0;
+        for (int frame = 0; frame < 1800; frame++) {
+            joust.run_frame();
+            if (frame > 1300) best = std::max(best, yellow(joust));
+        }
+        check(best > 3000, "Joust gets past FACTORY SETTINGS RESTORED to the title logo");
+    }
+    check(bool(std::ifstream(nv)), "Joust CMOS is saved to disk");
+    std::remove(nv.c_str());
+}
+
 void test_a2600_rom_if_present() {
     auto try_path = [](const char* path) {
         std::ifstream probe(path);
@@ -6752,6 +6787,7 @@ int main() {
     test_snes_ppu();
     test_snes_math_registers();
     test_snes_mazinger_if_present();
+    test_williams_joust_if_present();
     test_slapstic();
     test_ym2151();
     test_pokey();
