@@ -114,6 +114,8 @@ private:
     int pointer_frac_x_ = 0;
     int pointer_frac_y_ = 0;
     bool pointer_seen_ = false;
+    bool seed_valid_ = false;
+    int seed_x_ = 0, seed_y_ = 0;
     bool last_pointer_b1_ = false;
     bool last_pointer_b2_ = false;
     uint32_t video_count_ = 0;

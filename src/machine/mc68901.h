@@ -44,6 +44,7 @@ private:
     };
 
     void tick_timer(Timer& t, int ticks);
+    void write_data(Timer& t, uint8_t value);
 
     uint8_t gpip_ = 0xff;
     uint8_t aer_ = 0;

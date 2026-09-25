@@ -638,8 +638,10 @@ void AmigaChipset::plot_sprites(uint32_t* framebuffer) const {
             }
             const bool attached = (s + 1 < 8) && (spr_line_ctl_[size_t(s + 1)][size_t(y)] & 0x80) &&
                                   spr_line_on_[size_t(s + 1)][size_t(y)];
+            // SH8..SH0 is already in lores pixels, the same units as the
+            // DIWSTRT horizontal start.
             const int hstart = ((pos & 0xFF) << 1) | (ctl & 1);
-            const int x0 = (hstart / 2) - h0;
+            const int x0 = hstart - h0;
             const uint16_t da = spr_line_data_[size_t(s)][size_t(y)];
             const uint16_t db = spr_line_datb_[size_t(s)][size_t(y)];
             const uint16_t oa = attached ? spr_line_data_[size_t(s + 1)][size_t(y)] : 0;

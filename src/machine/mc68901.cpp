@@ -136,6 +136,11 @@ uint8_t Mc68901::read(int offset) {
     }
 }
 
+void Mc68901::write_data(Timer& t, uint8_t value) {
+    t.data = value;
+    if (t.control == 0 || t.count == 0) t.count = value;
+}
+
 void Mc68901::write(int offset, uint8_t value) {
     switch (offset & 0x1f) {
         case 0x00:
@@ -167,10 +172,13 @@ void Mc68901::write(int offset, uint8_t value) {
             tc_.control = uint8_t((value >> 4) & 7);
             td_.control = uint8_t(value & 7);
             break;
-        case 0x0f: ta_.data = value; if (ta_.count == 0) ta_.count = value; break;
-        case 0x10: tb_.data = value; if (tb_.count == 0) tb_.count = value; break;
-        case 0x11: tc_.data = value; if (tc_.count == 0) tc_.count = value; break;
-        case 0x12: td_.data = value; if (td_.count == 0) td_.count = value; break;
+        // Writing a data register while the timer is stopped loads the main
+        // counter as well (TOS 1.04 writes TBDR and spins until it reads the
+        // value back, e.g. from Desk > Desktop Info).
+        case 0x0f: write_data(ta_, value); break;
+        case 0x10: write_data(tb_, value); break;
+        case 0x11: write_data(tc_, value); break;
+        case 0x12: write_data(td_, value); break;
         default: break;
     }
 }

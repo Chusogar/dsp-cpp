@@ -233,13 +233,14 @@ tracks are encoded as MFM for Kickstart's trackdisk DSKDMA.
 ./build/dsp --game amiga --disk workbench.adf /path/to/a500.zip
 ```
 
-Mouse (Amiga and Atari ST): both machines only ever see relative mouse motion,
-and every program keeps its own pointer, so the window captures the mouse
-instead of showing a second (host) cursor: click in the window to capture it
-(the host cursor hides and the emulated pointer follows the motion), press the
-middle button or switch windows to release it. The mouse sits in Amiga port 0
-(left button on CIA-A /FIR0, right on POTGOR), cursor keys + Left Ctrl/Space are
-a joystick in port 1.
+Mouse (Amiga and Atari ST): both machines only see relative mouse motion and
+every program keeps its own pointer, so the window hides the host cursor and
+lines the emulated pointer up with the host mouse: on the first movement (and
+whenever the mouse comes back into the window) it is pushed into the top-left
+corner and then moved to the host position; moving past a window edge keeps
+pushing it against that edge. The Amiga mouse is in port 0 (left button on
+CIA-A /FIR0, right on POTGOR); cursor keys + Left Ctrl/Space are a joystick in
+port 1.
 
 ### Atari System 1 (Indiana Jones, Marble Madness, Peter Pack Rat, Road Runner)
 

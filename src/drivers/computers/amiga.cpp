@@ -321,43 +321,79 @@ void Amiga500::set_inputs(const MachineInputs& inputs) {
         chipset_.set_joy1dat(j);
         fire1_ = inputs.player1.button1;
     }
-    if (!inputs.has_pointer) return;
+    if (!inputs.has_pointer) {
+        pointer_seen_ = false;  // re-seed when the pointer comes back
+        seed_valid_ = false;
+        sync_frames_ = 0;
+        lmb_ = false;
+        chipset_.set_right_button(false);
+        return;
+    }
     lmb_ = inputs.pointer_button1;
     chipset_.set_right_button(inputs.pointer_button2);
-    // One lores pixel of motion is two mouse counts horizontally (the
-    // counters run at hires resolution, as games and Intuition expect) and
-    // one count vertically.
+    // One mouse count per lores pixel on both axes (the pointer sprite moves
+    // one lores pixel per count).
+    if (inputs.pointer_resync) {
+        // The mouse came back into the window: line up again on its next move.
+        pointer_seen_ = false;
+        seed_valid_ = false;
+        sync_frames_ = 0;
+    }
     int dx = 0, dy = 0;
+    if (sync_frames_ > 0) {
+        // Lining the pointer up: a few frames of full-speed motion up and
+        // left pin it in the corner (programs clamp there), then it moves to
+        // where the host pointer is.
+        mouse_x_ = uint8_t(mouse_x_ - kMaxCountsPerFrame);
+        mouse_y_ = uint8_t(mouse_y_ - kMaxCountsPerFrame);
+        update_joy0();
+        if (--sync_frames_ == 0) {
+            pend_x_ = inputs.pointer_x;
+            pend_y_ = inputs.pointer_y;
+            last_px_ = inputs.pointer_x;
+            last_py_ = inputs.pointer_y;
+        }
+        return;
+    }
     if (inputs.pointer_relative) {
         dx = inputs.pointer_dx;
         dy = inputs.pointer_dy;
     } else {
         const int x = inputs.pointer_x, y = inputs.pointer_y;
         if (!pointer_seen_) {
+            // Wait for the first real movement (the OS or game may still be
+            // starting), then line the pointer up with the host one.
+            if (!seed_valid_ || (x == seed_x_ && y == seed_y_)) {
+                seed_valid_ = true;
+                seed_x_ = x;
+                seed_y_ = y;
+                return;
+            }
             pointer_seen_ = true;
-            last_px_ = x;
-            last_py_ = y;
+            pend_x_ = pend_y_ = 0;
+            sync_frames_ = 12;  // 12 x 60 counts: past any edge
             return;
         }
         dx = x - last_px_;
         dy = y - last_py_;
         last_px_ = x;
         last_py_ = y;
-        // Uncaptured absolute pointer: the host pointer stops at the window
-        // edge; keep pushing so the Amiga pointer (clamped by the OS or the
-        // game) stops on that edge too and both line up again.
+        // The host pointer stops at the window edge; keep pushing so the
+        // Amiga pointer (clamped by the OS or the game) stops on that edge
+        // too and both line up again.
         if (x <= 0) dx -= 16;
         if (x >= AmigaChipset::kWidth - 1) dx += 16;
         if (y <= 0) dy -= 16;
         if (y >= AmigaChipset::kHeight - 1) dy += 16;
     }
-    dx *= 2;
-    // The counters are 8 bits and read once per frame: more than 127
-    // counts between reads would wrap into the opposite direction, so a
-    // fast flick is spread over the following frames.
+    // The counters are 8 bits: more than 127 counts between two reads wrap
+    // into the opposite direction. Games often read them only every other
+    // frame (25 Hz), so at most 60 counts are added per frame and a fast
+    // flick is spread over the following frames.
     pend_x_ += dx;
     pend_y_ += dy;
-    const int sx = std::clamp(pend_x_, -100, 100), sy = std::clamp(pend_y_, -100, 100);
+    const int sx = std::clamp(pend_x_, -kMaxCountsPerFrame, kMaxCountsPerFrame);
+    const int sy = std::clamp(pend_y_, -kMaxCountsPerFrame, kMaxCountsPerFrame);
     pend_x_ -= sx;
     pend_y_ -= sy;
     mouse_x_ = uint8_t(mouse_x_ + sx);

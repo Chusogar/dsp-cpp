@@ -119,6 +119,7 @@ void AtariSt::reset() {
     last_pointer_x_ = last_pointer_y_ = 0;
     pointer_frac_x_ = pointer_frac_y_ = 0;
     pointer_seen_ = false;
+    seed_valid_ = false;
     last_pointer_b1_ = last_pointer_b2_ = false;
     video_count_ = 0;
     blit_halftone_.fill(0);
@@ -193,7 +194,16 @@ void AtariSt::ikbd_mouse_packet(int dx, int dy, bool left, bool right) {
 }
 
 void AtariSt::ikbd_mouse(const MachineInputs& inputs) {
-    if (!inputs.has_pointer) return;
+    if (!inputs.has_pointer) {
+        pointer_seen_ = false;  // re-seed when the pointer comes back
+        seed_valid_ = false;
+        return;
+    }
+    if (inputs.pointer_resync) {
+        // The mouse came back into the window: line up again on its next move.
+        pointer_seen_ = false;
+        seed_valid_ = false;
+    }
     int dx_host = 0, dy_host = 0;
     if (inputs.pointer_relative) {
         // Captured host mouse: plain motion, no absolute position to track.
@@ -201,17 +211,27 @@ void AtariSt::ikbd_mouse(const MachineInputs& inputs) {
         dy_host = inputs.pointer_dy;
         pointer_seen_ = true;
     } else if (!pointer_seen_) {
+        // The pointer just came (back) over the window. The ST cursor is
+        // wherever the program left it, so line it up: slam it into the
+        // top-left corner (every program clamps there), then move it to
+        // the host position. Wait for the first real movement, so the sync
+        // is not spent while TOS or the game is still starting up.
+        if (!seed_valid_ || (inputs.pointer_x == seed_x_ && inputs.pointer_y == seed_y_)) {
+            seed_valid_ = true;
+            seed_x_ = inputs.pointer_x;
+            seed_y_ = inputs.pointer_y;
+            return;
+        }
         last_pointer_x_ = inputs.pointer_x;
         last_pointer_y_ = inputs.pointer_y;
         last_pointer_b1_ = inputs.pointer_button1;
         last_pointer_b2_ = inputs.pointer_button2;
         pointer_seen_ = true;
         pointer_frac_x_ = pointer_frac_y_ = 0;
-        // A click on the first sample still needs a button packet, but never
-        // a motion from (0,0) — that throws GEM's cursor off the screen.
-        if (inputs.pointer_button1 || inputs.pointer_button2)
-            ikbd_mouse_packet(0, 0, inputs.pointer_button1, inputs.pointer_button2);
-        return;
+        for (int i = 0; i < 6; i++)
+            ikbd_mouse_packet(-127, -127, inputs.pointer_button1, inputs.pointer_button2);
+        dx_host = inputs.pointer_x;
+        dy_host = inputs.pointer_y;
     } else {
         dx_host = inputs.pointer_x - last_pointer_x_;
         dy_host = inputs.pointer_y - last_pointer_y_;

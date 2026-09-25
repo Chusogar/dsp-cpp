@@ -38,6 +38,7 @@
 #include "machine/ql_mdv.h"
 #include "machine/ql_win.h"
 #include "drivers/computers/atari_st.h"
+#include "machine/mc68901.h"
 #include "machine/st_floppy.h"
 #include "drivers/computers/amiga.h"
 #include "machine/amiga_adf.h"
@@ -5023,11 +5024,21 @@ void test_st_ikbd_mouse() {
     check(machine.ikbd_pending_bytes().empty(),
           "the first pointer sample does not throw GEM's mouse off-screen");
 
-    in.pointer_x = 104;  // +4 host px → +2 TOS pixels in low res
+    // The first real movement lines the ST cursor up: six packets into the
+    // top-left corner, then the host position (104,300 -> 52,150).
+    in.pointer_x = 104;
     machine.set_inputs(in);
     auto q = machine.ikbd_pending_bytes();
-    check(q.size() == 3, "a small move is one relative IKBD packet");
-    check(q[0] == 0xf8 && q[1] == 2 && q[2] == 0, "low-res IKBD X is halved to shifter pixels");
+    check(q.size() == 18 + 6 && q[0] == 0xf8 && int8_t(q[1]) == -127 && int8_t(q[2]) == -127,
+          "the first movement slams the cursor into the corner");
+    check(q[18] == 0xf8 && q[19] == 52 && q[20] == 127 && q[21] == 0xf8 && q[22] == 0 && q[23] == 23,
+          "then moves it to the host position");
+
+    in.pointer_x = 108;  // +4 host px → +2 TOS pixels in low res
+    machine.set_inputs(in);
+    q = machine.ikbd_pending_bytes();
+    check(q.size() == 27, "a small move is one relative IKBD packet");
+    check(q[24] == 0xf8 && q[25] == 2 && q[26] == 0, "low-res IKBD X is halved to shifter pixels");
 
     const size_t after_move = q.size();
     in.pointer_button1 = true;
@@ -5067,7 +5078,7 @@ void test_st_ikbd_mouse() {
     q = machine.ikbd_pending_bytes();
     check(q.size() > before_edge && int8_t(q[q.size() - 2]) < 0, "the left window edge keeps pushing left");
 
-    // Captured mouse: relative deltas straight through.
+    // Relative deltas (MachineInputs::pointer_relative) go straight through.
     dsp::AtariSt rel;
     dsp::MachineInputs r;
     r.has_pointer = true;
@@ -5076,7 +5087,7 @@ void test_st_ikbd_mouse() {
     r.pointer_dy = 4;  // → 2
     rel.set_inputs(r);
     q = rel.ikbd_pending_bytes();
-    check(q.size() == 3 && q[0] == 0xf8 && q[1] == 3 && q[2] == 2, "captured motion becomes one IKBD packet");
+    check(q.size() == 3 && q[0] == 0xf8 && q[1] == 3 && q[2] == 2, "relative motion becomes one IKBD packet");
 }
 
 void test_st_blitter() {
@@ -5186,7 +5197,7 @@ void test_st_boot_if_present() {
     }
     const int mx = be16(gcur);
     const int my = be16(gcur + 2);
-    check(mx > 159 && mx < 220 && my == 99, "a small move+click keeps the GEM mouse on-screen");
+    check(mx == 210 && my == 150, "the first move lines the GEM mouse up with the host pointer (420,300 -> 210,150)");
 
     // Fresh boot: double-click drive A. Open-bus $FF at $FF8A3C used to hang
     // Line-A in `tst.b (a5); bmi.s` after GEM recognised the clicks.
@@ -5214,9 +5225,9 @@ void test_st_boot_if_present() {
         desk.set_inputs(mouse);
         desk.run_frame();
     }
-    // Host 500,300 → 230,158 is TOS 24,28, the drive-A icon in low res.
-    mouse.pointer_x = 230;
-    mouse.pointer_y = 158;
+    // The drive-A icon is at TOS 24,28 in low res: host 48,56.
+    mouse.pointer_x = 48;
+    mouse.pointer_y = 56;
     for (int i = 0; i < 20; i++) {
         desk.set_inputs(mouse);
         desk.run_frame();
@@ -6293,7 +6304,7 @@ void test_amiga_north_south_if_present() {
     std::string error;
     check(a.init(rom, &error), "Kickstart loads for North & South");
     check(a.load_media(disk, &error), "North & South ADF mounts");
-    check(a.uses_pointer() && a.uses_relative_pointer(), "the Amiga takes a captured relative mouse");
+    check(a.uses_pointer() && a.uses_relative_pointer(), "the Amiga mouse is a relative device");
     dsp::MachineInputs in;
     in.has_pointer = true;
     in.pointer_relative = true;
@@ -6308,15 +6319,27 @@ void test_amiga_north_south_if_present() {
         if (b > 100 && b > r && b > g) blue++;
     }
     check(blue > 30000, "North & South loads past the Infogrames logo to the blue title");
-    // Mouse counters: 2 counts per lores pixel across, 1 down.
+    // Mouse counters: one count per lores pixel.
     const uint16_t before = uint16_t((a.peek(0xdff00a) << 8) | a.peek(0xdff00b));
     in.pointer_dx = 10;
     in.pointer_dy = 5;
     a.set_inputs(in);
     const uint16_t after = uint16_t((a.peek(0xdff00a) << 8) | a.peek(0xdff00b));
-    check(uint8_t((after & 0xff) - (before & 0xff)) == 20 && uint8_t((after >> 8) - (before >> 8)) == 5,
+    check(uint8_t((after & 0xff) - (before & 0xff)) == 10 && uint8_t((after >> 8) - (before >> 8)) == 5,
           "JOY0DAT counts the mouse motion");
     check(a.peek(0xbfdd01) == 0xff, "$BFDD01 selects no CIA (CIA-A needs A12 low)");
+}
+
+// TOS 1.04 (Desk > Desktop Info...) stops timer B, writes TBDR and spins
+// until TBDR reads back the value: a stopped timer loads its counter.
+void test_mfp_stopped_timer_data() {
+    dsp::Mc68901 mfp;
+    mfp.reset();
+    mfp.write(0x0d, 0x00);  // TBCR: stop
+    mfp.write(0x10, 0x4e);  // TBDR
+    check(mfp.read(0x10) == 0x4e, "MFP: writing TBDR with timer B stopped loads the counter");
+    mfp.write(0x10, 0x21);
+    check(mfp.read(0x10) == 0x21, "MFP: a second write while stopped reloads it again");
 }
 
 int main() {
@@ -6454,6 +6477,7 @@ int main() {
     test_st_missing_roms();
     test_st_floppy_formats();
     test_st_ikbd_mouse();
+    test_mfp_stopped_timer_data();
     test_st_blitter();
     test_st_boot_if_present();
     test_st_north_south_if_present();

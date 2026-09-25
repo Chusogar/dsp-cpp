@@ -106,9 +106,12 @@ private:
     bool selected_ = false;
     // Mouse in game port 0: 8-bit quadrature counters, buttons.
     void update_joy0();
+    static constexpr int kMaxCountsPerFrame = 60;
     uint8_t mouse_x_ = 0, mouse_y_ = 0;
     int last_px_ = 0, last_py_ = 0, pend_x_ = 0, pend_y_ = 0;
     bool pointer_seen_ = false;
+    bool seed_valid_ = false;
+    int seed_x_ = 0, seed_y_ = 0, sync_frames_ = 0;
     bool lmb_ = false, fire1_ = false;
     bool disk_changed_ = true;
     uint8_t prev_prb_ = 0xFF;
