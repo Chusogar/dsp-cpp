@@ -570,7 +570,7 @@ VRAM), 256 KiB mapper RAM, RP-5C01 RTC, and a WD2793 disk interface.
 | Slot | Contents |
 | --- | --- |
 | 0 | 32 KiB main BIOS (pages 0–1) |
-| 1 | cartridge (linear ≤48 KiB, ASCII16 above that) |
+| 1 | cartridge (plain ≤32 KiB; mapper detected for larger images, see below) |
 | 3 expanded | 3-0: 16 KiB sub-ROM; 3-1: mapper RAM; 3-2: 16 KiB disk ROM + FDC |
 
 ROMs are **not** shipped. A directory or zip with these names works (MAME
@@ -595,6 +595,33 @@ decoded at both type 1 (`$7FF8`) and type 2 (`$7FB8`) addresses.
 
 The host keyboard is the MSX matrix (same layout as MSX1). Joysticks are on the
 AY-3-8910 port A. F6 toggles cassette play when a `.cas`/`.tzx` is loaded.
+
+**Cartridges** (`.rom`, `.mx1`, `.mx2`, plain or zipped) are loaded with
+`--tape`. The mapper is picked from the Z80 `LD (nn),A` writes to the mapper
+registers, as openMSX does: Konami (Metal Gear, Nemesis: $6000/$8000/$A000,
+$4000 fixed), Konami SCC (Metal Gear 2, Salamander: $5000/$7000/$9000/$B000,
+with the SCC wavetable chip mixed into the sound), ASCII8, ASCII16 and the rest.
+A tag in the file name forces one (`konami4`, `konami5`/`konamiscc`, `ascii8`,
+`ascii16`…); the word "Konami" alone does not, since it is usually the publisher.
+
+**Region.** Japanese cartridges such as *Metal Gear* read the BIOS ID bytes
+`$002B`/`$002C` and reset unless the machine is a 60 Hz Japanese MSX — as they
+do on a real European NMS 8250. When the cartridge file name carries a
+Japanese tag (`(J)`, `[J]`, `(Japan)`, `_J.`) the driver reports a Japanese
+60 Hz machine (NTSC timing, 262 lines) with the same BIOS. `--game msx2-jp`
+forces the Japanese region and `--game msx2-eu` the European one;
+`--dip 0` / `1` / `2` selects auto / Europe / Japan.
+
+```bash
+./build/dsp --game msx2 --tape "Metal Gear (1987)(Konami)(J).mx2" /path/to/msx2-roms/
+./build/dsp --game msx2-jp --tape metalgear2.rom /path/to/msx2-roms/
+```
+
+The V9938 command engine uses absolute coordinates (SCREEN 5/6 have four
+256-line pages, SCREEN 7/8 two), so games that build the screen by copying
+from hidden pages (HMMM/LMMM with the transparent `T` operations) draw
+correctly; R#2 selects the shown page and R#23 scrolls it. Sprite mode 2
+(SCREEN 4–8) has per-line colours, EC/CC/IC bits and 8 sprites per line.
 
 ### Casio PV-2000
 

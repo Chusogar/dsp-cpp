@@ -5193,6 +5193,220 @@ void test_msx2_boot_logo_if_present() {
     check(other == 0, "the MSX2 logo uses only its four SCREEN 6 palette colours");
 }
 
+void v9938_reg(dsp::V9938& vdp, int reg, uint8_t value) {
+    vdp.register_write(value);
+    vdp.register_write(uint8_t(0x80 | reg));
+}
+
+void v9938_vram_at(dsp::V9938& vdp, uint32_t addr) {
+    v9938_reg(vdp, 14, uint8_t(addr >> 14));
+    vdp.register_write(uint8_t(addr));
+    vdp.register_write(uint8_t(0x40 | ((addr >> 8) & 0x3f)));
+}
+
+void v9938_command(dsp::V9938& vdp, int sx, int sy, int dx, int dy, int nx, int ny, uint8_t clr, uint8_t arg,
+                   uint8_t cmd) {
+    const int v[] = {sx & 0xff, sx >> 8, sy & 0xff, sy >> 8, dx & 0xff, dx >> 8, dy & 0xff, dy >> 8,
+                     nx & 0xff, nx >> 8, ny & 0xff, ny >> 8, clr, arg};
+    for (int i = 0; i < 14; i++) v9938_reg(vdp, 32 + i, uint8_t(v[i]));
+    v9938_reg(vdp, 46, cmd);
+}
+
+void test_v9938_commands_and_pages() {
+    dsp::V9938 vdp([](bool) {});
+    // SCREEN 5 (G4), display on, 212 lines, page 0 shown.
+    v9938_reg(vdp, 0, 0x06);
+    v9938_reg(vdp, 1, 0x40);
+    v9938_reg(vdp, 8, 0x0a);
+    v9938_reg(vdp, 9, 0x80);
+    v9938_reg(vdp, 2, 0x1f);
+    // Palette 5 = pure red, 9 = pure green.
+    v9938_reg(vdp, 16, 5);
+    vdp.palette_write(0x70);
+    vdp.palette_write(0x00);
+    v9938_reg(vdp, 16, 9);
+    vdp.palette_write(0x00);
+    vdp.palette_write(0x07);
+    // Page 1 line 10 (Y = 266): 8 pixels of colour 5.
+    v9938_vram_at(vdp, 266 * 128);
+    for (int i = 0; i < 4; i++) vdp.vram_write(0x55);
+    // HMMM (Y 266, page 1) -> (0, 0) page 0: commands use absolute Y.
+    v9938_command(vdp, 0, 266, 0, 0, 8, 1, 0, 0, 0xd0);
+    check(!vdp.command_executing(), "V9938 HMMM completes");
+    vdp.refresh_line(0, 262);
+    check((vdp.framebuffer()[0] & 0xffffff) == 0xff0000 && (vdp.framebuffer()[15] & 0xffffff) == 0xff0000,
+          "V9938 HMMM copies from page 1 to the displayed page 0");
+    // Showing page 1 (R#2 bits 6-5) displays the source line at line 10.
+    v9938_reg(vdp, 2, 0x3f);
+    vdp.refresh_line(10, 262);
+    check((vdp.framebuffer()[10 * 512] & 0xffffff) == 0xff0000, "V9938 R#2 selects the displayed SCREEN 5 page");
+    v9938_reg(vdp, 2, 0x1f);
+    // LMMM with TIMP: source 0 pixels leave the destination alone.
+    v9938_command(vdp, 0, 0, 0, 1, 8, 1, 9, 0, 0x80);        // LMMV line 1 green
+    v9938_vram_at(vdp, 300 * 128);
+    vdp.vram_write(0x05);                                     // (0,300)=0, (1,300)=5
+    v9938_command(vdp, 0, 300, 0, 1, 2, 1, 0, 0, 0x98);       // LMMM TIMP
+    vdp.refresh_line(1, 262);
+    const uint32_t* line1 = vdp.framebuffer() + 512;
+    check((line1[0] & 0xffffff) == 0x00ff00 && (line1[2] & 0xffffff) == 0xff0000,
+          "V9938 LMMM TIMP keeps the destination where the source is colour 0");
+    // Vertical scroll R#23 moves the picture up.
+    v9938_reg(vdp, 23, 1);
+    vdp.refresh_line(0, 262);
+    check((vdp.framebuffer()[0] & 0xffffff) == 0x00ff00, "V9938 R#23 scrolls the bitmap vertically");
+    v9938_reg(vdp, 23, 0);
+    // SRCH finds colour 5 on line 0 scanning left from X 100.
+    v9938_command(vdp, 100, 0, 0, 0, 0, 0, 5, 0x04, 0x60);
+    v9938_reg(vdp, 15, 2);
+    const uint8_t s2 = vdp.status_read();
+    v9938_reg(vdp, 15, 8);
+    const uint8_t s8 = vdp.status_read();
+    v9938_reg(vdp, 15, 0);
+    check((s2 & 0x10) && s8 == 7, "V9938 SRCH reports the border colour position");
+}
+
+void test_v9938_sprite_mode2() {
+    dsp::V9938 vdp([](bool) {});
+    v9938_reg(vdp, 0, 0x06);   // SCREEN 5
+    v9938_reg(vdp, 1, 0x40);   // 8x8 sprites
+    v9938_reg(vdp, 8, 0x08);
+    v9938_reg(vdp, 9, 0x80);
+    v9938_reg(vdp, 2, 0x1f);
+    v9938_reg(vdp, 5, 0xef);   // colour table $7400, attributes $7600
+    v9938_reg(vdp, 11, 0x00);
+    v9938_reg(vdp, 6, 0x0f);   // patterns $7800
+    v9938_reg(vdp, 16, 3);
+    vdp.palette_write(0x07);   // colour 3 = blue
+    vdp.palette_write(0x00);
+    v9938_reg(vdp, 16, 6);
+    vdp.palette_write(0x70);   // colour 6 = red
+    vdp.palette_write(0x00);
+    v9938_vram_at(vdp, 0x7800);
+    for (int i = 0; i < 8; i++) vdp.vram_write(0xff);
+    // Sprite 0 at (10, Y 20 -> line 21), line colours: row 0 blue, row 1 red.
+    v9938_vram_at(vdp, 0x7600);
+    const uint8_t sat[] = {20, 10, 0, 0, 216};
+    for (uint8_t b : sat) vdp.vram_write(b);
+    v9938_vram_at(vdp, 0x7400);
+    vdp.vram_write(3);
+    vdp.vram_write(6);
+    vdp.refresh_line(21, 262);
+    vdp.refresh_line(22, 262);
+    const uint32_t* fb = vdp.framebuffer();
+    check((fb[21 * 512 + 20] & 0xffffff) == 0x0000ff && (fb[22 * 512 + 20] & 0xffffff) == 0xff0000,
+          "V9938 sprite mode 2 takes a colour per sprite line from the colour table");
+    check((fb[21 * 512 + 18] & 0xffffff) != 0x0000ff, "V9938 sprite mode 2 X position");
+}
+
+void test_msx_konami_mappers() {
+    // Konami (no SCC): $4000 fixed to bank 0, $6000/$8000/$A000 switch.
+    std::vector<uint8_t> rom(0x20000);
+    for (size_t i = 0; i < rom.size(); i++) rom[i] = uint8_t(i / 0x2000);
+    dsp::MsxCartridgeMapper k4;
+    std::vector<uint8_t> tagged = rom;
+    check(k4.load(tagged, "Game (1987)(Konami)(J).rom"), "Konami ROM loads");
+    // The publisher name alone does not pick the mapper: this image has no
+    // register writes, so it must not be treated as Konami SCC or Konami.
+    check(k4.type() != dsp::MsxMapperType::KonamiScc, "publisher 'Konami' in the name does not force SCC");
+    // LD ($6000),A / LD ($8000),A / LD ($A000),A: Konami without SCC.
+    const uint8_t k4code[] = {0x32, 0x00, 0x60, 0x32, 0x00, 0x80, 0x32, 0x00, 0xa0};
+    std::copy(std::begin(k4code), std::end(k4code), rom.begin() + 0x100);
+    check(k4.load(rom, "Metal Gear (1987)(Konami)(J).rom") && k4.type() == dsp::MsxMapperType::Konami,
+          "Konami4 detected from $6000/$8000/$A000 writes");
+    k4.write(0x6000, 5);
+    k4.write(0x8000, 6);
+    k4.write(0xa000, 7);
+    k4.write(0x5000, 9);   // not a register on this mapper
+    check(k4.read(0x4000) == 0 && k4.read(0x6000) == 5 && k4.read(0x8000) == 6 && k4.read(0xa000) == 7,
+          "Konami4 switches $6000/$8000/$A000 and keeps $4000 on bank 0");
+
+    std::vector<uint8_t> scc_rom(0x40000);
+    for (size_t i = 0; i < scc_rom.size(); i++) scc_rom[i] = uint8_t(i / 0x2000);
+    const uint8_t scccode[] = {0x32, 0x00, 0x50, 0x32, 0x00, 0x70, 0x32, 0x00, 0x90, 0x32, 0x00, 0xb0};
+    std::copy(std::begin(scccode), std::end(scccode), scc_rom.begin() + 0x100);
+    dsp::MsxCartridgeMapper scc;
+    check(scc.load(scc_rom, "Metal Gear 2 (1990)(Konami)(J).rom") && scc.type() == dsp::MsxMapperType::KonamiScc,
+          "Konami SCC detected from $5000/$7000/$9000/$B000 writes");
+    scc.write(0x5000, 3);
+    scc.write(0xb000, 4);
+    check(scc.read(0x4000) == 3 && scc.read(0xa000) == 4, "Konami SCC bank registers");
+    check(scc.audio_sample(3579545, 44100) == 0, "SCC silent before it is programmed");
+    scc.write(0x9000, 0x3f);  // SCC registers appear at $9800
+    for (int i = 0; i < 32; i++) scc.write(uint16_t(0x9800 + i), uint8_t(i < 16 ? 100 : -100));
+    check(scc.read(0x9800) == 100 && scc.read(0x9810) == uint8_t(-100), "SCC waveform RAM reads back");
+    scc.write(0x9880, 0xfe);  // channel 1 period $0FE (~440 Hz)
+    scc.write(0x9881, 0x00);
+    scc.write(0x988a, 15);    // volume
+    scc.write(0x988f, 0x01);  // enable channel 1
+    int nonzero = 0, positive = 0, negative = 0;
+    for (int i = 0; i < 441; i++) {
+        const int32_t v = scc.audio_sample(3579545, 44100);
+        if (v) nonzero++;
+        if (v > 0) positive++;
+        if (v < 0) negative++;
+    }
+    check(nonzero > 400 && positive > 100 && negative > 100, "SCC channel 1 plays its square waveform");
+    scc.write(0x9000, 2);  // SCC off: $9800 is ROM again
+    check(scc.read(0x9800) == 2, "SCC registers disappear when bank 2 is not $3F");
+}
+
+void test_msx2_region_and_metal_gear_if_present() {
+    namespace fs = std::filesystem;
+    const char* dir = "/tmp/roms/msx2";
+    if (!fs::exists(std::string(dir) + "/MSX2.ROM")) {
+        std::printf("skip: MSX2.ROM not found\n");
+        return;
+    }
+    std::string error;
+    dsp::Msx2 eu;
+    check(eu.init(dir, &error) && !eu.japanese(), "MSX2 defaults to the European BIOS region");
+    eu.debug_write_port(0xa8, 0);
+    check(eu.debug_read_byte(0x2b) == 0x91, "European MSX2 BIOS ID byte $2B");
+    check(eu.frames_per_second() < 51, "European MSX2 runs at 50 Hz");
+    dsp::Msx2 jp(dsp::Msx2::Region::Japan);
+    check(jp.init(dir, &error) && jp.japanese(), "msx2-jp selects the Japanese region");
+    jp.debug_write_port(0xa8, 0);
+    check(jp.debug_read_byte(0x2b) == 0x00 && (jp.debug_read_byte(0x2c) & 0xcf) == 0,
+          "Japanese region: BIOS ID bytes report a 60 Hz Japanese machine");
+    check(jp.frames_per_second() > 59, "Japanese MSX2 runs at 60 Hz");
+
+    struct Game {
+        const char* file;
+        int frames;
+        int press;
+        const char* what;
+    };
+    const Game games[] = {
+        {"Metal Gear 1 (1987)(Konami)(J).mx2", 1300, 900, "Metal Gear"},
+        {"Metal Gear 2 - Solid Snake (1990)(Konami)(J).mx2", 1750, 1000, "Metal Gear 2"},
+    };
+    for (const Game& g : games) {
+        const std::string path = std::string(dir) + "/games/" + g.file;
+        if (!fs::exists(path)) {
+            std::printf("skip: %s not found\n", path.c_str());
+            continue;
+        }
+        dsp::Msx2 msx;
+        check(msx.init(dir, &error) && msx.load_media(path, &error), (std::string(g.what) + " loads").c_str());
+        check(msx.japanese(), (std::string(g.what) + ": (J) tag selects the Japanese region").c_str());
+        std::set<uint32_t> colours;
+        for (int f = 1; f <= g.frames; f++) {
+            dsp::MachineInputs in;
+            // Space every 300 frames: title, intro, first screen.
+            in.keys[size_t(dsp::Key::Space)] = f >= g.press && (f - g.press) % 300 < 4;
+            msx.set_inputs(in);
+            msx.run_frame();
+            std::vector<int16_t> audio;
+            msx.drain_audio(audio);
+        }
+        const uint32_t* fb = msx.framebuffer();
+        for (int i = 0; i < msx.screen_width() * msx.screen_height(); i++) colours.insert(fb[i] & 0xffffff);
+        check(colours.size() >= 8, (std::string(g.what) + " reaches a coloured in-game screen").c_str());
+        // Past the BIOS: the program runs from the cartridge or RAM, not ROM.
+        check(msx.debug_pc() >= 0x4000, (std::string(g.what) + " keeps running (no reset loop)").c_str());
+    }
+}
+
 void test_msx2_missing_roms_mapper_and_disk() {
     dsp::Msx2 missing;
     std::string error = "unset";
@@ -7378,6 +7592,10 @@ int main() {
     test_msx_disk_and_fdc();
     test_rp5c01_fixed_clock();
     test_msx2_missing_roms_mapper_and_disk();
+    test_v9938_commands_and_pages();
+    test_v9938_sprite_mode2();
+    test_msx_konami_mappers();
+    test_msx2_region_and_metal_gear_if_present();
     test_msx2_boot_logo_if_present();
     test_diskii_encode_roundtrip();
     test_apple2_missing_roms_and_dummy();

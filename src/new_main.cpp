@@ -145,7 +145,7 @@ void print_supported_emulators() {
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
-        "    cpc464, cpc664, cpc6128, msx, msx2, nms8250, c64,\n"
+        "    cpc464, cpc664, cpc6128, msx, msx2, msx2-jp, msx2-eu, nms8250, c64,\n"
         "    apple2, apple2gs, apple2plus, apple2e, apple2ee, exl100, exeltel, ql,\n"
         "    st, atarist, atari-st, amiga, a500, amiga500,\n"
         "    macplus, mac, macintosh, plus, macii, samcoupe\n"
@@ -500,6 +500,12 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "msx") return std::make_unique<dsp::Msx1>();
 	if (game == "msx2" || game == "nms8250" || game == "philips-msx2") {
 	    return std::make_unique<dsp::Msx2>();
+	}
+	if (game == "msx2-jp" || game == "msx2jp") {
+	    return std::make_unique<dsp::Msx2>(dsp::Msx2::Region::Japan);
+	}
+	if (game == "msx2-eu" || game == "msx2eu") {
+	    return std::make_unique<dsp::Msx2>(dsp::Msx2::Region::Europe);
 	}
 	if (game == "c64" || game == "commodore64" || game == "commodore") {
         return std::make_unique<dsp::C64>();
