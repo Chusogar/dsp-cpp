@@ -234,6 +234,7 @@ void MacII::reset() {
     adb_mouse_addr_ = 3;
     key_events_.clear();
     mouse_dx_ = mouse_dy_ = 0;
+    adb_mouse_polled_ = false;
 
     m68k_pulse_reset();
 }
@@ -809,6 +810,7 @@ void MacII::adb_talk() {
     const int reg = adb_cmd_ & 3;
     if (addr == adb_mouse_addr_) {
         if (reg == 0) {
+            adb_mouse_polled_ = true;
             int dx = std::clamp(mouse_dx_, -63, 63);
             int dy = std::clamp(mouse_dy_, -63, 63);
             mouse_dx_ -= dx;
@@ -922,9 +924,36 @@ void MacII::adb_update() {
 }
 
 void MacII::debug_mouse(int dx, int dy, bool button) {
-    mouse_dx_ += dx;
-    mouse_dy_ += dy;
+    const int x = std::clamp((last_px_ < 0 ? 0 : last_px_) + dx, 0, kWidth - 1);
+    const int y = std::clamp((last_py_ < 0 ? 0 : last_py_) + dy, 0, kHeight - 1);
+    move_pointer(x, y);
     mouse_button_ = button;
+}
+
+// The host pointer is absolute. Once the system is tracking the ADB mouse,
+// its cursor globals are set directly (as Mini vMac does): MTemp, RawMouse
+// and Mouse get the host position and CrsrNew asks the cursor VBL task to
+// redraw it. Relative ADB motion would go through the Mouse control panel's
+// acceleration and drift away from the host pointer. Before that (ROM
+// boot, memory test) the motion is sent as ADB deltas.
+void MacII::move_pointer(int x, int y) {
+    x = std::clamp(x, 0, kWidth - 1);
+    y = std::clamp(y, 0, kHeight - 1);
+    if (adb_mouse_polled_ && !overlay_) {
+        const uint8_t pos[4] = {uint8_t(y >> 8), uint8_t(y), uint8_t(x >> 8), uint8_t(x)};
+        if (std::memcmp(&ram_[0x828], pos, 4) != 0 || std::memcmp(&ram_[0x82c], pos, 4) != 0) {
+            std::memcpy(&ram_[0x828], pos, 4);  // MTemp
+            std::memcpy(&ram_[0x82c], pos, 4);  // RawMouse
+            std::memcpy(&ram_[0x830], pos, 4);  // Mouse
+            ram_[0x8ce] = 0xff;                 // CrsrNew
+        }
+        mouse_dx_ = mouse_dy_ = 0;
+    } else if (last_px_ >= 0) {
+        mouse_dx_ += x - last_px_;
+        mouse_dy_ += y - last_py_;
+    }
+    last_px_ = x;
+    last_py_ = y;
 }
 
 void MacII::set_inputs(const MachineInputs& inputs) {
@@ -934,12 +963,7 @@ void MacII::set_inputs(const MachineInputs& inputs) {
     }
     prev_keys_ = inputs.keys;
     if (inputs.has_pointer) {
-        if (last_px_ >= 0) {
-            mouse_dx_ += inputs.pointer_x - last_px_;
-            mouse_dy_ += inputs.pointer_y - last_py_;
-        }
-        last_px_ = inputs.pointer_x;
-        last_py_ = inputs.pointer_y;
+        move_pointer(inputs.pointer_x, inputs.pointer_y);
         mouse_button_ = inputs.pointer_button1;
     }
 }
