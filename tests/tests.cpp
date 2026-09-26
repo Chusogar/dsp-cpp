@@ -32,6 +32,7 @@
 #include "drivers/consoles/snes.h"
 #include "drivers/arcade/williams.h"
 #include "video/snes_ppu.h"
+#include "video/nes_ppu.h"
 #include "drivers/arcade/atari_system1.h"
 #include "drivers/arcade/atari_system2.h"
 #include "drivers/computers/apple2.h"
@@ -1589,6 +1590,129 @@ std::vector<uint8_t> make_nrom_cart() {
     rom[16 + 0x3ffa] = 0x00;  // NMI vector
     rom[16 + 0x3ffb] = 0x80;
     return rom;
+}
+
+void nes_ppu_setup(dsp::NesPpu& ppu) {
+    ppu.reset();
+    ppu.control2 = 0x1e;  // sprites + background, no left clipping
+    ppu.pos_spt = 0;
+    ppu.pos_bg = 1;
+    // Tile 1: only the leftmost pixel of every row (colour 1).
+    for (int y = 0; y < 8; y++) ppu.chr_bank(0)[16 + y] = 0x80;
+    // Tile 2: solid colour 3.
+    for (int y = 0; y < 8; y++) ppu.chr_bank(0)[32 + y] = ppu.chr_bank(0)[32 + 8 + y] = 0xff;
+    // Palettes: backdrop 0x0f, sprite palette 0 colour 1 = 0x16, colour 3 = 0x2a.
+    ppu.address = 0x3f00;
+    ppu.write(0x0f);
+    ppu.address = 0x3f11;
+    ppu.write(0x16);
+    ppu.address = 0x3f13;
+    ppu.write(0x2a);
+    ppu.address = 0x2000;  // nametable 0, all tile 0 in the (empty) bg table
+    std::fill(ppu.sprite_ram(), ppu.sprite_ram() + 256, 0xff);
+}
+
+void test_nes_ppu_sprites_and_palette() {
+    dsp::NesPpu ppu;
+    uint32_t line[256];
+    uint32_t backdrop = 0, red = 0;
+
+    nes_ppu_setup(ppu);
+    uint8_t* oam = ppu.sprite_ram();
+    // Sprite at X=100, OAM Y=9: first drawn on line 10.
+    oam[0] = 9; oam[1] = 1; oam[2] = 0x00; oam[3] = 100;
+    ppu.address = 0x2000;
+    ppu.draw_linea(9, line);
+    backdrop = line[100];
+    check(line[100] == line[50], "NES sprite is not drawn on the OAM Y line itself");
+    ppu.address = 0x2000;
+    ppu.draw_linea(10, line);
+    red = line[100];
+    check(red != backdrop && line[107] == backdrop,
+          "NES sprite pattern bit 7 is the leftmost pixel");
+    oam[2] = 0x40;  // horizontal flip
+    ppu.address = 0x2000;
+    ppu.draw_linea(10, line);
+    check(line[107] == red && line[100] == backdrop, "NES horizontal flip mirrors the sprite");
+
+    // Lower OAM index wins even when it is behind the background.
+    oam[0] = 9; oam[1] = 2; oam[2] = 0x20; oam[3] = 40;   // behind, colour 3
+    oam[4] = 9; oam[5] = 2; oam[6] = 0x00; oam[7] = 40;   // front, same place
+    ppu.address = 0x2000;
+    ppu.draw_linea(10, line);
+    check(line[40] != backdrop, "NES behind-priority sprite shows over a transparent background");
+
+    // Eight sprites per line.
+    nes_ppu_setup(ppu);
+    for (int i = 0; i < 10; i++) {
+        oam[i * 4] = 19; oam[i * 4 + 1] = 2; oam[i * 4 + 2] = 0; oam[i * 4 + 3] = uint8_t(i * 16);
+    }
+    ppu.status = 0;
+    ppu.address = 0x2000;
+    ppu.draw_linea(20, line);
+    check(line[7 * 16] != line[250] && line[8 * 16] == line[250], "NES draws at most eight sprites per line");
+    check((ppu.status & 0x20) != 0, "NES sets sprite overflow with a ninth sprite");
+
+    // Palette mirrors: $3F10 is $3F00, $3F14 is $3F04 only.
+    nes_ppu_setup(ppu);
+    ppu.address = 0x3f04;
+    ppu.write(0x21);
+    ppu.address = 0x3f10;
+    ppu.write(0x30);
+    check(ppu.read_mem(0x3f00) == 0x30 && ppu.read_mem(0x3f04) == 0x21 && ppu.read_mem(0x3f14) == 0x21,
+          "NES palette: only $3F1x entries with bits 0-1 clear mirror $3F0x");
+    ppu.address = 0x3f00;
+    check(ppu.read() == 0x30, "NES palette reads through $2007 are not buffered");
+
+    // Sprite 0 hit needs an opaque background pixel.
+    nes_ppu_setup(ppu);
+    oam[0] = 29; oam[1] = 2; oam[2] = 0; oam[3] = 60;
+    ppu.status = 0;
+    ppu.address = 0x2000;
+    ppu.draw_linea(30, line);
+    check((ppu.status & 0x40) == 0, "NES sprite 0 hit does not fire over a transparent background");
+    for (int y = 0; y < 8; y++) ppu.chr_bank(1)[y] = 0xff;  // bg tile 0 opaque
+    ppu.address = 0x2000;
+    ppu.draw_linea(30, line);
+    check((ppu.status & 0x40) != 0, "NES sprite 0 hit fires over an opaque background");
+}
+
+void test_nes_smb_if_present() {
+    namespace fs = std::filesystem;
+    const char* rom = "/tmp/roms/nes/smb.zip";
+    if (!fs::exists(rom)) {
+        std::printf("skip: %s not found\n", rom);
+        return;
+    }
+    dsp::Nes nes;
+    std::string error;
+    check(nes.init(rom, &error), "Super Mario Bros loads");
+    for (int f = 1; f <= 330; f++) {
+        dsp::MachineInputs in;
+        in.player1.start = f >= 60 && f < 66;
+        in.player1.right = f >= 200 && f < 260;
+        in.player1.left = f >= 260;
+        nes.set_inputs(in);
+        nes.run_frame();
+        std::vector<int16_t> audio;
+        nes.drain_audio(audio);
+    }
+    // Mario (walking left) is drawn as one figure: his red cap and
+    // overalls pixels form a single blob no wider than 16 pixels.
+    const uint32_t* fb = nes.framebuffer();
+    int minx = 256, maxx = -1, count = 0;
+    for (int y = 150; y < 208; y++) {
+        for (int x = 0; x < 256; x++) {
+            const uint32_t c = fb[y * 256 + x];
+            const int r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
+            if (r > 160 && g > 75 && g < 105 && b > 65 && b < 100) {  // Mario's red (palette $16)
+                minx = std::min(minx, x);
+                maxx = std::max(maxx, x);
+                count++;
+            }
+        }
+    }
+    check(count > 20 && maxx - minx < 16, "Super Mario Bros: Mario walking left is drawn in one piece");
 }
 
 void test_nes_apu_status() {
@@ -7685,6 +7809,8 @@ int main() {
     test_spectrum_tzx();
     test_spectrum_ula();
     test_nes_apu_status();
+    test_nes_ppu_sprites_and_palette();
+    test_nes_smb_if_present();
     test_nes_ines_and_memory();
     test_nes_unsupported_mapper();
     test_nes_simple_mappers();
