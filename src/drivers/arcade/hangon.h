@@ -27,6 +27,8 @@ public:
     static constexpr int kScreenHeight = 224;
     static constexpr double kFramesPerSecond = 60.0;
     static constexpr int kScanlines = 262;
+    // Output gain applied after the MAME mixer levels.
+    static constexpr double kMixGain = 1.8;
 
     explicit HangOn(Game game = Game::HangOn);
 
@@ -48,6 +50,12 @@ public:
     const char* title() const override;
 
     uint32_t debug_pc() const { return main_cpu_.pc(); }
+    uint16_t debug_sound_pc() const { return sound_cpu_.pc(); }
+    // Value the ADC0804 would convert on analog channel `channel`.
+    uint8_t debug_adc(int channel) const;
+    uint16_t debug_in0() const { return in0_; }
+    int debug_sound_commands() const { return sound_commands_; }
+    uint8_t debug_pcm_reg(int offset) const { return pcm_.read(uint16_t(offset)); }
 
 private:
     bool is_sharrier_map() const { return game_ != Game::HangOn; }
@@ -104,11 +112,6 @@ private:
     uint8_t adc_select_ = 0;
     uint8_t sound_latch_ = 0;
     uint8_t control_res_ = 0;
-    uint8_t analog_x_ = 0x80;
-    uint8_t analog_y_ = 0x80;
-    uint8_t analog_gas_ = 0;
-    uint8_t analog_brake_ = 0;
-    uint8_t analog_moto_ = 0;
     uint16_t in0_ = 0xffff;
     uint16_t dsw_a_ = 0xffff;
     uint16_t dsw_b_ = 0xfffe;
@@ -121,6 +124,15 @@ private:
 
     int64_t audio_acc_ = 0;
     int64_t pcm_acc_ = 0;
+    int64_t pcm_sum_ = 0;
+    int pcm_count_ = 0;
+    int32_t pcm_last_ = 0;
+    // Cycle budgets carried between slices so each CPU runs at its clock.
+    double main_debt_ = 0, sub_debt_ = 0, sound_debt_ = 0, mcu_debt_ = 0;
+    bool sound_mute_ = false;  // PPI0 PC0 = 0 mutes the amplifier
+    int sound_commands_ = 0;
+    // Analog controls, in ADC units (ramped like MAME's keyboard deltas).
+    int steer_ = 0x80, stick_y_ = 0x80, gas_ = 0, brake_ = 0, lean_ = 0x20;
     std::vector<int16_t> audio_;
 };
 

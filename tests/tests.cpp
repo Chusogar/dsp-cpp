@@ -25,6 +25,7 @@
 #include "cpu/spc700.h"
 #include "cpu/upd7801.h"
 #include "cpu/z80.h"
+#include "machine/i8255.h"
 #include "cpu/z80ctc.h"
 #include "drivers/computers/amstrad_cpc.h"
 #include "drivers/consoles/atari_lynx.h"
@@ -155,6 +156,25 @@ void test_z80_arithmetic() {
     cpu.run(7 + 7 + 4);
     check(cpu.a == 0x16, "daa converts 0x10 to bcd 0x16");
     check((cpu.f & dsp::Z80::NF) == 0, "daa keeps N clear after an add");
+}
+
+void test_z80_nmi_held_does_not_block_irq() {
+    auto memory = make_memory();
+    dsp::Z80 cpu = make_cpu(memory);
+    // 0000: im 1 / ei / jr $   0038: inc (hl-less counter at 8000) / ei / reti
+    const uint8_t program[] = {0xed, 0x56, 0xfb, 0x18, 0xfe};
+    std::memcpy(memory.data(), program, sizeof(program));
+    const uint8_t irq[] = {0x3a, 0x00, 0x80, 0x3c, 0x32, 0x00, 0x80, 0xfb, 0xed, 0x4d};
+    std::memcpy(memory.data() + 0x38, irq, sizeof(irq));
+    const uint8_t nmi[] = {0x3a, 0x01, 0x80, 0x3c, 0x32, 0x01, 0x80, 0xed, 0x45};
+    std::memcpy(memory.data() + 0x66, nmi, sizeof(nmi));
+    cpu.run(100);
+    // NMI line held low (as a PPI /OBF would), plus a level IRQ.
+    cpu.set_nmi(dsp::IrqLine::Assert);
+    cpu.set_irq(dsp::IrqLine::Assert);
+    cpu.run(2000);
+    check(memory[0x8001] == 1, "Z80 takes a held NMI exactly once (edge triggered)");
+    check(memory[0x8000] > 1, "Z80 still services maskable IRQs while NMI is held low");
 }
 
 void test_z80_flags_and_blocks() {
@@ -3895,6 +3915,52 @@ void test_sega_pcm_and_mapper() {
     pcm.clock();
     check(pcm.left() != 0 || pcm.right() != 0, "Sega PCM produces a sample when a channel is active");
 
+    // Discrete-logic variant (Hang-On / Space Harrier board): voices at
+    // 0x40+8v / 0xc0+8v, 62.5 kHz at 4 MHz, nothing at the 315-5218 offsets.
+    dsp::SegaPcm discrete(4000000, 1.0f, dsp::SegaPcm::Variant::Discrete);
+    check(discrete.tick_rate() == 62500, "discrete Sega PCM ticks at clock/64");
+    check(pcm.tick_rate() == 31250, "315-5218 ticks at clock/128");
+    discrete.reset();
+    discrete.set_read_rom([](uint32_t) { return uint8_t(0xff); });
+    discrete.write(0x86, 0x00);
+    discrete.write(0x02, 0x7f);
+    discrete.clock();
+    check(discrete.left() == 0, "discrete Sega PCM ignores the 315-5218 register block");
+    discrete.write(0xe006 & 0xff, 0x00);  // mirrored window: voice 0 control at 0xc6
+    discrete.write(0xc6, 0x00);
+    discrete.write(0x42, 0x7f);
+    discrete.write(0x47, 0x01);
+    discrete.clock();
+    check(discrete.left() == 127 * 0x7f, "discrete Sega PCM voice 0 lives at 0x40/0xc0");
+    discrete.write(0xc6, 0x01);
+    discrete.clock();
+    check(discrete.left() == 0, "discrete Sega PCM control bit 0 disables the voice");
+
+    // 8255 port A mode 2 handshake: a write drives /OBF (PC7) low, /ACK
+    // releases it (Sega's sound NMI).
+    {
+        dsp::I8255 ppi;
+        uint8_t pc = 0xff;
+        ppi.set_handshake(true);
+        ppi.set_port_handlers(nullptr, nullptr, nullptr, nullptr, nullptr,
+                              [&pc](uint8_t value) { pc = value; });
+        ppi.reset();
+        ppi.write(3, 0xc0);
+        ppi.write(2, 0x07);
+        check((pc & 0x80) != 0 && (pc & 0x07) == 0x07, "8255 mode 2: /OBF idles high");
+        ppi.write(0, 0x42);
+        check((pc & 0x80) == 0, "8255 mode 2: port A write drives /OBF low");
+        ppi.ack_a();
+        check((pc & 0x80) != 0, "8255 mode 2: /ACK sets /OBF high again");
+        dsp::I8255 plain;
+        uint8_t pc0 = 0xff;
+        plain.set_port_handlers(nullptr, nullptr, nullptr, nullptr, nullptr,
+                                [&pc0](uint8_t value) { pc0 = value; });
+        plain.write(3, 0xc0);
+        plain.write(2, 0x07);
+        check(pc0 == 0x07, "8255 without handshake keeps plain port C writes");
+    }
+
     dsp::Sega3155195 mapper;
     mapper.reset();
     mapper.write_reg(0x10, 1);
@@ -4939,6 +5005,35 @@ void test_sega_roms_if_present() {
         check(machine.init("/tmp/roms/shinobi.zip", &error), "Shinobi MAME set loads");
         for (int frame = 0; frame < 180; frame++) machine.run_frame();
         check(unique_pixels(machine) > 8, "Shinobi attract mode draws a colour picture");
+        // Coin, start and play: the Z80 gets its commands through the PPI
+        // handshake and the YM2151/N7751 make sound.
+        std::vector<int16_t> audio;
+        double energy = 0;
+        size_t samples = 0;
+        for (int frame = 0; frame < 900; frame++) {
+            dsp::MachineInputs in;
+            in.coin1 = frame >= 300 && frame < 305;
+            in.player1.start = frame >= 360 && frame < 365;
+            in.player1.button1 = frame > 500 && (frame / 8) % 2 == 0;
+            in.player1.right = frame > 500;
+            machine.set_inputs(in);
+            machine.run_frame();
+            machine.drain_audio(audio);
+            if (frame >= 400) {
+                for (int16_t v : audio) energy += double(v) * v;
+                samples += audio.size();
+            }
+        }
+        check(machine.debug_sound_commands() > 10, "Shinobi sends sound commands to the Z80");
+        check(samples > 0 && std::sqrt(energy / double(samples)) > 300.0, "Shinobi plays sound");
+        dsp::MachineInputs in;
+        in.player1.left = true;
+        in.player1.button2 = true;
+        in.coin2 = true;
+        in.service = true;
+        machine.set_inputs(in);
+        check(machine.debug_port(1) == 0xff7b && (machine.debug_port(0) & 0x06) == 0,
+              "System 16A inputs follow MAME (left D7, button 2 D2, coin 2 D1, test D2)");
     }
 
     if (exists("/tmp/roms/tetris.zip")) {
@@ -4963,6 +5058,37 @@ void test_sega_roms_if_present() {
         check(machine.init("/tmp/roms/hangon.zip", &error), "Hang-On MAME set loads");
         for (int frame = 0; frame < 180; frame++) machine.run_frame();
         check(unique_pixels(machine) > 4, "Hang-On attract mode draws more than the text layer");
+        {
+            std::vector<int16_t> audio;
+            double energy = 0;
+            size_t samples = 0;
+            for (int frame = 0; frame < 1200; frame++) {
+                dsp::MachineInputs in;
+                in.coin1 = frame >= 600 && frame < 605;
+                in.player1.start = frame >= 660 && frame < 665;
+                in.player1.button1 = frame > 700;
+                machine.set_inputs(in);
+                machine.run_frame();
+                machine.drain_audio(audio);
+                if (frame >= 800) {
+                    for (int16_t v : audio) energy += double(v) * v;
+                    samples += audio.size();
+                }
+            }
+            check(samples + 2 >= size_t(400 * 735) && samples <= size_t(400 * 735) + 2,
+                  "Hang-On emits 735 samples per frame");
+            check(std::sqrt(energy / double(samples)) > 300.0, "Hang-On plays sound in game");
+        }
+        dsp::MachineInputs in;
+        in.player1.left = true;
+        in.player1.button2 = true;
+        in.player1.start = true;
+        in.service = true;
+        for (int frame = 0; frame < 30; frame++) machine.set_inputs(in);
+        check(machine.debug_adc(0) == 0xe0 && machine.debug_adc(1) == 0x00 &&
+                  machine.debug_adc(2) == 0xff,
+              "Hang-On ADC: steering reversed (left = 0xe0), gas, brake");
+        check((machine.debug_in0() & 0xff) == 0xeb, "Hang-On SERVICE port: start D4, test D2");
     }
 
     if (exists("/tmp/roms/enduror.zip")) {
@@ -4971,14 +5097,76 @@ void test_sega_roms_if_present() {
         check(machine.init("/tmp/roms/enduror.zip", &error), "Enduro Racer MAME set loads");
         for (int frame = 0; frame < 180; frame++) machine.run_frame();
         check(unique_pixels(machine) > 4, "Enduro Racer attract mode draws a colour picture");
+        {
+            std::vector<int16_t> audio;
+            double energy = 0;
+            size_t samples = 0;
+            for (int frame = 0; frame < 1200; frame++) {
+                dsp::MachineInputs in;
+                in.coin1 = frame >= 600 && frame < 605;
+                in.player1.start = frame >= 660 && frame < 665;
+                in.player1.button1 = frame > 700;
+                machine.set_inputs(in);
+                machine.run_frame();
+                machine.drain_audio(audio);
+                if (frame >= 800) {
+                    for (int16_t v : audio) energy += double(v) * v;
+                    samples += audio.size();
+                }
+            }
+            check(samples + 2 >= size_t(400 * 735) && samples <= size_t(400 * 735) + 2,
+                  "Enduro Racer emits 735 samples per frame");
+            check(std::sqrt(energy / double(samples)) > 300.0, "Enduro Racer plays sound in game");
+        }
+        dsp::MachineInputs in;
+        in.player1.right = true;
+        in.player1.down = true;
+        in.player1.button1 = true;
+        in.player1.start = true;
+        for (int frame = 0; frame < 30; frame++) machine.set_inputs(in);
+        check(machine.debug_adc(0) == 0xff && machine.debug_adc(1) == 0x00 &&
+                  machine.debug_adc(2) == 0xff && machine.debug_adc(3) == 0x01,
+              "Enduro Racer ADC: gas, brake, bank (pull back), steering reversed");
+        check((machine.debug_in0() & 0xff) == 0xbf, "Enduro Racer start is SERVICE D6");
     }
 
     if (exists("/tmp/roms/sharrier.zip")) {
         dsp::HangOn machine(dsp::HangOn::Game::Sharrier);
         std::string error;
         check(machine.init("/tmp/roms/sharrier.zip", &error), "Space Harrier MAME set loads");
-        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        // The game counts down on a plain screen for ~9 seconds at boot.
+        for (int frame = 0; frame < 600; frame++) machine.run_frame();
         check(unique_pixels(machine) > 4, "Space Harrier attract mode draws a colour picture");
+        {
+            std::vector<int16_t> audio;
+            double energy = 0;
+            size_t samples = 0;
+            for (int frame = 0; frame < 1200; frame++) {
+                dsp::MachineInputs in;
+                in.coin1 = frame >= 600 && frame < 605;
+                in.player1.start = frame >= 660 && frame < 665;
+                in.player1.button1 = frame > 700;
+                machine.set_inputs(in);
+                machine.run_frame();
+                machine.drain_audio(audio);
+                if (frame >= 800) {
+                    for (int16_t v : audio) energy += double(v) * v;
+                    samples += audio.size();
+                }
+            }
+            check(samples + 2 >= size_t(400 * 735) && samples <= size_t(400 * 735) + 2,
+                  "Space Harrier emits 735 samples per frame");
+            check(std::sqrt(energy / double(samples)) > 300.0, "Space Harrier plays sound in game");
+        }
+        dsp::MachineInputs in;
+        in.player1.left = true;
+        in.player1.up = true;
+        in.player1.button1 = true;
+        in.player1.button3 = true;
+        for (int frame = 0; frame < 30; frame++) machine.set_inputs(in);
+        check(machine.debug_adc(0) == 0xe0 && machine.debug_adc(1) == 0xe0,
+              "Space Harrier stick: X and Y reversed like MAME (left/up = 0xe0)");
+        check((machine.debug_in0() & 0xff) == 0x5f, "Space Harrier buttons on SERVICE D5-D7");
     }
 
     if (exists("/tmp/roms/alexkidd.zip")) {
@@ -7913,6 +8101,7 @@ int main() {
     test_atari_system2_game_if_present(dsp::AtariSystem2::Game::Apb,
                                        "/tmp/roms/apb.zip", 3000);
     test_sega_pcm_and_mapper();
+    test_z80_nmi_held_does_not_block_irq();
     test_sega_system16_missing_roms();
     test_skullxbo_without_roms();
     test_shuuz_without_roms();

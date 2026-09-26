@@ -113,7 +113,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Z8002 CPU | new (MAME `z8000`) | Unsegmented 16-bit Z8002 used by Pole Position |
 | MB88xx MCU | new (MAME `mb88xx`) | Fujitsu 4-bit MCU used by Namco 51/52/53/54xx |
 | Pole Position driver | new (MAME `namco/polepos.cpp`) | Z80 + dual Z8002, road, sprites, real 51/52/53/54xx, WSG/engine |
-| Sega PCM | `src/snd/sega_pcm.pas` | 16-channel sample player (OutRun, Hang-On) |
+| Sega PCM | `src/snd/sega_pcm.pas`, MAME `segapcm.cpp` | 315-5218 (16 voices) and the discrete 8-voice board (Hang-On, Space Harrier) |
 | 315-5195 mapper | `src/arcade/misc/sega_315_5195.pas` | 68000 memory mapper used by OutRun and System 16B |
 | OutRun driver | `src/arcade/outrun_hw.pas` | Dual 68000, Z80, YM2151, Sega PCM, road + sprites |
 | Hang-On driver | `src/arcade/hangon_hw.pas` | Hang-On, Enduro Racer (FD1089), Space Harrier (i8751) |
@@ -1161,9 +1161,24 @@ Ported from [dsp-emulator](https://github.com/leniad/dsp-emulator)
 ./build/dsp --game altbeast /path/to/altbeast.zip
 ```
 
-OutRun and Hang-On family games use analog wheel / gas / brake (arrow keys plus
-button 1/2) and a gear toggle on button 3. System 16 games use a two-button
-joystick.
+OutRun uses an analog wheel / gas / brake (arrow keys plus button 1/2) and a
+gear toggle on button 3. The Hang-On board games follow MAME's analog ports,
+ramped from the keys like MAME's key deltas:
+
+| Game | Controls |
+|------|----------|
+| Hang-On | left/right steer, button 1 (or up) gas, button 2 (or down) brake |
+| Enduro Racer | left/right steer, button 1 gas, button 2 brake, down (or button 3) pulls a wheelie, up leans forward |
+| Space Harrier | stick on the arrows, buttons 1-3 |
+
+System 16 games use the three-button joystick of MAME's `system16a_generic`
+port (button 1 = D1, button 2 = D2, button 3 = D0). F1 is the test switch on
+all of these boards.
+
+Sound follows MAME: the main CPU's 8255 runs port A in mode 2, so a command
+write drops /OBF (the Z80 NMI) until the Z80 reads the latch. Hang-On and Space
+Harrier have the YM2203 board with the discrete 8-voice Sega PCM (62.5 kHz),
+Enduro Racer the YM2151 board with the 16-voice 315-5218.
 
 Enduro Racer decrypts the FD1089B program ROMs with `317-0013a.key`. Space
 Harrier runs the i8751 MCU that raises 68000 IRQs. Shinobi, Alex Kidd and Alien
