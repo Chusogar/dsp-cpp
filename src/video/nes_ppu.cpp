@@ -83,7 +83,7 @@ void NesPpu::reset() {
     sprite_ram_pos = 0;
     address = 0;
     address_temp = 0;
-    dir_first = false;
+    dir_first = true;  // next $2005/$2006 write is the first
     sprite0_hit = false;
     sprite_over_flow = false;
     sprite_size = 8;
@@ -95,7 +95,6 @@ void NesPpu::reset() {
     linea = 0;
     pal_ram_.fill(0);
     sprite_ram_.fill(0);
-    dot_line_trans_.fill(0);
 }
 
 int NesPpu::nametable_index(uint16_t addr) const {
@@ -121,7 +120,7 @@ uint8_t NesPpu::read_mem(uint16_t address) const {
     address &= 0x3fff;
     if (address <= 0x1fff) return chr_read(address);
     if (address <= 0x3eff) return name_table_[size_t(nametable_index(address))][address & 0x3ff];
-    return pal_ram_[address & 0x1f];
+    return pal_ram_[pal_index(address)];
 }
 
 uint32_t NesPpu::pal_color(uint8_t index) const {
@@ -167,8 +166,17 @@ void NesPpu::advance_vram() {
 }
 
 uint8_t NesPpu::read() {
-    uint8_t ret = disable_chr ? uint8_t(address & 0xff) : buffer_read_;
-    buffer_read_ = read_mem(address);
+    const uint16_t addr = uint16_t(address & 0x3fff);
+    uint8_t ret;
+    if (addr >= 0x3f00) {
+        // Palette reads are not buffered; the buffer gets the nametable
+        // byte "under" the palette.
+        ret = uint8_t((read_mem(addr) & 0x3f) | (open_bus & 0xc0));
+        buffer_read_ = read_mem(uint16_t(addr - 0x1000));
+    } else {
+        ret = disable_chr ? uint8_t(address & 0xff) : buffer_read_;
+        buffer_read_ = read_mem(addr);
+    }
     advance_vram();
     return ret;
 }
@@ -180,16 +188,8 @@ void NesPpu::write(uint8_t value) {
     } else if (addr <= 0x3eff) {
         name_table_[size_t(nametable_index(addr))][addr & 0x3ff] = value;
     } else {
-        switch (addr & 0x1f) {
-            case 0x00:
-            case 0x10:
-                pal_ram_[0x00] = pal_ram_[0x04] = pal_ram_[0x08] = pal_ram_[0x0c] = value;
-                pal_ram_[0x10] = pal_ram_[0x14] = pal_ram_[0x18] = pal_ram_[0x1c] = value;
-                break;
-            default:
-                pal_ram_[addr & 0x1f] = value;
-                break;
-        }
+        // $3F10/$3F14/$3F18/$3F1C mirror $3F00/$3F04/$3F08/$3F0C.
+        pal_ram_[pal_index(addr)] = uint8_t(value & 0x3f);
     }
     advance_vram();
 }
@@ -223,90 +223,75 @@ void NesPpu::dma_spr(uint8_t page, const uint8_t* cpu_mem, std::function<void(in
     if (steal) steal(513);
 }
 
-void NesPpu::sprite_line_overflow(int line) {
-    int nsprites = 0;
+// Sprite evaluation and drawing for one line.  OAM Y is the line before the
+// sprite's first line.  Up to eight sprites per line, the lowest OAM index
+// winning where two overlap (whatever their priority bits: a low-index
+// "behind" sprite masks higher-index sprites, the SMB mushroom trick).
+// Fills spr[] with 0x10 | palette | colour (0 = transparent), behind[] with
+// the priority bit and zero[] where sprite 0 is opaque.
+void NesPpu::eval_sprites(int line, uint8_t* spr, bool* behind, bool* zero) {
+    int found = 0;
     for (int f = 0; f < 64; ++f) {
         const uint8_t pos_y = sprite_ram_[size_t(f * 4)];
-        if (pos_y == 255 || pos_y > 239) continue;
-        const unsigned pos_linea = unsigned(line) - pos_y;
-        if (pos_linea < sprite_size) {
-            ++nsprites;
-            if (nsprites == 9) {
-                status |= 0x20;
-                return;
-            }
+        const int row = line - (int(pos_y) + 1);
+        if (row < 0 || row >= sprite_size) continue;
+        if (++found > 8) {
+            status |= 0x20;  // sprite overflow
+            break;
         }
-    }
-}
-
-void NesPpu::put_sprites(int line, uint8_t pri, uint32_t* out) {
-    int nsprites = 0;
-    for (int f = 0; f < 64; ++f) {
-        const uint8_t pos_y = sprite_ram_[size_t(f * 4)];
-        if (((sprite_ram_[size_t(f * 4 + 2)] & 0x20) != pri) || pos_y > 239) continue;
+        const uint8_t tile = sprite_ram_[size_t(f * 4 + 1)];
+        const uint8_t attr = sprite_ram_[size_t(f * 4 + 2)];
         const uint8_t pos_x = sprite_ram_[size_t(f * 4 + 3)];
-        const unsigned pos_linea = unsigned(line) - pos_y;
-        if (pos_linea >= sprite_size) continue;
-        ++nsprites;
-        if (nsprites == 9) return;
-
-        const uint8_t attrib = uint8_t((sprite_ram_[size_t(f * 4 + 2)] & 0x03) << 2);
-        const bool flipx = (sprite_ram_[size_t(f * 4 + 2)] & 0x40) != 0;
-        const bool flipy = (sprite_ram_[size_t(f * 4 + 2)] & 0x80) != 0;
-        uint8_t num_char = sprite_ram_[size_t(f * 4 + 1)];
-        uint8_t temp = pos_spt;
-        uint8_t def_y;
+        const bool flipx = (attr & 0x40) != 0;
+        const bool flipy = (attr & 0x80) != 0;
+        uint16_t pattern;
         if (sprite_size == 8) {
-            def_y = flipy ? uint8_t(7 - (pos_linea & 7)) : uint8_t(pos_linea & 7);
+            const int y = flipy ? 7 - row : row;
+            pattern = uint16_t(pos_spt * 0x1000 + tile * 16 + y);
         } else {
-            temp = num_char & 1;
-            if (flipy) {
-                def_y = uint8_t(7 - (pos_linea & 7));
-                num_char = uint8_t((num_char & 0xfe) + ((~unsigned(pos_linea >> 3)) & 1));
-            } else {
-                def_y = uint8_t(pos_linea & 7);
-                num_char = uint8_t((num_char & 0xfe) + (pos_linea >> 3));
-            }
+            // 8x16: bit 0 picks the pattern table, the pair of tiles is
+            // swapped by vertical flip.
+            const int y = flipy ? 15 - row : row;
+            const int t = (tile & 0xfe) + (y >> 3);
+            pattern = uint16_t((tile & 1) * 0x1000 + t * 16 + (y & 7));
         }
-        const uint16_t pattern = uint16_t(temp * 0x1000 + num_char * 16 + def_y);
-        const uint8_t tempb1 = read_mem(pattern);
+        const uint8_t lo = read_mem(pattern);
         if (ppu_read_) ppu_read_(pattern);
-        const uint8_t tempb2 = read_mem(uint16_t(pattern + 8));
+        const uint8_t hi = read_mem(uint16_t(pattern + 8));
         if (ppu_read_) ppu_read_(uint16_t(pattern + 8));
-
+        const uint8_t palette = uint8_t(0x10 | ((attr & 0x03) << 2));
         for (int i = 0; i < 8; ++i) {
-            const int x = flipx ? i : (7 - i);
-            const int px = flipx ? (pos_x + i) : (pos_x + (7 - i));
-            const uint8_t punto = uint8_t(((tempb1 >> x) & 1) + (((tempb2 >> x) & 1) << 1));
-            if (punto == 0 || px < 0 || px >= kScreenWidth) continue;
-            if (px != 255 && f == 0 && (dot_line_trans_[size_t(px)] & 0x3f) != 0) {
-                status |= 0x40;
-            }
-            if ((control2 & 0x04) == 0 && px < 8) continue;
-            if ((dot_line_trans_[size_t(px)] & 0x3f) >= uint8_t(f)) {
-                out[px] = pal_color(read_mem(uint16_t(0x3f10 + punto + attrib)));
-                dot_line_trans_[size_t(px)] =
-                    uint8_t((dot_line_trans_[size_t(px)] & 0x80) | uint8_t(f));
-            }
+            // Pattern bit 7 is the leftmost pixel unless flipped.
+            const int bit = flipx ? i : 7 - i;
+            const uint8_t color = uint8_t(((lo >> bit) & 1) | (((hi >> bit) & 1) << 1));
+            const int px = pos_x + i;
+            if (color == 0 || px >= kScreenWidth) continue;
+            if ((control2 & 0x04) == 0 && px < 8) continue;  // left 8 pixels clipped
+            if (spr[px] != 0) continue;                      // lower index wins
+            spr[px] = uint8_t(palette | color);
+            behind[px] = (attr & 0x20) != 0;
+            zero[px] = f == 0;
         }
     }
 }
 
-void NesPpu::put_background(uint32_t* scratch) {
+// Background for one line: 33 tiles from the loopy V address (coarse X
+// advances as on hardware), then the fine X offset.  bg[] gets the palette
+// address (attribute * 4 + colour, 0 = transparent).
+void NesPpu::put_background(uint8_t* bg) {
+    uint8_t scratch[33 * 8];
     uint16_t attrib_table = uint16_t(
         0x2000 + (address & 0xc00) + 0x3c0 +
         ((((address & 0x3e0) / 0x20) & 0xfffc) * 2) + ((address & 0x1f) / 4));
     int pos_x = 0;
     const int tile_y_offset = (address & 0x7000) >> 12;
-    uint8_t attrib_val;
-    if ((address & 0x40) == 0) {
-        attrib_val = ((address & 0x02) == 0) ? uint8_t((read_mem(attrib_table) & 0x03) << 2)
-                                             : uint8_t(read_mem(attrib_table) & 0x0c);
-    } else {
-        attrib_val = ((address & 0x02) == 0) ? uint8_t((read_mem(attrib_table) & 0x30) >> 2)
-                                             : uint8_t((read_mem(attrib_table) & 0xc0) >> 4);
-    }
-    for (int tiles = 32; tiles >= 0; --tiles) {
+    auto attribute = [&]() -> uint8_t {
+        const uint8_t a = read_mem(attrib_table);
+        const int shift = ((address & 0x40) ? 4 : 0) + ((address & 0x02) ? 2 : 0);
+        return uint8_t(((a >> shift) & 3) << 2);
+    };
+    uint8_t attrib_val = attribute();
+    for (int tiles = 0; tiles < 33; ++tiles) {
         const uint16_t pattern =
             uint16_t(pos_bg * 0x1000 + read_mem(uint16_t(0x2000 + (address & 0xfff))) * 16 +
                      tile_y_offset);
@@ -314,15 +299,8 @@ void NesPpu::put_background(uint32_t* scratch) {
         const uint8_t lo = read_mem(pattern);
         const uint8_t hi = read_mem(uint16_t(pattern + 8));
         for (int x = 7; x >= 0; --x) {
-            const uint8_t col = uint8_t(((lo >> x) & 1) + (((hi >> x) & 1) * 2));
-            if (col == 0) {
-                scratch[pos_x] = kTransparent;
-                dot_line_trans_[size_t(pos_x)] = uint8_t(dot_line_trans_[size_t(pos_x)] & 0x7f);
-            } else {
-                scratch[pos_x] = set_emphasis(pal_color(read_mem(uint16_t(0x3f00 + col + attrib_val))));
-                dot_line_trans_[size_t(pos_x)] = uint8_t(dot_line_trans_[size_t(pos_x)] | 0x80);
-            }
-            ++pos_x;
+            const uint8_t col = uint8_t(((lo >> x) & 1) | (((hi >> x) & 1) << 1));
+            scratch[pos_x++] = col ? uint8_t(attrib_val | col) : 0;
         }
         if ((address & 0x1f) == 0x1f) {
             attrib_table = uint16_t((attrib_table ^ 0x400) - 8);
@@ -331,40 +309,38 @@ void NesPpu::put_background(uint32_t* scratch) {
             address = uint16_t(address + 1);
         }
         if ((address & 0x03) == 0) attrib_table = uint16_t(attrib_table + 1);
-        if ((address & 0x01) == 0) {
-            if ((address & 0x40) == 0) {
-                attrib_val = ((address & 0x02) == 0) ? uint8_t((read_mem(attrib_table) & 0x03) << 2)
-                                                     : uint8_t(read_mem(attrib_table) & 0x0c);
-            } else {
-                attrib_val = ((address & 0x02) == 0) ? uint8_t((read_mem(attrib_table) & 0x30) >> 2)
-                                                     : uint8_t((read_mem(attrib_table) & 0xc0) >> 4);
-            }
-        }
+        if ((address & 0x01) == 0) attrib_val = attribute();
     }
+    for (int x = 0; x < kScreenWidth; ++x) bg[x] = scratch[tile_x_offset + x];
     if ((control2 & 0x02) == 0) {
-        for (int x = 0; x < 8; ++x) {
-            dot_line_trans_[size_t(x)] = uint8_t(dot_line_trans_[size_t(x)] & 0x7f);
-            scratch[tile_x_offset + x] = set_emphasis(pal_color(read_mem(0x3f00)));
-        }
+        for (int x = 0; x < 8; ++x) bg[x] = 0;  // left 8 pixels clipped
     }
 }
 
 void NesPpu::draw_linea(int line, uint32_t* out) {
-    const uint32_t backdrop = set_emphasis(pal_color(read_mem(0x3f00)));
-    for (int x = 0; x < kScreenWidth; ++x) out[x] = backdrop;
-    dot_line_trans_.fill(0x3f);
-    if (control2 & 0x18) sprite_line_overflow(line + 1);
-    if (control2 & 0x10) put_sprites(line, 0x20, out);
-    if (control2 & 0x08) {
-        uint32_t scratch[256 + 16]{};
-        put_background(scratch);
-        for (int x = 0; x < kScreenWidth; ++x) {
-            const uint32_t pix = scratch[tile_x_offset + x];
-            if (pix != kTransparent) out[x] = pix;
-        }
+    uint8_t bg[kScreenWidth] = {};
+    uint8_t spr[kScreenWidth] = {};
+    bool behind[kScreenWidth] = {};
+    bool zero[kScreenWidth] = {};
+    const bool show_bg = (control2 & 0x08) != 0;
+    const bool show_spr = (control2 & 0x10) != 0;
+    if (show_bg) put_background(bg);
+    if (show_spr) eval_sprites(line, spr, behind, zero);
+
+    // With rendering off the PPU outputs the backdrop, or the palette entry
+    // V points at when V is in palette space.
+    uint8_t backdrop = pal_ram_[0];
+    if (!show_bg && !show_spr && (address & 0x3f00) == 0x3f00) backdrop = pal_ram_[pal_index(address)];
+
+    for (int x = 0; x < kScreenWidth; ++x) {
+        // Sprite 0 hit: opaque sprite 0 over opaque background, not at x=255.
+        if (zero[x] && bg[x] != 0 && show_bg && show_spr && x != 255) status |= 0x40;
+        uint8_t value;
+        if (spr[x] != 0 && (!behind[x] || bg[x] == 0)) value = pal_ram_[spr[x] & 0x1f];
+        else if (bg[x] != 0) value = pal_ram_[bg[x]];
+        else value = backdrop;
+        out[x] = set_emphasis(pal_color(value));
     }
-    if (control2 & 0x10) put_sprites(line, 0x00, out);
-    if ((control2 & 0x18) != 0x18) status &= 0xbf;
 }
 
 }  // namespace dsp

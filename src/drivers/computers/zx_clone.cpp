@@ -558,25 +558,91 @@ void ZxClone::set_inputs(const MachineInputs& inputs) {
     magic_down_ = magic;
 }
 
+namespace {
+
+// Matrix positions (row = address line A8..A15, bit = data bit D0..D4).
+struct MatrixKey {
+    int row;
+    int bit;
+};
+constexpr MatrixKey kCapsShift{0, 0};
+constexpr MatrixKey kSymbolShift{7, 1};
+
+// Host punctuation typed through Symbol Shift, as printed on the Spectrum
+// keys: {host key, unshifted target, target with host Shift held}.
+struct PunctKey {
+    Key key;
+    MatrixKey plain;
+    MatrixKey shifted;
+};
+const PunctKey kPunctuation[] = {
+    {Key::Comma, {7, 3}, {2, 3}},      // ,  N   |  <  R
+    {Key::Period, {7, 2}, {2, 4}},     // .  M   |  >  T
+    {Key::Semicolon, {5, 1}, {0, 1}},  // ;  O   |  :  Z
+    {Key::Quote, {4, 3}, {5, 0}},      // '  7   |  "  P
+    {Key::Slash, {0, 4}, {0, 3}},      // /  V   |  ?  C
+    {Key::Minus, {6, 3}, {4, 0}},      // -  J   |  _  0
+    {Key::Equals, {6, 1}, {6, 2}},     // =  L   |  +  K
+    {Key::Plus, {6, 2}, {6, 2}},       // +  K
+    // The front end reports the "+ *" key of a Spanish keyboard (US "]")
+    // as Asterisk.
+    {Key::Asterisk, {6, 2}, {7, 4}},   // +  K   |  *  B
+};
+
+}  // namespace
+
 void ZxClone::apply_keyboard(const MachineInputs& in) {
     keys_.fill(0xff);
+    auto press = [this](MatrixKey k) { keys_[size_t(k.row)] &= uint8_t(~(1u << k.bit)); };
     for (int row = 0; row < 8; ++row) {
         for (int bit = 0; bit < 5; ++bit) {
-            if (in.key(kMatrix[row][bit])) keys_[row] &= uint8_t(~(1u << bit));
+            if (in.key(kMatrix[row][bit])) press({row, bit});
         }
     }
+
+    // Symbol Shift: either Ctrl, Right Shift or AltGr (the matrix only had
+    // Right Ctrl, which many keyboards lack).
+    const bool host_shift = in.key(Key::LeftShift) || in.key(Key::RightShift);
+    bool punct = false;
+    for (const PunctKey& p : kPunctuation) {
+        if (!in.key(p.key)) continue;
+        punct = true;
+        press(kSymbolShift);
+        press(host_shift ? p.shifted : p.plain);
+    }
+    if (punct && host_shift) {
+        // The host Shift picked the shifted symbol; it must not also reach
+        // the matrix as Caps Shift (Caps + Symbol = extended mode).
+        keys_[0] |= 0x01;
+    }
+    if (in.key(Key::LeftCtrl) || in.key(Key::RightCtrl) || in.key(Key::RightAlt) ||
+        (in.key(Key::RightShift) && !punct)) {
+        press(kSymbolShift);
+    }
+
+    // Editing keys the ROM expects as Caps Shift combinations.
+    auto caps_with = [&](MatrixKey k) {
+        press(kCapsShift);
+        press(k);
+    };
+    if (in.key(Key::Left)) caps_with({3, 4});       // 5
+    if (in.key(Key::Down)) caps_with({4, 4});       // 6
+    if (in.key(Key::Up)) caps_with({4, 3});         // 7
+    if (in.key(Key::Right)) caps_with({4, 2});      // 8
+    if (in.key(Key::Backspace) || in.key(Key::Delete)) caps_with({4, 0});  // DELETE
+    if (in.key(Key::Escape)) caps_with({7, 0});     // BREAK
+    if (in.key(Key::CapsLock)) caps_with({3, 1});   // CAPS LOCK
+    if (in.key(Key::Tab)) caps_with(kSymbolShift);  // EXTEND MODE
+
+    // Kempston joystick on the cursor keys (read on port 0x1f only, so it
+    // no longer injects Sinclair digits into the matrix: that turned the
+    // arrows into 6-9 and Space / Ctrl into 0).
     joy_ = 0;
     if (in.player1.right) joy_ |= 0x01;
     if (in.player1.left) joy_ |= 0x02;
     if (in.player1.down) joy_ |= 0x04;
     if (in.player1.up) joy_ |= 0x08;
     if (in.player1.button1) joy_ |= 0x10;
-    auto press_bit = [&](int row, int bit) { keys_[row] = uint8_t(keys_[row] & ~(1u << bit)); };
-    if (in.player1.left) press_bit(4, 4);
-    if (in.player1.right) press_bit(4, 3);
-    if (in.player1.down) press_bit(4, 2);
-    if (in.player1.up) press_bit(4, 1);
-    if (in.player1.button1) press_bit(4, 0);
 }
 
 bool ZxClone::load_media(const std::string& path, std::string* error) {

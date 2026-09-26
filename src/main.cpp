@@ -21,6 +21,7 @@
 #include "drivers/arcade/snk.h"
 #include "drivers/arcade/cps1.h"
 #include "drivers/arcade/m72.h"
+#include "drivers/arcade/punchout.h"
 #include "drivers/arcade/starwars.h"
 #include "drivers/arcade/asteroid.h"
 #include "drivers/arcade/polepos.h"
@@ -28,6 +29,7 @@
 #include "drivers/arcade/system16.h"
 #include "drivers/arcade/sega_system1.h"
 #include "drivers/arcade/outrun.h"
+#include "drivers/arcade/xboard.h"
 #include "drivers/arcade/galaxian.h"
 #include "drivers/arcade/vicdual.h"
 #include "drivers/arcade/opwolf.h"
@@ -114,7 +116,7 @@ void print_supported_emulators() {
         "\n"
         "  Arcade:\n"
         "    bagman, mikie, trackfld, gauntlet, mrdo, ddragon, ddragon2,\n"
-        "    elevator, junglek, indydoom, peter, marble, skullxbo, shuuz, starwars, esb, asteroid, roadrunn,\n"
+        "    elevator, junglek, indydoom, peter, marble, skullxbo, shuuz, starwars, esb, punchout, asteroid, roadrunn,\n"
         "    paperboy, ssprint, apb, 720,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
 		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
@@ -124,7 +126,7 @@ void print_supported_emulators() {
         "    knights, sf2ce, dino, punisher, willow, 1941, nemo,\n"
         "    rtype, hharry, rtype2,\n"
         "    polepos, polepos2\n"
-        "    outrun, hangon, enduro, sharrier, fantzone, shinobi,\n"
+        "    outrun, aburner2, hangon, enduro, sharrier, fantzone, shinobi,\n"
 		"    alexkidd, aliensyn, wb3, tetris, altbeast,\n"
         "    pitfall2, teddyboy, wboy, mrviking, seganinj, upndown,\n"
 		"    flicky, gardia,\n"
@@ -232,6 +234,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "indydoom") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Indy);
 	if (game == "peter") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::PeterPak);	
 	if (game == "marble") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Marble);
+	if (game == "punchout" || game == "punch-out") return std::make_unique<dsp::PunchOut>();
 	if (game == "starwars" || game == "star-wars") {
 		return std::make_unique<dsp::StarWars>(dsp::StarWars::Game::StarWars);
 	}
@@ -325,6 +328,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	}
     
 	if (game == "outrun") return std::make_unique<dsp::Outrun>();
+	if (game == "aburner2") return std::make_unique<dsp::XBoard>();
 
     if (game == "hangon" || game == "hang-on") return std::make_unique<dsp::HangOn>();
     if (game == "enduro" || game == "enduror" || game == "enduro-racer") {
@@ -400,7 +404,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	}
 	if (game == "headon") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::HeadOn);
 	if (game == "headon2") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::HeadOn2);
-	if (game == "headon2s" || game == "headon2slim") {
+	if (game == "headon2s" || game == "headon2sl" || game == "headon2slim") {
 		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::HeadOn2Slim);
 	}
 	if (game == "invho2" || game == "invincoheadon2") {

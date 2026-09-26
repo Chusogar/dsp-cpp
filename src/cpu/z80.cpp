@@ -540,7 +540,9 @@ int Z80::run(int cycles) {
     while (executed_ < cycles) {
         cycles_ = 0;
         if (!after_ei_) {
-            if (nmi_state_ != IrqLine::Clear) {
+            // NMI is edge triggered: once taken, a line still held low must
+            // not block maskable interrupts.
+            if (nmi_state_ != IrqLine::Clear && !nmi_latched_) {
                 cycles_ += take_nmi();
             } else if (irq_state_ != IrqLine::Clear) {
                 cycles_ += take_irq();

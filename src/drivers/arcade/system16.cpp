@@ -1,6 +1,7 @@
 #include "drivers/arcade/system16.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #include "machine/fd1089.h"
@@ -228,7 +229,7 @@ System16::System16(Game game)
     : game_(game),
       main_cpu_(kMainClock),
       sound_cpu_(game == Game::Altbeast ? 5000000u : 4000000u),
-      ym_(4000000),
+      ym_(4000000, 0.5f),  // update() sums L+R: halve it for a mono mix
       framebuffer_(kScreenWidth * kScreenHeight, 0) {
     fps_ = is_16b() ? 60.05439 : 60.0;
     sound_clock_ = is_16b() ? 5000000u : 4000000u;
@@ -253,8 +254,15 @@ System16::System16(Game game)
         });
     }
     if (!is_16b()) {
+        // PPI port A runs in mode 2: a write fills the output buffer, /OBF
+        // (PC7) pulls the Z80 NMI low, and the Z80's read of the latch
+        // strobes /ACK (sound_data_r in MAME segas16a).
+        ppi_.set_handshake(true);
         ppi_.set_port_handlers(nullptr, nullptr, nullptr,
-                               [this](uint8_t value) { sound_latch_ = value; },
+                               [this](uint8_t value) {
+                                   sound_latch_ = value;
+                                   sound_commands_++;
+                               },
                                [this](uint8_t value) { video_.screen_enabled = (value & 0x10) != 0; },
                                [this](uint8_t value) {
                                    sound_cpu_.set_nmi((value & 0x80) ? IrqLine::Clear
@@ -497,6 +505,10 @@ void System16::reset() {
     n7751_command_ = 0;
     n7751_rom_address_ = 0;
     audio_acc_ = 0;
+    main_debt_ = sound_debt_ = mcu_debt_ = n7751_debt_ = 0;
+    dc_in_ = dc_out_ = 0;
+    dac_lp1_ = dac_lp2_ = 0;
+    sound_commands_ = 0;
     audio_.clear();
     std::fill(framebuffer_.begin(), framebuffer_.end(), 0);
 }
@@ -529,8 +541,11 @@ void System16::set_inputs(const MachineInputs& inputs) {
             else port |= 0x0001;
         }
     };
+    // SERVICE port (MAME system16a/16b_generic): D0 coin 1, D1 coin 2,
+    // D2 test (service mode), D3 service coin, D4 start 1, D5 start 2.
     if (is_16b()) {
         in0_ = 0xffff;
+        if (inputs.service) in0_ &= ~0x0004;
         apply_player(in1_, inputs.player1, true);
         apply_player(in2_, inputs.player2, true);
         if (inputs.coin1) in0_ &= ~0x0001;
@@ -548,6 +563,8 @@ void System16::set_inputs(const MachineInputs& inputs) {
         else in0_ |= 0x0001;
         if (inputs.coin2) in0_ &= ~0x0002;
         else in0_ |= 0x0002;
+        if (inputs.service) in0_ &= ~0x0004;
+        else in0_ |= 0x0004;
     }
 }
 
@@ -573,7 +590,7 @@ uint16_t System16::io_16a(uint16_t address) {
                 case 3: return in1_;
                 case 6:
                 case 7: return in2_;
-                default: return 0xff;
+                default: return 0xffff;
             }
         case 0x2000:
             return (address & 2) ? dsw_b_ : dsw_a_;
@@ -697,7 +714,6 @@ void System16::write_16a(uint32_t address, uint16_t value) {
             case 0x70000 ... 0x7ffff: {
                 const uint16_t offset = uint16_t((address & 0x3fff) >> 1);
                 ram_[offset] = value;
-                if (offset == 0x38) sound_latch_ = uint8_t(value);
                 break;
             }
             default:
@@ -820,8 +836,14 @@ uint8_t System16::sound_read(uint16_t address) {
         return 0xff;
     }
     if (address <= 0x7fff || address >= 0xf800) return sound_mem_[address];
-    if (address == 0xe800) return sound_latch_;
+    if (address == 0xe800) return sound_data_r();
     return 0xff;
+}
+
+uint8_t System16::sound_data_r() {
+    // Reading the latch asserts the PPI's /ACK, releasing the NMI.
+    ppi_.ack_a();
+    return sound_latch_;
 }
 
 void System16::sound_write(uint16_t address, uint8_t value) {
@@ -838,7 +860,7 @@ uint8_t System16::sound_in(uint16_t port) {
             return sound_latch_;
         }
     } else if (p >= 0xc0) {
-        return sound_latch_;
+        return sound_data_r();
     }
     return 0xff;
 }
@@ -877,9 +899,25 @@ void System16::on_sound_cycles(int cycles) {
     audio_acc_ += int64_t(cycles) * YM2151::kSampleRate;
     while (audio_acc_ >= sound_clock_) {
         audio_acc_ -= sound_clock_;
-        int32_t sample = ym_.update();
-        if (upd_) sample += upd_->update();
-        if (n7751_) sample += dac_.update();
+        // Mix levels from MAME: YM2151 0.43 with the N7751 DAC 0.4 (16A) or
+        // the uPD7759 0.48 (16B).
+        double mix = double(ym_.update()) * 0.43;
+        if (upd_) mix += double(upd_->update()) * 0.48;
+        if (n7751_) {
+            // Two-pole ~4 kHz low-pass standing in for the speech filter
+            // after the R-2R DAC; it also softens the spike the DAC makes
+            // when the N7751 is reset (its ports float to 0xff).
+            constexpr double kAlpha = 0.43;  // 1 - exp(-2*pi*4000/44100)
+            dac_lp1_ += kAlpha * (double(dac_.update()) - dac_lp1_);
+            dac_lp2_ += kAlpha * (dac_lp1_ - dac_lp2_);
+            mix += dac_lp2_ * 0.4;
+        }
+        // AC coupling of the amplifier: the DAC idles at 0xff, which would
+        // otherwise leave a large DC offset.
+        const double hp = mix - dc_in_ + 0.9985 * dc_out_;
+        dc_in_ = mix;
+        dc_out_ = hp;
+        const int32_t sample = int32_t(std::lround(hp * kMixGain));
         audio_.push_back(int16_t(std::clamp(sample, int32_t(-32768), int32_t(32767))));
     }
 }
@@ -948,14 +986,14 @@ void System16::update_video() {
 }
 
 void System16::run_frame() {
-    const int main_cycles =
-        int(double(kMainClock) / fps_ / (kScanlines * kCpuSync) + 0.5);
-    const int sound_cycles =
-        int(double(sound_clock_) / fps_ / (kScanlines * kCpuSync) + 0.5);
-    const int mcu_cycles =
-        mcu_ ? int(double(mcu_->clock()) / fps_ / (kScanlines * kCpuSync) + 0.5) : 0;
-    const int n7751_cycles =
-        n7751_ ? int(double(n7751_->clock()) / fps_ / (kScanlines * kCpuSync) + 0.5) : 0;
+    // Budgets carry over between slices so every CPU runs at its clock
+    // (run() finishes the instruction in progress and returns the cycles
+    // really spent).
+    const double slices = double(kScanlines * kCpuSync);
+    const double main_cycles = double(kMainClock) / fps_ / slices;
+    const double sound_cycles = double(sound_clock_) / fps_ / slices;
+    const double mcu_cycles = mcu_ ? double(mcu_->clock()) / fps_ / slices : 0.0;
+    const double n7751_cycles = n7751_ ? double(n7751_->clock()) / fps_ / slices : 0.0;
     for (int line = 0; line < kScanlines; line++) {
         if (line == 224) {
             if (use_mcu_ && mcu_) mcu_->set_irq0_line(IrqLine::Hold);
@@ -963,10 +1001,18 @@ void System16::run_frame() {
             update_video();
         }
         for (int slice = 0; slice < kCpuSync; slice++) {
-            main_cpu_.run(main_cycles);
-            sound_cpu_.run(sound_cycles);
-            if (use_mcu_ && mcu_) mcu_->run(mcu_cycles);
-            if (n7751_) n7751_->run(n7751_cycles);
+            main_debt_ += main_cycles;
+            main_debt_ -= main_cpu_.run(int(main_debt_));
+            sound_debt_ += sound_cycles;
+            sound_debt_ -= sound_cpu_.run(int(sound_debt_));
+            if (use_mcu_ && mcu_) {
+                mcu_debt_ += mcu_cycles;
+                mcu_debt_ -= mcu_->run(int(mcu_debt_));
+            }
+            if (n7751_) {
+                n7751_debt_ += n7751_cycles;
+                n7751_debt_ -= n7751_->run(int(n7751_debt_));
+            }
         }
     }
 }

@@ -337,8 +337,10 @@ void Nes::run_frame() {
         const int line = ppu_.linea;
         if (line <= 239) {
             run_cpu(kHalfVisible);
-            ppu_.end_y_coarse();
+            // The line is fetched with the current V; coarse/fine Y then
+            // advance (dot 256) and the horizontal bits reload (dot 257).
             ppu_.draw_linea(line, &framebuffer_[size_t(line) * NesPpu::kScreenWidth]);
+            ppu_.end_y_coarse();
             run_cpu(kLine - kHalfVisible);
         } else if (line == 240) {
             run_cpu(kLine);
@@ -436,7 +438,12 @@ void Nes::write_byte(uint16_t address, uint8_t value) {
                 ppu_.sprite_ram_pos = value;
                 break;
             case 4:
-                if (ppu_.linea < 240) value = 0xff;
+                if (ppu_.linea < 240 && (ppu_.control2 & 0x18) != 0) {
+                    // During rendering the write is ignored and the OAM
+                    // address glitches forward by one sprite.
+                    ppu_.sprite_ram_pos = uint8_t(ppu_.sprite_ram_pos + 4);
+                    break;
+                }
                 ppu_.sprite_ram()[ppu_.sprite_ram_pos] = value;
                 ppu_.sprite_ram_pos = uint8_t(ppu_.sprite_ram_pos + 1);
                 break;

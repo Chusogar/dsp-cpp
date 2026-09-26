@@ -13,7 +13,7 @@ Computers: **ZX Spectrum 48K**, Amstrad CPC, **Commodore 64**, **EXL-100** /
 **EXELTEL**. Consoles: NES, Game Boy / Game Boy Color, **Atari Lynx**,
 **Super Cassette Vision**.
 Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
-**OutRun**, **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
+**OutRun**, **After Burner II** (X-Board), **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
 **Altered Beast**).
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
 **MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
@@ -113,9 +113,10 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Z8002 CPU | new (MAME `z8000`) | Unsegmented 16-bit Z8002 used by Pole Position |
 | MB88xx MCU | new (MAME `mb88xx`) | Fujitsu 4-bit MCU used by Namco 51/52/53/54xx |
 | Pole Position driver | new (MAME `namco/polepos.cpp`) | Z80 + dual Z8002, road, sprites, real 51/52/53/54xx, WSG/engine |
-| Sega PCM | `src/snd/sega_pcm.pas` | 16-channel sample player (OutRun, Hang-On) |
+| Sega PCM | `src/snd/sega_pcm.pas`, MAME `segapcm.cpp` | 315-5218 (16 voices) and the discrete 8-voice board (Hang-On, Space Harrier) |
 | 315-5195 mapper | `src/arcade/misc/sega_315_5195.pas` | 68000 memory mapper used by OutRun and System 16B |
 | OutRun driver | `src/arcade/outrun_hw.pas` | Dual 68000, Z80, YM2151, Sega PCM, road + sprites |
+| X-Board driver | new (MAME `segaxbd.cpp`) | After Burner II: dual 68000, 315-5248/5249/5250, CXD1095, ADC, road, zoomed sprites |
 | Hang-On driver | `src/arcade/hangon_hw.pas` | Hang-On, Enduro Racer (FD1089), Space Harrier (i8751) |
 | System 16 driver | `src/arcade/system16a_hw.pas`, `system16b_hw.pas` | Fantasy Zone, Shinobi, Alex Kidd, Alien Syndrome, WB3, Tetris, Altered Beast |
 | FD1089 | `src/devices/fd1089.pas` | Hitachi 68000 opcode/data encryption |
@@ -181,6 +182,7 @@ holding the individual files:
 ./build/dsp --game polepos /path/to/polepos.zip
 ./build/dsp --game polepos2 /path/to/polepos2.zip
 ./build/dsp --game outrun /path/to/outrun.zip
+./build/dsp --game aburner2 /path/to/aburner2.zip
 ./build/dsp --game hangon /path/to/hangon.zip
 ./build/dsp --game enduro /path/to/enduror.zip
 ./build/dsp --game sharrier /path/to/sharrier.zip
@@ -535,6 +537,15 @@ Scorpion ZS-256 wants a 64 KB ROM (`scorpion.rom` / `scorp294.rom`, or
 `scorp0.rom`…`scorp3.rom`): 128 editor, 48 BASIC, service, TR-DOS. Port `$1FFD`
 bit 0 maps RAM page 0 at `$0000`, bit 1 selects the service ROM, bit 4 is the
 256 KB RAM bit. F5 is the Magic button (NMI).
+
+Keyboard (both clones): Left Shift is CAPS SHIFT; either Ctrl, Right Shift or
+AltGr is SYMBOL SHIFT. The cursor keys send CAPS SHIFT + 5/6/7/8, Backspace and
+Delete are DELETE (CAPS + 0), Esc is BREAK (CAPS + SPACE), Caps Lock is CAPS
+LOCK (CAPS + 2) and Tab is EXTEND MODE (CAPS + SYMBOL). The host keys
+`, . ; ' / - =` (and Shift for `< > : " ? _ +`) are typed through SYMBOL SHIFT
+by their key position on a US layout; SYMBOL SHIFT + letter always works as on
+the real keyboard. The cursor keys and Ctrl/Space also drive a Kempston
+joystick on port `$1F`.
 
 MAME 0.221 names (merged parent is `spec128.zip`; clones live in subfolders
 `pentagon/`, `pent1024/`, `scorpio/`; TR-DOS is the `spectrum_beta128` device).
@@ -1067,6 +1078,59 @@ averaged per output sample (no aliasing), the mix follows MAME (POKEY 0.20,
 TMS5220 0.50) with the DC removed, and the two CPUs run in ~100 µs slices so
 commands are not lost between them.
 
+### Nintendo Punch-Out!!
+
+After MAME `punchout.cpp` (set `punchout`, Rev B). Z80 at 4 MHz; a 2A03 (NES
+CPU and APU) for music and effects and a VLM5030 for the announcer. The two
+monitors are stacked into one 256×448 picture: the top one with its tilemap
+and the zooming opponent when it is routed there, the bottom one with the
+row-scrolled ring, the opponent and Little Mac (drawn as the green wire frame
+of the original). Colours come from the pink-labelled PROMs.
+
+Controls: button 1 / button 2 punch (left / right), button 3 or Start is the
+third cabinet button, the joystick dodges (left / right) and blocks (down),
+coin is 5. `--dip VALUE` sets DSW2 (difficulty, time, demo sounds…),
+`--dip 1:VALUE` DSW1 (coinage).
+
+```bash
+./build/dsp --game punchout /path/to/punchout.zip
+```
+
+### Sega / Gremlin VIC Dual
+
+Z80 at 1.93 MHz, 256×224 character-RAM display with an optional colour PROM,
+following MAME's `vicdual.cpp` per game: memory and I/O maps, input ports
+(64V, VBLANK, CBLANK and the 500 Hz timer, coin status, DIP defaults), the
+coin mechanism (a coin resets the CPU and holds the coin line for 70 ms) and
+the monitor orientation. Depthcharge, Safari, Frogs, Head On and Head On 2
+are horizontal; the rest are vertical (ROT270, shown at 224×256).
+
+`--game` names: `depthch`, `safari`, `frogs`, `sspaceat`, `sspacaho`, `headon`,
+`headon2`, `headon2sl`, `invho2`, `nsub`, `samurai`, `invinco`, `invds`,
+`tranqgun`, `spacetrk`, `carnival`, `brdrline`, `digger`, `pulsar`, `heiankyo`,
+`alphaho`. The MAME 0.260 non-merged zips load as they are.
+
+Sound:
+
+* Head On, Head On 2, the Head On halves of the two-game boards: a model of
+  the Head On discrete board (555 engine VCOs through their /2 /3 /4 chain,
+  the two screeches, bonus and crash).
+* Carnival: the music board (i8035 running `epr-412.u5` driving an
+  AY-3-8912) plus the effects.
+* Depthcharge, Invinco (and Invinco / Head On 2, Invinco / Deep Scan),
+  Pulsar, Carnival and N-Sub use MAME's sample WAVs for their effects. Put
+  them in a `samples` folder next to the ROMs (`samples/carnival.zip`,
+  `samples/depthch/…`); without them synthesized effects are played on the
+  same triggers.
+* Frogs, Borderline and Tranquillizer Gun: synthesized effects on the sound
+  latch bits of MAME's netlists.
+* Safari, Space Attack, Samurai, Space Trek, Digger, Heiankyo Alien and Alpha
+  Fighter have no sound emulation in MAME either, and stay silent.
+
+```bash
+./build/dsp --game carnival /path/to/carnival.zip
+```
+
 ### Namco Pole Position / Pole Position II
 
 Z80 + two Z8002s at 3.072 MHz, 256×224, ~60.6 Hz. The Namco 06xx talks to
@@ -1108,9 +1172,35 @@ Ported from [dsp-emulator](https://github.com/leniad/dsp-emulator)
 ./build/dsp --game altbeast /path/to/altbeast.zip
 ```
 
-OutRun and Hang-On family games use analog wheel / gas / brake (arrow keys plus
-button 1/2) and a gear toggle on button 3. System 16 games use a two-button
-joystick.
+OutRun uses an analog wheel / gas / brake (arrow keys plus button 1/2) and a
+gear toggle on button 3. The Hang-On board games follow MAME's analog ports,
+ramped from the keys like MAME's key deltas:
+
+| Game | Controls |
+|------|----------|
+| Hang-On | left/right steer, button 1 (or up) gas, button 2 (or down) brake |
+| Enduro Racer | left/right steer, button 1 gas, button 2 brake, down (or button 3) pulls a wheelie, up leans forward |
+| Space Harrier | stick on the arrows, buttons 1-3 |
+
+System 16 games use the three-button joystick of MAME's `system16a_generic`
+port (button 1 = D1, button 2 = D2, button 3 = D0). F1 is the test switch on
+all of these boards.
+
+Sound follows MAME: the main CPU's 8255 runs port A in mode 2, so a command
+write drops /OBF (the Z80 NMI) until the Z80 reads the latch. Hang-On and Space
+Harrier have the YM2203 board with the discrete 8-voice Sega PCM (62.5 kHz),
+Enduro Racer the YM2151 board with the 16-voice 315-5218.
+
+After Burner II runs on the X-Board (MAME `segaxbd.cpp`, set `aburner2`, VER
+2.00): two 68000s at 12.5 MHz, each with a 315-5248 multiplier, 315-5249
+divider and 315-5250 compare/timer (the main one also latches the sound
+command and raises the timer IRQ), System 16B tilemaps, frame-buffered zooming
+sprites, the road/sky layer drawn by the sub CPU, and a Z80 with YM2151 +
+315-5218 Sega PCM. The game's own memory test reports all ROMs, RAMs and custom
+chips GOOD. Controls: arrows = stick (up pushes the nose down, as on the real
+flight stick), button 1 = Vulcan, button 2 = missile, button 3 / button 4 =
+throttle up / down, F1 = test. The cabinet DIP defaults to Upright 1 (no
+motion motors).
 
 Enduro Racer decrypts the FD1089B program ROMs with `317-0013a.key`. Space
 Harrier runs the i8751 MCU that raises 68000 IRQs. Shinobi, Alex Kidd and Alien

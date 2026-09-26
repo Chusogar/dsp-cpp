@@ -25,6 +25,7 @@
 #include "cpu/spc700.h"
 #include "cpu/upd7801.h"
 #include "cpu/z80.h"
+#include "machine/i8255.h"
 #include "cpu/z80ctc.h"
 #include "drivers/computers/amstrad_cpc.h"
 #include "drivers/consoles/atari_lynx.h"
@@ -32,6 +33,7 @@
 #include "drivers/consoles/snes.h"
 #include "drivers/arcade/williams.h"
 #include "video/snes_ppu.h"
+#include "video/nes_ppu.h"
 #include "drivers/arcade/atari_system1.h"
 #include "drivers/arcade/atari_system2.h"
 #include "drivers/computers/apple2.h"
@@ -60,7 +62,9 @@
 #include "drivers/consoles/nes.h"
 #include "drivers/consoles/pv2000.h"
 #include "drivers/consoles/scv.h"
+#include "drivers/arcade/punchout.h"
 #include "drivers/arcade/starwars.h"
+#include "drivers/arcade/vicdual.h"
 #include "drivers/arcade/asteroid.h"
 #include "drivers/computers/c64.h"
 #include "machine/mos6566.h"
@@ -74,6 +78,7 @@
 #include "drivers/consoles/genesis.h"
 #include "drivers/arcade/hangon.h"
 #include "drivers/arcade/outrun.h"
+#include "drivers/arcade/xboard.h"
 #include "drivers/arcade/skullxbo.h"
 #include "drivers/arcade/shuuz.h"
 #include "drivers/arcade/bublbobl.h"
@@ -152,6 +157,25 @@ void test_z80_arithmetic() {
     cpu.run(7 + 7 + 4);
     check(cpu.a == 0x16, "daa converts 0x10 to bcd 0x16");
     check((cpu.f & dsp::Z80::NF) == 0, "daa keeps N clear after an add");
+}
+
+void test_z80_nmi_held_does_not_block_irq() {
+    auto memory = make_memory();
+    dsp::Z80 cpu = make_cpu(memory);
+    // 0000: im 1 / ei / jr $   0038: inc (hl-less counter at 8000) / ei / reti
+    const uint8_t program[] = {0xed, 0x56, 0xfb, 0x18, 0xfe};
+    std::memcpy(memory.data(), program, sizeof(program));
+    const uint8_t irq[] = {0x3a, 0x00, 0x80, 0x3c, 0x32, 0x00, 0x80, 0xfb, 0xed, 0x4d};
+    std::memcpy(memory.data() + 0x38, irq, sizeof(irq));
+    const uint8_t nmi[] = {0x3a, 0x01, 0x80, 0x3c, 0x32, 0x01, 0x80, 0xed, 0x45};
+    std::memcpy(memory.data() + 0x66, nmi, sizeof(nmi));
+    cpu.run(100);
+    // NMI line held low (as a PPI /OBF would), plus a level IRQ.
+    cpu.set_nmi(dsp::IrqLine::Assert);
+    cpu.set_irq(dsp::IrqLine::Assert);
+    cpu.run(2000);
+    check(memory[0x8001] == 1, "Z80 takes a held NMI exactly once (edge triggered)");
+    check(memory[0x8000] > 1, "Z80 still services maskable IRQs while NMI is held low");
 }
 
 void test_z80_flags_and_blocks() {
@@ -1588,6 +1612,129 @@ std::vector<uint8_t> make_nrom_cart() {
     rom[16 + 0x3ffa] = 0x00;  // NMI vector
     rom[16 + 0x3ffb] = 0x80;
     return rom;
+}
+
+void nes_ppu_setup(dsp::NesPpu& ppu) {
+    ppu.reset();
+    ppu.control2 = 0x1e;  // sprites + background, no left clipping
+    ppu.pos_spt = 0;
+    ppu.pos_bg = 1;
+    // Tile 1: only the leftmost pixel of every row (colour 1).
+    for (int y = 0; y < 8; y++) ppu.chr_bank(0)[16 + y] = 0x80;
+    // Tile 2: solid colour 3.
+    for (int y = 0; y < 8; y++) ppu.chr_bank(0)[32 + y] = ppu.chr_bank(0)[32 + 8 + y] = 0xff;
+    // Palettes: backdrop 0x0f, sprite palette 0 colour 1 = 0x16, colour 3 = 0x2a.
+    ppu.address = 0x3f00;
+    ppu.write(0x0f);
+    ppu.address = 0x3f11;
+    ppu.write(0x16);
+    ppu.address = 0x3f13;
+    ppu.write(0x2a);
+    ppu.address = 0x2000;  // nametable 0, all tile 0 in the (empty) bg table
+    std::fill(ppu.sprite_ram(), ppu.sprite_ram() + 256, 0xff);
+}
+
+void test_nes_ppu_sprites_and_palette() {
+    dsp::NesPpu ppu;
+    uint32_t line[256];
+    uint32_t backdrop = 0, red = 0;
+
+    nes_ppu_setup(ppu);
+    uint8_t* oam = ppu.sprite_ram();
+    // Sprite at X=100, OAM Y=9: first drawn on line 10.
+    oam[0] = 9; oam[1] = 1; oam[2] = 0x00; oam[3] = 100;
+    ppu.address = 0x2000;
+    ppu.draw_linea(9, line);
+    backdrop = line[100];
+    check(line[100] == line[50], "NES sprite is not drawn on the OAM Y line itself");
+    ppu.address = 0x2000;
+    ppu.draw_linea(10, line);
+    red = line[100];
+    check(red != backdrop && line[107] == backdrop,
+          "NES sprite pattern bit 7 is the leftmost pixel");
+    oam[2] = 0x40;  // horizontal flip
+    ppu.address = 0x2000;
+    ppu.draw_linea(10, line);
+    check(line[107] == red && line[100] == backdrop, "NES horizontal flip mirrors the sprite");
+
+    // Lower OAM index wins even when it is behind the background.
+    oam[0] = 9; oam[1] = 2; oam[2] = 0x20; oam[3] = 40;   // behind, colour 3
+    oam[4] = 9; oam[5] = 2; oam[6] = 0x00; oam[7] = 40;   // front, same place
+    ppu.address = 0x2000;
+    ppu.draw_linea(10, line);
+    check(line[40] != backdrop, "NES behind-priority sprite shows over a transparent background");
+
+    // Eight sprites per line.
+    nes_ppu_setup(ppu);
+    for (int i = 0; i < 10; i++) {
+        oam[i * 4] = 19; oam[i * 4 + 1] = 2; oam[i * 4 + 2] = 0; oam[i * 4 + 3] = uint8_t(i * 16);
+    }
+    ppu.status = 0;
+    ppu.address = 0x2000;
+    ppu.draw_linea(20, line);
+    check(line[7 * 16] != line[250] && line[8 * 16] == line[250], "NES draws at most eight sprites per line");
+    check((ppu.status & 0x20) != 0, "NES sets sprite overflow with a ninth sprite");
+
+    // Palette mirrors: $3F10 is $3F00, $3F14 is $3F04 only.
+    nes_ppu_setup(ppu);
+    ppu.address = 0x3f04;
+    ppu.write(0x21);
+    ppu.address = 0x3f10;
+    ppu.write(0x30);
+    check(ppu.read_mem(0x3f00) == 0x30 && ppu.read_mem(0x3f04) == 0x21 && ppu.read_mem(0x3f14) == 0x21,
+          "NES palette: only $3F1x entries with bits 0-1 clear mirror $3F0x");
+    ppu.address = 0x3f00;
+    check(ppu.read() == 0x30, "NES palette reads through $2007 are not buffered");
+
+    // Sprite 0 hit needs an opaque background pixel.
+    nes_ppu_setup(ppu);
+    oam[0] = 29; oam[1] = 2; oam[2] = 0; oam[3] = 60;
+    ppu.status = 0;
+    ppu.address = 0x2000;
+    ppu.draw_linea(30, line);
+    check((ppu.status & 0x40) == 0, "NES sprite 0 hit does not fire over a transparent background");
+    for (int y = 0; y < 8; y++) ppu.chr_bank(1)[y] = 0xff;  // bg tile 0 opaque
+    ppu.address = 0x2000;
+    ppu.draw_linea(30, line);
+    check((ppu.status & 0x40) != 0, "NES sprite 0 hit fires over an opaque background");
+}
+
+void test_nes_smb_if_present() {
+    namespace fs = std::filesystem;
+    const char* rom = "/tmp/roms/nes/smb.zip";
+    if (!fs::exists(rom)) {
+        std::printf("skip: %s not found\n", rom);
+        return;
+    }
+    dsp::Nes nes;
+    std::string error;
+    check(nes.init(rom, &error), "Super Mario Bros loads");
+    for (int f = 1; f <= 330; f++) {
+        dsp::MachineInputs in;
+        in.player1.start = f >= 60 && f < 66;
+        in.player1.right = f >= 200 && f < 260;
+        in.player1.left = f >= 260;
+        nes.set_inputs(in);
+        nes.run_frame();
+        std::vector<int16_t> audio;
+        nes.drain_audio(audio);
+    }
+    // Mario (walking left) is drawn as one figure: his red cap and
+    // overalls pixels form a single blob no wider than 16 pixels.
+    const uint32_t* fb = nes.framebuffer();
+    int minx = 256, maxx = -1, count = 0;
+    for (int y = 150; y < 208; y++) {
+        for (int x = 0; x < 256; x++) {
+            const uint32_t c = fb[y * 256 + x];
+            const int r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
+            if (r > 160 && g > 75 && g < 105 && b > 65 && b < 100) {  // Mario's red (palette $16)
+                minx = std::min(minx, x);
+                maxx = std::max(maxx, x);
+                count++;
+            }
+        }
+    }
+    check(count > 20 && maxx - minx < 16, "Super Mario Bros: Mario walking left is drawn in one piece");
 }
 
 void test_nes_apu_status() {
@@ -3407,6 +3554,125 @@ void test_starwars_sound_and_esb_slapstic_if_present() {
     check(esb.debug_avg_lines() > 100, "ESB keeps drawing during the game");
 }
 
+void test_vicdual_headon_discrete() {
+    dsp::VicDual headon(dsp::VicDual::Game::HeadOn);
+    check(!headon.rotated() && headon.screen_width() == 256 && headon.screen_height() == 224,
+          "Head On is a horizontal (ROT0) 256x224 game");
+    std::vector<int16_t> quiet = headon.debug_headon_audio(0x04, 4410);  // crash line idle high
+    int loud = 0;
+    for (int16_t v : quiet) if (std::abs(v) > 500) loud++;
+    // The crash monostable is still timing out from power-up; let it settle.
+    quiet = headon.debug_headon_audio(0x04, 88200);
+    loud = 0;
+    for (size_t i = 44100; i < quiet.size(); i++) if (std::abs(quiet[i]) > 500) loud++;
+    check(loud == 0, "Head On discrete board is silent with everything off");
+    // Engine on: after the ramp the 555 VCO and its dividers drone.
+    std::vector<int16_t> engine = headon.debug_headon_audio(0x44, 44100 * 9);
+    int crossings = 0;
+    for (size_t i = 44100 * 8 + 1; i < engine.size(); i++) {
+        if ((engine[i - 1] < 0) != (engine[i] < 0)) crossings++;
+    }
+    check(crossings > 40 && crossings < 4000, "Head On engine produces a low drone when the car runs");
+    std::vector<int16_t> crash = headon.debug_headon_audio(0x40, 22050);  // crash line low
+    double e = 0;
+    for (int16_t v : crash) e += double(v) * v;
+    check(e / double(crash.size()) > 1e5, "Head On crash noise sounds while the crash line is low");
+}
+
+void test_vicdual_games_if_present() {
+    namespace fs = std::filesystem;
+    struct G {
+        const char* zip;
+        dsp::VicDual::Game game;
+        bool rot;
+    };
+    const G games[] = {
+        {"/tmp/roms/vicdual/depthch.zip", dsp::VicDual::Game::DepthCharge, false},
+        {"/tmp/roms/vicdual/carnival.zip", dsp::VicDual::Game::Carnival, true},
+        {"/tmp/roms/vicdual/invinco.zip", dsp::VicDual::Game::Invinco, true},
+    };
+    for (const G& g : games) {
+        if (!fs::exists(g.zip)) {
+            std::printf("skip: %s not found\n", g.zip);
+            continue;
+        }
+        dsp::VicDual m(g.game);
+        std::string error;
+        const std::string name = m.title();
+        check(m.init(g.zip, &error), (name + " loads").c_str());
+        check(m.rotated() == g.rot && m.screen_width() == (g.rot ? 224 : 256) &&
+                  m.screen_height() == (g.rot ? 256 : 224),
+              (name + " has MAME's monitor orientation").c_str());
+        double energy = 0;
+        size_t n = 0;
+        for (int f = 1; f <= 1200; f++) {
+            dsp::MachineInputs in;
+            in.coin1 = f >= 200 && f < 205;
+            in.player1.start = f >= 300 && f < 305;
+            in.player1.button1 = f > 400 && (f / 8) % 2;
+            in.player1.left = f > 400 && (f / 90) % 2;
+            in.player1.right = f > 400 && !((f / 90) % 2);
+            m.set_inputs(in);
+            m.run_frame();
+            std::vector<int16_t> audio;
+            m.drain_audio(audio);
+            if (f > 400) {
+                for (int16_t v : audio) energy += double(v) * v;
+                n += audio.size();
+            }
+        }
+        int lit = 0;
+        const uint32_t* fb = m.framebuffer();
+        for (int i = 0; i < m.screen_width() * m.screen_height(); i++) if ((fb[i] & 0xffffff) != 0) lit++;
+        check(lit > 500, (name + " draws the game").c_str());
+        check(n > 0 && std::sqrt(energy / double(n)) > 300.0, (name + " makes sound during play").c_str());
+        if (g.game == dsp::VicDual::Game::Carnival) {
+            check(m.debug_psg_writes() > 50, "Carnival music board (i8035 + AY-3-8912) plays");
+        }
+    }
+}
+
+void test_punchout_if_present() {
+    namespace fs = std::filesystem;
+    const char* rom = "/tmp/roms/punchout/punchout.zip";
+    dsp::PunchOut po;
+    check(po.screen_width() == 256 && po.screen_height() == 448 && po.fit_window(),
+          "Punch-Out!! shows both monitors stacked (256x448)");
+    if (!fs::exists(rom)) {
+        std::printf("skip: %s not found\n", rom);
+        return;
+    }
+    std::string error;
+    check(po.init(rom, &error), "Punch-Out!! ROM set loads");
+    int speaking = 0;
+    double energy = 0;
+    size_t n = 0;
+    // Title, coin, start, initials entry (left to time out), then the fight.
+    for (int f = 1; f <= 2200; f++) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 600 && f < 606;
+        in.player1.start = f >= 700 && f < 706;
+        in.player1.button1 = f > 900 && (f / 7) % 3 == 0;
+        po.set_inputs(in);
+        po.run_frame();
+        if (po.debug_speaking()) speaking++;
+        std::vector<int16_t> audio;
+        po.drain_audio(audio);
+        for (int16_t v : audio) energy += double(v) * v;
+        n += audio.size();
+    }
+    // Both monitors show a busy picture during the fight.
+    auto colours = [&](int y0) {
+        std::set<uint32_t> c;
+        for (int y = y0; y < y0 + 224; y++)
+            for (int x = 0; x < 256; x++) c.insert(po.framebuffer()[y * 256 + x]);
+        return c.size();
+    };
+    check(colours(0) > 8 && colours(224) > 8, "Punch-Out!! draws both monitors");
+    check(n > 0 && std::sqrt(energy / double(n)) > 500.0, "Punch-Out!! 2A03 sound plays");
+    check(speaking > 30, "Punch-Out!! VLM5030 speaks");
+}
+
 void test_starwars_missing_roms() {
     dsp::StarWars machine;
     check(std::strcmp(machine.title(), "Star Wars") == 0, "Star Wars title");
@@ -3650,6 +3916,52 @@ void test_sega_pcm_and_mapper() {
     pcm.clock();
     check(pcm.left() != 0 || pcm.right() != 0, "Sega PCM produces a sample when a channel is active");
 
+    // Discrete-logic variant (Hang-On / Space Harrier board): voices at
+    // 0x40+8v / 0xc0+8v, 62.5 kHz at 4 MHz, nothing at the 315-5218 offsets.
+    dsp::SegaPcm discrete(4000000, 1.0f, dsp::SegaPcm::Variant::Discrete);
+    check(discrete.tick_rate() == 62500, "discrete Sega PCM ticks at clock/64");
+    check(pcm.tick_rate() == 31250, "315-5218 ticks at clock/128");
+    discrete.reset();
+    discrete.set_read_rom([](uint32_t) { return uint8_t(0xff); });
+    discrete.write(0x86, 0x00);
+    discrete.write(0x02, 0x7f);
+    discrete.clock();
+    check(discrete.left() == 0, "discrete Sega PCM ignores the 315-5218 register block");
+    discrete.write(0xe006 & 0xff, 0x00);  // mirrored window: voice 0 control at 0xc6
+    discrete.write(0xc6, 0x00);
+    discrete.write(0x42, 0x7f);
+    discrete.write(0x47, 0x01);
+    discrete.clock();
+    check(discrete.left() == 127 * 0x7f, "discrete Sega PCM voice 0 lives at 0x40/0xc0");
+    discrete.write(0xc6, 0x01);
+    discrete.clock();
+    check(discrete.left() == 0, "discrete Sega PCM control bit 0 disables the voice");
+
+    // 8255 port A mode 2 handshake: a write drives /OBF (PC7) low, /ACK
+    // releases it (Sega's sound NMI).
+    {
+        dsp::I8255 ppi;
+        uint8_t pc = 0xff;
+        ppi.set_handshake(true);
+        ppi.set_port_handlers(nullptr, nullptr, nullptr, nullptr, nullptr,
+                              [&pc](uint8_t value) { pc = value; });
+        ppi.reset();
+        ppi.write(3, 0xc0);
+        ppi.write(2, 0x07);
+        check((pc & 0x80) != 0 && (pc & 0x07) == 0x07, "8255 mode 2: /OBF idles high");
+        ppi.write(0, 0x42);
+        check((pc & 0x80) == 0, "8255 mode 2: port A write drives /OBF low");
+        ppi.ack_a();
+        check((pc & 0x80) != 0, "8255 mode 2: /ACK sets /OBF high again");
+        dsp::I8255 plain;
+        uint8_t pc0 = 0xff;
+        plain.set_port_handlers(nullptr, nullptr, nullptr, nullptr, nullptr,
+                                [&pc0](uint8_t value) { pc0 = value; });
+        plain.write(3, 0xc0);
+        plain.write(2, 0x07);
+        check(pc0 == 0x07, "8255 without handshake keeps plain port C writes");
+    }
+
     dsp::Sega3155195 mapper;
     mapper.reset();
     mapper.write_reg(0x10, 1);
@@ -3688,6 +4000,13 @@ void test_sega_system16_missing_roms() {
           "OutRun init reports why the set is missing");
     check(std::strcmp(outrun.title(), "OutRun") == 0, "OutRun title");
     check(outrun.screen_width() == 320 && outrun.screen_height() == 224, "OutRun screen is 320x224");
+
+    dsp::XBoard aburner2;
+    error = "unset";
+    check(!aburner2.init("/no/such/aburner2.zip", &error), "After Burner II init fails without ROMs");
+    check(std::strcmp(aburner2.title(), "After Burner II") == 0, "After Burner II title");
+    check(std::abs(aburner2.frames_per_second() - 59.637) < 0.01,
+          "X-Board refresh is 50 MHz / 8 / (400 x 262)");
 
     dsp::HangOn hangon;
     error = "unset";
@@ -4694,6 +5013,35 @@ void test_sega_roms_if_present() {
         check(machine.init("/tmp/roms/shinobi.zip", &error), "Shinobi MAME set loads");
         for (int frame = 0; frame < 180; frame++) machine.run_frame();
         check(unique_pixels(machine) > 8, "Shinobi attract mode draws a colour picture");
+        // Coin, start and play: the Z80 gets its commands through the PPI
+        // handshake and the YM2151/N7751 make sound.
+        std::vector<int16_t> audio;
+        double energy = 0;
+        size_t samples = 0;
+        for (int frame = 0; frame < 900; frame++) {
+            dsp::MachineInputs in;
+            in.coin1 = frame >= 300 && frame < 305;
+            in.player1.start = frame >= 360 && frame < 365;
+            in.player1.button1 = frame > 500 && (frame / 8) % 2 == 0;
+            in.player1.right = frame > 500;
+            machine.set_inputs(in);
+            machine.run_frame();
+            machine.drain_audio(audio);
+            if (frame >= 400) {
+                for (int16_t v : audio) energy += double(v) * v;
+                samples += audio.size();
+            }
+        }
+        check(machine.debug_sound_commands() > 10, "Shinobi sends sound commands to the Z80");
+        check(samples > 0 && std::sqrt(energy / double(samples)) > 300.0, "Shinobi plays sound");
+        dsp::MachineInputs in;
+        in.player1.left = true;
+        in.player1.button2 = true;
+        in.coin2 = true;
+        in.service = true;
+        machine.set_inputs(in);
+        check(machine.debug_port(1) == 0xff7b && (machine.debug_port(0) & 0x06) == 0,
+              "System 16A inputs follow MAME (left D7, button 2 D2, coin 2 D1, test D2)");
     }
 
     if (exists("/tmp/roms/tetris.zip")) {
@@ -4712,12 +5060,82 @@ void test_sega_roms_if_present() {
         check(unique_pixels(machine) > 4, "Altered Beast attract mode draws a colour picture");
     }
 
+    if (exists("/tmp/roms/aburner2.zip")) {
+        dsp::XBoard machine;
+        std::string error;
+        check(machine.init("/tmp/roms/aburner2.zip", &error), "After Burner II MAME set loads");
+        for (int frame = 0; frame < 300; frame++) machine.run_frame();
+        check(machine.debug_display_enabled(), "After Burner II enables the display");
+        check(unique_pixels(machine) > 16, "After Burner II attract mode draws a colour picture");
+        check(machine.debug_sprites_drawn() > 10, "After Burner II draws zoomed sprites");
+        std::vector<int16_t> audio;
+        double energy = 0;
+        size_t samples = 0;
+        for (int frame = 0; frame < 900; frame++) {
+            dsp::MachineInputs in;
+            in.coin1 = frame >= 10 && frame < 15;
+            in.player1.start = frame >= 70 && frame < 75;
+            in.player1.button1 = frame > 200 && (frame / 6) % 2 == 0;
+            machine.set_inputs(in);
+            machine.run_frame();
+            machine.drain_audio(audio);
+            if (frame >= 300) {
+                for (int16_t v : audio) energy += double(v) * v;
+                samples += audio.size();
+            }
+        }
+        check(machine.debug_sound_commands() > 50, "After Burner II sends sound commands (NMI latch)");
+        check(samples > 0 && std::sqrt(energy / double(samples)) > 300.0,
+              "After Burner II plays YM2151 + Sega PCM sound in game");
+        dsp::MachineInputs in;
+        in.player1.left = true;
+        in.player1.up = true;
+        in.player1.button3 = true;
+        in.player1.button2 = true;
+        for (int frame = 0; frame < 40; frame++) machine.set_inputs(in);
+        check(machine.debug_adc(0) == 0x20 && machine.debug_adc(1) == 0xc0 &&
+                  machine.debug_adc(2) == 0xff,
+              "After Burner II ADC: stick X, stick Y reversed, throttle (MAME ranges)");
+        check(machine.debug_io1_porta() == 0xdf, "After Burner II missile button is IO1 port A D5");
+    }
+
     if (exists("/tmp/roms/hangon.zip")) {
         dsp::HangOn machine;
         std::string error;
         check(machine.init("/tmp/roms/hangon.zip", &error), "Hang-On MAME set loads");
         for (int frame = 0; frame < 180; frame++) machine.run_frame();
         check(unique_pixels(machine) > 4, "Hang-On attract mode draws more than the text layer");
+        {
+            std::vector<int16_t> audio;
+            double energy = 0;
+            size_t samples = 0;
+            for (int frame = 0; frame < 1200; frame++) {
+                dsp::MachineInputs in;
+                in.coin1 = frame >= 600 && frame < 605;
+                in.player1.start = frame >= 660 && frame < 665;
+                in.player1.button1 = frame > 700;
+                machine.set_inputs(in);
+                machine.run_frame();
+                machine.drain_audio(audio);
+                if (frame >= 800) {
+                    for (int16_t v : audio) energy += double(v) * v;
+                    samples += audio.size();
+                }
+            }
+            check(samples + 2 >= size_t(400 * 735) && samples <= size_t(400 * 735) + 2,
+                  "Hang-On emits 735 samples per frame");
+            check(std::sqrt(energy / double(samples)) > 300.0, "Hang-On plays sound in game");
+        }
+        dsp::MachineInputs in;
+        in.player1.left = true;
+        in.player1.button2 = true;
+        in.player1.start = true;
+        in.service = true;
+        for (int frame = 0; frame < 30; frame++) machine.set_inputs(in);
+        check(machine.debug_adc(0) == 0xe0 && machine.debug_adc(1) == 0x00 &&
+                  machine.debug_adc(2) == 0xff,
+              "Hang-On ADC: steering reversed (left = 0xe0), gas, brake");
+        check((machine.debug_in0() & 0xff) == 0xeb, "Hang-On SERVICE port: start D4, test D2");
     }
 
     if (exists("/tmp/roms/enduror.zip")) {
@@ -4726,14 +5144,76 @@ void test_sega_roms_if_present() {
         check(machine.init("/tmp/roms/enduror.zip", &error), "Enduro Racer MAME set loads");
         for (int frame = 0; frame < 180; frame++) machine.run_frame();
         check(unique_pixels(machine) > 4, "Enduro Racer attract mode draws a colour picture");
+        {
+            std::vector<int16_t> audio;
+            double energy = 0;
+            size_t samples = 0;
+            for (int frame = 0; frame < 1200; frame++) {
+                dsp::MachineInputs in;
+                in.coin1 = frame >= 600 && frame < 605;
+                in.player1.start = frame >= 660 && frame < 665;
+                in.player1.button1 = frame > 700;
+                machine.set_inputs(in);
+                machine.run_frame();
+                machine.drain_audio(audio);
+                if (frame >= 800) {
+                    for (int16_t v : audio) energy += double(v) * v;
+                    samples += audio.size();
+                }
+            }
+            check(samples + 2 >= size_t(400 * 735) && samples <= size_t(400 * 735) + 2,
+                  "Enduro Racer emits 735 samples per frame");
+            check(std::sqrt(energy / double(samples)) > 300.0, "Enduro Racer plays sound in game");
+        }
+        dsp::MachineInputs in;
+        in.player1.right = true;
+        in.player1.down = true;
+        in.player1.button1 = true;
+        in.player1.start = true;
+        for (int frame = 0; frame < 30; frame++) machine.set_inputs(in);
+        check(machine.debug_adc(0) == 0xff && machine.debug_adc(1) == 0x00 &&
+                  machine.debug_adc(2) == 0xff && machine.debug_adc(3) == 0x01,
+              "Enduro Racer ADC: gas, brake, bank (pull back), steering reversed");
+        check((machine.debug_in0() & 0xff) == 0xbf, "Enduro Racer start is SERVICE D6");
     }
 
     if (exists("/tmp/roms/sharrier.zip")) {
         dsp::HangOn machine(dsp::HangOn::Game::Sharrier);
         std::string error;
         check(machine.init("/tmp/roms/sharrier.zip", &error), "Space Harrier MAME set loads");
-        for (int frame = 0; frame < 180; frame++) machine.run_frame();
+        // The game counts down on a plain screen for ~9 seconds at boot.
+        for (int frame = 0; frame < 600; frame++) machine.run_frame();
         check(unique_pixels(machine) > 4, "Space Harrier attract mode draws a colour picture");
+        {
+            std::vector<int16_t> audio;
+            double energy = 0;
+            size_t samples = 0;
+            for (int frame = 0; frame < 1200; frame++) {
+                dsp::MachineInputs in;
+                in.coin1 = frame >= 600 && frame < 605;
+                in.player1.start = frame >= 660 && frame < 665;
+                in.player1.button1 = frame > 700;
+                machine.set_inputs(in);
+                machine.run_frame();
+                machine.drain_audio(audio);
+                if (frame >= 800) {
+                    for (int16_t v : audio) energy += double(v) * v;
+                    samples += audio.size();
+                }
+            }
+            check(samples + 2 >= size_t(400 * 735) && samples <= size_t(400 * 735) + 2,
+                  "Space Harrier emits 735 samples per frame");
+            check(std::sqrt(energy / double(samples)) > 300.0, "Space Harrier plays sound in game");
+        }
+        dsp::MachineInputs in;
+        in.player1.left = true;
+        in.player1.up = true;
+        in.player1.button1 = true;
+        in.player1.button3 = true;
+        for (int frame = 0; frame < 30; frame++) machine.set_inputs(in);
+        check(machine.debug_adc(0) == 0xe0 && machine.debug_adc(1) == 0xe0,
+              "Space Harrier stick: X and Y reversed like MAME (left/up = 0xe0)");
+        check((machine.debug_in0() & 0xff) == 0x5f, "Space Harrier buttons on SERVICE D5-D7");
     }
 
     if (exists("/tmp/roms/alexkidd.zip")) {
@@ -4859,6 +5339,49 @@ void test_trdos_scl_and_beta() {
     check(scorpion->debug_ram_pages() == 16, "Scorpion 256 has 16 RAM pages");
     check(pentagon->screen_width() == 352 && pentagon->screen_height() == 280,
           "clone screen is 352x280");
+
+    {
+        // Keyboard matrix: port 0xfefe = row 0 (Caps Shift..V) ... 0x7ffe =
+        // row 7 (Space, Symbol Shift, M, N, B).
+        auto row = [&](dsp::MachineInputs in, uint16_t port) {
+            scorpion->set_inputs(in);
+            return uint8_t(scorpion->io_in(port) & 0x1f);
+        };
+        dsp::MachineInputs in;
+        in.keys[size_t(dsp::Key::LeftCtrl)] = true;
+        in.player1.button1 = true;  // the front end also reports Ctrl as fire
+        check(row(in, 0x7ffe) == 0x1d, "Scorpion: Left Ctrl is Symbol Shift");
+        check(row(in, 0xeffe) == 0x1f, "Scorpion: Ctrl no longer presses 0 (Sinclair fire)");
+        in = {};
+        in.keys[size_t(dsp::Key::RightShift)] = true;
+        check(row(in, 0x7ffe) == 0x1d, "Scorpion: Right Shift is Symbol Shift");
+        in = {};
+        in.keys[size_t(dsp::Key::Space)] = true;
+        in.player1.button1 = true;
+        check(row(in, 0x7ffe) == 0x1e && row(in, 0xeffe) == 0x1f, "Scorpion: Space is only Space");
+        in = {};
+        in.keys[size_t(dsp::Key::Comma)] = true;
+        check(row(in, 0x7ffe) == 0x15, "Scorpion: ',' types Symbol Shift + N");
+        in.keys[size_t(dsp::Key::LeftShift)] = true;
+        check(row(in, 0x7ffe) == 0x1d && row(in, 0xfbfe) == 0x17 && row(in, 0xfefe) == 0x1f,
+              "Scorpion: Shift+',' types Symbol Shift + R ('<') without Caps Shift");
+        in = {};
+        in.keys[size_t(dsp::Key::Left)] = true;
+        in.player1.left = true;
+        check(row(in, 0xfefe) == 0x1e && row(in, 0xf7fe) == 0x0f && row(in, 0xeffe) == 0x1f,
+              "Scorpion: cursor left is Caps Shift + 5, not the Sinclair 6");
+        in = {};
+        in.keys[size_t(dsp::Key::Backspace)] = true;
+        check(row(in, 0xfefe) == 0x1e && row(in, 0xeffe) == 0x1e, "Scorpion: Backspace is DELETE");
+        in = {};
+        in.keys[size_t(dsp::Key::Tab)] = true;
+        check(row(in, 0xfefe) == 0x1e && row(in, 0x7ffe) == 0x1d, "Scorpion: Tab is EXTEND MODE");
+        in = {};
+        in.keys[size_t(dsp::Key::W)] = true;
+        in.keys[size_t(dsp::Key::Num1)] = true;
+        check(row(in, 0xfbfe) == 0x1d && row(in, 0xf7fe) == 0x1e && row(in, 0xf3fe) == 0x1c,
+              "Scorpion: rows combine when several address lines are low");
+    }
 
     error = "unset";
     check(!pentagon->init("/no/such/pentagon", &error), "Pentagon init fails without ROMs");
@@ -7606,6 +8129,8 @@ int main() {
     test_spectrum_tzx();
     test_spectrum_ula();
     test_nes_apu_status();
+    test_nes_ppu_sprites_and_palette();
+    test_nes_smb_if_present();
     test_nes_ines_and_memory();
     test_nes_unsupported_mapper();
     test_nes_simple_mappers();
@@ -7647,6 +8172,9 @@ int main() {
     test_exelv_basic_load_if_present();
     test_trdos_scl_and_beta();
     test_starwars_missing_roms();
+    test_punchout_if_present();
+    test_vicdual_headon_discrete();
+    test_vicdual_games_if_present();
     test_mos6532_decode_and_pa7_edge();
     test_starwars_sound_and_esb_slapstic_if_present();
     test_polepos_driver();
@@ -7663,6 +8191,7 @@ int main() {
     test_atari_system2_game_if_present(dsp::AtariSystem2::Game::Apb,
                                        "/tmp/roms/apb.zip", 3000);
     test_sega_pcm_and_mapper();
+    test_z80_nmi_held_does_not_block_irq();
     test_sega_system16_missing_roms();
     test_skullxbo_without_roms();
     test_shuuz_without_roms();

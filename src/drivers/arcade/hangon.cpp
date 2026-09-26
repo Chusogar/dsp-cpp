@@ -1,6 +1,7 @@
 #include "drivers/arcade/hangon.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "machine/fd1089.h"
 
@@ -148,8 +149,12 @@ HangOn::HangOn(Game game)
       sub_cpu_(game == Game::HangOn ? 25174800u / 4 : 10000000u),
       sound_cpu_(4000000),
       ym2203_(4000000, 0.3f, 0.3f),
-      ym2151_(4000000),
-      pcm_(game == Game::HangOn ? 8000000u : 4000000u, game == Game::HangOn ? 1.3f : 1.0f),
+      ym2151_(4000000, 0.5f),  // update() sums L+R: halve it for a mono mix
+      // MAME segahang: the YM2203 boards (Hang-On, Space Harrier) carry the
+      // discrete-logic PCM, the YM2151 board (Enduro Racer) a 315-5218,
+      // both clocked at 8 MHz / 2.
+      pcm_(4000000, 1.0f,
+           game == Game::Enduro ? SegaPcm::Variant::Sega315_5218 : SegaPcm::Variant::Discrete),
       framebuffer_(kScreenWidth * kScreenHeight, 0) {
     use_fd1089_ = (game == Game::Enduro);
     use_ym2151_ = (game == Game::Enduro);
@@ -171,18 +176,32 @@ HangOn::HangOn(Game game)
         return pcm_rom_[addr % pcm_rom_.size()];
     });
     pcm_.set_bank(SegaPcm::kBank512);
+    ym2151_.set_irq_handler([this](bool state) {
+        if (use_ym2151_) sound_cpu_.set_irq(state ? IrqLine::Assert : IrqLine::Clear);
+    });
+    // PPI 0 runs port A in mode 2: a write fills the output buffer, /OBF
+    // (PC7) pulls the Z80 NMI low and the Z80's read of the latch strobes
+    // /ACK (see sound_in).
+    ppi0_.set_handshake(true);
     ppi0_.set_port_handlers(nullptr, nullptr, nullptr,
-                            [this](uint8_t value) { sound_latch_ = value; },
                             [this](uint8_t value) {
-                                z80_reset_ = (value & 0x20) == 0;
-                                if (z80_reset_) sound_cpu_.reset();
+                                sound_latch_ = value;
+                                sound_commands_++;
+                            },
+                            [this](uint8_t value) {
+                                const bool reset = (value & 0x20) == 0;
+                                if (reset && !z80_reset_) sound_cpu_.reset();
+                                z80_reset_ = reset;
                                 video_.screen_enabled = (value & 0x10) != 0;
                             },
                             [this](uint8_t value) {
                                 sound_cpu_.set_nmi((value & 0x80) ? IrqLine::Clear
                                                                   : IrqLine::Assert);
+                                sound_mute_ = (value & 0x01) == 0;
                             });
-    ppi1_.set_port_handlers(nullptr, nullptr, nullptr,
+    // PPI 1 port C: D6 = /INTR of the ADC0804.  Conversions are immediate
+    // here, so it always reads "done".
+    ppi1_.set_port_handlers(nullptr, nullptr, []() -> uint8_t { return 0x00; },
                             [this](uint8_t value) {
                                 sub_cpu_.set_irq(4, (value & 0x40) ? IrqLine::Clear
                                                                    : IrqLine::Assert);
@@ -280,7 +299,12 @@ bool HangOn::load_roms(const std::string& rom_path, std::string* error) {
         if (!load_rom_bytes(loader, kEnduroRoad, road, error)) return false;
         decode_hangon_road(road_gfx_, road);
         if (!load_rom_bytes(loader, kEnduroPcm, pcm_rom_, error)) return false;
+        // 32 KiB ROMs in 64 KiB banks: A15 is not decoded, mirror them.
         pcm_rom_.resize(0x20000, 0);
+        for (size_t bank = 0; bank < 0x20000; bank += 0x10000) {
+            std::copy(pcm_rom_.begin() + long(bank), pcm_rom_.begin() + long(bank + 0x8000),
+                      pcm_rom_.begin() + long(bank + 0x8000));
+        }
         sprite_banks_ = 8;
         dsw_b_ = 0xff7e;
         return true;
@@ -338,38 +362,104 @@ void HangOn::reset() {
     control_res_ = 0;
     z80_reset_ = false;
     i8751_addr_ = 0;
-    analog_x_ = 0x80;
-    analog_y_ = 0x80;
-    analog_gas_ = 0;
-    analog_brake_ = 0;
-    analog_moto_ = 0;
+    steer_ = 0x80;
+    stick_y_ = 0x80;
+    gas_ = 0;
+    brake_ = 0;
+    lean_ = 0x20;
     audio_acc_ = 0;
     pcm_acc_ = 0;
+    pcm_sum_ = 0;
+    pcm_count_ = 0;
+    pcm_last_ = 0;
+    main_debt_ = sub_debt_ = sound_debt_ = mcu_debt_ = 0;
+    sound_mute_ = false;
+    sound_commands_ = 0;
     audio_.clear();
     std::fill(framebuffer_.begin(), framebuffer_.end(), 0);
 }
 
+namespace {
+
+// Moves an analog control toward `target` by at most `delta` per frame, the
+// way MAME drives an analog port from digital keys (PORT_KEYDELTA).
+int ramp(int value, int target, int delta) {
+    if (value < target) return std::min(target, value + delta);
+    return std::max(target, value - delta);
+}
+
+}  // namespace
+
 void HangOn::set_inputs(const MachineInputs& inputs) {
+    // SERVICE port (MAME segahang hangon_generic / sharrier_generic):
+    // D0 coin 1, D1 coin 2, D2 test (service mode), D3 service coin,
+    // D4 start (D6 on Enduro Racer);
+    // Space Harrier has its three buttons on D5-D7.
+    const InputState& p = inputs.player1;
     in0_ = 0xffff;
     if (inputs.coin1) in0_ &= ~0x0001;
     if (inputs.coin2) in0_ &= ~0x0002;
-    if (inputs.player1.start) {
-        in0_ &= ~0x0010;
-        in0_ &= ~0x0040;
-    }
+    if (inputs.service) in0_ &= ~0x0004;
+    if (p.start) in0_ &= (game_ == Game::Enduro) ? ~0x0040 : ~0x0010;
     if (game_ == Game::Sharrier) {
-        if (inputs.player1.button1) in0_ &= ~0x0100;
-        if (inputs.player1.button2) in0_ &= ~0x0200;
+        if (p.button1) in0_ &= ~0x0020;
+        if (p.button2) in0_ &= ~0x0040;
+        if (p.button3) in0_ &= ~0x0080;
     }
-    analog_x_ = 0x80;
-    analog_y_ = 0x80;
-    if (inputs.player1.left) analog_x_ = 0x20;
-    if (inputs.player1.right) analog_x_ = 0xe0;
-    if (inputs.player1.up) analog_y_ = 0x20;
-    if (inputs.player1.down) analog_y_ = 0xe0;
-    analog_gas_ = (inputs.player1.up || inputs.player1.button1) ? 0xff : 0;
-    analog_brake_ = (inputs.player1.down || inputs.player1.button2) ? 0xff : 0;
-    analog_moto_ = inputs.player1.button3 ? 0xff : 0;
+
+    // Analog ports.  MAME marks the steering and the Space Harrier stick
+    // PORT_REVERSE, so left (and up) give the high end of the range.
+    switch (game_) {
+        case Game::HangOn: {
+            // ADC0 steering 0x20-0xe0, ADC1 gas, ADC2 brake.
+            const int target = p.left ? 0xe0 : p.right ? 0x20 : 0x80;
+            steer_ = ramp(steer_, target, 8);
+            gas_ = ramp(gas_, (p.button1 || p.up) ? 0xff : 0x00, 20);
+            brake_ = ramp(brake_, (p.button2 || p.down) ? 0xff : 0x00, 40);
+            break;
+        }
+        case Game::Sharrier: {
+            // ADC0 X, ADC1 Y, both 0x20-0xe0 and reversed.
+            steer_ = ramp(steer_, p.left ? 0xe0 : p.right ? 0x20 : 0x80, 12);
+            stick_y_ = ramp(stick_y_, p.up ? 0xe0 : p.down ? 0x20 : 0x80, 12);
+            break;
+        }
+        case Game::Enduro: {
+            // ADC0 gas, ADC1 brake, ADC2 bank (rest 0x20: pull back for a
+            // wheelie, push to lean forward), ADC3 steering 0x01-0xff reversed.
+            gas_ = ramp(gas_, p.button1 ? 0xff : 0x00, 20);
+            brake_ = ramp(brake_, p.button2 ? 0xff : 0x00, 40);
+            lean_ = ramp(lean_, (p.down || p.button3) ? 0xff : p.up ? 0x00 : 0x20, 16);
+            steer_ = ramp(steer_, p.left ? 0xff : p.right ? 0x01 : 0x80, 8);
+            break;
+        }
+    }
+}
+
+uint8_t HangOn::debug_adc(int channel) const {
+    switch (game_) {
+        case Game::HangOn:
+            switch (channel & 3) {
+                case 0: return uint8_t(steer_);
+                case 1: return uint8_t(gas_);
+                case 2: return uint8_t(brake_);
+                default: return 0;
+            }
+        case Game::Sharrier:
+            switch (channel & 3) {
+                case 0: return uint8_t(steer_);
+                case 1: return uint8_t(stick_y_);
+                default: return 0;
+            }
+        case Game::Enduro:
+            switch (channel & 3) {
+                case 0: return uint8_t(gas_);
+                case 1: return uint8_t(brake_);
+                case 2: return uint8_t(lean_);
+                default: return uint8_t(steer_);
+            }
+    }
+    return 0;
 }
 
 void HangOn::set_dip_switch(int bank, uint8_t value) {
@@ -383,29 +473,9 @@ void HangOn::drain_audio(std::vector<int16_t>& out) {
 }
 
 void HangOn::update_controls() {
-    if (game_ == Game::Enduro) {
-        switch (adc_select_) {
-            case 0: control_res_ = analog_gas_; break;
-            case 1: control_res_ = analog_brake_; break;
-            case 2: control_res_ = analog_moto_; break;
-            default: control_res_ = analog_x_; break;
-        }
-        return;
-    }
-    if (game_ == Game::Sharrier) {
-        switch (adc_select_) {
-            case 0: control_res_ = analog_x_; break;
-            case 1: control_res_ = analog_y_; break;
-            default: control_res_ = 0; break;
-        }
-        return;
-    }
-    switch (adc_select_) {
-        case 0: control_res_ = analog_x_; break;
-        case 1: control_res_ = analog_gas_; break;
-        case 2: control_res_ = analog_brake_; break;
-        default: control_res_ = 0; break;
-    }
+    // A write to the ADC0804 starts a conversion of the channel picked by
+    // PPI 1 PA2-PA3.
+    control_res_ = debug_adc(adc_select_);
 }
 
 uint16_t HangOn::main_read(uint32_t address) {
@@ -609,7 +679,9 @@ uint8_t HangOn::sound_read(uint16_t address) {
     }
     if (address <= 0x7fff) return sound_mem_[address];
     if (address >= 0xc000 && address <= 0xcfff) return sound_mem_[0xc000 + (address & 0x7ff)];
-    if (address >= 0xd000 && address <= 0xdfff) return ym2203_.status();
+    if (address >= 0xd000 && address <= 0xdfff) {
+        return (address & 1) ? ym2203_.read() : ym2203_.status();
+    }
     if (address >= 0xe000 && address <= 0xefff) return pcm_.read(address);
     return 0xff;
 }
@@ -633,7 +705,11 @@ void HangOn::sound_write(uint16_t address, uint8_t value) {
 uint8_t HangOn::sound_in(uint16_t port) {
     const uint8_t p = uint8_t(port);
     if (use_ym2151_ && p <= 0x3f && (p & 1)) return ym2151_.status();
-    if (p >= 0x40 && p <= 0x7f) return sound_latch_;
+    if (p >= 0x40 && p <= 0x7f) {
+        // Reading the latch strobes the PPI's /ACK, releasing the NMI.
+        ppi0_.ack_a();
+        return sound_latch_;
+    }
     return 0xff;
 }
 
@@ -652,12 +728,29 @@ void HangOn::on_sound_cycles(int cycles) {
     while (pcm_acc_ >= sound_clock_) {
         pcm_acc_ -= sound_clock_;
         pcm_.clock();
+        pcm_sum_ += pcm_.last_sample();
+        pcm_count_++;
     }
     audio_acc_ += int64_t(cycles) * YM2151::kSampleRate;
     while (audio_acc_ >= sound_clock_) {
         audio_acc_ -= sound_clock_;
-        const int32_t fm = use_ym2151_ ? ym2151_.update() : ym2203_.update();
-        const int32_t sample = fm + pcm_.last_sample();
+        // PCM runs at 62.5 kHz (discrete) or 31.25 kHz (315-5218): average
+        // the ticks that fell into this output sample.
+        if (pcm_count_ > 0) {
+            pcm_last_ = int32_t(pcm_sum_ / pcm_count_);
+            pcm_sum_ = 0;
+            pcm_count_ = 0;
+        }
+        // Mix levels from MAME segahang: YM2203 FM 0.15 / SSG 0.05 with
+        // PCM 0.40; YM2151 0.30 with PCM 0.70.
+        double mix;
+        if (use_ym2151_) {
+            mix = double(ym2151_.update()) * 0.30 + double(pcm_last_) * 0.70;
+        } else {
+            mix = double(ym2203_.update()) + double(pcm_last_) * 0.40;
+        }
+        if (sound_mute_) mix = 0;
+        const int32_t sample = int32_t(std::lround(mix * kMixGain));
         audio_.push_back(int16_t(std::clamp(sample, int32_t(-32768), int32_t(32767))));
     }
 }
@@ -695,12 +788,10 @@ void HangOn::update_video() {
 }
 
 void HangOn::run_frame() {
-    const int main_cycles =
-        int(double(main_clock_) / kFramesPerSecond / (kScanlines * cpu_sync_) + 0.5);
-    const int sound_cycles =
-        int(double(sound_clock_) / kFramesPerSecond / (kScanlines * cpu_sync_) + 0.5);
-    const int mcu_cycles =
-        mcu_ ? int(double(mcu_->clock()) / kFramesPerSecond / (kScanlines * cpu_sync_) + 0.5) : 0;
+    const double slices = double(kScanlines * cpu_sync_);
+    const double main_cycles = double(main_clock_) / kFramesPerSecond / slices;
+    const double sound_cycles = double(sound_clock_) / kFramesPerSecond / slices;
+    const double mcu_cycles = mcu_ ? double(mcu_->clock()) / kFramesPerSecond / slices : 0.0;
     for (int line = 0; line < kScanlines; line++) {
         if (line == 224) {
             if (mcu_) mcu_->set_irq0_line(IrqLine::Hold);
@@ -708,10 +799,23 @@ void HangOn::run_frame() {
             update_video();
         }
         for (int slice = 0; slice < cpu_sync_; slice++) {
-            main_cpu_.run(main_cycles);
-            sub_cpu_.run(main_cycles);
-            if (!z80_reset_) sound_cpu_.run(sound_cycles);
-            if (mcu_) mcu_->run(mcu_cycles);
+            main_debt_ += main_cycles;
+            main_debt_ -= main_cpu_.run(int(main_debt_));
+            sub_debt_ += main_cycles;
+            sub_debt_ -= sub_cpu_.run(int(sub_debt_));
+            sound_debt_ += sound_cycles;
+            if (!z80_reset_) {
+                sound_debt_ -= sound_cpu_.run(int(sound_debt_));
+            } else {
+                // Held in reset: the sound board is silent but time passes.
+                const int idle = int(sound_debt_);
+                on_sound_cycles(idle);
+                sound_debt_ -= idle;
+            }
+            if (mcu_) {
+                mcu_debt_ += mcu_cycles;
+                mcu_debt_ -= mcu_->run(int(mcu_debt_));
+            }
         }
     }
 }

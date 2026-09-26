@@ -78,9 +78,13 @@ public:
 private:
     uint32_t set_emphasis(uint32_t color) const;
     uint32_t pal_color(uint8_t index) const;
-    void put_sprites(int line, uint8_t pri, uint32_t* out);
-    void put_background(uint32_t* scratch);
-    void sprite_line_overflow(int line);
+    void eval_sprites(int line, uint8_t* spr, bool* behind, bool* zero);
+    void put_background(uint8_t* bg);
+    static int pal_index(uint16_t address) {
+        int i = address & 0x1f;
+        if ((i & 0x13) == 0x10) i &= 0x0f;
+        return i;
+    }
     int nametable_index(uint16_t address) const;
     void advance_vram();
 
@@ -88,7 +92,6 @@ private:
     std::array<std::array<uint8_t, 0x1000>, 4> chr_{};
     std::array<std::array<uint8_t, 0x400>, 4> name_table_{};
     std::array<uint8_t, 0x20> pal_ram_{};
-    std::array<uint8_t, 34 * 8> dot_line_trans_{};
     uint8_t buffer_read_ = 0;
     const uint8_t* chr_map_ = nullptr;
     std::function<void(bool)> line_ack_;

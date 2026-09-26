@@ -30,6 +30,8 @@ public:
     static constexpr int kScanlines = 262;
     static constexpr int kCpuSync = 4;
     static constexpr uint32_t kMainClock = 10000000;
+    // Output gain applied after the MAME mixer levels.
+    static constexpr double kMixGain = 1.8;
 
     explicit System16(Game game);
 
@@ -51,6 +53,9 @@ public:
     const char* title() const override;
 
     uint32_t debug_pc() const { return main_cpu_.pc(); }
+    uint16_t debug_sound_pc() const { return sound_cpu_.pc(); }
+    int debug_sound_commands() const { return sound_commands_; }
+    uint16_t debug_port(int n) const { return n == 0 ? in0_ : n == 1 ? in1_ : in2_; }
 
 private:
     bool is_16b() const { return game_ == Game::Altbeast; }
@@ -70,6 +75,7 @@ private:
     uint8_t sound_read(uint16_t address);
     void sound_write(uint16_t address, uint8_t value);
     uint8_t sound_in(uint16_t port);
+    uint8_t sound_data_r();
     void sound_out(uint16_t port, uint8_t value);
     void on_sound_cycles(int cycles);
     void update_video();
@@ -121,6 +127,10 @@ private:
     uint32_t n7751_rom_address_ = 0;
 
     int64_t audio_acc_ = 0;
+    double main_debt_ = 0, sound_debt_ = 0, mcu_debt_ = 0, n7751_debt_ = 0;
+    double dc_in_ = 0, dc_out_ = 0;
+    double dac_lp1_ = 0, dac_lp2_ = 0;
+    int sound_commands_ = 0;
     std::vector<int16_t> audio_;
 };
 
