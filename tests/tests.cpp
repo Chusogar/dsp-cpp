@@ -5293,6 +5293,49 @@ void test_trdos_scl_and_beta() {
     check(pentagon->screen_width() == 352 && pentagon->screen_height() == 280,
           "clone screen is 352x280");
 
+    {
+        // Keyboard matrix: port 0xfefe = row 0 (Caps Shift..V) ... 0x7ffe =
+        // row 7 (Space, Symbol Shift, M, N, B).
+        auto row = [&](dsp::MachineInputs in, uint16_t port) {
+            scorpion->set_inputs(in);
+            return uint8_t(scorpion->io_in(port) & 0x1f);
+        };
+        dsp::MachineInputs in;
+        in.keys[size_t(dsp::Key::LeftCtrl)] = true;
+        in.player1.button1 = true;  // the front end also reports Ctrl as fire
+        check(row(in, 0x7ffe) == 0x1d, "Scorpion: Left Ctrl is Symbol Shift");
+        check(row(in, 0xeffe) == 0x1f, "Scorpion: Ctrl no longer presses 0 (Sinclair fire)");
+        in = {};
+        in.keys[size_t(dsp::Key::RightShift)] = true;
+        check(row(in, 0x7ffe) == 0x1d, "Scorpion: Right Shift is Symbol Shift");
+        in = {};
+        in.keys[size_t(dsp::Key::Space)] = true;
+        in.player1.button1 = true;
+        check(row(in, 0x7ffe) == 0x1e && row(in, 0xeffe) == 0x1f, "Scorpion: Space is only Space");
+        in = {};
+        in.keys[size_t(dsp::Key::Comma)] = true;
+        check(row(in, 0x7ffe) == 0x15, "Scorpion: ',' types Symbol Shift + N");
+        in.keys[size_t(dsp::Key::LeftShift)] = true;
+        check(row(in, 0x7ffe) == 0x1d && row(in, 0xfbfe) == 0x17 && row(in, 0xfefe) == 0x1f,
+              "Scorpion: Shift+',' types Symbol Shift + R ('<') without Caps Shift");
+        in = {};
+        in.keys[size_t(dsp::Key::Left)] = true;
+        in.player1.left = true;
+        check(row(in, 0xfefe) == 0x1e && row(in, 0xf7fe) == 0x0f && row(in, 0xeffe) == 0x1f,
+              "Scorpion: cursor left is Caps Shift + 5, not the Sinclair 6");
+        in = {};
+        in.keys[size_t(dsp::Key::Backspace)] = true;
+        check(row(in, 0xfefe) == 0x1e && row(in, 0xeffe) == 0x1e, "Scorpion: Backspace is DELETE");
+        in = {};
+        in.keys[size_t(dsp::Key::Tab)] = true;
+        check(row(in, 0xfefe) == 0x1e && row(in, 0x7ffe) == 0x1d, "Scorpion: Tab is EXTEND MODE");
+        in = {};
+        in.keys[size_t(dsp::Key::W)] = true;
+        in.keys[size_t(dsp::Key::Num1)] = true;
+        check(row(in, 0xfbfe) == 0x1d && row(in, 0xf7fe) == 0x1e && row(in, 0xf3fe) == 0x1c,
+              "Scorpion: rows combine when several address lines are low");
+    }
+
     error = "unset";
     check(!pentagon->init("/no/such/pentagon", &error), "Pentagon init fails without ROMs");
     check(error.find("not found") != std::string::npos, "Pentagon reports the missing 128K ROM");

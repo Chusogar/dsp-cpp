@@ -536,6 +536,15 @@ Scorpion ZS-256 wants a 64 KB ROM (`scorpion.rom` / `scorp294.rom`, or
 bit 0 maps RAM page 0 at `$0000`, bit 1 selects the service ROM, bit 4 is the
 256 KB RAM bit. F5 is the Magic button (NMI).
 
+Keyboard (both clones): Left Shift is CAPS SHIFT; either Ctrl, Right Shift or
+AltGr is SYMBOL SHIFT. The cursor keys send CAPS SHIFT + 5/6/7/8, Backspace and
+Delete are DELETE (CAPS + 0), Esc is BREAK (CAPS + SPACE), Caps Lock is CAPS
+LOCK (CAPS + 2) and Tab is EXTEND MODE (CAPS + SYMBOL). The host keys
+`, . ; ' / - =` (and Shift for `< > : " ? _ +`) are typed through SYMBOL SHIFT
+by their key position on a US layout; SYMBOL SHIFT + letter always works as on
+the real keyboard. The cursor keys and Ctrl/Space also drive a Kempston
+joystick on port `$1F`.
+
 MAME 0.221 names (merged parent is `spec128.zip`; clones live in subfolders
 `pentagon/`, `pent1024/`, `scorpio/`; TR-DOS is the `spectrum_beta128` device).
 A directory of split zips also works: `pentagon.zip` + `spectrum_beta128.zip`,
