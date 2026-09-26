@@ -171,6 +171,7 @@ add_executable(dsp
   src/drivers/arcade/hangon.cpp
   src/drivers/arcade/system16.cpp
   src/drivers/arcade/outrun.cpp
+  src/drivers/arcade/xboard.cpp
   src/drivers/arcade/galaxian.cpp
   src/drivers/arcade/vicdual.cpp
   src/drivers/arcade/punchout.cpp
@@ -428,6 +429,7 @@ add_executable(dsp_tests
   src/drivers/computers/zx_clone.cpp
   src/drivers/consoles/genesis.cpp
   src/drivers/arcade/outrun.cpp
+  src/drivers/arcade/xboard.cpp
   src/drivers/arcade/hangon.cpp
   src/drivers/arcade/system16.cpp
   src/drivers/consoles/pcengine.cpp

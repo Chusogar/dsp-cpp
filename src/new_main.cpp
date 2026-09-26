@@ -29,6 +29,7 @@
 #include "drivers/arcade/system16.h"
 #include "drivers/arcade/sega_system1.h"
 #include "drivers/arcade/outrun.h"
+#include "drivers/arcade/xboard.h"
 #include "drivers/arcade/galaxian.h"
 #include "drivers/arcade/vicdual.h"
 #include "drivers/arcade/opwolf.h"
@@ -122,7 +123,7 @@ void print_supported_emulators() {
         "    knights, sf2ce, dino, punisher, willow, 1941, nemo,\n"
         "    rtype, hharry, rtype2,\n"
         "    polepos, polepos2\n"
-        "    outrun, hangon, enduro, sharrier, fantzone, shinobi,\n"
+        "    outrun, aburner2, hangon, enduro, sharrier, fantzone, shinobi,\n"
 		"    alexkidd, aliensyn, wb3, tetris, altbeast,\n"
         "    pitfall2, teddyboy, wboy, mrviking, seganinj, upndown,\n"
 		"    flicky, gardia,\n"
@@ -322,6 +323,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	}
     
 	if (game == "outrun") return std::make_unique<dsp::Outrun>();
+	if (game == "aburner2") return std::make_unique<dsp::XBoard>();
 
     if (game == "hangon" || game == "hang-on") return std::make_unique<dsp::HangOn>();
     if (game == "enduro" || game == "enduror" || game == "enduro-racer") {

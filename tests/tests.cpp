@@ -78,6 +78,7 @@
 #include "drivers/consoles/genesis.h"
 #include "drivers/arcade/hangon.h"
 #include "drivers/arcade/outrun.h"
+#include "drivers/arcade/xboard.h"
 #include "drivers/arcade/skullxbo.h"
 #include "drivers/arcade/shuuz.h"
 #include "drivers/arcade/bublbobl.h"
@@ -4000,6 +4001,13 @@ void test_sega_system16_missing_roms() {
     check(std::strcmp(outrun.title(), "OutRun") == 0, "OutRun title");
     check(outrun.screen_width() == 320 && outrun.screen_height() == 224, "OutRun screen is 320x224");
 
+    dsp::XBoard aburner2;
+    error = "unset";
+    check(!aburner2.init("/no/such/aburner2.zip", &error), "After Burner II init fails without ROMs");
+    check(std::strcmp(aburner2.title(), "After Burner II") == 0, "After Burner II title");
+    check(std::abs(aburner2.frames_per_second() - 59.637) < 0.01,
+          "X-Board refresh is 50 MHz / 8 / (400 x 262)");
+
     dsp::HangOn hangon;
     error = "unset";
     check(!hangon.init("/no/such/hangon.zip", &error), "Hang-On init fails without the ROM set");
@@ -5050,6 +5058,45 @@ void test_sega_roms_if_present() {
         check(machine.init("/tmp/roms/altbeast.zip", &error), "Altered Beast MAME set loads");
         for (int frame = 0; frame < 180; frame++) machine.run_frame();
         check(unique_pixels(machine) > 4, "Altered Beast attract mode draws a colour picture");
+    }
+
+    if (exists("/tmp/roms/aburner2.zip")) {
+        dsp::XBoard machine;
+        std::string error;
+        check(machine.init("/tmp/roms/aburner2.zip", &error), "After Burner II MAME set loads");
+        for (int frame = 0; frame < 300; frame++) machine.run_frame();
+        check(machine.debug_display_enabled(), "After Burner II enables the display");
+        check(unique_pixels(machine) > 16, "After Burner II attract mode draws a colour picture");
+        check(machine.debug_sprites_drawn() > 10, "After Burner II draws zoomed sprites");
+        std::vector<int16_t> audio;
+        double energy = 0;
+        size_t samples = 0;
+        for (int frame = 0; frame < 900; frame++) {
+            dsp::MachineInputs in;
+            in.coin1 = frame >= 10 && frame < 15;
+            in.player1.start = frame >= 70 && frame < 75;
+            in.player1.button1 = frame > 200 && (frame / 6) % 2 == 0;
+            machine.set_inputs(in);
+            machine.run_frame();
+            machine.drain_audio(audio);
+            if (frame >= 300) {
+                for (int16_t v : audio) energy += double(v) * v;
+                samples += audio.size();
+            }
+        }
+        check(machine.debug_sound_commands() > 50, "After Burner II sends sound commands (NMI latch)");
+        check(samples > 0 && std::sqrt(energy / double(samples)) > 300.0,
+              "After Burner II plays YM2151 + Sega PCM sound in game");
+        dsp::MachineInputs in;
+        in.player1.left = true;
+        in.player1.up = true;
+        in.player1.button3 = true;
+        in.player1.button2 = true;
+        for (int frame = 0; frame < 40; frame++) machine.set_inputs(in);
+        check(machine.debug_adc(0) == 0x20 && machine.debug_adc(1) == 0xc0 &&
+                  machine.debug_adc(2) == 0xff,
+              "After Burner II ADC: stick X, stick Y reversed, throttle (MAME ranges)");
+        check(machine.debug_io1_porta() == 0xdf, "After Burner II missile button is IO1 port A D5");
     }
 
     if (exists("/tmp/roms/hangon.zip")) {

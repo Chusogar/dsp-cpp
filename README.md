@@ -13,7 +13,7 @@ Computers: **ZX Spectrum 48K**, Amstrad CPC, **Commodore 64**, **EXL-100** /
 **EXELTEL**. Consoles: NES, Game Boy / Game Boy Color, **Atari Lynx**,
 **Super Cassette Vision**.
 Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
-**OutRun**, **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
+**OutRun**, **After Burner II** (X-Board), **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
 **Altered Beast**).
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
 **MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
@@ -116,6 +116,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Sega PCM | `src/snd/sega_pcm.pas`, MAME `segapcm.cpp` | 315-5218 (16 voices) and the discrete 8-voice board (Hang-On, Space Harrier) |
 | 315-5195 mapper | `src/arcade/misc/sega_315_5195.pas` | 68000 memory mapper used by OutRun and System 16B |
 | OutRun driver | `src/arcade/outrun_hw.pas` | Dual 68000, Z80, YM2151, Sega PCM, road + sprites |
+| X-Board driver | new (MAME `segaxbd.cpp`) | After Burner II: dual 68000, 315-5248/5249/5250, CXD1095, ADC, road, zoomed sprites |
 | Hang-On driver | `src/arcade/hangon_hw.pas` | Hang-On, Enduro Racer (FD1089), Space Harrier (i8751) |
 | System 16 driver | `src/arcade/system16a_hw.pas`, `system16b_hw.pas` | Fantasy Zone, Shinobi, Alex Kidd, Alien Syndrome, WB3, Tetris, Altered Beast |
 | FD1089 | `src/devices/fd1089.pas` | Hitachi 68000 opcode/data encryption |
@@ -181,6 +182,7 @@ holding the individual files:
 ./build/dsp --game polepos /path/to/polepos.zip
 ./build/dsp --game polepos2 /path/to/polepos2.zip
 ./build/dsp --game outrun /path/to/outrun.zip
+./build/dsp --game aburner2 /path/to/aburner2.zip
 ./build/dsp --game hangon /path/to/hangon.zip
 ./build/dsp --game enduro /path/to/enduror.zip
 ./build/dsp --game sharrier /path/to/sharrier.zip
@@ -1188,6 +1190,17 @@ Sound follows MAME: the main CPU's 8255 runs port A in mode 2, so a command
 write drops /OBF (the Z80 NMI) until the Z80 reads the latch. Hang-On and Space
 Harrier have the YM2203 board with the discrete 8-voice Sega PCM (62.5 kHz),
 Enduro Racer the YM2151 board with the 16-voice 315-5218.
+
+After Burner II runs on the X-Board (MAME `segaxbd.cpp`, set `aburner2`, VER
+2.00): two 68000s at 12.5 MHz, each with a 315-5248 multiplier, 315-5249
+divider and 315-5250 compare/timer (the main one also latches the sound
+command and raises the timer IRQ), System 16B tilemaps, frame-buffered zooming
+sprites, the road/sky layer drawn by the sub CPU, and a Z80 with YM2151 +
+315-5218 Sega PCM. The game's own memory test reports all ROMs, RAMs and custom
+chips GOOD. Controls: arrows = stick (up pushes the nose down, as on the real
+flight stick), button 1 = Vulcan, button 2 = missile, button 3 / button 4 =
+throttle up / down, F1 = test. The cabinet DIP defaults to Upright 1 (no
+motion motors).
 
 Enduro Racer decrypts the FD1089B program ROMs with `317-0013a.key`. Space
 Harrier runs the i8751 MCU that raises 68000 IRQs. Shinobi, Alex Kidd and Alien
