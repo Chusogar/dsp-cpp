@@ -61,6 +61,7 @@
 #include "drivers/consoles/nes.h"
 #include "drivers/consoles/pv2000.h"
 #include "drivers/consoles/scv.h"
+#include "drivers/arcade/punchout.h"
 #include "drivers/arcade/starwars.h"
 #include "drivers/arcade/vicdual.h"
 #include "drivers/arcade/asteroid.h"
@@ -3608,6 +3609,47 @@ void test_vicdual_games_if_present() {
             check(m.debug_psg_writes() > 50, "Carnival music board (i8035 + AY-3-8912) plays");
         }
     }
+}
+
+void test_punchout_if_present() {
+    namespace fs = std::filesystem;
+    const char* rom = "/tmp/roms/punchout/punchout.zip";
+    dsp::PunchOut po;
+    check(po.screen_width() == 256 && po.screen_height() == 448 && po.fit_window(),
+          "Punch-Out!! shows both monitors stacked (256x448)");
+    if (!fs::exists(rom)) {
+        std::printf("skip: %s not found\n", rom);
+        return;
+    }
+    std::string error;
+    check(po.init(rom, &error), "Punch-Out!! ROM set loads");
+    int speaking = 0;
+    double energy = 0;
+    size_t n = 0;
+    // Title, coin, start, initials entry (left to time out), then the fight.
+    for (int f = 1; f <= 2200; f++) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 600 && f < 606;
+        in.player1.start = f >= 700 && f < 706;
+        in.player1.button1 = f > 900 && (f / 7) % 3 == 0;
+        po.set_inputs(in);
+        po.run_frame();
+        if (po.debug_speaking()) speaking++;
+        std::vector<int16_t> audio;
+        po.drain_audio(audio);
+        for (int16_t v : audio) energy += double(v) * v;
+        n += audio.size();
+    }
+    // Both monitors show a busy picture during the fight.
+    auto colours = [&](int y0) {
+        std::set<uint32_t> c;
+        for (int y = y0; y < y0 + 224; y++)
+            for (int x = 0; x < 256; x++) c.insert(po.framebuffer()[y * 256 + x]);
+        return c.size();
+    };
+    check(colours(0) > 8 && colours(224) > 8, "Punch-Out!! draws both monitors");
+    check(n > 0 && std::sqrt(energy / double(n)) > 500.0, "Punch-Out!! 2A03 sound plays");
+    check(speaking > 30, "Punch-Out!! VLM5030 speaks");
 }
 
 void test_starwars_missing_roms() {
@@ -7852,6 +7894,7 @@ int main() {
     test_exelv_basic_load_if_present();
     test_trdos_scl_and_beta();
     test_starwars_missing_roms();
+    test_punchout_if_present();
     test_vicdual_headon_discrete();
     test_vicdual_games_if_present();
     test_mos6532_decode_and_pa7_edge();

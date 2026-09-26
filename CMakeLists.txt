@@ -173,6 +173,7 @@ add_executable(dsp
   src/drivers/arcade/outrun.cpp
   src/drivers/arcade/galaxian.cpp
   src/drivers/arcade/vicdual.cpp
+  src/drivers/arcade/punchout.cpp
   src/drivers/arcade/sega_system1.cpp
   src/drivers/arcade/neogeo.cpp
   src/drivers/arcade/opwolf.cpp
@@ -419,6 +420,7 @@ add_executable(dsp_tests
   src/drivers/consoles/vectrex.cpp
   src/drivers/arcade/starwars.cpp
   src/drivers/arcade/vicdual.cpp
+  src/drivers/arcade/punchout.cpp
   src/drivers/arcade/asteroid.cpp
   src/drivers/arcade/polepos.cpp
   src/drivers/arcade/atari_system1.cpp

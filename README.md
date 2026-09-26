@@ -1067,6 +1067,24 @@ averaged per output sample (no aliasing), the mix follows MAME (POKEY 0.20,
 TMS5220 0.50) with the DC removed, and the two CPUs run in ~100 µs slices so
 commands are not lost between them.
 
+### Nintendo Punch-Out!!
+
+After MAME `punchout.cpp` (set `punchout`, Rev B). Z80 at 4 MHz; a 2A03 (NES
+CPU and APU) for music and effects and a VLM5030 for the announcer. The two
+monitors are stacked into one 256×448 picture: the top one with its tilemap
+and the zooming opponent when it is routed there, the bottom one with the
+row-scrolled ring, the opponent and Little Mac (drawn as the green wire frame
+of the original). Colours come from the pink-labelled PROMs.
+
+Controls: button 1 / button 2 punch (left / right), button 3 or Start is the
+third cabinet button, the joystick dodges (left / right) and blocks (down),
+coin is 5. `--dip VALUE` sets DSW2 (difficulty, time, demo sounds…),
+`--dip 1:VALUE` DSW1 (coinage).
+
+```bash
+./build/dsp --game punchout /path/to/punchout.zip
+```
+
 ### Sega / Gremlin VIC Dual
 
 Z80 at 1.93 MHz, 256×224 character-RAM display with an optional colour PROM,

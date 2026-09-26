@@ -92,6 +92,9 @@ public:
     // lines) return the corrected size and the front end scales to it.
     virtual int display_width() const { return screen_width(); }
     virtual int display_height() const { return screen_height(); }
+    // True when the default window should be shrunk to fit a 1080p desktop
+    // (tall pictures such as two stacked monitors).
+    virtual bool fit_window() const { return false; }
     virtual double frames_per_second() const = 0;
 
     // Consumes the audio samples generated so far (mono, signed 16 bit).

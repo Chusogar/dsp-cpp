@@ -153,7 +153,7 @@ int SdlApp::run(Machine& machine) {
     // framebuffer size and SDL stretches it).
     const int display_w = machine.display_width();
     const int display_h = machine.display_height();
-    if (display_w != width || display_h != height) {
+    if (display_w != width || display_h != height || machine.fit_window()) {
         // Keep the default window on a 1080p desktop.
         while (scale > 1 && display_h * scale > 960) scale--;
     }
