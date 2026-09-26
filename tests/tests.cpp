@@ -61,6 +61,7 @@
 #include "drivers/consoles/pv2000.h"
 #include "drivers/consoles/scv.h"
 #include "drivers/arcade/starwars.h"
+#include "drivers/arcade/vicdual.h"
 #include "drivers/arcade/asteroid.h"
 #include "drivers/computers/c64.h"
 #include "machine/mos6566.h"
@@ -3405,6 +3406,84 @@ void test_starwars_sound_and_esb_slapstic_if_present() {
     }
     check(!trapped, "ESB plays past the slapstic checks (alternate bank switch via the 6809 dummy cycle)");
     check(esb.debug_avg_lines() > 100, "ESB keeps drawing during the game");
+}
+
+void test_vicdual_headon_discrete() {
+    dsp::VicDual headon(dsp::VicDual::Game::HeadOn);
+    check(!headon.rotated() && headon.screen_width() == 256 && headon.screen_height() == 224,
+          "Head On is a horizontal (ROT0) 256x224 game");
+    std::vector<int16_t> quiet = headon.debug_headon_audio(0x04, 4410);  // crash line idle high
+    int loud = 0;
+    for (int16_t v : quiet) if (std::abs(v) > 500) loud++;
+    // The crash monostable is still timing out from power-up; let it settle.
+    quiet = headon.debug_headon_audio(0x04, 88200);
+    loud = 0;
+    for (size_t i = 44100; i < quiet.size(); i++) if (std::abs(quiet[i]) > 500) loud++;
+    check(loud == 0, "Head On discrete board is silent with everything off");
+    // Engine on: after the ramp the 555 VCO and its dividers drone.
+    std::vector<int16_t> engine = headon.debug_headon_audio(0x44, 44100 * 9);
+    int crossings = 0;
+    for (size_t i = 44100 * 8 + 1; i < engine.size(); i++) {
+        if ((engine[i - 1] < 0) != (engine[i] < 0)) crossings++;
+    }
+    check(crossings > 40 && crossings < 4000, "Head On engine produces a low drone when the car runs");
+    std::vector<int16_t> crash = headon.debug_headon_audio(0x40, 22050);  // crash line low
+    double e = 0;
+    for (int16_t v : crash) e += double(v) * v;
+    check(e / double(crash.size()) > 1e5, "Head On crash noise sounds while the crash line is low");
+}
+
+void test_vicdual_games_if_present() {
+    namespace fs = std::filesystem;
+    struct G {
+        const char* zip;
+        dsp::VicDual::Game game;
+        bool rot;
+    };
+    const G games[] = {
+        {"/tmp/roms/vicdual/depthch.zip", dsp::VicDual::Game::DepthCharge, false},
+        {"/tmp/roms/vicdual/carnival.zip", dsp::VicDual::Game::Carnival, true},
+        {"/tmp/roms/vicdual/invinco.zip", dsp::VicDual::Game::Invinco, true},
+    };
+    for (const G& g : games) {
+        if (!fs::exists(g.zip)) {
+            std::printf("skip: %s not found\n", g.zip);
+            continue;
+        }
+        dsp::VicDual m(g.game);
+        std::string error;
+        const std::string name = m.title();
+        check(m.init(g.zip, &error), (name + " loads").c_str());
+        check(m.rotated() == g.rot && m.screen_width() == (g.rot ? 224 : 256) &&
+                  m.screen_height() == (g.rot ? 256 : 224),
+              (name + " has MAME's monitor orientation").c_str());
+        double energy = 0;
+        size_t n = 0;
+        for (int f = 1; f <= 1200; f++) {
+            dsp::MachineInputs in;
+            in.coin1 = f >= 200 && f < 205;
+            in.player1.start = f >= 300 && f < 305;
+            in.player1.button1 = f > 400 && (f / 8) % 2;
+            in.player1.left = f > 400 && (f / 90) % 2;
+            in.player1.right = f > 400 && !((f / 90) % 2);
+            m.set_inputs(in);
+            m.run_frame();
+            std::vector<int16_t> audio;
+            m.drain_audio(audio);
+            if (f > 400) {
+                for (int16_t v : audio) energy += double(v) * v;
+                n += audio.size();
+            }
+        }
+        int lit = 0;
+        const uint32_t* fb = m.framebuffer();
+        for (int i = 0; i < m.screen_width() * m.screen_height(); i++) if ((fb[i] & 0xffffff) != 0) lit++;
+        check(lit > 500, (name + " draws the game").c_str());
+        check(n > 0 && std::sqrt(energy / double(n)) > 300.0, (name + " makes sound during play").c_str());
+        if (g.game == dsp::VicDual::Game::Carnival) {
+            check(m.debug_psg_writes() > 50, "Carnival music board (i8035 + AY-3-8912) plays");
+        }
+    }
 }
 
 void test_starwars_missing_roms() {
@@ -7647,6 +7726,8 @@ int main() {
     test_exelv_basic_load_if_present();
     test_trdos_scl_and_beta();
     test_starwars_missing_roms();
+    test_vicdual_headon_discrete();
+    test_vicdual_games_if_present();
     test_mos6532_decode_and_pa7_edge();
     test_starwars_sound_and_esb_slapstic_if_present();
     test_polepos_driver();

@@ -1067,6 +1067,41 @@ averaged per output sample (no aliasing), the mix follows MAME (POKEY 0.20,
 TMS5220 0.50) with the DC removed, and the two CPUs run in ~100 µs slices so
 commands are not lost between them.
 
+### Sega / Gremlin VIC Dual
+
+Z80 at 1.93 MHz, 256×224 character-RAM display with an optional colour PROM,
+following MAME's `vicdual.cpp` per game: memory and I/O maps, input ports
+(64V, VBLANK, CBLANK and the 500 Hz timer, coin status, DIP defaults), the
+coin mechanism (a coin resets the CPU and holds the coin line for 70 ms) and
+the monitor orientation. Depthcharge, Safari, Frogs, Head On and Head On 2
+are horizontal; the rest are vertical (ROT270, shown at 224×256).
+
+`--game` names: `depthch`, `safari`, `frogs`, `sspaceat`, `sspacaho`, `headon`,
+`headon2`, `headon2sl`, `invho2`, `nsub`, `samurai`, `invinco`, `invds`,
+`tranqgun`, `spacetrk`, `carnival`, `brdrline`, `digger`, `pulsar`, `heiankyo`,
+`alphaho`. The MAME 0.260 non-merged zips load as they are.
+
+Sound:
+
+* Head On, Head On 2, the Head On halves of the two-game boards: a model of
+  the Head On discrete board (555 engine VCOs through their /2 /3 /4 chain,
+  the two screeches, bonus and crash).
+* Carnival: the music board (i8035 running `epr-412.u5` driving an
+  AY-3-8912) plus the effects.
+* Depthcharge, Invinco (and Invinco / Head On 2, Invinco / Deep Scan),
+  Pulsar, Carnival and N-Sub use MAME's sample WAVs for their effects. Put
+  them in a `samples` folder next to the ROMs (`samples/carnival.zip`,
+  `samples/depthch/…`); without them synthesized effects are played on the
+  same triggers.
+* Frogs, Borderline and Tranquillizer Gun: synthesized effects on the sound
+  latch bits of MAME's netlists.
+* Safari, Space Attack, Samurai, Space Trek, Digger, Heiankyo Alien and Alpha
+  Fighter have no sound emulation in MAME either, and stay silent.
+
+```bash
+./build/dsp --game carnival /path/to/carnival.zip
+```
+
 ### Namco Pole Position / Pole Position II
 
 Z80 + two Z8002s at 3.072 MHz, 256×224, ~60.6 Hz. The Namco 06xx talks to

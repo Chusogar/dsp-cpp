@@ -400,7 +400,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	}
 	if (game == "headon") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::HeadOn);
 	if (game == "headon2") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::HeadOn2);
-	if (game == "headon2s" || game == "headon2slim") {
+	if (game == "headon2s" || game == "headon2sl" || game == "headon2slim") {
 		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::HeadOn2Slim);
 	}
 	if (game == "invho2" || game == "invincoheadon2") {

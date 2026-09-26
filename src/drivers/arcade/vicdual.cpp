@@ -1,14 +1,23 @@
 #include "drivers/arcade/vicdual.h"
-#include "core/rom_loader.h"
+
 #include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <filesystem>
+
+#include "core/rom_loader.h"
 
 namespace dsp {
 namespace {
+
+constexpr double kPi = 3.14159265358979323846;
 
 const uint32_t kPens[8] = {
     0xff000000u, 0xff00ff00u, 0xff0000ffu, 0xff00ffffu,
     0xffff0000u, 0xffffff00u, 0xffff00ffu, 0xffffffffu,
 };
+
+const std::vector<RomEntry> kCarnivalMusic = {{"epr-412.u5", 0x0400, 0x0000, 0x0dbaa2b0}};
 
 const std::vector<RomEntry> kDepthChargeCpu = {
     {"50a", 0x0400, 0x0000, 0x56c5ffed},
@@ -359,53 +368,356 @@ const std::vector<RomEntry> kAlphaFighterCpu = {
 
 // AlphaFighter: no color PROM
 
+// ---------------------------------------------------------------------------
+// Synthesized stand-ins for MAME's sample WAVs (used when the samples are not
+// available).  Each one imitates the kind of sound the original sample holds.
+
+using Wave = std::vector<float>;
+
+int sec(double s) { return int(s * VicDual::kSampleRate); }
+
+struct Rng {
+    uint32_t s = 0x12345678u;
+    float next() {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        return float(int32_t(s)) / 2147483648.0f;
+    }
+};
+
+// Low-passed noise with an exponential decay (explosions, hits).
+Wave noise_burst(double len, double decay, double cutoff, double gain = 0.9) {
+    Wave w(size_t(sec(len)));
+    Rng r;
+    const double a = 1.0 - std::exp(-2.0 * kPi * cutoff / VicDual::kSampleRate);
+    double lp = 0, lp2 = 0;
+    for (size_t i = 0; i < w.size(); i++) {
+        const double t = double(i) / VicDual::kSampleRate;
+        lp += a * (r.next() - lp);
+        lp2 += a * (lp - lp2);
+        w[i] = float(lp2 * gain * 3.0 * std::exp(-t / decay));
+    }
+    return w;
+}
+
+// Square/triangle-ish tone with a frequency sweep and decay.
+Wave sweep(double len, double f0, double f1, double decay, bool square = true, double gain = 0.6) {
+    Wave w(size_t(sec(len)));
+    double ph = 0;
+    for (size_t i = 0; i < w.size(); i++) {
+        const double t = double(i) / VicDual::kSampleRate;
+        const double f = f0 + (f1 - f0) * (t / len);
+        ph += f / VicDual::kSampleRate;
+        ph -= std::floor(ph);
+        const double v = square ? (ph < 0.5 ? 1.0 : -1.0) : std::sin(2 * kPi * ph);
+        w[i] = float(v * gain * std::exp(-t / decay));
+    }
+    return w;
+}
+
+Wave notes(const std::vector<double>& freqs, double each, double gain = 0.5) {
+    Wave w;
+    for (double f : freqs) {
+        Wave n = sweep(each, f, f, each * 0.9, true, gain);
+        w.insert(w.end(), n.begin(), n.end());
+    }
+    return w;
+}
+
+// Inharmonic partials: bells, clangs, pings.
+Wave metallic(double len, std::initializer_list<double> freqs, double decay, double gain = 0.5) {
+    Wave w(size_t(sec(len)));
+    for (size_t i = 0; i < w.size(); i++) {
+        const double t = double(i) / VicDual::kSampleRate;
+        double v = 0;
+        int k = 0;
+        for (double f : freqs) v += std::sin(2 * kPi * f * t) / (1 + k++);
+        w[i] = float(v * gain * std::exp(-t / decay));
+    }
+    return w;
+}
+
+// Periodic sound followed by silence, for looping samples (sonar, beats).
+Wave with_gap(Wave w, double total) {
+    w.resize(std::max(w.size(), size_t(sec(total))), 0.0f);
+    return w;
+}
+
+Wave mix(const Wave& a, const Wave& b) {
+    Wave w(std::max(a.size(), b.size()), 0.0f);
+    for (size_t i = 0; i < a.size(); i++) w[i] += a[i];
+    for (size_t i = 0; i < b.size(); i++) w[i] += b[i];
+    return w;
+}
+
+Wave warble(double len, double f, double depth, double rate, double gain = 0.45) {
+    Wave w(size_t(sec(len)));
+    double ph = 0;
+    for (size_t i = 0; i < w.size(); i++) {
+        const double t = double(i) / VicDual::kSampleRate;
+        ph += (f + depth * std::sin(2 * kPi * rate * t)) / VicDual::kSampleRate;
+        ph -= std::floor(ph);
+        w[i] = float((ph < 0.5 ? 1.0 : -1.0) * gain);
+    }
+    return w;
+}
+
+Wave synth_sample(const std::string& name) {
+    // Depthcharge
+    if (name == "longex") return noise_burst(1.8, 0.6, 350);
+    if (name == "shortex") return noise_burst(0.7, 0.2, 700);
+    if (name == "spray") return noise_burst(0.35, 0.12, 5000, 0.5);
+    if (name == "bonus") return notes({523, 659, 784, 1047, 1319}, 0.07);
+    if (name == "sonar") return with_gap(metallic(0.5, {1200, 1203}, 0.12, 0.7), 1.3);
+    // Invinco
+    if (name == "saucer") return warble(0.5, 700, 200, 9);
+    if (name == "move1") return sweep(0.07, 110, 110, 0.05, true, 0.5);
+    if (name == "move2") return sweep(0.07, 98, 98, 0.05, true, 0.5);
+    if (name == "move3") return sweep(0.07, 87, 87, 0.05, true, 0.5);
+    if (name == "move4") return sweep(0.07, 82, 82, 0.05, true, 0.5);
+    if (name == "fire") return sweep(0.22, 1600, 300, 0.12, true, 0.4);
+    if (name == "invhit") return mix(noise_burst(0.35, 0.1, 2500, 0.6), sweep(0.2, 900, 200, 0.08, true, 0.3));
+    if (name == "shiphit") return noise_burst(1.3, 0.45, 600);
+    // Pulsar
+    if (name == "clang") return metallic(0.5, {523, 1397, 2311, 3217}, 0.12);
+    if (name == "key") return sweep(0.09, 2200, 2200, 0.05, true, 0.4);
+    if (name == "alienhit") return noise_burst(0.45, 0.15, 1500);
+    if (name == "phit") return noise_burst(1.1, 0.4, 500);
+    if (name == "ashoot") return sweep(0.25, 900, 200, 0.12, true, 0.4);
+    if (name == "pshoot") return sweep(0.16, 2200, 600, 0.08, true, 0.4);
+    if (name == "sizzle") return noise_burst(0.5, 0.2, 7000, 0.5);
+    if (name == "gate") return warble(0.5, 120, 30, 16, 0.4);
+    if (name == "birth") return sweep(0.6, 200, 1400, 0.5, true, 0.4);
+    if (name == "hbeat") {
+        Wave a = sweep(0.09, 55, 45, 0.05, false, 0.9);
+        Wave b = sweep(0.09, 50, 40, 0.05, false, 0.8);
+        Wave w(size_t(sec(0.85)), 0.0f);
+        for (size_t i = 0; i < a.size(); i++) w[i] += a[i];
+        for (size_t i = 0; i < b.size(); i++) w[size_t(sec(0.2)) + i] += b[i];
+        return w;
+    }
+    if (name == "movmaze") return warble(0.4, 90, 25, 6, 0.35);
+    // Carnival
+    if (name == "bear") return mix(sweep(0.5, 95, 70, 0.3, true, 0.4), noise_burst(0.5, 0.3, 400, 0.4));
+    if (name == "bonus1") return notes({523, 659, 784, 1047}, 0.08);
+    if (name == "bonus2") return notes({1047, 784, 659, 523}, 0.08);
+    if (name == "duck1") return with_gap(sweep(0.08, 720, 620, 0.05, true, 0.35), 0.28);
+    if (name == "duck2") return with_gap(sweep(0.08, 820, 700, 0.05, true, 0.35), 0.26);
+    if (name == "duck3") return with_gap(sweep(0.08, 940, 800, 0.05, true, 0.35), 0.24);
+    if (name == "pipehit") return metallic(0.25, {2500, 3700}, 0.06, 0.6);
+    if (name == "ranking") return notes({523, 587, 659, 698, 784, 1047}, 0.1);
+    if (name == "rifle") return mix(noise_burst(0.15, 0.04, 4000, 0.9), sweep(0.05, 1500, 400, 0.02, true, 0.3));
+    // N-Sub
+    if (name == "SND_EXPL_L0") return noise_burst(0.8, 2.0, 300);
+    if (name == "SND_EXPL_L1") return noise_burst(1.6, 0.5, 300);
+    if (name == "SND_SONAR") return with_gap(metallic(0.5, {1100, 1104}, 0.12, 0.7), 1.2);
+    if (name == "SND_LAUNCH0") return warble(0.5, 300, 60, 12, 0.35);
+    if (name == "SND_LAUNCH1") return sweep(0.4, 300, 900, 0.2, true, 0.4);
+    if (name == "SND_WARNING0") return with_gap(sweep(0.15, 880, 880, 0.2, true, 0.35), 0.3);
+    if (name == "SND_WARNING1") return sweep(0.15, 880, 880, 0.08, true, 0.35);
+    if (name == "SND_EXPL_S0") return noise_burst(0.5, 2.0, 800);
+    if (name == "SND_EXPL_S1") return noise_burst(0.8, 0.25, 800);
+    if (name == "SND_BONUS0") return with_gap(notes({659, 784, 988}, 0.07), 0.35);
+    if (name == "SND_BONUS1") return notes({988, 1319}, 0.08);
+    if (name == "SND_CODE") return with_gap(sweep(0.05, 1800, 1800, 0.04, true, 0.3), 0.12);
+    if (name == "SND_BOAT") return warble(0.5, 70, 10, 5, 0.3);
+    return {};
+}
+
+// 8/16-bit PCM WAV at any rate -> mono float at kSampleRate.
+bool decode_wav(const std::vector<uint8_t>& f, Wave& out) {
+    auto u16 = [&](size_t o) { return unsigned(f[o] | (f[o + 1] << 8)); };
+    auto u32 = [&](size_t o) { return uint32_t(u16(o) | (u16(o + 2) << 16)); };
+    if (f.size() < 44 || std::memcmp(f.data(), "RIFF", 4) != 0 || std::memcmp(f.data() + 8, "WAVE", 4) != 0)
+        return false;
+    unsigned channels = 0, bits = 0;
+    uint32_t rate = 0;
+    size_t data = 0, size = 0;
+    for (size_t o = 12; o + 8 <= f.size();) {
+        const uint32_t len = u32(o + 4);
+        if (std::memcmp(f.data() + o, "fmt ", 4) == 0 && o + 24 <= f.size()) {
+            if (u16(o + 8) != 1) return false;
+            channels = u16(o + 10);
+            rate = u32(o + 12);
+            bits = u16(o + 22);
+        } else if (std::memcmp(f.data() + o, "data", 4) == 0) {
+            data = o + 8;
+            size = std::min<size_t>(len, f.size() - data);
+            break;
+        }
+        o += 8 + len + (len & 1);
+    }
+    if (!data || !rate || !channels || (bits != 8 && bits != 16)) return false;
+    const size_t frame = channels * bits / 8;
+    const size_t frames = size / frame;
+    Wave in(frames);
+    for (size_t i = 0; i < frames; i++) {
+        const size_t o = data + i * frame;
+        in[i] = bits == 8 ? (float(f[o]) - 128.0f) / 128.0f : float(int16_t(u16(o))) / 32768.0f;
+    }
+    const double step = double(rate) / VicDual::kSampleRate;
+    out.resize(size_t(double(frames) / step));
+    for (size_t i = 0; i < out.size(); i++) {
+        const double p = double(i) * step;
+        const size_t k = size_t(p);
+        const double fr = p - double(k);
+        const float a = in[std::min(k, frames - 1)], b = in[std::min(k + 1, frames - 1)];
+        out[i] = float(a + (b - a) * fr);
+    }
+    return true;
+}
+
+const std::vector<std::string>& sample_names(VicDual::Game game, std::string* set) {
+    static const std::vector<std::string> depthch = {"longex", "shortex", "spray", "bonus", "sonar"};
+    static const std::vector<std::string> invinco = {"saucer", "move1", "move2", "fire", "invhit", "shiphit", "move3", "move4"};
+    static const std::vector<std::string> pulsar = {"clang", "key", "alienhit", "phit", "ashoot", "pshoot",
+                                                    "bonus", "sizzle", "gate", "birth", "hbeat", "movmaze"};
+    static const std::vector<std::string> carnival = {"bear", "bonus1", "bonus2", "clang", "duck1",
+                                                      "duck2", "duck3", "pipehit", "ranking", "rifle"};
+    static const std::vector<std::string> nsub = {"SND_EXPL_L0", "SND_EXPL_L1", "SND_SONAR", "SND_LAUNCH0",
+                                                  "SND_LAUNCH1", "SND_WARNING0", "SND_WARNING1", "SND_EXPL_S0",
+                                                  "SND_EXPL_S1", "SND_BONUS0", "SND_BONUS1", "SND_CODE", "SND_BOAT"};
+    static const std::vector<std::string> none;
+    switch (game) {
+        case VicDual::Game::DepthCharge: *set = "depthch"; return depthch;
+        case VicDual::Game::Invinco:
+        case VicDual::Game::InvincoHeadOn2:
+        case VicDual::Game::InvincoDeepScan: *set = "invinco"; return invinco;
+        case VicDual::Game::Pulsar: *set = "pulsar"; return pulsar;
+        case VicDual::Game::Carnival: *set = "carnival"; return carnival;
+        case VicDual::Game::NSub: *set = "nsub"; return nsub;
+        default: set->clear(); return none;
+    }
+}
+
 }  // namespace
 
 VicDual::VicDual(Game game)
     : game_(game), cpu_(kCpuClock),
-      framebuffer_(size_t(kScreenWidth * kScreenHeight), 0xff000000u) {
-    cpu_.set_memory_handlers(
-        [this](uint16_t a) { return read_byte(a); },
-        [this](uint16_t a, uint8_t v) { write_byte(a, v); });
-    cpu_.set_io_handlers(
-        [this](uint16_t p) { return read_port(p); },
-        [this](uint16_t p, uint8_t v) { write_port(p, v); });
+      native_(size_t(kNativeWidth * kNativeHeight), 0xff000000u),
+      output_(size_t(kNativeWidth * kNativeHeight), 0xff000000u) {
+    cpu_.set_memory_handlers([this](uint16_t a) { return read_byte(a); },
+                             [this](uint16_t a, uint8_t v) { write_byte(a, v); });
+    cpu_.set_io_handlers([this](uint16_t p) { return read_port(p); },
+                         [this](uint16_t p, uint8_t v) { write_port(p, v); });
+    configure();
 }
 
-VicDual::Layout VicDual::layout() const {
+VicDual::~VicDual() = default;
+
+void VicDual::configure() {
     switch (game_) {
-        case Game::DepthCharge: return Layout::DualGame;
-        case Game::Safari: return Layout::Safari;
-        case Game::Frogs: return Layout::DualGame;
-        case Game::SpaceAttack: return Layout::HeadOn;
-        case Game::SpaceAttackHeadOn: return Layout::DualGame;
-        case Game::HeadOn: return Layout::HeadOn;
-        case Game::HeadOn2: return Layout::HeadOn2;
-        case Game::HeadOn2Slim: return Layout::DualGame;
-        case Game::InvincoHeadOn2: return Layout::DualGame;
-        case Game::NSub: return Layout::VramC000;
-        case Game::Samurai: return Layout::DualGame;
-        case Game::Invinco: return Layout::VramC000;
-        case Game::InvincoDeepScan: return Layout::DualGame;
-        case Game::TranqGun: return Layout::DualGame;
-        case Game::SpaceTrek: return Layout::DualGame;
-        case Game::Carnival: return Layout::DualGame;
-        case Game::Borderline: return Layout::DualGame;
-        case Game::Digger: return Layout::HeadOn2;
-        case Game::Pulsar: return Layout::DualGame;
-        case Game::Heiankyo: return Layout::DualGame;
-        case Game::AlphaFighter: return Layout::DualGame;
+        case Game::HeadOn:
+        case Game::HeadOn2:
+        case Game::HeadOn2Slim:
+        case Game::SpaceAttackHeadOn:
+            sound_ = Audio::HeadOn;
+            break;
+        case Game::InvincoHeadOn2:  // Invinco samples + Head On discrete
+        case Game::DepthCharge:
+        case Game::Invinco:
+        case Game::InvincoDeepScan:
+        case Game::Pulsar:
+        case Game::NSub:
+            sound_ = Audio::Samples;
+            break;
+        case Game::Carnival:
+            sound_ = Audio::Carnival;
+            break;
+        case Game::Frogs:
+            sound_ = Audio::Frogs;
+            break;
+        case Game::Borderline:
+        case Game::TranqGun:
+            sound_ = Audio::Borderline;
+            break;
+        default:
+            sound_ = Audio::None;
+            break;
     }
-    return Layout::DualGame;
+    if (game_ == Game::Carnival) {
+        music_cpu_ = std::make_unique<Mcs48>(3579545, Mcs48::Chip::I8035);
+        psg_ = std::make_unique<AY8910>(3579545 / 3, 1.0f);
+        music_cpu_->set_io_handlers(
+            [this](uint16_t port) -> uint8_t {
+                // T1: comms from audio port 2 d3.
+                if (port == MCS48_PORT_T1) return uint8_t((~port2_state_ >> 3) & 1);
+                return 0xff;
+            },
+            [this](uint16_t port, uint8_t data) {
+                if (port == MCS48_PORT_P1) {
+                    music_data_ = data;  // AY8912 d0-d7
+                } else if (port == MCS48_PORT_P2) {
+                    music_bus_ = uint8_t((data >> 6) & 3);  // d6 BDIR, d7 BC1
+                } else {
+                    return;
+                }
+                if (music_bus_ & 1) {
+                    if (music_bus_ & 2) psg_->control(music_data_);
+                    else {
+                        psg_->write(music_data_);
+                        psg_writes_++;
+                    }
+                }
+            });
+    }
 }
 
-bool VicDual::is_color() const {
-    return has_prom_ || layout() == Layout::DualGame;
+bool VicDual::rotated() const {
+    switch (game_) {
+        case Game::DepthCharge:
+        case Game::Safari:
+        case Game::Frogs:
+        case Game::HeadOn:
+        case Game::HeadOn2:
+            return false;  // ROT0
+        default:
+            return true;   // ROT270
+    }
+}
+
+VicDual::Map VicDual::map() const {
+    switch (game_) {
+        case Game::Safari: return Map::Safari;
+        case Game::SpaceAttack:
+        case Game::HeadOn:
+        case Game::HeadOn2:
+        case Game::Digger: return Map::HeadOn;
+        case Game::Invinco:
+        case Game::NSub: return Map::Invinco;
+        case Game::Samurai: return Map::Vid8000Samurai;
+        default: return Map::Vid8000;
+    }
+}
+
+VicDual::IoRead VicDual::io_read_type() const {
+    switch (game_) {
+        case Game::DepthCharge:
+        case Game::Safari:
+        case Game::Frogs:
+        case Game::HeadOn:
+        case Game::NSub: return IoRead::Logic18;
+        case Game::SpaceAttack:
+        case Game::HeadOn2:
+        case Game::Digger:
+        case Game::Invinco: return IoRead::Logic148;
+        default: return IoRead::Dual4;
+    }
+}
+
+uint8_t VicDual::io_mask() const {
+    switch (game_) {
+        case Game::TranqGun:
+        case Game::Borderline:
+        case Game::Heiankyo: return 0x0f;
+        default: return io_read_type() == IoRead::Dual4 ? 0x7f : 0x1f;
+    }
 }
 
 const char* VicDual::title() const {
     switch (game_) {
-        case Game::DepthCharge: return "Depth Charge";
+        case Game::DepthCharge: return "Depthcharge";
         case Game::Safari: return "Safari";
         case Game::Frogs: return "Frogs";
         case Game::SpaceAttack: return "Space Attack";
@@ -427,7 +739,7 @@ const char* VicDual::title() const {
         case Game::Heiankyo: return "Heiankyo Alien";
         case Game::AlphaFighter: return "Alpha Fighter / Head On";
     }
-    return "Vic Dual";
+    return "VIC Dual";
 }
 
 bool VicDual::load_roms(const std::string& rom_path, std::string* error) {
@@ -436,115 +748,96 @@ bool VicDual::load_roms(const std::string& rom_path, std::string* error) {
     std::vector<uint8_t> rom(0x4000, 0);
     const std::vector<RomEntry>* cpu = nullptr;
     const std::vector<RomEntry>* prom = nullptr;
-    size_t rom_bytes = 0x4000;
     switch (game_) {
-    case Game::DepthCharge:
-        cpu = &kDepthChargeCpu; rom_bytes = 0x1800;
-        
-        break;
-    case Game::Safari:
-        cpu = &kSafariCpu; rom_bytes = 0x2800;
-        
-        break;
-    case Game::Frogs:
-        cpu = &kFrogsCpu; rom_bytes = 0x2000;
-        
-        break;
-    case Game::SpaceAttack:
-        cpu = &kSpaceAttackCpu; rom_bytes = 0x2000;
-        prom = &kSpaceAttackProm;
-        break;
-    case Game::SpaceAttackHeadOn:
-        cpu = &kSpaceAttackHeadOnCpu; rom_bytes = 0x4000;
-        prom = &kSpaceAttackHeadOnProm;
-        break;
-    case Game::HeadOn:
-        cpu = &kHeadOnCpu; rom_bytes = 0x1c00;
-        prom = &kHeadOnProm;
-        break;
-    case Game::HeadOn2:
-        cpu = &kHeadOn2Cpu; rom_bytes = 0x2000;
-        prom = &kHeadOn2Prom;
-        break;
-    case Game::HeadOn2Slim:
-        cpu = &kHeadOn2SlimCpu; rom_bytes = 0x2000;
-        prom = &kHeadOn2SlimProm;
-        break;
-    case Game::InvincoHeadOn2:
-        cpu = &kInvincoHeadOn2Cpu; rom_bytes = 0x4000;
-        prom = &kInvincoHeadOn2Prom;
-        break;
-    case Game::NSub:
-        cpu = &kNSubCpu; rom_bytes = 0x4000;
-        prom = &kNSubProm;
-        break;
-    case Game::Samurai:
-        cpu = &kSamuraiCpu; rom_bytes = 0x3800;
-        prom = &kSamuraiProm;
-        break;
-    case Game::Invinco:
-        cpu = &kInvincoCpu; rom_bytes = 0x2400;
-        prom = &kInvincoProm;
-        break;
-    case Game::InvincoDeepScan:
-        cpu = &kInvincoDeepScanCpu; rom_bytes = 0x4000;
-        prom = &kInvincoDeepScanProm;
-        break;
-    case Game::TranqGun:
-        cpu = &kTranqGunCpu; rom_bytes = 0x4000;
-        prom = &kTranqGunProm;
-        break;
-    case Game::SpaceTrek:
-        cpu = &kSpaceTrekCpu; rom_bytes = 0x4000;
-        prom = &kSpaceTrekProm;
-        break;
-    case Game::Carnival:
-        cpu = &kCarnivalCpu; rom_bytes = 0x4000;
-        prom = &kCarnivalProm;
-        break;
-    case Game::Borderline:
-        cpu = &kBorderlineCpu; rom_bytes = 0x4000;
-        prom = &kBorderlineProm;
-        break;
-    case Game::Digger:
-        cpu = &kDiggerCpu; rom_bytes = 0x2000;
-        prom = &kDiggerProm;
-        break;
-    case Game::Pulsar:
-        cpu = &kPulsarCpu; rom_bytes = 0x4000;
-        prom = &kPulsarProm;
-        break;
-    case Game::Heiankyo:
-        cpu = &kHeiankyoCpu; rom_bytes = 0x4000;
-        prom = &kHeiankyoProm;
-        break;
-    case Game::AlphaFighter:
-        cpu = &kAlphaFighterCpu; rom_bytes = 0x4000;
-        
-        break;
+        case Game::DepthCharge: cpu = &kDepthChargeCpu; break;
+        case Game::Safari: cpu = &kSafariCpu; break;
+        case Game::Frogs: cpu = &kFrogsCpu; break;
+        case Game::SpaceAttack: cpu = &kSpaceAttackCpu; prom = &kSpaceAttackProm; break;
+        case Game::SpaceAttackHeadOn: cpu = &kSpaceAttackHeadOnCpu; prom = &kSpaceAttackHeadOnProm; break;
+        case Game::HeadOn: cpu = &kHeadOnCpu; prom = &kHeadOnProm; break;
+        case Game::HeadOn2: cpu = &kHeadOn2Cpu; prom = &kHeadOn2Prom; break;
+        case Game::HeadOn2Slim: cpu = &kHeadOn2SlimCpu; prom = &kHeadOn2SlimProm; break;
+        case Game::InvincoHeadOn2: cpu = &kInvincoHeadOn2Cpu; prom = &kInvincoHeadOn2Prom; break;
+        case Game::NSub: cpu = &kNSubCpu; prom = &kNSubProm; break;
+        case Game::Samurai: cpu = &kSamuraiCpu; prom = &kSamuraiProm; break;
+        case Game::Invinco: cpu = &kInvincoCpu; prom = &kInvincoProm; break;
+        case Game::InvincoDeepScan: cpu = &kInvincoDeepScanCpu; prom = &kInvincoDeepScanProm; break;
+        case Game::TranqGun: cpu = &kTranqGunCpu; prom = &kTranqGunProm; break;
+        case Game::SpaceTrek: cpu = &kSpaceTrekCpu; prom = &kSpaceTrekProm; break;
+        case Game::Carnival: cpu = &kCarnivalCpu; prom = &kCarnivalProm; break;
+        case Game::Borderline: cpu = &kBorderlineCpu; prom = &kBorderlineProm; break;
+        case Game::Digger: cpu = &kDiggerCpu; prom = &kDiggerProm; break;
+        case Game::Pulsar: cpu = &kPulsarCpu; prom = &kPulsarProm; break;
+        case Game::Heiankyo: cpu = &kHeiankyoCpu; prom = &kHeiankyoProm; break;
+        case Game::AlphaFighter: cpu = &kAlphaFighterCpu; break;
     }
     if (!cpu || !loader.load(*cpu, rom, error)) return false;
-    std::copy(rom.begin(), rom.begin() + static_cast<std::ptrdiff_t>(rom_bytes), memory_.begin());
-    const auto lay = layout();
-    if (lay == Layout::HeadOn) {
-        for (int a = 0x2000; a < 0x8000; ++a) memory_[size_t(a)] = memory_[size_t(a & 0x1fff)];
-    } else {
-        for (int a = 0x4000; a < 0x8000; ++a) memory_[size_t(a)] = memory_[size_t(a & 0x3fff)];
-    }
+    std::copy(rom.begin(), rom.end(), rom_.begin());
     has_prom_ = false;
+    color_prom_.fill(0);
     if (prom) {
         std::vector<uint8_t> p(0x20, 0);
-        if (loader.load(*prom, p, error)) {
+        std::string perr;
+        if (loader.load(*prom, p, &perr)) {
             std::copy(p.begin(), p.end(), color_prom_.begin());
             has_prom_ = true;
-        } else if (error) error->clear();
+        }
     }
-    warnings_ = loader.warnings();
+    if (game_ == Game::Carnival) {
+        std::vector<uint8_t> music(0x400, 0);
+        std::string merr;
+        std::fill(music_cpu_->rom(), music_cpu_->rom() + Mcs48::kRomSize, 0);
+        if (loader.load(kCarnivalMusic, music, &merr)) {
+            std::copy(music.begin(), music.end(), music_cpu_->rom());
+        } else {
+            warnings_.push_back("Carnival music ROM epr-412.u5 not found: no music");
+        }
+    }
+    const auto w = loader.warnings();
+    warnings_.insert(warnings_.end(), w.begin(), w.end());
     return true;
 }
 
+void VicDual::load_samples(const std::string& rom_path) {
+    std::string set;
+    const auto& names = sample_names(game_, &set);
+    samples_.assign(names.size(), Sample{});
+    samples_from_files_ = false;
+    if (names.empty()) return;
+    // MAME keeps samples in a "samples" folder next to the ROM folder.
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path base = fs::path(rom_path);
+    if (!fs::is_directory(base, ec)) base = base.parent_path();
+    std::vector<fs::path> candidates = {base / "samples" / (set + ".zip"), base / "samples" / set,
+                                        base.parent_path() / "samples" / (set + ".zip"),
+                                        base.parent_path() / "samples" / set, base / (set + "_samples.zip")};
+    int loaded = 0;
+    for (const fs::path& c : candidates) {
+        if (!fs::exists(c, ec)) continue;
+        RomLoader loader;
+        std::string err;
+        if (!loader.open(c.string(), &err)) continue;
+        for (size_t i = 0; i < names.size(); i++) {
+            std::vector<uint8_t> wav;
+            if (loader.try_read(names[i] + ".wav", wav) && decode_wav(wav, samples_[i].data)) loaded++;
+        }
+        if (loaded) break;
+    }
+    samples_from_files_ = loaded > 0;
+    for (size_t i = 0; i < names.size(); i++) {
+        if (samples_[i].data.empty()) samples_[i].data = synth_sample(names[i]);
+    }
+    if (!samples_from_files_) {
+        warnings_.push_back("MAME samples for '" + set +
+                            "' not found (samples/" + set + ".zip): using synthesized sound effects");
+    }
+}
+
 bool VicDual::init(const std::string& rom_path, std::string* error) {
+    warnings_.clear();
     if (!load_roms(rom_path, error)) return false;
+    load_samples(rom_path);
     reset();
     return true;
 }
@@ -552,221 +845,466 @@ bool VicDual::init(const std::string& rom_path, std::string* error) {
 void VicDual::reset() {
     cpu_.reset();
     videoram_.fill(0);
+    ram_.fill(0);
+    safari_ram_.fill(0);
     characterram_.fill(0);
     coin_status_ = 0;
-    coin_clear_counter_ = 0;
-    palette_bank_ = 0;
+    coin_clear_at_ = -1;
+    // Head On 2 powers up with palette bank 3 (MAME machine_reset).
+    palette_bank_ = game_ == Game::HeadOn2 ? 3 : 0;
     scanline_ = 0;
-    frame_count_ = 0;
+    hblank_ = false;
+    cycles_ = 0;
+    samurai_protection_ = 0;
+    tranqgun_prot_ = 0;
+    nsub_play_counter_ = 0;
+    nsub_next_pulse_ = 0;
+    port1_state_ = 0;
+    port2_state_ = game_ == Game::NSub ? 0xff : 0;
+    for (auto& c : channels_) c = Channel{};
     audio_.clear();
-    in0_ = in1_ = in2_ = in3_ = 0xff;
-    audio_port1_ = audio_port2_ = 0;
-    for (auto& v : voices_) v = Voice{};
-    lfsr_ = 0x1ffff;
-}
-
-
-void VicDual::set_inputs(const MachineInputs& inputs) {
-    in0_ = in1_ = in2_ = in3_ = 0xff;
-    if (inputs.coin1) {
-        coin_status_ = 1;
-        coin_clear_counter_ = int(kFramesPerSecond / 4);
+    audio_frac_ = 0;
+    hp_in_ = hp_out_ = 0;
+    ho_ = HeadOn{};
+    for (auto& v : net_) v = NetVoice{};
+    game_select_ = false;
+    if (music_cpu_) {
+        music_cpu_->reset();
+        music_cpu_->set_reset_line(IrqLine::Assert);  // held until port 2 d4 goes high
+        psg_->reset();
+        music_data_ = music_bus_ = 0;
+        music_cycle_acc_ = 0;
     }
-    // Generic active-low mapping covering dualgame + invinco-style boards
-    if (inputs.player1.up) in0_ &= ~0x20;
-    if (inputs.player1.down) in0_ &= ~0x10;
-    if (inputs.player1.left) in1_ &= ~0x10;
-    if (inputs.player1.right) in1_ &= ~0x20;
-    if (inputs.player1.start) in2_ &= ~0x10;
-    if (inputs.player1.button1) in2_ &= ~0x20;
-    if (inputs.player2.start) in3_ &= ~0x20;
-    // Head On / Invinco style on IN0
-    if (game_ == Game::HeadOn || game_ == Game::HeadOn2 || game_ == Game::Digger ||
-        game_ == Game::SpaceAttack) {
-        in0_ = 0xff;
-        if (inputs.player1.left) in0_ &= ~0x40;
-        if (inputs.player1.right) in0_ &= ~0x10;
-        if (inputs.player1.up) in0_ &= ~0x80;
-        if (inputs.player1.down) in0_ &= ~0x20;
-        if (inputs.player1.button1) in0_ &= ~0x08;
-        if (inputs.player1.start) in0_ &= ~0x01;
-        if (inputs.player2.start) in0_ &= ~0x02;
-    }
-    if (game_ == Game::Invinco) {
-        in0_ = 0xff;
-        if (inputs.player1.start) in0_ &= ~0x01;
-        if (inputs.player2.start) in0_ &= ~0x02;
-        if (inputs.player1.button1) in0_ &= ~0x08;
-        if (inputs.player1.right) in0_ &= ~0x10;
-        if (inputs.player1.left) in0_ &= ~0x40;
-        in1_ = uint8_t(0xfc | (dsw_ & 3));
-    }
+    std::fill(native_.begin(), native_.end(), 0xff000000u);
+    rotate_output();
 }
 
-void VicDual::set_dip_switch(int bank, uint8_t value) {
-    if (bank == 0) dsw_ = value;
-}
-
-bool VicDual::timer_value() const {
-    return ((frame_count_ * 500 / int(kFramesPerSecond + 0.5)) & 1) != 0;
-}
+// ---------------------------------------------------------------------------
+// Memory
 
 uint8_t VicDual::read_byte(uint16_t address) {
-    const auto lay = layout();
-    if (lay == Layout::DualGame) {
-        if (address <= 0x7fff) return memory_[address & 0x3fff];
-        if (address >= 0x8000) {
-            const uint16_t base = uint16_t(address & ~uint16_t(0x7000));
-            if (base <= 0x83ff) return videoram_[base & 0x3ff];
-            if (base <= 0x87ff) return memory_[0x8400 + (base & 0x3ff)];
-            if (base <= 0x8fff) return characterram_[base & 0x7ff];
+    switch (map()) {
+        case Map::Vid8000:
+        case Map::Vid8000Samurai:
+            if (address < 0x8000) {
+                if (game_ == Game::TranqGun && address >= 0x4000) {
+                    return (address - 0x4000) == 0x3800 ? tranqgun_prot_ : 0x00;
+                }
+                return rom_[address & 0x3fff];
+            }
+            break;
+        case Map::HeadOn:
+            if (address < 0x8000) return rom_[address & 0x1fff];
+            if (address < 0xc000) return 0;
+            break;
+        case Map::Invinco:
+            if (address < 0x8000) return rom_[address & 0x3fff];
+            if (address < 0xc000) return 0;
+            break;
+        case Map::Safari:
+            if (address < 0x4000) return rom_[address];
+            if (address < 0x8000) return 0;
+            if (address < 0xc000) return safari_ram_[address & 0xfff];
+            break;
+    }
+    // Video area: $8000 (mirror $7000) or $C000 (mirror $3000).
+    const uint16_t off = address & 0x0fff;
+    if (off < 0x400) return videoram_[off];
+    if (off < 0x800) return ram_[off & 0x3ff];
+    return characterram_[off & 0x7ff];
+}
+
+void VicDual::write_byte(uint16_t address, uint8_t value) {
+    switch (map()) {
+        case Map::Vid8000:
+            if (address < 0x8000) {
+                if (game_ == Game::TranqGun && address == 0x4000) {
+                    if (value == 0xd8) tranqgun_prot_ = 0x02;
+                    else if (value == 0x3a) tranqgun_prot_ = 0x01;
+                    else if (value == 0x6a) tranqgun_prot_ = 0x06;
+                }
+                return;
+            }
+            break;
+        case Map::Vid8000Samurai:
+            if (address < 0x8000) {
+                samurai_protection_ = value;
+                return;
+            }
+            break;
+        case Map::HeadOn:
+        case Map::Invinco:
+            if (address < 0xc000) return;
+            break;
+        case Map::Safari:
+            if (address < 0x8000) return;
+            if (address < 0xc000) {
+                safari_ram_[address & 0xfff] = value;
+                return;
+            }
+            break;
+    }
+    const uint16_t off = address & 0x0fff;
+    if (off < 0x400) videoram_[off] = value;
+    else if (off < 0x800) ram_[off & 0x3ff] = value;
+    else characterram_[off & 0x7ff] = value;
+}
+
+// ---------------------------------------------------------------------------
+// Inputs (MAME INPUT_PORTS per game).  Bits are active low unless noted.
+
+bool VicDual::timer_value() const {
+    // 500 Hz square wave: toggles every 2 ms of emulated time.
+    return ((cycles_ * 500 / int64_t(kCpuClock)) & 1) != 0;
+}
+
+uint8_t VicDual::input_port(int n) {
+    const InputState& p1 = host_.player1;
+    const InputState& p2 = host_.player2;
+    const bool v64 = ((vcounter() >> 6) & 1) != 0;
+    const bool vblank_comp = vcounter() < kVBlankStart;
+    const bool cblank_comp = vblank_comp && !hblank_;
+    const bool timer = timer_value();
+    const bool coin = coin_status_ != 0;
+    uint8_t v = 0xff;
+    // Active-low control: clear the bit while pressed.
+    auto low = [&v](uint8_t mask, bool pressed) { if (pressed) v = uint8_t(v & ~mask); };
+    // Active-high signal or fixed level.
+    auto set = [&v](uint8_t mask, bool level) { v = level ? uint8_t(v | mask) : uint8_t(v & ~mask); };
+
+    switch (game_) {
+        case Game::DepthCharge:
+            if (n == 0) { low(0x01, p1.button2); low(0x02, p1.button1); low(0x04, p1.right); low(0x08, p1.left); }
+            else { set(0x01, v64); set(0x80, coin); }
+            break;
+        case Game::Safari:
+            if (n == 0) {
+                low(0x01, p1.up); low(0x02, p1.down); low(0x04, p1.right); low(0x08, p1.left);
+                low(0x10, p1.button2); low(0x20, p1.button3); low(0x80, p1.button1);
+            } else { set(0x01, v64); set(0x80, coin); }
+            break;
+        case Game::Frogs:
+            if (n == 0) { low(0x01, p1.right); low(0x02, p1.up); low(0x04, p1.left); low(0x80, p1.button1); }
+            else { set(0x01, v64); set(0x80, coin); }
+            break;
+        case Game::HeadOn:
+            if (n == 0) {
+                v = uint8_t(v & ~0x07);  // lives / demo sounds DIPs at their defaults
+                low(0x08, p1.button1 || p1.start); low(0x10, p1.right); low(0x20, p1.down);
+                low(0x40, p1.left); low(0x80, p1.up);
+            } else { set(0x01, v64); set(0x80, coin); }
+            break;
+        case Game::SpaceAttack:
+            if (n == 0) {
+                low(0x01, p1.right); low(0x02, p1.button1); low(0x04, p1.start); low(0x08, p2.start);
+                low(0x10, p2.button1); low(0x20, p2.right); low(0x40, p2.left); low(0x80, p1.left);
+            } else if (n == 1) {
+                v = 0x6e;
+            } else { set(0x01, timer); set(0x80, coin); }
+            break;
+        case Game::HeadOn2:
+            if (n == 0) {
+                low(0x01, p1.start); low(0x02, p2.start); low(0x08, p1.button1); low(0x10, p1.right);
+                low(0x20, p1.down); low(0x40, p1.left); low(0x80, p1.up);
+            } else if (n == 2) { set(0x80, coin); }
+            break;
+        case Game::Digger:
+            if (n == 0) {
+                low(0x01, p1.start); low(0x02, p2.start); low(0x04, p1.button1); low(0x08, p1.button2);
+                low(0x10, p1.right); low(0x20, p1.down); low(0x40, p1.left); low(0x80, p1.up);
+            } else if (n == 1) { v = 0x63; }
+            else { set(0x01, cblank_comp); set(0x80, coin); }
+            break;
+        case Game::NSub:
+            if (n == 0) {
+                low(0x01, p1.start); low(0x02, p2.start); low(0x04, p1.button1); low(0x08, p1.button2);
+                low(0x10, p1.right); low(0x20, p1.down); low(0x40, p1.left); low(0x80, p1.up);
+            } else { set(0x01, cblank_comp); set(0x80, coin); }
+            break;
+        case Game::Invinco:
+            if (n == 0) {
+                low(0x01, p1.start); low(0x02, p2.start); low(0x08, p1.button1); low(0x10, p1.right); low(0x40, p1.left);
+            } else if (n == 1) { v = 0x60; }
+            else { set(0x01, cblank_comp); set(0x80, coin); }
+            break;
+        // ---- dual game boards: IN0-IN3 on ports 0-3 ----
+        case Game::InvincoHeadOn2:
+        case Game::SpaceAttackHeadOn:
+        case Game::AlphaFighter:
+            // 0x04: lives DIPs (MAME defaults read 0), 0x08: SW1:5 = 0.
+            if (n == 0) { set(0x0c, false); low(0x10, p1.down); low(0x20, p1.up); if (game_ != Game::InvincoHeadOn2) { low(0x01, p2.up); low(0x02, p2.button1); } }
+            if (n == 1) { set(0x04, false); set(0x08, cblank_comp); low(0x10, p1.left); low(0x20, p1.right); if (game_ != Game::InvincoHeadOn2) low(0x01, p2.right); }
+            if (n == 2) { set(0x04, false); set(0x08, timer); low(0x10, p1.start); low(0x20, p1.button1); if (game_ != Game::InvincoHeadOn2) low(0x01, p2.down); }
+            if (n == 3) { set(0x04, false); set(0x08, coin); low(0x10, game_select_); low(0x20, p2.start); if (game_ != Game::InvincoHeadOn2) low(0x01, p2.left); }
+            break;
+        case Game::InvincoDeepScan:
+            if (n == 0) { set(0x0c, false); low(0x20, p1.button1); }
+            if (n == 1) { set(0x04, false); set(0x08, cblank_comp); low(0x10, p1.left); low(0x20, p1.right); }
+            if (n == 2) { set(0x04, false); set(0x08, timer); low(0x10, p1.start); low(0x20, p1.button2); }
+            if (n == 3) { set(0x04, false); set(0x08, coin); low(0x10, game_select_); low(0x20, p2.start); }
+            break;
+        case Game::TranqGun:
+            if (n == 0) { set(0x0c, false); low(0x01, p2.up); low(0x02, p2.button1); low(0x10, p1.down); low(0x20, p1.up); }
+            if (n == 1) { set(0x04, false); set(0x08, vblank_comp); low(0x01, p2.right); low(0x10, p1.left); low(0x20, p1.right); }
+            if (n == 2) { set(0x04, false); set(0x08, timer); low(0x01, p2.down); low(0x10, p1.start); low(0x20, p1.button1); }
+            if (n == 3) { set(0x04, false); set(0x08, coin); low(0x01, p2.left); low(0x20, p2.start); }
+            break;
+        case Game::SpaceTrek:
+            if (n == 0) { set(0x08, false); low(0x10, p1.right); low(0x20, p1.left); }
+            if (n == 1) { set(0x04, false); set(0x08, cblank_comp); low(0x10, p1.down); low(0x20, p1.up); }
+            if (n == 2) { set(0x02, false); set(0x08, timer); low(0x10, p1.start); low(0x20, p1.button1); }
+            if (n == 3) { set(0x06, false); set(0x08, coin); low(0x10, p1.button2); low(0x20, p2.start); }
+            break;
+        case Game::Carnival:
+            if (n == 0) set(0x1c, false);
+            if (n == 1) { set(0x04, false); set(0x08, cblank_comp); low(0x10, p1.left); low(0x20, p1.right); }
+            if (n == 2) { set(0x04, false); set(0x08, timer); low(0x10, p1.start); low(0x20, p1.button1); }
+            if (n == 3) { set(0x04, false); set(0x08, coin); low(0x20, p2.start); }
+            break;
+        case Game::Borderline:
+            if (n == 0) { set(0x0c, false); low(0x01, p2.up); low(0x02, p2.button1); low(0x10, p1.down); low(0x20, p1.up); }
+            if (n == 1) { set(0x08, vblank_comp); low(0x01, p2.right); low(0x10, p1.left); low(0x20, p1.right); }
+            if (n == 2) { set(0x08, v64); low(0x01, p2.down); low(0x10, p1.start); low(0x20, p1.button1); }
+            if (n == 3) { set(0x08, !coin); low(0x01, p2.left); low(0x20, p2.start); }  // coin is active low here
+            break;
+        case Game::Pulsar:
+            if (n == 0) { set(0x08, false); low(0x10, p1.down); low(0x20, p1.up); }
+            if (n == 1) { set(0x04, false); set(0x08, cblank_comp); low(0x10, p1.left); low(0x20, p1.right); }
+            if (n == 2) { set(0x04, false); set(0x08, timer); low(0x10, p1.start); low(0x20, p1.button1); }
+            if (n == 3) { set(0x04, false); set(0x08, coin); low(0x20, p2.start); }
+            break;
+        case Game::Heiankyo:
+            if (n == 0) { set(0x08, false); low(0x01, p2.up); low(0x02, p2.button1); low(0x10, p1.up); low(0x20, p1.button1); }
+            if (n == 1) { set(0x08, cblank_comp); low(0x01, p2.right); low(0x02, p2.button2); low(0x10, p1.right); low(0x20, p1.button2); }
+            if (n == 2) { set(0x22, false); set(0x08, timer); low(0x01, p2.down); low(0x10, p1.down); }
+            if (n == 3) { set(0x04, false); set(0x08, coin); low(0x01, p2.left); low(0x02, p2.start); low(0x10, p1.left); low(0x20, p1.start); }
+            break;
+        case Game::HeadOn2Slim:
+            if (n == 0) { set(0x08, false); low(0x01, p2.up); low(0x02, p2.button1); low(0x10, p1.down); low(0x20, p1.up); }
+            if (n == 1) { low(0x01, p2.right); low(0x10, p1.left); low(0x20, p1.right); }
+            if (n == 2) { low(0x01, p2.down); low(0x10, p1.start); low(0x20, p1.button1); }
+            if (n == 3) { set(0x08, coin); low(0x01, p2.left); low(0x20, p2.start); }
+            break;
+        case Game::Samurai: {
+            // Protection: $AB -> 0x02, $1D -> 0x0c; ports 1-3 read bits 1-3.
+            const uint8_t answer = samurai_protection_ == 0xab ? 0x02 : samurai_protection_ == 0x1d ? 0x0c : 0x00;
+            if (n == 0) { low(0x10, p1.down); low(0x20, p1.up); }
+            if (n == 1) { set(0x02, (answer >> 1) & 1); set(0x04, false); set(0x08, cblank_comp); low(0x10, p1.left); low(0x20, p1.right); }
+            if (n == 2) { set(0x02, (answer >> 2) & 1); set(0x04, false); set(0x08, timer); low(0x10, p1.start); low(0x20, p1.button1); }
+            if (n == 3) { set(0x02, (answer >> 3) & 1); set(0x04, false); set(0x08, coin); low(0x20, p2.start); }
+            break;
         }
-        return 0xff;
     }
-    // HeadOn / HeadOn2 / VramC000 / Safari: character/video at $c000
-    if (lay == Layout::HeadOn) {
-        if (address <= 0x7fff) return memory_[address & 0x1fff];
-    } else {
-        if (address <= 0x7fff) return memory_[address & 0x3fff];
-    }
-    if (lay == Layout::Safari && address >= 0x8000 && address <= 0xbfff)
-        return memory_[0x8000 + (address & 0xfff)];
-    if ((address & 0xc000) == 0xc000) {
-        const uint16_t off = address & 0xfff;
-        if (off <= 0x3ff) return videoram_[off];
-        if (off <= 0x7ff) return memory_[0xc400 + (off & 0x3ff)];
-        return characterram_[off & 0x7ff];
+    return v;
+}
+
+uint8_t VicDual::read_port(uint16_t port) {
+    const uint8_t o = uint8_t(port & io_mask());
+    switch (io_read_type()) {
+        case IoRead::Logic18: {
+            uint8_t data = 0xff;
+            if (o & 0x01) data &= input_port(0);
+            if (o & 0x08) data &= input_port(1);
+            return data;
+        }
+        case IoRead::Logic148: {
+            uint8_t data = 0xff;
+            if (o & 0x01) data &= input_port(0);
+            if (o & 0x04) data &= input_port(1);
+            if (o & 0x08) data &= input_port(2);
+            return data;
+        }
+        case IoRead::Dual4:
+            return input_port(o & 3);
     }
     return 0xff;
 }
 
-void VicDual::write_byte(uint16_t address, uint8_t value) {
-    const auto lay = layout();
-    if (lay == Layout::DualGame) {
-        if (address <= 0x7fff) return;
-        if (address >= 0x8000) {
-            const uint16_t base = uint16_t(address & ~uint16_t(0x7000));
-            if (base <= 0x83ff) { videoram_[base & 0x3ff] = value; return; }
-            if (base <= 0x87ff) { memory_[0x8400 + (base & 0x3ff)] = value; return; }
-            if (base <= 0x8fff) { characterram_[base & 0x7ff] = value; return; }
-        }
-        return;
-    }
-    if (address <= 0x7fff) return;
-    if (lay == Layout::Safari && address >= 0x8000 && address <= 0xbfff) {
-        memory_[0x8000 + (address & 0xfff)] = value;
-        return;
-    }
-    if ((address & 0xc000) == 0xc000) {
-        const uint16_t off = address & 0xfff;
-        if (off <= 0x3ff) { videoram_[off] = value; return; }
-        if (off <= 0x7ff) { memory_[0xc400 + (off & 0x3ff)] = value; return; }
-        characterram_[off & 0x7ff] = value;
-    }
-}
-
-uint8_t VicDual::read_port(uint16_t port) {
-    const auto lay = layout();
-    // Dual-game 4-port boards
-    if (lay == Layout::DualGame) {
-        const uint8_t o = uint8_t(port & 0x03);
-        uint8_t data = 0xff;
-        switch (o) {
-            case 0: data = in0_; break;
-            case 1:
-                data = in1_;
-                if (scanline_ < kScreenHeight) data |= 0x08;
-                else data &= ~0x08;
-                break;
-            case 2:
-                data = in2_;
-                if (timer_value()) data |= 0x08;
-                else data &= ~0x08;
-                break;
-            case 3:
-                data = in3_;
-                if (coin_status_) data |= 0x08;
-                else data &= ~0x08;
-                break;
-        }
-        return data;
-    }
-    // Invinco-style
-    if (game_ == Game::Invinco || game_ == Game::NSub) {
-        const uint8_t o = uint8_t(port & 0x0f);
-        uint8_t data = 0xff;
-        if (o & 0x01) data &= in0_;
-        if (o & 0x04) data &= in1_;
-        if (o & 0x08) {
-            uint8_t p2 = 0x7e;
-            if (scanline_ < kScreenHeight) p2 |= 0x01;
-            if (coin_status_) p2 |= 0x80;
-            data &= p2;
-        }
-        return data;
-    }
-    // Head On family
-    const uint8_t o = uint8_t(port & 0x0f);
-    uint8_t data = 0xff;
-    if (o & 0x01) data &= in0_;
-    if (o & 0x08) data &= in1_;
-    if (o & 0x04) data &= in2_;
-    return data;
-}
-
 void VicDual::write_port(uint16_t port, uint8_t value) {
-    const auto lay = layout();
-    if (lay == Layout::DualGame) {
-        const uint8_t o = uint8_t(port & 0x7f);
-        if (o & 0x01) audio_port1_w(value);
-        if (o & 0x02) audio_port2_w(value);
-        if (o & 0x08) { coin_status_ = 1; coin_clear_counter_ = int(kFramesPerSecond / 4); }
-        if (game_ == Game::Borderline) {
-            if (o & 0x02) palette_bank_ = value & 3;
-        } else if (o & 0x40) {
-            palette_bank_ = value & 3;
-        }
-        // Borderline uses bit1 for palette; still route low nibble as tone when not borderline-only
-        if (game_ != Game::Borderline && (o & 0x02) == 0 && (o & 0x01) == 0) {
-            // no-op
-        }
-        return;
+    const uint8_t o = uint8_t(port & io_mask());
+    // No decoder, just logic gates: every selected bit acts.
+    switch (game_) {
+        case Game::DepthCharge:
+            if (o & 0x01) coin_status_ = 1;
+            if (o & 0x04) depthch_audio_w(value);
+            break;
+        case Game::Safari:
+            if (o & 0x01) coin_status_ = 1;
+            break;
+        case Game::Frogs:
+            if (o & 0x01) coin_status_ = 1;
+            if (o & 0x02) netlist_audio_w(value);
+            break;
+        case Game::HeadOn:
+        case Game::SpaceAttack:
+        case Game::HeadOn2:
+            if (o & 0x01) coin_status_ = 1;
+            if ((o & 0x02) && game_ != Game::SpaceAttack) headon_audio_w(value);
+            break;
+        case Game::Digger:
+            if (o & 0x01) coin_status_ = 1;
+            if (o & 0x04) palette_bank_w(value & 3);
+            break;
+        case Game::NSub:
+            if (o & 0x01) coin_status_ = 1;
+            if (o & 0x02) nsub_audio_w(value);
+            if (o & 0x04) palette_bank_w(value);
+            break;
+        case Game::Invinco:
+            if (o & 0x01) coin_status_ = 1;
+            if (o & 0x02) invinco_audio_w(value);
+            if (o & 0x04) palette_bank_w(value);
+            break;
+        case Game::InvincoHeadOn2:
+            if (o & 0x01) invho2_audio_w(value);
+            if (o & 0x02) invinco_audio_w(value);
+            if (o & 0x08) coin_status_ = 1;
+            if (o & 0x40) palette_bank_w(value);
+            break;
+        case Game::InvincoDeepScan:
+            if (o & 0x01) invinco_audio_w(value);
+            if (o & 0x08) coin_status_ = 1;
+            if (o & 0x40) palette_bank_w(value);
+            break;
+        case Game::SpaceAttackHeadOn:
+            if (o & 0x01) invho2_audio_w(value);
+            if (o & 0x08) coin_status_ = 1;
+            if (o & 0x40) palette_bank_w(value);
+            break;
+        case Game::TranqGun:
+        case Game::Borderline:
+            if (o & 0x01) netlist_audio_w(value);
+            if (o & 0x02) palette_bank_w(value);
+            if (o & 0x08) coin_status_ = 1;
+            break;
+        case Game::SpaceTrek:
+        case Game::AlphaFighter:
+            if (o & 0x08) coin_status_ = 1;
+            if (o & 0x40) palette_bank_w(value);
+            break;
+        case Game::Carnival:
+            if (o & 0x01) carnival_audio_1_w(value);
+            if (o & 0x02) carnival_audio_2_w(value);
+            if (o & 0x08) coin_status_ = 1;
+            if (o & 0x40) palette_bank_w(value);
+            break;
+        case Game::Pulsar:
+            if (o & 0x01) pulsar_audio_1_w(value);
+            if (o & 0x02) pulsar_audio_2_w(value);
+            if (o & 0x08) coin_status_ = 1;
+            if (o & 0x40) palette_bank_w(value);
+            break;
+        case Game::Heiankyo:
+            if (o & 0x08) coin_status_ = 1;
+            break;
+        case Game::HeadOn2Slim:
+            if (o & 0x01) invho2_audio_w(value);
+            if (o & 0x02) palette_bank_w(uint8_t((value & 3) ^ 1));
+            if (o & 0x08) coin_status_ = 1;
+            break;
+        case Game::Samurai:
+            if (o & 0x02) palette_bank_w(value);
+            if (o & 0x08) coin_status_ = 1;
+            break;
     }
-    const uint8_t o = uint8_t(port & 0x1f);
-    if (o & 0x01) { coin_status_ = 1; coin_clear_counter_ = int(kFramesPerSecond / 4); }
-    if (o & 0x02) audio_port1_w(value);
-    if (o & 0x04) palette_bank_ = value & 3;
-    if (o & 0x08) audio_port2_w(value);
 }
 
-void VicDual::update_video() {
+// The main CPU is reset when a coin is inserted; the coin switch stays
+// closed for 70 ms, after which the coin status line clears.
+void VicDual::coin_in() {
+    cpu_.reset();
+    coin_clear_at_ = cycles_ + int64_t(kCpuClock) * 70 / 1000;
+}
+
+void VicDual::set_inputs(const MachineInputs& inputs) {
+    host_ = inputs;
+    const bool coin = inputs.coin1 || inputs.coin2;
+    if (coin && !prev_coin_) {
+        if (game_ == Game::NSub) nsub_play_counter_++;  // 1 coin / 1 credit (default coinage)
+        else coin_in();
+    }
+    prev_coin_ = coin;
+    // "Game Select" toggle on the two-game boards.
+    const bool select = game_ == Game::InvincoDeepScan ? inputs.player1.button3 : inputs.player1.button2;
+    if (select && !prev_select_) game_select_ = !game_select_;
+    prev_select_ = select;
+}
+
+void VicDual::set_dip_switch(int bank, uint8_t value) {
+    if (bank == 0) {
+        dsw_ = value;
+        dsw_set_ = true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Video
+
+void VicDual::render_line(int y) {
+    uint32_t* out = &native_[size_t(y * kNativeWidth)];
     const bool color = has_prom_;
-    for (int y = 0; y < kScreenHeight; ++y) {
-        for (int x = 0; x < kScreenWidth; ++x) {
-            const int offs = ((y >> 3) << 5) | (x >> 3);
-            const uint8_t code = videoram_[size_t(offs & 0x3ff)];
-            const uint8_t line = characterram_[size_t((code << 3) | (y & 7))];
-            const bool on = ((line >> (7 - (x & 7))) & 1) != 0;
-            uint32_t pix;
-            if (!color) {
-                pix = on ? 0xffffffffu : 0xff000000u;
-            } else {
-                const int po = (code >> 5) | (palette_bank_ << 3);
-                const uint8_t pr = color_prom_[size_t(po & 0x1f)];
-                pix = on ? kPens[(pr >> 5) & 7] : kPens[(pr >> 1) & 7];
-            }
-            framebuffer_[size_t(y * kScreenWidth + x)] = pix;
+    for (int col = 0; col < 32; col++) {
+        const uint8_t code = videoram_[size_t(((y >> 3) << 5) | col)];
+        const uint8_t bits = characterram_[size_t((code << 3) | (y & 7))];
+        uint32_t fore = 0xffffffffu, back = 0xff000000u;
+        if (color) {
+            const uint8_t pr = color_prom_[size_t(((code >> 5) | (palette_bank_ << 3)) & 0x1f)];
+            back = kPens[(pr >> 1) & 7];
+            fore = kPens[(pr >> 5) & 7];
+        }
+        for (int b = 0; b < 8; b++) out[col * 8 + b] = ((bits << b) & 0x80) ? fore : back;
+    }
+}
+
+void VicDual::rotate_output() {
+    if (!rotated()) {
+        output_ = native_;
+        return;
+    }
+    // ROT270: output (x, y) = native (255 - y, x); 224 x 256.
+    const int ow = kNativeHeight;
+    for (int y = 0; y < kNativeWidth; y++) {
+        for (int x = 0; x < ow; x++) {
+            output_[size_t(y * ow + x)] = native_[size_t(x * kNativeWidth + (kNativeWidth - 1 - y))];
         }
     }
 }
 
 void VicDual::run_frame() {
-    const int cpl = int(double(kCpuClock) / (kFramesPerSecond * kVTotal) + 0.5);
-    for (scanline_ = 0; scanline_ < kVTotal; ++scanline_) cpu_.run(cpl);
-    update_video();
-    if (coin_clear_counter_ > 0 && --coin_clear_counter_ == 0) coin_status_ = 0;
-    ++frame_count_;
-    mix_audio(int(kSampleRate / kFramesPerSecond + 0.5));
+    const double samples_per_line = double(kSampleRate) / (kFramesPerSecond * kVTotal);
+    const double music_per_line =
+        music_cpu_ ? double(music_cpu_->clock()) / (kFramesPerSecond * kVTotal) : 0.0;
+    for (scanline_ = 0; scanline_ < kVTotal; ++scanline_) {
+        hblank_ = false;
+        cpu_.run(kVisibleCycles);
+        hblank_ = true;
+        cpu_.run(kCyclesPerLine - kVisibleCycles);
+        cycles_ += kCyclesPerLine;
+        if (scanline_ < kNativeHeight) render_line(scanline_);
+        if (coin_clear_at_ >= 0 && cycles_ >= coin_clear_at_) {
+            coin_status_ = 0;
+            coin_clear_at_ = -1;
+        }
+        if (game_ == Game::NSub && cycles_ >= nsub_next_pulse_) {
+            // Play-counter 555: one coin pulse every 150 ms while credits are due.
+            nsub_next_pulse_ = cycles_ + int64_t(kCpuClock) * 150 / 1000;
+            if (nsub_play_counter_ > 0) {
+                nsub_play_counter_--;
+                coin_in();
+            }
+        }
+        if (music_cpu_) {
+            music_cycle_acc_ += music_per_line;
+            const int n = int(music_cycle_acc_);
+            music_cycle_acc_ -= n;
+            if (n > 0) music_cpu_->run(n);
+        }
+        audio_frac_ += samples_per_line;
+        const int n = int(audio_frac_);
+        audio_frac_ -= n;
+        if (n > 0) generate_audio(n);
+    }
+    rotate_output();
 }
 
 void VicDual::drain_audio(std::vector<int16_t>& out) {
@@ -774,204 +1312,355 @@ void VicDual::drain_audio(std::vector<int16_t>& out) {
     audio_.clear();
 }
 
+// ---------------------------------------------------------------------------
+// Sound latches, as in MAME.
 
-void VicDual::audio_port1_w(uint8_t data) {
-    const uint8_t changed = uint8_t(audio_port1_ ^ data);
-    const uint8_t gone_high = uint8_t(changed & data);
-    const uint8_t gone_low = uint8_t(changed & ~data);
-    audio_port1_ = data;
+void VicDual::play(int channel, int sample, bool loop) {
+    if (sample < 0 || size_t(sample) >= samples_.size() || samples_[size_t(sample)].data.empty()) return;
+    Channel& c = channels_[size_t(channel)];
+    c.sample = sample;
+    c.pos = 0;
+    c.loop = loop;
+}
 
-    // Map control bits onto discrete voices.
-    // Active bit = sustain tone; falling/rising edge = short one-shot (shots/explosions).
-    auto trigger_shot = [&](int idx, double hz, float amp, int samples) {
-        auto& v = voices_[size_t(idx)];
-        v.freq_hz = hz;
-        v.target_amp = amp;
-        v.amp = amp;
-        v.oneshot = samples;
-        v.noise = false;
+void VicDual::stop(int channel) { channels_[size_t(channel)].sample = -1; }
+
+void VicDual::depthch_audio_w(uint8_t data) {
+    const uint8_t changed = uint8_t(port1_state_ ^ data), high = uint8_t(changed & data), low = uint8_t(changed & ~data);
+    port1_state_ = data;
+    enum { LONGEX, SHORTEX, SPRAY, BONUS, SONAR };
+    if (high & 0x01) play(LONGEX, LONGEX, false);
+    if (high & 0x02) play(SHORTEX, SHORTEX, false);
+    if (high & 0x04) play(SPRAY, SPRAY, false);
+    if (high & 0x08) play(SONAR, SONAR, true);
+    if (low & 0x08) {
+        stop(SONAR);
+        play(BONUS, BONUS, false);  // bonus sound on the same line as sonar
+    }
+}
+
+void VicDual::invinco_audio_w(uint8_t data) {
+    const uint8_t changed = uint8_t(port2_state_ ^ data), low = uint8_t(changed & ~data);
+    port2_state_ = data;
+    enum { SAUCER, MOVE1, MOVE2, FIRE, INVHIT, SHIPHIT };
+    if (low & 0x04) play(SAUCER, SAUCER, false);
+    if (low & 0x08) play(MOVE1, MOVE1, false);
+    if (low & 0x10) play(MOVE2, MOVE2, false);
+    if (low & 0x20) play(FIRE, FIRE, false);
+    if (low & 0x40) play(INVHIT, INVHIT, false);
+    if (low & 0x80) play(SHIPHIT, SHIPHIT, false);
+}
+
+void VicDual::pulsar_audio_1_w(uint8_t data) {
+    const uint8_t changed = uint8_t(port1_state_ ^ data), low = uint8_t(changed & ~data);
+    port1_state_ = data;
+    enum { CLANG, KEY, ALIENHIT, PHIT, ASHOOT, PSHOOT, BONUS };
+    if (low & 0x01) play(CLANG, CLANG, false);
+    if (low & 0x02) play(KEY, KEY, false);
+    if (low & 0x04) play(ALIENHIT, ALIENHIT, false);
+    if (low & 0x08) play(PHIT, PHIT, false);
+    if (low & 0x10) play(ASHOOT, ASHOOT, false);
+    if (low & 0x20) play(PSHOOT, PSHOOT, false);
+    if (low & 0x40) play(BONUS, BONUS, false);
+}
+
+void VicDual::pulsar_audio_2_w(uint8_t data) {
+    const uint8_t changed = uint8_t(port2_state_ ^ data), high = uint8_t(changed & data), low = uint8_t(changed & ~data);
+    port2_state_ = data;
+    enum { CLANG = 0, SIZZLE = 7, GATE, BIRTH, HBEAT, MOVMAZE };
+    if (low & 0x01) play(SIZZLE, SIZZLE, false);
+    if (low & 0x02) play(CLANG, GATE, false);
+    if (high & 0x02) stop(CLANG);
+    if (low & 0x04) play(BIRTH, BIRTH, false);
+    if (low & 0x08) play(HBEAT, HBEAT, true);
+    if (high & 0x08) stop(HBEAT);
+    if (low & 0x10) play(MOVMAZE, MOVMAZE, true);
+    if (high & 0x10) stop(MOVMAZE);
+}
+
+void VicDual::carnival_audio_1_w(uint8_t data) {
+    const uint8_t changed = uint8_t(port1_state_ ^ data), high = uint8_t(changed & data), low = uint8_t(changed & ~data);
+    port1_state_ = data;
+    enum { BEAR, BONUS1, BONUS2, CLANG, DUCK1, DUCK2, DUCK3, PIPEHIT, RANKING, RIFLE };
+    if (low & 0x01) play(RIFLE, RIFLE, false);
+    if (low & 0x02) play(CLANG, CLANG, false);
+    if (low & 0x04) play(DUCK1, DUCK1, true);
+    if (high & 0x04) stop(DUCK1);
+    if (low & 0x08) play(DUCK2, DUCK2, true);
+    if (high & 0x08) stop(DUCK2);
+    if (low & 0x10) play(DUCK3, DUCK3, true);
+    if (high & 0x10) stop(DUCK3);
+    if (low & 0x20) play(PIPEHIT, PIPEHIT, false);
+    if (low & 0x40) play(BONUS1, BONUS1, false);
+    if (low & 0x80) play(BONUS2, BONUS2, false);
+}
+
+void VicDual::carnival_audio_2_w(uint8_t data) {
+    const uint8_t changed = uint8_t(port2_state_ ^ data), low = uint8_t(changed & ~data);
+    port2_state_ = data;
+    enum { BEAR = 0, RANKING = 8 };
+    if (low & 0x04) play(BEAR, BEAR, false);
+    if (low & 0x20) play(RANKING, RANKING, false);
+    // d4: music board MCU reset (active low).
+    if (music_cpu_) music_cpu_->set_reset_line((data & 0x10) ? IrqLine::Clear : IrqLine::Assert);
+}
+
+void VicDual::nsub_audio_w(uint8_t data) {
+    const uint8_t changed = uint8_t(port2_state_ ^ data), high = uint8_t(changed & data), low = uint8_t(changed & ~data);
+    port2_state_ = data;
+    enum { EXPL_L0, EXPL_L1, SONAR, LAUNCH0, LAUNCH1, WARNING0, WARNING1, EXPL_S0, EXPL_S1, BONUS0, BONUS1, CODE, BOAT };
+    auto pair = [&](uint8_t bit, int on, int off) {
+        if (low & bit) { play(on, on, true); stop(off); }
+        else if (high & bit) { play(off, off, false); stop(on); }
     };
-    auto set_sustain = [&](int idx, bool on, double hz, float amp) {
-        auto& v = voices_[size_t(idx)];
-        v.freq_hz = hz;
-        v.noise = false;
-        if (on) {
-            v.target_amp = amp;
-            if (v.amp < 0.05f) v.amp = amp;
-            v.oneshot = 0;
-        } else if (v.oneshot == 0) {
-            v.target_amp = 0;
+    pair(0x01, WARNING0, WARNING1);
+    if (low & 0x02) play(SONAR, SONAR, true);
+    else if (high & 0x02) stop(SONAR);
+    pair(0x04, LAUNCH0, LAUNCH1);
+    pair(0x08, EXPL_L0, EXPL_L1);
+    pair(0x10, EXPL_S0, EXPL_S1);
+    pair(0x20, BONUS0, BONUS1);
+    if (low & 0x40) play(CODE, CODE, true);
+    else if (high & 0x40) stop(CODE);
+    if (low & 0x80) play(BOAT, BOAT, true);
+    else if (high & 0x80) stop(BOAT);
+}
+
+void VicDual::headon_audio_w(uint8_t data) {
+    ho_.hispeed_pc = data & 0x01;
+    ho_.screech1 = data & 0x02;
+    ho_.crash = data & 0x04;
+    ho_.hispeed_cc = data & 0x08;
+    ho_.screech2 = data & 0x10;
+    ho_.bonus = data & 0x20;
+    ho_.car_on = data & 0x40;
+}
+
+void VicDual::invho2_audio_w(uint8_t data) {
+    ho_.hispeed_pc = data & 0x10;
+    ho_.screech1 = data & 0x08;
+    ho_.crash = data & 0x80;
+    ho_.hispeed_cc = data & 0x40;
+    ho_.screech2 = data & 0x04;
+    ho_.bonus = data & 0x02;
+    ho_.car_on = data & 0x20;
+}
+
+void VicDual::netlist_audio_w(uint8_t data) {
+    const uint8_t changed = uint8_t(port1_state_ ^ data);
+    port1_state_ = data;
+    for (int b = 0; b < 8; b++) {
+        const uint8_t m = uint8_t(1 << b);
+        if (!(changed & m)) continue;
+        NetVoice& v = net_[size_t(b)];
+        if (sound_ == Audio::Borderline) {
+            // Active-low triggers (the sound board inverts the latch).
+            v.held = (data & m) == 0;
+            if (v.held) v.t = 0;
+        } else {
+            // Frogs: the latch drives the 555 triggers directly.
+            v.held = (data & m) != 0;
+            if (v.held) v.t = 0;
         }
-    };
-    auto trigger_noise = [&](int idx, float amp, int samples) {
-        auto& v = voices_[size_t(idx)];
-        v.noise = true;
-        v.freq_hz = 0;
-        v.target_amp = amp;
-        v.amp = amp;
-        v.oneshot = samples;
-    };
+    }
+}
 
-    switch (game_) {
-        case Game::HeadOn:
-        case Game::HeadOn2:
-        case Game::HeadOn2Slim:
-        case Game::Digger:
-        case Game::SpaceAttack:
-        case Game::AlphaFighter:
-            // headon discrete bits (approximate MAME HEADON_* enables)
-            set_sustain(0, data & 0x01, 90.0, 0.25f);    // car engine low
-            set_sustain(1, data & 0x02, 180.0, 0.22f);   // hi-speed
-            if (gone_high & 0x04) trigger_noise(2, 0.45f, int(0.35 * kSampleRate));  // crash
-            set_sustain(3, data & 0x08, 1200.0, 0.12f);  // screech1
-            set_sustain(4, data & 0x10, 900.0, 0.12f);   // screech2
-            if (gone_high & 0x20) trigger_shot(5, 880.0, 0.3f, int(0.12 * kSampleRate));  // bonus
-            set_sustain(6, data & 0x40, 60.0, 0.15f);
-            break;
+// ---------------------------------------------------------------------------
+// Head On discrete board (MAME headon_discrete), behavioural model.
 
-        case Game::Carnival:
-            if (gone_low & 0x01) trigger_shot(0, 1800.0, 0.4f, int(0.08 * kSampleRate));  // rifle
-            if (gone_low & 0x02) trigger_shot(1, 600.0, 0.35f, int(0.15 * kSampleRate));   // clang
-            set_sustain(2, data & 0x04, 440.0, 0.12f);   // duck1
-            set_sustain(3, data & 0x08, 520.0, 0.12f);   // duck2
-            set_sustain(4, data & 0x10, 620.0, 0.12f);   // duck3
-            if (gone_low & 0x20) trigger_shot(5, 300.0, 0.3f, int(0.1 * kSampleRate));
-            if (gone_low & 0x40) trigger_shot(6, 1000.0, 0.25f, int(0.1 * kSampleRate));
-            if (gone_low & 0x80) trigger_shot(7, 1200.0, 0.25f, int(0.1 * kSampleRate));
-            break;
+float VicDual::headon_sample() {
+    constexpr int kOver = 4;
+    constexpr double dt = 1.0 / (kSampleRate * kOver);
+    double acc = 0;
+    for (int s = 0; s < kOver; s++) {
+        // MM5837 noise at ~100 kHz.
+        ho_.noise_acc += 100000.0 * dt;
+        while (ho_.noise_acc >= 1.0) {
+            ho_.noise_acc -= 1.0;
+            const uint32_t bit = ((ho_.lfsr >> 13) ^ (ho_.lfsr >> 16)) & 1;
+            ho_.lfsr = ((ho_.lfsr << 1) | (bit ^ 1)) & 0x1ffff;
+            ho_.noise = (ho_.lfsr >> 16) & 1;
+        }
+        const double noise = ho_.noise ? 1.0 : 0.0;
 
-        case Game::DepthCharge:
-            if (gone_high & 0x01) trigger_noise(0, 0.5f, int(0.5 * kSampleRate));
-            if (gone_high & 0x02) trigger_noise(1, 0.4f, int(0.2 * kSampleRate));
-            set_sustain(2, data & 0x04, 200.0, 0.15f);  // spray
-            if (gone_high & 0x08) trigger_shot(3, 880.0, 0.3f, int(0.15 * kSampleRate));
-            set_sustain(4, data & 0x10, 40.0, 0.2f);    // sonar
-            break;
-
-        case Game::Invinco:
-        case Game::InvincoHeadOn2:
-        case Game::InvincoDeepScan:
-            if (gone_high & 0x01) trigger_shot(0, 400.0, 0.3f, int(0.1 * kSampleRate));
-            if (gone_high & 0x02) trigger_noise(1, 0.4f, int(0.25 * kSampleRate));
-            set_sustain(2, data & 0x04, 220.0, 0.15f);
-            set_sustain(3, data & 0x08, 330.0, 0.12f);
-            if (gone_high & 0x10) trigger_shot(4, 660.0, 0.25f, int(0.12 * kSampleRate));
-            set_sustain(5, data & 0x20, 110.0, 0.1f);
-            break;
-
-        case Game::Pulsar:
-            if (gone_high & 0x01) trigger_shot(0, 500.0, 0.3f, int(0.08 * kSampleRate));
-            if (gone_high & 0x02) trigger_shot(1, 700.0, 0.25f, int(0.08 * kSampleRate));
-            if (gone_high & 0x04) trigger_noise(2, 0.35f, int(0.2 * kSampleRate));
-            set_sustain(3, data & 0x08, 150.0, 0.15f);
-            set_sustain(4, data & 0x10, 300.0, 0.12f);
-            if (gone_high & 0x20) trigger_shot(5, 1000.0, 0.3f, int(0.15 * kSampleRate));
-            set_sustain(6, data & 0x40, 80.0, 0.1f);
-            set_sustain(7, data & 0x80, 55.0, 0.12f);
-            break;
-
-        case Game::Borderline:
-        case Game::TranqGun:
-        case Game::SpaceTrek:
-        case Game::Samurai:
-        case Game::Heiankyo:
-        case Game::Frogs:
-        case Game::Safari:
-        case Game::NSub:
-        case Game::SpaceAttackHeadOn:
-        default:
-            // Generic: each set bit sustains a harmonic; edges fire noise
-            for (int b = 0; b < 8; ++b) {
-                const bool on = (data & (1 << b)) != 0;
-                const double hz = 80.0 * (b + 1);
-                if (gone_high & (1 << b)) {
-                    if (b >= 5) trigger_noise(b, 0.3f, int(0.15 * kSampleRate));
-                    else trigger_shot(b, hz * 2, 0.25f, int(0.1 * kSampleRate));
-                } else {
-                    set_sustain(b, on, hz, 0.12f);
+        // Engines: ramp 12 V -> 10.8 V over 7 s while the car runs, extra
+        // -2 V over 0.8 s at high speed; a 555 current-controlled oscillator
+        // whose output feeds /2, /4 and /3 counters.
+        auto car = [&](HeadOnCar& c, bool hispeed) -> double {
+            const double car_target = ho_.car_on ? 10.8 : 12.0;
+            const double car_rate = (12.0 - 10.8) / 7.0 * dt;
+            if (c.ramp_car > car_target) c.ramp_car = std::max(car_target, c.ramp_car - car_rate);
+            else c.ramp_car = std::min(car_target, c.ramp_car + car_rate);
+            const double hi_target = hispeed ? -2.0 : 0.0;
+            const double hi_rate = 2.0 / 0.8 * dt;
+            if (c.ramp_hi > hi_target) c.ramp_hi = std::max(hi_target, c.ramp_hi - hi_rate);
+            else c.ramp_hi = std::min(hi_target, c.ramp_hi + hi_rate);
+            if (!ho_.car_on) {
+                c.cap = 4.0;
+                c.charging = true;
+                return 0.0;
+            }
+            const double vin = c.ramp_car + c.ramp_hi;
+            // Current source (PNP from +12 V): (12 - (Vin + Vbe)) / 10k; no
+            // current, no oscillation, until the ramp has come down.
+            const double i = std::max(12.0 - vin - 0.6, 0.0) / 10000.0;
+            if (i <= 0.0) {
+                c.cap -= c.cap * dt / 1.0;  // leakage only
+            } else if (c.charging) {
+                c.cap += i / 100e-9 * dt;
+                if (c.cap >= 8.0) {
+                    c.charging = false;
+                }
+            } else {
+                // Discharge through 1k.
+                c.cap -= (c.cap / (1000.0 * 100e-9)) * dt;
+                if (c.cap <= 4.0) {
+                    c.charging = true;
+                    // Rising edge of the output clocks the counters.
+                    c.div2 = (c.div2 + 1) % 2;
+                    c.div4 = (c.div4 + 1) % 4;
+                    c.div3 = (c.div3 + 1) % 3;
                 }
             }
-            break;
+            const int level = c.div2 + (c.div4 > 1 ? 1 : 0) + (c.div3 == 2 ? 1 : 0);
+            return level * 4.0;  // 0..12 V
+        };
+        const double player = car(ho_.player, ho_.hispeed_pc);
+        const double computer = car(ho_.computer, ho_.hispeed_cc);
+
+        // Screeches: CD4069 oscillators with the noise on their inputs.
+        auto screech = [&](double& ph, double freq, bool on) -> double {
+            if (!on) return 0.0;
+            ph += freq * (0.8 + 0.4 * noise) * dt;
+            ph -= std::floor(ph);
+            return ph < 0.5 ? 12.0 : 0.0;
+        };
+        const double s1 = screech(ho_.screech_phase1, 1.0 / (2.2 * 10000.0 * 47e-9), ho_.screech1);
+        const double s2 = screech(ho_.screech_phase2, 1.0 / (2.2 * 10000.0 * 57e-9), ho_.screech2);
+
+        // Bonus: slow inverter oscillator switching a 555 between ~600 Hz
+        // and ~375 Hz.
+        double bonus = 0.0;
+        if (ho_.bonus) {
+            ho_.bonus_mod += dt / (2.2 * 1e6 * 470e-9);
+            ho_.bonus_mod -= std::floor(ho_.bonus_mod);
+            const double f = ho_.bonus_mod < 0.5 ? 600.0 : 375.0;
+            ho_.bonus_phase += f * dt;
+            ho_.bonus_phase -= std::floor(ho_.bonus_phase);
+            bonus = ho_.bonus_phase < 0.5 ? 11.5 : 0.0;
+        } else {
+            ho_.bonus_mod = 0;
+        }
+
+        // Crash: two 555 monostables (0.52 s and 1.14 s) triggered while the
+        // crash input is low gate the noise, through a 500 Hz band-pass and a
+        // 71 Hz Sallen-Key low-pass.
+        if (!ho_.crash) {
+            ho_.crash1 = 1.1 * 470000.0 * 1e-6;
+            ho_.crash2 = 1.1 * 470000.0 * 2.2e-6;
+        }
+        const double g1 = ho_.crash1 > 0 ? 1.0 : 0.0;
+        const double g2 = ho_.crash2 > 0 ? 1.0 : 0.0;
+        ho_.crash1 -= dt;
+        ho_.crash2 -= dt;
+        const double n1 = g1 * (noise * 12.0 - 6.0);
+        const double n2 = g2 * (noise * 12.0 - 6.0);
+        const double a_lp = 1.0 - std::exp(-2.0 * kPi * 500.0 * dt);
+        ho_.bp_lp += a_lp * (n1 - ho_.bp_lp);
+        const double bp = ho_.bp_lp - ho_.bp_hp;
+        ho_.bp_hp += a_lp * (ho_.bp_lp - ho_.bp_hp);
+        const double a_sk = 1.0 - std::exp(-2.0 * kPi * 71.0 * dt);
+        ho_.sk_1 += a_sk * (n2 - ho_.sk_1);
+        ho_.sk_2 += a_sk * 1.4 * (ho_.sk_1 - ho_.sk_2);
+        const double crash = (bp * 2.0 + ho_.sk_2 * 10.0) * 0.5;
+
+        // Resistor mixer (130k, 130k, 100k, 100k, 100k, 10k into 100k).
+        const double g[6] = {1 / 130e3, 1 / 130e3, 1 / 100e3, 1 / 100e3, 1 / 100e3, 1 / 10e3};
+        const double vin[6] = {player, computer, s1, s2, bonus, crash};
+        double num = 0, den = 1 / 100e3;
+        for (int k = 0; k < 6; k++) {
+            num += vin[k] * g[k];
+            den += g[k];
+        }
+        acc += num / den;
     }
-    (void)gone_low;
+    return float(acc / kOver * (37000.0 / 12.0) / 32768.0);
 }
 
-void VicDual::audio_port2_w(uint8_t data) {
-    const uint8_t changed = uint8_t(audio_port2_ ^ data);
-    const uint8_t gone_low = uint8_t(changed & ~data);
-    const uint8_t gone_high = uint8_t(changed & data);
-    audio_port2_ = data;
-
-    if (game_ == Game::Carnival) {
-        if (gone_low & 0x01) {  // bear
-            voices_[5].freq_hz = 200.0;
-            voices_[5].amp = voices_[5].target_amp = 0.35f;
-            voices_[5].oneshot = int(0.3 * kSampleRate);
-            voices_[5].noise = false;
-        }
-        if (gone_low & 0x02) {
-            voices_[6].freq_hz = 1500.0;
-            voices_[6].amp = voices_[6].target_amp = 0.3f;
-            voices_[6].oneshot = int(0.2 * kSampleRate);
-        }
-        // bit4 music MCU reset ignored (no i8035)
-    } else if (game_ == Game::Pulsar) {
-        for (int b = 0; b < 8; ++b) {
-            if (gone_high & (1 << b)) {
-                auto& v = voices_[size_t(b)];
-                v.freq_hz = 250.0 * (b + 1);
-                v.amp = v.target_amp = 0.2f;
-                v.oneshot = int(0.1 * kSampleRate);
-                v.noise = (b & 1) != 0;
+// Frogs / Borderline stand-ins: one synthesized voice per latch bit.
+float VicDual::netlist_sample() {
+    const double dt = 1.0 / kSampleRate;
+    const uint32_t bit = ((noise_lfsr_ >> 13) ^ (noise_lfsr_ >> 16)) & 1;
+    noise_lfsr_ = ((noise_lfsr_ << 1) | bit) & 0x1ffff;
+    const double noise = bit ? 1.0 : -1.0;
+    double out = 0;
+    for (int b = 0; b < 8; b++) {
+        NetVoice& v = net_[size_t(b)];
+        if (v.t < 0) continue;
+        const double t = v.t;
+        double s = 0;
+        bool done = false;
+        auto sq = [&](double f) {
+            v.phase += f * dt;
+            v.phase -= std::floor(v.phase);
+            return v.phase < 0.5 ? 1.0 : -1.0;
+        };
+        if (sound_ == Audio::Frogs) {
+            switch (b) {
+                case 0: s = sq(300 + 900 * t) * std::exp(-t / 0.08); done = t > 0.3; break;       // hop
+                case 1: s = sq(200 + 1400 * t) * std::exp(-t / 0.2); done = t > 0.6; break;       // jump (boing)
+                case 2: s = sq(1500 - 1200 * t) * std::exp(-t / 0.12); done = t > 0.35; break;    // tongue (zip)
+                case 3: s = sq(120) * (0.6 + 0.4 * noise) * std::exp(-t / 0.15); done = t > 0.45; break;  // capture (croak)
+                case 4: s = v.held ? sq(220 + 30 * std::sin(2 * kPi * 25 * t)) * 0.4 : 0; done = !v.held; break;  // fly buzz
+                case 7: s = noise * std::exp(-t / 0.35); done = t > 1.0; break;                    // splash
+                default: done = true; break;
+            }
+        } else {
+            switch (b) {
+                case 0: s = sq(1000 + 400 * std::sin(2 * kPi * 12 * t)) * std::exp(-t / 0.15); done = t > 0.4; break;  // point
+                case 1: s = noise * std::exp(-t / 0.3); done = t > 0.8; break;                     // hit
+                case 2: s = sq(90) * (std::fmod(t, 0.25) < 0.08 ? 1.0 : 0.0) * 0.6; done = !v.held && t > 0.25; break;  // walk
+                case 3: s = sq(700 - 300 * t) * std::exp(-t / 0.3); done = t > 0.8; break;         // cry
+                case 4: s = sq(150 + 60 * std::sin(2 * kPi * 3 * t)) * 0.5 * std::exp(-t / 0.5); done = t > 1.2; break;  // animal
+                case 5: s = (noise * 0.7 + sq(1200 - 3000 * t) * 0.3) * std::exp(-t / 0.06); done = t > 0.2; break;  // gun
+                case 6: s = v.held ? sq(60 + 8 * noise) * 0.35 : 0; done = !v.held; break;          // jeep
+                case 7: s = sq(500 + 500 * std::sin(2 * kPi * 7 * t)) * std::exp(-t / 0.4); done = t > 1.0; break;  // emergency
+                default: done = true; break;
             }
         }
-    } else {
-        // secondary port: soft tones
-        for (int b = 0; b < 4; ++b) {
-            auto& v = voices_[size_t(4 + b)];
-            if (data & (1 << b)) {
-                v.freq_hz = 100.0 * (b + 2);
-                v.target_amp = 0.1f;
-                if (v.amp < 0.05f) v.amp = 0.1f;
-                v.oneshot = 0;
-            } else if (v.oneshot == 0) {
-                v.target_amp = 0;
-            }
-        }
+        out += s;
+        v.t += dt;
+        if (done) v.t = -1;
     }
-    (void)gone_high;
+    return float(out * 0.25);
 }
 
-void VicDual::mix_audio(int samples) {
-    audio_.reserve(audio_.size() + size_t(samples));
-    for (int i = 0; i < samples; ++i) {
-        float mix = 0.f;
-        // LFSR noise (MM5837-ish 17-bit)
-        const uint32_t bit = ((lfsr_ >> 13) ^ (lfsr_ >> 16)) & 1;
-        lfsr_ = ((lfsr_ << 1) | bit) & 0x1ffff;
-        const float noise = (bit ? 1.f : -1.f);
-
-        for (auto& v : voices_) {
-            if (v.amp < 0.001f && v.target_amp < 0.001f && v.oneshot == 0) continue;
-            float s;
-            if (v.noise) {
-                s = noise;
-            } else {
-                v.phase += v.freq_hz / double(kSampleRate);
-                if (v.phase >= 1.0) v.phase -= 1.0;
-                s = (v.phase < 0.5) ? 1.f : -1.f;
+void VicDual::generate_audio(int n) {
+    for (int i = 0; i < n; i++) {
+        double mixv = 0;
+        for (Channel& c : channels_) {
+            if (c.sample < 0) continue;
+            const Wave& w = samples_[size_t(c.sample)].data;
+            const size_t k = size_t(c.pos);
+            if (k >= w.size()) {
+                if (c.loop && !w.empty()) {
+                    c.pos = 0;
+                } else {
+                    c.sample = -1;
+                    continue;
+                }
             }
-            mix += s * v.amp;
-
-            if (v.oneshot > 0) {
-                if (--v.oneshot == 0) v.target_amp = 0;
-            }
-            // simple envelope toward target
-            if (v.amp < v.target_amp) v.amp = std::min(v.target_amp, v.amp + 0.002f);
-            else if (v.amp > v.target_amp) v.amp = std::max(v.target_amp, v.amp - 0.001f);
+            mixv += 0.5 * w[size_t(c.pos)];
+            c.pos += 1.0;
         }
-        mix = std::max(-1.f, std::min(1.f, mix * 0.35f));
-        audio_.push_back(int16_t(mix * 28000.f));
+        if (sound_ == Audio::HeadOn || game_ == Game::InvincoHeadOn2) mixv += headon_sample();
+        if (sound_ == Audio::Frogs || sound_ == Audio::Borderline) mixv += netlist_sample();
+        if (psg_) mixv += 0.25 * double(psg_->update()) / 16384.0;
+        // Output coupling capacitor.
+        hp_out_ = 0.998 * (hp_out_ + mixv - hp_in_);
+        hp_in_ = mixv;
+        const int32_t s = int32_t(std::lround(hp_out_ * 32767.0));
+        audio_.push_back(int16_t(std::clamp(s, int32_t(-32768), int32_t(32767))));
     }
 }
 

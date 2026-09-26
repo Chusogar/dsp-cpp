@@ -418,6 +418,7 @@ add_executable(dsp_tests
   src/drivers/computers/macii.cpp
   src/drivers/consoles/vectrex.cpp
   src/drivers/arcade/starwars.cpp
+  src/drivers/arcade/vicdual.cpp
   src/drivers/arcade/asteroid.cpp
   src/drivers/arcade/polepos.cpp
   src/drivers/arcade/atari_system1.cpp
