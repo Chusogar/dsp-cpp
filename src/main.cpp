@@ -60,6 +60,7 @@
 #include "drivers/arcade/retofinv.h"
 #include "drivers/arcade/slapfight.h"
 #include "drivers/arcade/williams.h"
+#include "drivers/arcade/badlands.h"
 
 // Computers
 #include "drivers/computers/spectrum.h"
@@ -148,6 +149,7 @@ void print_supported_emulators() {
 		"    ambush, shaolins, tehkanwc, appoooh, robowres, arkanoid, renegade\n"
 		"    retofinv, slapfight, tigerheli\n"
 		"    defender, mayday, colony7, joust, robotron, stargate\n"
+		"    badlands\n"
 		"\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
@@ -234,6 +236,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "indydoom") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Indy);
 	if (game == "peter") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::PeterPak);	
 	if (game == "marble") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Marble);
+	if (game == "badlands") return std::make_unique<dsp::BadLands>();
 	if (game == "punchout" || game == "punch-out") return std::make_unique<dsp::PunchOut>();
 	if (game == "starwars" || game == "star-wars") {
 		return std::make_unique<dsp::StarWars>(dsp::StarWars::Game::StarWars);
