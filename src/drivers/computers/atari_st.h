@@ -73,6 +73,8 @@ private:
     void ikbd_keys(const MachineInputs& inputs);
     void ikbd_mouse(const MachineInputs& inputs);
     void ikbd_mouse_packet(int dx, int dy, bool left, bool right);
+    void ikbd_joystick(const MachineInputs& inputs);
+    static uint8_t joy_state_from(const InputState& p);
     void service_acia();
     uint16_t blit_get_word(uint32_t even_addr) const;
     void blit_set_word(uint32_t even_addr, uint16_t value);
@@ -118,6 +120,11 @@ private:
     int seed_x_ = 0, seed_y_ = 0;
     bool last_pointer_b1_ = false;
     bool last_pointer_b2_ = false;
+    // IKBD joystick: host keys (arrows/Ctrl) → player1/2 → $FE/$FF packets
+    uint8_t joy0_state_ = 0;
+    uint8_t joy1_state_ = 0;
+    bool joy_event_mode_ = true;   // $14 event reports; false = $15 interrogate only
+    bool joy_enabled_ = true;      // cleared by $1A
     uint32_t video_count_ = 0;
 
     // Mega ST / STE blitter at $FF8A00. TOS 1.04 Line-A uses it once the

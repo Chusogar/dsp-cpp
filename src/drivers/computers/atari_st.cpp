@@ -116,6 +116,9 @@ void AtariSt::reset() {
     ikbd_pending_.clear();
     ikbd_cmd_ = 0;
     ikbd_reset_step_ = 0;
+    joy0_state_ = joy1_state_ = 0;
+    joy_event_mode_ = true;
+    joy_enabled_ = true;
     last_pointer_x_ = last_pointer_y_ = 0;
     pointer_frac_x_ = pointer_frac_y_ = 0;
     pointer_seen_ = false;
@@ -171,10 +174,38 @@ void AtariSt::ikbd_byte(uint8_t value) {
     }
     if (ikbd_reset_step_ == 1) {
         ikbd_reset_step_ = 0;
-        if (value == 0x01) ikbd_push(0xf1);
+        if (value == 0x01) {
+            ikbd_push(0xf1);
+            joy_event_mode_ = true;
+            joy_enabled_ = true;
+            joy0_state_ = joy1_state_ = 0;
+        }
         return;
     }
     ikbd_cmd_ = value;
+    // Joystick IKBD commands (Atari "Intelligent Keyboard Protocol")
+    switch (value) {
+        case 0x14:  // SET JOYSTICK EVENT REPORTING
+            joy_event_mode_ = true;
+            joy_enabled_ = true;
+            break;
+        case 0x15:  // SET JOYSTICK INTERROGATION MODE
+            joy_event_mode_ = false;
+            joy_enabled_ = true;
+            break;
+        case 0x16:  // JOYSTICK INTERROGATE → $FD, joy0, joy1
+            if (joy_enabled_) {
+                ikbd_push(0xfd);
+                ikbd_push(joy0_state_);
+                ikbd_push(joy1_state_);
+            }
+            break;
+        case 0x1a:  // DISABLE JOYSTICKS
+            joy_enabled_ = false;
+            break;
+        default:
+            break;
+    }
 }
 
 std::vector<uint8_t> AtariSt::ikbd_pending_bytes() const {
@@ -284,6 +315,42 @@ void AtariSt::ikbd_mouse(const MachineInputs& inputs) {
     }
 }
 
+uint8_t AtariSt::joy_state_from(const InputState& p) {
+    // IKBD joystick byte: bit0=up,1=down,2=left,3=right,7=fire
+    uint8_t st = 0;
+    if (p.up) st = uint8_t(st | 0x01);
+    if (p.down) st = uint8_t(st | 0x02);
+    if (p.left) st = uint8_t(st | 0x04);
+    if (p.right) st = uint8_t(st | 0x08);
+    if (p.button1) st = uint8_t(st | 0x80);
+    return st;
+}
+
+void AtariSt::ikbd_joystick(const MachineInputs& inputs) {
+    if (!joy_enabled_) return;
+    // player1 → Joy1 ($FF): primary stick (port shared with mouse on real HW)
+    // player2 → Joy0 ($FE)
+    // Frontend: arrows + LCtrl/Space → player1; typically no player2 keys unless pad.
+    const uint8_t j1 = joy_state_from(inputs.player1);
+    const uint8_t j0 = joy_state_from(inputs.player2);
+    if (joy_event_mode_) {
+        if (j0 != joy0_state_) {
+            joy0_state_ = j0;
+            ikbd_push(0xfe);
+            ikbd_push(j0);
+        }
+        if (j1 != joy1_state_) {
+            joy1_state_ = j1;
+            ikbd_push(0xff);
+            ikbd_push(j1);
+        }
+    } else {
+        // Interrogation mode: only store; $16 will report
+        joy0_state_ = j0;
+        joy1_state_ = j1;
+    }
+}
+
 void AtariSt::ikbd_keys(const MachineInputs& inputs) {
     for (const IkbdMap& map : kIkbd) {
         const bool down = inputs.key(map.key);
@@ -293,6 +360,7 @@ void AtariSt::ikbd_keys(const MachineInputs& inputs) {
         keys_down_[idx] = down;
     }
     ikbd_mouse(inputs);
+    ikbd_joystick(inputs);
 }
 
 uint8_t AtariSt::acia_status() const {

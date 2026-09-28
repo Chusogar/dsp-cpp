@@ -65,12 +65,14 @@ void StFloppy::reset() {
 
 bool StFloppy::decode_geometry(size_t bytes) {
     const int k = int(bytes / kSectorSize);
+    if (k < 1 || size_t(k) * kSectorSize != bytes) return false;
     const struct {
         int tracks, sides, spt;
     } cands[] = {
         {80, 2, 9},  {80, 2, 10}, {80, 1, 9}, {80, 1, 10}, {81, 2, 9},
         {81, 2, 10}, {82, 2, 9},  {82, 2, 10}, {79, 2, 9}, {40, 2, 9},
-        {80, 2, 11}, {83, 2, 9},
+        {80, 2, 11}, {83, 2, 9}, {81, 1, 11}, {99, 1, 9}, {90, 1, 9},
+        {80, 1, 11}, {82, 1, 9}, {100, 1, 9}, {78, 2, 9}, {84, 2, 9},
     };
     for (const auto& c : cands) {
         if (c.tracks * c.sides * c.spt == k) {
@@ -80,13 +82,26 @@ bool StFloppy::decode_geometry(size_t bytes) {
             return true;
         }
     }
-    if (k >= 9 * 80 && (k % 9) == 0) {
-        tracks_ = 80;
-        spt_ = 9;
-        sides_ = k / (80 * 9);
-        if (sides_ < 1) sides_ = 1;
-        if (sides_ > 2) sides_ = 2;
-        return true;
+    // Prefer 9 spt (standard ST), then 10/11.
+    for (int spt : {9, 10, 11}) {
+        if (k % spt != 0) continue;
+        const int tracks_sides = k / spt;
+        // Double-sided first when even
+        if (tracks_sides % 2 == 0) {
+            const int tr = tracks_sides / 2;
+            if (tr >= 40 && tr <= 86) {
+                tracks_ = tr;
+                sides_ = 2;
+                spt_ = spt;
+                return true;
+            }
+        }
+        if (tracks_sides >= 40 && tracks_sides <= 100) {
+            tracks_ = tracks_sides;
+            sides_ = 1;
+            spt_ = spt;
+            return true;
+        }
     }
     return false;
 }
