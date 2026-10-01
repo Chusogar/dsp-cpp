@@ -57,6 +57,7 @@ public:
     uint8_t debug_ram3() const { return ram3_; }
     uint8_t debug_rom_page() const { return rom_page_; }
     void debug_m1(uint16_t pc) { on_m1(pc); }
+    uint8_t debug_read(uint16_t addr) { return mem_read(addr); }
 
     uint8_t io_in(uint16_t port);
     void io_out(uint16_t port, uint8_t value);
@@ -91,6 +92,7 @@ private:
     bool nmi_pending_ = false;
     bool magic_down_ = false;
     bool gluk_present_ = false;
+    bool port_compat_ = true;  // Scorpion: 128K-style #7FFD decoding
 
     std::array<uint32_t, kScreenWidth * kScreenHeight> framebuffer_{};
     std::array<uint32_t, 16> palette_{};

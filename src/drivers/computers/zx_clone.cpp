@@ -457,14 +457,27 @@ void ZxClone::io_out(uint16_t port, uint8_t value) {
             ay_.write(value);
         }
     } else {
-        if ((port & 0xc023) == 0x4021) {
+        // The board decodes #7FFD as 01xxxxxxxx1xxx01 and #1FFD as
+        // 00xxxxxxxx1xxx01 (MAME scorpion_io). Programs written for the
+        // 128K / Pentagon page with any A15 = 0, A1 = 0 address: the common
+        // "LD A,#11 : OUT (#FD),A" lands on #1FFD here, maps RAM over the
+        // ROM and crashes (Terminator 2/128). With the compatibility
+        // decoding (the default, DIP bank 0 bit 0 clear) only #1FFD itself
+        // reaches the Scorpion port and every other such address is #7FFD.
+        bool is_7ffd = (port & 0xc023) == 0x4021;
+        bool is_1ffd = (port & 0xc023) == 0x0021;
+        if (port_compat_ && (port & 0x8002) == 0 && (port & 1) != 0) {
+            is_1ffd = (port & 0xff00) == 0x1f00;
+            is_7ffd = !is_1ffd;
+        }
+        if (is_7ffd) {
             if (!paging_locked_) {
                 port_7ffd_ = value;
                 paging_locked_ = (value & 0x20) != 0;
                 update_memory();
             }
         }
-        if ((port & 0xc023) == 0x0021) {
+        if (is_1ffd) {
             port_1ffd_ = value;
             update_memory();
         }
@@ -558,7 +571,10 @@ void ZxClone::drain_audio(std::vector<int16_t>& out) {
     audio_.clear();
 }
 
-void ZxClone::set_dip_switch(int, uint8_t) {}
+void ZxClone::set_dip_switch(int bank, uint8_t value) {
+    // Scorpion, bank 0 bit 0: 1 = strict hardware decoding of #7FFD/#1FFD.
+    if (bank == 0) port_compat_ = (value & 1) == 0;
+}
 
 void ZxClone::set_inputs(const MachineInputs& inputs) {
     apply_keyboard(inputs);

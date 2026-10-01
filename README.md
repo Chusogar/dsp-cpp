@@ -578,6 +578,18 @@ Beta ports and opens the "Shadow service monitor"; "0. Continue program"
 returns. With TR-DOS paged out, port `#1F` still shows the Beta INTRQ/DRQ lines
 on D7-D6 (the service ROM polls them), with the Kempston joystick on D4-D0.
 
+Scorpion paging ports: the board decodes `#7FFD` as `01xxxxxxxx1xxx01` and
+`#1FFD` as `00xxxxxxxx1xxx01`, so 128K / Pentagon software that pages with
+`LD A,#11 : OUT (#FD),A` (port `#11FD`) hits `#1FFD` on real hardware, maps RAM
+over the ROM and crashes (Terminator 2/128 does). By default the emulator uses
+a compatibility decoding: only port `#1FFD` itself reaches the Scorpion port and
+every other A15 = 0, A1 = 0 address is `#7FFD`, as on a 128K. `--dip 1`
+selects the strict board decoding.
+
+Disks: there is no autoboot without a `boot` file. Pick "128 TR-DOS" in the
+menu, `LIST` (K) + Enter shows the catalogue and `RUN "name"` loads a program
+(Symbol Shift + P types the quotes).
+
 Keyboard (both clones): Left Shift is CAPS SHIFT; either Ctrl, Right Shift or
 AltGr is SYMBOL SHIFT. The cursor keys send CAPS SHIFT + 5/6/7/8, Backspace and
 Delete are DELETE (CAPS + 0), Esc is BREAK (CAPS + SPACE), Caps Lock is CAPS

@@ -191,6 +191,19 @@ void test_z80_flags_and_blocks() {
     check(cpu.halted, "halt stops execution");
 }
 
+void test_z80_r_register_ignored_prefix() {
+    auto memory = make_memory();
+    dsp::Z80 cpu = make_cpu(memory);
+    // dd 00 (an index prefix in front of a plain NOP) / ld a,r: the prefix
+    // and the opcode count one refresh each, like ED and 5F, so R = 4.
+    // Protections that decrypt with LD A,R (IMP '95 on La Abadia del
+    // Crimen) broke when the ignored prefix counted the opcode twice.
+    const uint8_t program[] = {0xdd, 0x00, 0xed, 0x5f, 0x76};
+    std::memcpy(memory.data(), program, sizeof(program));
+    cpu.run(4 + 4 + 9);
+    check(cpu.a == 4, "Z80 R counts an ignored DD prefix and its opcode once each");
+}
+
 void test_z80_interrupt() {
     auto memory = make_memory();
     dsp::Z80 cpu = make_cpu(memory);
@@ -5557,6 +5570,85 @@ void test_trdos_scl_and_beta() {
         frames(3, dsp::Key::Num0);  // "0. Continue program"
         frames(100, dsp::Key::Count);
         check(sc.debug_rom_page() == 0, "Scorpion service monitor returns to 128 BASIC");
+
+        // TR-DOS disks: type RUN "name" at the A> prompt of 128 TR-DOS.
+        auto type_run = [&](const char* keys) {
+            // keys: '#'+X = Caps Shift + X, '~'+X = Symbol Shift + X.
+            auto press = [&](std::initializer_list<dsp::Key> ks) {
+                for (int i = 0; i < 3; i++) {
+                    dsp::MachineInputs in;
+                    for (dsp::Key k : ks) in.keys[size_t(k)] = true;
+                    sc.set_inputs(in);
+                    sc.run_frame();
+                    std::vector<int16_t> audio;
+                    sc.drain_audio(audio);
+                }
+                frames(4, dsp::Key::Count);
+            };
+            auto key_of = [](char c) {
+                if (c >= 'A' && c <= 'Z') return dsp::Key(int(dsp::Key::A) + (c - 'A'));
+                if (c >= '0' && c <= '9') return dsp::Key(int(dsp::Key::Num0) + (c - '0'));
+                return dsp::Key::Enter;
+            };
+            for (const char* p = keys; *p; p++) {
+                if (*p == '#') press({dsp::Key::LeftShift, key_of(*++p)});
+                else if (*p == '~') press({dsp::Key::LeftCtrl, key_of(*++p)});
+                else press({key_of(*p)});
+            }
+        };
+        auto boot_disk = [&](const char* disk) {
+            sc.reset();
+            check(sc.load_media(disk, &error), "Scorpion mounts a TR-DOS disk");
+            frames(150, dsp::Key::Count);
+            frames(3, dsp::Key::Enter);  // "128 TR-DOS"
+            frames(200, dsp::Key::Count);
+        };
+        auto count = [&](auto pred) {
+            int n = 0;
+            const uint32_t* fb = sc.framebuffer();
+            for (int i = 0; i < sc.screen_width() * sc.screen_height(); i++) {
+                const int r = int((fb[i] >> 16) & 0xff), g = int((fb[i] >> 8) & 0xff), b = int(fb[i] & 0xff);
+                if (pred(r, g, b)) n++;
+            }
+            return n;
+        };
+        if (std::filesystem::exists("/tmp/roms/scorpion/abadia.trd")) {
+            // La Abadia del Crimen (TRD, "corrected for Scorpion"): the IMP
+            // '95 loader decrypts itself with LD A,R.
+            boot_disk("/tmp/roms/scorpion/abadia.trd");
+            type_run("R~P#LA#A#B#A#D#I#A~P^");
+            frames(1800, dsp::Key::Count);
+            frames(5, dsp::Key::Space);
+            frames(600, dsp::Key::Count);
+            frames(5, dsp::Key::Enter);
+            frames(1500, dsp::Key::Count);
+            check(count([](int r, int g, int b) { return r > 150 && g > 150 && b < 60; }) > 20000,
+                  "La Abadia del Crimen loads from TRD and shows its parchment");
+        }
+        if (std::filesystem::exists("/tmp/roms/scorpion/t2_128.scl")) {
+            // Terminator 2 (SCL) pages with LD A,#11 : OUT (#FD),A.
+            boot_disk("/tmp/roms/scorpion/t2_128.scl");
+            type_run("R~P#T~J2~V128~1~P^");
+            frames(400, dsp::Key::Count);
+            frames(5, dsp::Key::Space);
+            frames(1500, dsp::Key::Count);
+            check(count([](int r, int g, int b) { return r > 150 && g > 150 && b < 60; }) > 1000 &&
+                      count([](int r, int g, int b) { return r > 150 && g < 60 && b < 60; }) > 300,
+                  "Terminator 2 loads from SCL and reaches its joystick menu");
+        }
+    }
+    {
+        // Paging port decoding: 128K-style "OUT (#FD),A" with A = #11.
+        dsp::Scorpion256 compat;
+        compat.io_out(0x11fd, 0x11);
+        check(compat.debug_ram3() == 1 && compat.debug_rom_page() == 1,
+              "Scorpion compatibility decoding: #11FD pages like #7FFD");
+        compat.io_out(0x1ffd, 0x10);
+        check(compat.debug_ram3() == 9, "Scorpion #1FFD bit 4 still selects the upper 128K");
+        dsp::Scorpion256 strict;
+        strict.set_dip_switch(0, 1);
+        strict.io_out(0x11fd, 0x11);
+        check(strict.debug_ram3() == 8, "Scorpion strict decoding (DIP 1): #11FD is #1FFD, like the board");
     }
 
     namespace fs = std::filesystem;
@@ -8539,6 +8631,7 @@ int main() {
     test_z80_arithmetic();
     test_z80_flags_and_blocks();
     test_z80_interrupt();
+    test_z80_r_register_ignored_prefix();
     test_z80_cpc_wait_states();
     test_z80_irq_cycle_align();
     test_amstrad_crtc_does_not_tear();
