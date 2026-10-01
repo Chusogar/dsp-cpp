@@ -270,7 +270,7 @@ CIA1 matrix while the button is held and the cap sinks; SHIFT, C= and CTRL
 latch until the next key, SHIFT LOCK locks the left SHIFT, and RESTORE pulls
 the NMI line like the real key.
 
-ZX Spectrum 48K and Amstrad CPC on-screen keyboards: F11 shows or hides them
+ZX Spectrum 48K, Amstrad CPC and Sinclair QL on-screen keyboards: F11 shows or hides them
 the same way, through the shared `VirtualKeyboard` (src/machine/
 virtual_keyboard.cpp: RGBA picture with transparent margins, key table,
 mouse handling, sunk keys). `tools/gen_zx48_vkb.py` draws the 48K's 40
@@ -281,8 +281,11 @@ colour names over the number row. `tools/gen_cpc464_vkb.py` draws the Spanish CP
 keyboard with sculpted black caps in the charcoal case: red ESC, green TAB /
 FIJA MAYS / MAYS / CTRL / BORR / COPIA, blue L-shaped INTRO and pad INTRO, the
 cursor cross over the f0-f9 pad, the ventilation slots and the label strip
-with its power LED. CAPS SHIFT /
-SYMBOL SHIFT (Spectrum) and SHIFT / CTRL (CPC) latch until the next key. No
+with its power LED. `tools/gen_ql_vkb.py` draws the Sinclair QL: low rounded
+black keys with white legends in the ribbed black case, the F1-F5 column,
+TABULATE / CAPS LOCK, the inverted-L ENTER and the cursor keys beside the
+space bar. CAPS SHIFT / SYMBOL SHIFT (Spectrum), SHIFT / CTRL (CPC) and
+SHIFT / CTRL / ALT (QL) latch until the next key. No
 logos or badges are drawn. Both run the generators (Pillow, FreeSans) to
 rebuild their `*_vkb_data.inc`.
 

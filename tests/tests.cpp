@@ -2529,6 +2529,43 @@ void test_cpc464_virtual_keyboard() {
     check(cpc.debug_keyboard_line(2) == 0xff, "the key consumes SHIFT and CTRL");
 }
 
+void test_ql_virtual_keyboard() {
+    dsp::SinclairQl ql;
+    vkb_toggle(ql);
+    const dsp::MachineOverlay ov = ql.screen_overlay();
+    check(ov.pixels != nullptr && ov.width >= 1024, "F11 shows the Sinclair QL keyboard overlay");
+    // ESC: IPC row 1, bit 3 (active high).
+    int x = 0, y = 0;
+    ql.vkb().key_centre(1 * 8 + 3, &x, &y);
+    dsp::MachineInputs in;
+    in.overlay_pointer = true;
+    in.overlay_x = x;
+    in.overlay_y = y;
+    in.overlay_button = true;
+    ql.set_inputs(in);
+    check(ql.debug_keys(1) == 0x08, "clicking ESC on the QL keyboard sets row 1 bit 3");
+    in.overlay_button = false;
+    ql.set_inputs(in);
+    check(ql.debug_keys(1) == 0x00, "releasing the mouse releases ESC");
+    // SHIFT latches, then A: row 7 bit 0 + row 4 bit 4.
+    vkb_click(ql, 7 * 8 + 0);
+    ql.vkb().key_centre(4 * 8 + 4, &x, &y);
+    in.overlay_x = x;
+    in.overlay_y = y;
+    in.overlay_button = true;
+    ql.set_inputs(in);
+    check(ql.debug_keys(7) == 0x01 && ql.debug_keys(4) == 0x10, "QL SHIFT + A are down together");
+    in.overlay_button = false;
+    ql.set_inputs(in);
+    check(ql.debug_keys(7) == 0x00, "the key consumes the latched SHIFT");
+    // F1..F5 and the cursor keys are on the picture.
+    const int codes[] = {0 * 8 + 1, 0 * 8 + 3, 0 * 8 + 4, 0 * 8 + 0, 0 * 8 + 5, 1 * 8 + 1, 1 * 8 + 2, 1 * 8 + 4,
+                         1 * 8 + 7, 7 * 8 + 2, 7 * 8 + 4, 1 * 8 + 0, 1 * 8 + 6};
+    bool all = true;
+    for (int code : codes) all = all && ql.vkb().key_centre(code, &x, &y);
+    check(all, "QL keyboard has F1-F5, the cursor keys, CTRL, ALT, ENTER and SPACE");
+}
+
 void test_c64_virtual_keyboard() {
     const std::string dir = "/tmp/dsp-c64-vkb-test";
     std::filesystem::create_directories(dir);
@@ -9032,6 +9069,7 @@ int main() {
     test_c64_virtual_keyboard();
     test_zx48_virtual_keyboard();
     test_cpc464_virtual_keyboard();
+    test_ql_virtual_keyboard();
     test_m6502_rmw_double_write();
     test_mos6566_bank_and_multicolor_bitmap();
     test_pv2000_missing_roms_and_dummy_bios();

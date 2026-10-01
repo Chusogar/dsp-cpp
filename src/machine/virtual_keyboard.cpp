@@ -119,7 +119,11 @@ void VirtualKeyboard::compose() {
     // darker, the gap it leaves at the top shows the shadowed surround.
     const int travel = height_ / 90 + 2;
     for (int i = 0; i < key_count_; i++) {
-        if (!down(i)) continue;
+        // An ordinary key drawn in several pieces (the QL's L-shaped ENTER)
+        // sinks as a whole.
+        bool sunk = down(i);
+        if (!sunk && pressed_ >= 0 && keys_[i].flags == 0 && keys_[pressed_].code == keys_[i].code) sunk = true;
+        if (!sunk) continue;
         const VkbKeyDef& k = keys_[i];
         const uint32_t shade = base_[size_t(k.y1 > 0 ? k.y1 - 1 : 0) * size_t(width_) + size_t(k.x1 + 2)];
         for (int y = k.y2 - 1; y >= k.y1; y--) {
