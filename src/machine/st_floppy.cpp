@@ -78,6 +78,7 @@ void StFloppy::reset() {
     fdc_irq_ = false;
     fdc_busy_ = false;
     motor_on_ = false;
+    motor_idle_ = 0;
     irq_delay_ = 0;
     dma_error_ = false;
     psg_a_ = 0xff;
@@ -224,6 +225,12 @@ void StFloppy::dma_mode_w(uint16_t value) {
 
 void StFloppy::tick(int cycles) {
     cycles_ += uint64_t(cycles);
+    // The WD1772 drops Motor On after 9 index pulses without a command.
+    // Games wait for it (North & South polls status bit 7 before going on).
+    if (motor_on_ && !fdc_busy_) {
+        motor_idle_ += uint32_t(cycles);
+        if (motor_idle_ >= 9 * kCyclesPerRev) motor_on_ = false;
+    }
     if (irq_delay_ <= 0) return;
     irq_delay_ -= cycles;
     if (irq_delay_ <= 0) {
@@ -308,11 +315,12 @@ void StFloppy::finish_command() {
 
 void StFloppy::fdc_command(uint8_t cmd) {
     last_cmd_ = cmd;
+    motor_idle_ = 0;
     fdc_irq_ = false;
     irq_delay_ = 0;
     dma_error_ = false;
     fdc_status_ = 0;
-    motor_on_ = true;
+    if ((cmd & 0xf0) != 0xd0) motor_on_ = true;  // Force Interrupt does not spin up
     const uint8_t type = uint8_t(cmd & 0xf0);
     if (stx_ && type < 0x80) {
         // Type I on a real head: restore, seek, step, step-in, step-out.

@@ -110,13 +110,15 @@ AtariSt::AtariSt() : cpu_(kCpuClock), psg_(2000000, 1.2f) {
     cpu_.set_byte_handlers([this](uint32_t a) { return read_byte(a); },
                            [this](uint32_t a, uint8_t v) { write_byte(a, v); });
     cpu_.set_cycle_handler([this](int c) { on_cpu_cycles(c); });
+    // Copy-protected loaders (Top Gun's) patch the instruction words the
+    // 68000 has already prefetched.
+    cpu_.set_prefetch_emulation(true);
     cpu_.set_reset_instruction_handler([this]() {
         mfp_.reset();
         floppy_.reset();
         psg_.reset();
         ikbd_rx_.clear();
         ikbd_pending_.clear();
-        ikbd_reset_step_ = 0;
         mfp_.set_gpip_bit(7, 1);
         mfp_.set_gpip_bit(5, 1);
         mfp_.set_gpip_bit(4, 1);
@@ -165,8 +167,9 @@ void AtariSt::reset() {
     acia_rdr_ = 0;
     ikbd_rx_.clear();
     ikbd_pending_.clear();
-    ikbd_cmd_ = 0;
-    ikbd_reset_step_ = 0;
+    ikbd_cmd_.clear();
+    ikbd_cmd_need_ = 0;
+    ikbd_reset_modes();
     last_pointer_x_ = last_pointer_y_ = 0;
     pointer_frac_x_ = pointer_frac_y_ = 0;
     pointer_seen_ = false;
@@ -219,17 +222,273 @@ void AtariSt::service_acia() {
     mfp_.set_gpip_bit(4, 0);
 }
 
+namespace {
+
+// Bytes taken by each IKBD command, command byte included (0 = unknown,
+// ignored). From the Atari "Intelligent Keyboard (ikbd) Protocol".
+int ikbd_command_length(uint8_t cmd) {
+    switch (cmd) {
+        case 0x07: return 2;   // set mouse button action
+        case 0x08: return 1;   // relative mouse
+        case 0x09: return 5;   // absolute mouse: xmax, ymax
+        case 0x0a: return 3;   // mouse keycode mode
+        case 0x0b: return 3;   // mouse threshold
+        case 0x0c: return 3;   // mouse scale
+        case 0x0d: return 1;   // interrogate mouse position
+        case 0x0e: return 6;   // load mouse position
+        case 0x0f: return 1;   // Y origin at the bottom
+        case 0x10: return 1;   // Y origin at the top
+        case 0x11: return 1;   // resume
+        case 0x12: return 1;   // disable mouse
+        case 0x13: return 1;   // pause output
+        case 0x14: return 1;   // joystick event reporting
+        case 0x15: return 1;   // joystick interrogation mode
+        case 0x16: return 1;   // joystick interrogate
+        case 0x17: return 2;   // joystick monitoring
+        case 0x18: return 1;   // fire button monitoring
+        case 0x19: return 7;   // joystick keycode mode
+        case 0x1a: return 1;   // disable joysticks
+        case 0x1b: return 7;   // set time of day
+        case 0x1c: return 1;   // interrogate time of day
+        case 0x20: return 4;   // memory load: address, count (+ data)
+        case 0x21: return 3;   // memory read
+        case 0x22: return 3;   // controller execute
+        case 0x80: return 2;   // reset ($80 $01)
+        default: break;
+    }
+    if (cmd >= 0x87 && cmd <= 0x9a) return 1;  // status inquiries
+    return 0;
+}
+
+uint8_t bcd_inc(uint8_t v) {
+    v = uint8_t(v + 1);
+    if ((v & 0x0f) > 9) v = uint8_t((v & 0xf0) + 0x10);
+    return v;
+}
+
+}  // namespace
+
+void AtariSt::ikbd_reset_modes() {
+    mouse_mode_ = MouseMode::Relative;
+    joy_mode_ = JoyMode::Event;
+    ikbd_paused_ = false;
+    mouse_y_bottom_ = false;
+    mouse_button_action_ = 0;
+    abs_x_ = abs_y_ = 0;
+    abs_max_x_ = 319;
+    abs_max_y_ = 199;
+    abs_buttons_ = 0;
+    abs_left_ = abs_right_ = false;
+    joy_monitor_rate_ = 0;
+    joy_monitor_count_ = 0;
+}
+
 void AtariSt::ikbd_byte(uint8_t value) {
-    if (ikbd_reset_step_ == 0 && value == 0x80) {
-        ikbd_reset_step_ = 1;
-        return;
+    if (ikbd_cmd_.empty()) {
+        const int need = ikbd_command_length(value);
+        if (need == 0) return;  // not a command: the 6301 ignores it
+        ikbd_cmd_need_ = need;
     }
-    if (ikbd_reset_step_ == 1) {
-        ikbd_reset_step_ = 0;
-        if (value == 0x01) ikbd_push(0xf1);
-        return;
+    ikbd_cmd_.push_back(value);
+    // Memory load: the count byte says how many data bytes follow.
+    if (ikbd_cmd_[0] == 0x20 && ikbd_cmd_.size() == 4) ikbd_cmd_need_ = 4 + ikbd_cmd_[3];
+    if (int(ikbd_cmd_.size()) < ikbd_cmd_need_) return;
+    const std::vector<uint8_t> cmd = ikbd_cmd_;
+    ikbd_cmd_.clear();
+    ikbd_cmd_need_ = 0;
+    ikbd_command(cmd);
+}
+
+void AtariSt::ikbd_command(const std::vector<uint8_t>& cmd) {
+    // Any command but Pause lifts a pause.
+    if (cmd[0] != 0x13) ikbd_paused_ = false;
+    switch (cmd[0]) {
+        case 0x80:
+            if (cmd[1] != 0x01) return;
+            ikbd_reset_modes();
+            ikbd_push(0xf1);  // self test passed / version
+            return;
+        case 0x07: mouse_button_action_ = cmd[1]; return;
+        case 0x08: mouse_mode_ = MouseMode::Relative; return;
+        case 0x09:
+            mouse_mode_ = MouseMode::Absolute;
+            abs_max_x_ = (cmd[1] << 8) | cmd[2];
+            abs_max_y_ = (cmd[3] << 8) | cmd[4];
+            abs_x_ = std::min(abs_x_, abs_max_x_);
+            abs_y_ = std::min(abs_y_, abs_max_y_);
+            return;
+        case 0x0a: mouse_mode_ = MouseMode::Keycode; return;
+        case 0x0b:
+        case 0x0c: return;
+        case 0x0d: {
+            if (mouse_mode_ != MouseMode::Absolute) return;
+            ikbd_push(0xf7);
+            ikbd_push(abs_buttons_);
+            abs_buttons_ = 0;
+            const int y = mouse_y_bottom_ ? abs_max_y_ - abs_y_ : abs_y_;
+            ikbd_push(uint8_t(abs_x_ >> 8));
+            ikbd_push(uint8_t(abs_x_));
+            ikbd_push(uint8_t(y >> 8));
+            ikbd_push(uint8_t(y));
+            return;
+        }
+        case 0x0e: {
+            abs_x_ = std::clamp((cmd[2] << 8) | cmd[3], 0, abs_max_x_);
+            const int y = std::clamp((cmd[4] << 8) | cmd[5], 0, abs_max_y_);
+            abs_y_ = mouse_y_bottom_ ? abs_max_y_ - y : y;
+            return;
+        }
+        case 0x0f: mouse_y_bottom_ = true; return;
+        case 0x10: mouse_y_bottom_ = false; return;
+        case 0x11: return;
+        case 0x12: mouse_mode_ = MouseMode::Off; return;
+        case 0x13: ikbd_paused_ = true; return;
+        case 0x14:
+            joy_mode_ = JoyMode::Event;
+            mouse_mode_ = MouseMode::Off;  // joystick 0 replaces the mouse
+            return;
+        case 0x15:
+            joy_mode_ = JoyMode::Interrogate;
+            mouse_mode_ = MouseMode::Off;
+            return;
+        case 0x16:
+            ikbd_push(0xfd);
+            ikbd_push(joy_state_[0]);
+            ikbd_push(joy_state_[1]);
+            return;
+        case 0x17:
+            joy_mode_ = JoyMode::Monitor;
+            mouse_mode_ = MouseMode::Off;
+            joy_monitor_rate_ = cmd[1];
+            joy_monitor_count_ = 0;
+            return;
+        case 0x18:
+        case 0x19:
+        case 0x1a:
+            joy_mode_ = JoyMode::Off;
+            return;
+        case 0x1b:
+            for (int i = 0; i < 6; i++) {
+                // Bytes that are not valid BCD leave that field unchanged.
+                if ((cmd[size_t(1 + i)] & 0x0f) <= 9 && (cmd[size_t(1 + i)] >> 4) <= 9) clock_[i] = cmd[size_t(1 + i)];
+            }
+            clock_frames_ = 0;
+            return;
+        case 0x1c:
+            ikbd_push(0xfc);
+            for (uint8_t b : clock_) ikbd_push(b);
+            return;
+        case 0x20:
+        case 0x22: return;
+        case 0x21:
+            ikbd_push(0xf6);
+            ikbd_push(0x20);
+            for (int i = 0; i < 6; i++) ikbd_push(0);
+            return;
+        default:
+            break;
     }
-    ikbd_cmd_ = value;
+    if (cmd[0] >= 0x87 && cmd[0] <= 0x9a) {
+        // Status inquiry: the reply looks like the matching set command.
+        uint8_t reply[7] = {0, 0, 0, 0, 0, 0, 0};
+        switch (cmd[0]) {
+            case 0x87: reply[0] = 0x07; reply[1] = mouse_button_action_; break;
+            case 0x88:
+                reply[0] = mouse_mode_ == MouseMode::Absolute ? 0x09
+                           : mouse_mode_ == MouseMode::Keycode ? 0x0a : 0x08;
+                if (mouse_mode_ == MouseMode::Absolute) {
+                    reply[1] = uint8_t(abs_max_x_ >> 8);
+                    reply[2] = uint8_t(abs_max_x_);
+                    reply[3] = uint8_t(abs_max_y_ >> 8);
+                    reply[4] = uint8_t(abs_max_y_);
+                }
+                break;
+            case 0x8b: reply[0] = 0x0b; reply[1] = 1; reply[2] = 1; break;
+            case 0x8c: reply[0] = 0x0c; reply[1] = 1; reply[2] = 1; break;
+            case 0x8f:
+            case 0x90: reply[0] = mouse_y_bottom_ ? 0x0f : 0x10; break;
+            case 0x92: reply[0] = mouse_mode_ == MouseMode::Off ? 0x12 : 0x00; break;
+            case 0x94:
+            case 0x95:
+            case 0x99:
+                reply[0] = joy_mode_ == JoyMode::Interrogate ? 0x15 : 0x14;
+                break;
+            case 0x9a: reply[0] = joy_mode_ == JoyMode::Off ? 0x1a : 0x00; break;
+            default: break;
+        }
+        ikbd_push(0xf6);
+        for (uint8_t b : reply) ikbd_push(b);
+    }
+}
+
+void AtariSt::ikbd_mouse_report(int dx, int dy, bool left, bool right) {
+    if (ikbd_paused_) return;
+    const bool left_changed = left != abs_left_;
+    const bool right_changed = right != abs_right_;
+    if (left_changed) abs_buttons_ = uint8_t(abs_buttons_ | (left ? 0x04 : 0x08));
+    if (right_changed) abs_buttons_ = uint8_t(abs_buttons_ | (right ? 0x01 : 0x02));
+    abs_left_ = left;
+    abs_right_ = right;
+    switch (mouse_mode_) {
+        case MouseMode::Relative:
+            ikbd_mouse_packet(dx, mouse_y_bottom_ ? -dy : dy, left, right);
+            return;
+        case MouseMode::Absolute:
+            abs_x_ = std::clamp(abs_x_ + dx, 0, abs_max_x_);
+            abs_y_ = std::clamp(abs_y_ + dy, 0, abs_max_y_);
+            // Button action bit 2: buttons send key codes $74 / $75.
+            if (mouse_button_action_ & 0x04) {
+                if (left_changed) ikbd_push(left ? 0x74 : 0xf4);
+                if (right_changed) ikbd_push(right ? 0x75 : 0xf5);
+            }
+            return;
+        case MouseMode::Keycode:
+        case MouseMode::Off:
+            return;
+    }
+}
+
+void AtariSt::ikbd_joysticks(const MachineInputs& inputs) {
+    auto state = [](const InputState& p) {
+        uint8_t v = 0;
+        if (p.up) v |= 0x01;
+        if (p.down) v |= 0x02;
+        if (p.left) v |= 0x04;
+        if (p.right) v |= 0x08;
+        if (p.button1) v |= 0x80;
+        return v;
+    };
+    // Joystick 1 is the game port; joystick 0 shares the mouse port.
+    const uint8_t now[2] = {state(inputs.player2), state(inputs.player1)};
+    for (int j = 0; j < 2; j++) {
+        const bool changed = now[j] != joy_state_[j];
+        joy_state_[j] = now[j];
+        if (!changed || ikbd_paused_ || joy_mode_ != JoyMode::Event) continue;
+        if (j == 0 && mouse_mode_ != MouseMode::Off) continue;  // the mouse owns port 0
+        ikbd_push(uint8_t(0xfe + j));
+        ikbd_push(joy_state_[j]);
+    }
+    if (joy_mode_ == JoyMode::Monitor && !ikbd_paused_) {
+        // Rate is in 1/100 s; frames are 1/50 s.
+        if (++joy_monitor_count_ * 2 >= std::max(joy_monitor_rate_, 2)) {
+            joy_monitor_count_ = 0;
+            ikbd_push(uint8_t(((joy_state_[1] >> 7) << 1) | (joy_state_[0] >> 7)));
+            ikbd_push(uint8_t(((joy_state_[1] & 0x0f) << 4) | (joy_state_[0] & 0x0f)));
+        }
+    }
+}
+
+void AtariSt::ikbd_clock_tick() {
+    if (++clock_frames_ < 50) return;
+    clock_frames_ = 0;
+    static const uint8_t kLimit[6] = {0x99, 0x12, 0x31, 0x23, 0x59, 0x59};
+    for (int i = 5; i >= 3; i--) {
+        if (clock_[i] < kLimit[i]) {
+            clock_[i] = bcd_inc(clock_[i]);
+            return;
+        }
+        clock_[i] = 0;
+    }
 }
 
 std::vector<uint8_t> AtariSt::ikbd_pending_bytes() const {
@@ -292,7 +551,7 @@ void AtariSt::ikbd_mouse(const MachineInputs& inputs) {
         pointer_seen_ = true;
         pointer_frac_x_ = pointer_frac_y_ = 0;
         for (int i = 0; i < 6; i++)
-            ikbd_mouse_packet(-127, -127, inputs.pointer_button1, inputs.pointer_button2);
+            ikbd_mouse_report(-127, -127, inputs.pointer_button1, inputs.pointer_button2);
         dx_host = inputs.pointer_x;
         dy_host = inputs.pointer_y;
     } else {
@@ -339,7 +598,7 @@ void AtariSt::ikbd_mouse(const MachineInputs& inputs) {
         if (sx < -127) sx = -127;
         if (sy > 127) sy = 127;
         if (sy < -127) sy = -127;
-        ikbd_mouse_packet(sx, sy, left, right);
+        ikbd_mouse_report(sx, sy, left, right);
         dx -= sx;
         dy -= sy;
         send_button = false;
@@ -356,6 +615,7 @@ void AtariSt::ikbd_keys(const MachineInputs& inputs) {
         keys_down_[idx] = down;
     }
     ikbd_mouse(inputs);
+    ikbd_joysticks(inputs);
 }
 
 uint8_t AtariSt::acia_status() const {
@@ -381,7 +641,6 @@ void AtariSt::acia_write_control(uint8_t value) {
     if ((value & 3) == 3) {
         ikbd_rx_.clear();
         ikbd_pending_.clear();
-        ikbd_reset_step_ = 0;
         mfp_.set_gpip_bit(4, 1);
     }
 }
@@ -899,9 +1158,14 @@ void AtariSt::run_frame() {
             video_count_ = vbase;
         }
         mfp_.pulse_tb();
+        // HBL (autovector level 2) every line. TOS's handler raises the
+        // interrupted code's IPL to 3, which is why programs run at $x300;
+        // loaders that fold SR into their decryption key depend on it.
+        cpu_.set_irq(2, IrqLine::Hold);
         cpu_.run(kCyclesPerLine);
         update_irqs();
     }
+    ikbd_clock_tick();
     render();
     if (vkb_visible_) vkb_compose();
 }

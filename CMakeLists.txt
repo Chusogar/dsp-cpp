@@ -534,3 +534,18 @@ target_compile_options(macii_run PRIVATE -Wall -Wextra)
 # (https://github.com/SingleStepTests/65816): w65c816_sst path/to/v1
 add_executable(w65c816_sst EXCLUDE_FROM_ALL tools/w65c816_sst.cpp src/cpu/w65c816.cpp)
 target_include_directories(w65c816_sst PRIVATE src)
+
+# Atari ST headless runner (screenshots, scripted keys/mouse/joystick):
+# st_run ROMSET FRAMES OUTPREFIX [disk]
+add_executable(st_run EXCLUDE_FROM_ALL
+  tools/st_run.cpp
+  src/drivers/computers/atari_st.cpp
+  src/machine/mc68901.cpp
+  src/machine/st_floppy.cpp
+  src/sound/ay8910.cpp
+  src/cpu/m68000.cpp
+  src/core/rom_loader.cpp
+)
+target_include_directories(st_run PRIVATE src)
+target_link_libraries(st_run PRIVATE ZLIB::ZLIB musashi)
+target_compile_options(st_run PRIVATE -Wall -Wextra)

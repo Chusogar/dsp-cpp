@@ -83,6 +83,12 @@ private:
     void ikbd_keys(const MachineInputs& inputs);
     void ikbd_mouse(const MachineInputs& inputs);
     void ikbd_mouse_packet(int dx, int dy, bool left, bool right);
+    // Mouse motion in IKBD units, sent according to the current mouse mode.
+    void ikbd_mouse_report(int dx, int dy, bool left, bool right);
+    void ikbd_command(const std::vector<uint8_t>& cmd);
+    void ikbd_reset_modes();
+    void ikbd_joysticks(const MachineInputs& inputs);
+    void ikbd_clock_tick();
     void service_acia();
     uint16_t blit_get_word(uint32_t even_addr) const;
     void blit_set_word(uint32_t even_addr, uint16_t value);
@@ -135,8 +141,24 @@ private:
         int cycles = 0;
     };
     std::deque<IkbdByte> ikbd_pending_;
-    uint8_t ikbd_cmd_ = 0;
-    int ikbd_reset_step_ = 0;
+    // IKBD (HD6301) command interpreter state.
+    std::vector<uint8_t> ikbd_cmd_;  // command byte + parameters received
+    int ikbd_cmd_need_ = 0;          // total bytes the command takes
+    enum class MouseMode : uint8_t { Relative, Absolute, Keycode, Off };
+    enum class JoyMode : uint8_t { Event, Interrogate, Monitor, Off };
+    MouseMode mouse_mode_ = MouseMode::Relative;
+    JoyMode joy_mode_ = JoyMode::Event;
+    bool ikbd_paused_ = false;
+    bool mouse_y_bottom_ = false;    // Y origin at the bottom (0x10)
+    uint8_t mouse_button_action_ = 0;
+    int abs_x_ = 0, abs_y_ = 0, abs_max_x_ = 319, abs_max_y_ = 199;
+    uint8_t abs_buttons_ = 0;        // 0x0D button change bits
+    bool abs_left_ = false, abs_right_ = false;
+    uint8_t joy_state_[2] = {0, 0};  // bit 7 fire, bits 0-3 up/down/left/right
+    int joy_monitor_rate_ = 0;       // 0x17 rate in 1/100 s
+    int joy_monitor_count_ = 0;
+    uint8_t clock_[6] = {0x89, 0x01, 0x01, 0x00, 0x00, 0x00};  // BCD yy mm dd hh mm ss
+    int clock_frames_ = 0;
     int last_pointer_x_ = 0;
     int last_pointer_y_ = 0;
     int pointer_frac_x_ = 0;
