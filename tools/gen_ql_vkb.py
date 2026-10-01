@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generates src/drivers/computers/ql_vkb_data.inc: Sinclair QL keyboard.
 
-Modelled on the QL's black wedge: low, rounded black keys with white
+Modelled on the QL's black wedge: low, domed black keys with white
 legends, the F1-F5 column on the left, TABULATE / CAPS LOCK / SHIFT / CTRL /
 ALT, the inverted-L ENTER, the cursor keys either side of the space bar, and
 the ribbed black case. Drawn from scratch with FreeSans; no logos.
@@ -10,7 +10,11 @@ usage: gen_ql_vkb.py out.inc [preview.png]
 """
 import sys
 
-from vkb_common import Canvas, lerp, write_inc
+import numpy as np
+from PIL import Image, ImageDraw, ImageFilter
+from scipy.ndimage import binary_closing, distance_transform_edt, gaussian_filter
+
+from vkb_common import SS, Canvas, lerp, write_inc
 
 W, H = 1536, 520
 U = 84.0
@@ -28,6 +32,59 @@ INK = (236, 236, 236)
 c = Canvas(W, H)
 keys = []
 
+
+# Light from the top, a little to the left and in front (image y grows down).
+_L = np.array([-0.28, -0.70, 0.66])
+_L /= np.linalg.norm(_L)
+_HV = _L + np.array([0.0, 0.0, 1.0])
+_HV /= np.linalg.norm(_HV)
+
+
+def shade_cap(boxes, base=(23, 23, 26)):
+    """Paints a glossy, domed black cap whose outline is the union of the
+    rounded boxes [(x1, y1, x2, y2, r)] (final-picture units). The surface is
+    a height field: a quarter-round bevel at the rim rising into a low dome,
+    lit with diffuse + two specular lobes, like the QL's moulded keys."""
+    m = 6
+    bx1 = min(b[0] for b in boxes) - m
+    by1 = min(b[1] for b in boxes) - m
+    bx2 = max(b[2] for b in boxes) + m
+    by2 = max(b[3] for b in boxes) + m
+    ox, oy = c.s(bx1), c.s(by1)
+    w, h = c.s(bx2) - ox, c.s(by2) - oy
+    mask = Image.new("L", (w, h), 0)
+    md = ImageDraw.Draw(mask)
+    for x1, y1, x2, y2, r in boxes:
+        md.rounded_rectangle((c.s(x1) - ox, c.s(y1) - oy, c.s(x2) - ox, c.s(y2) - oy), radius=c.s(r), fill=255)
+    a = np.asarray(mask, dtype=np.float32) / 255.0
+    if len(boxes) > 1:
+        # Round the inside corner of composite (L-shaped) caps.
+        rr = int(0.10 * U * SS)
+        yy, xx = np.mgrid[-rr:rr + 1, -rr:rr + 1]
+        disk = xx * xx + yy * yy <= rr * rr
+        padded = np.pad(a > 0.5, rr + 2)
+        a = binary_closing(padded, structure=disk)[rr + 2:-rr - 2, rr + 2:-rr - 2].astype(np.float32)
+    d = distance_transform_edt(a > 0.5).astype(np.float32)
+    bevel = 0.15 * U * SS
+    t = np.clip(d / bevel, 0.0, 1.0)
+    height = bevel * 0.55 * np.sqrt(1.0 - (1.0 - t) ** 2)
+    height += bevel * 0.22 * (1.0 - np.exp(-d / (2.2 * bevel)))   # gentle dome over the top
+    height = gaussian_filter(height, 1.2)
+    gy, gx = np.gradient(height)
+    n = np.dstack([-gx, -gy, np.ones_like(gx)])
+    n /= np.linalg.norm(n, axis=2, keepdims=True)
+    diff = np.clip(n @ _L, 0.0, 1.0)
+    nh = np.clip(n @ _HV, 0.0, 1.0)
+    spec = 0.75 * nh ** 70 + 0.16 * nh ** 9
+    # Sky reflection: faces tilted towards the top pick up a little light.
+    sky = np.clip(-n[:, :, 1], 0.0, 1.0) * 0.10
+    col = np.array(base, dtype=np.float32) / 255.0
+    rgb = col[None, None, :] * (0.55 + 0.95 * diff[:, :, None]) + (spec + sky)[:, :, None]
+    rgb = np.clip(rgb, 0.0, 1.0)
+    out = np.dstack([rgb * 255.0, a * 255.0]).astype(np.uint8)
+    layer = Image.fromarray(out, "RGBA")
+    c.img.alpha_composite(layer, (ox, oy))
+
 # Case: black, with the fine ribbing of the QL's top.
 c.shadow([(14, 10, W - 14, H - 4, 14)], 7, alpha=170)
 c.vgrad_rrect(8, 4, W - 8, H - 8, 12, (38, 38, 41), (20, 20, 22))
@@ -44,16 +101,14 @@ c.vgrad_rrect(*tray, 9, (16, 16, 18), (22, 22, 25))
 def key(x0, row, x, w, legends, code, flags=0, name="", size=None, h=1.0, base=None):
     """x in units from base (MAIN by default); row 0-4."""
     bx = MAIN if base is None else base
-    g = 0.12 * U
+    g = 0.20 * U
     x1, y1 = bx + x * U + g / 2, TOP + row * U + g / 2
     x2, y2 = bx + (x + w) * U - g / 2, TOP + (row + h) * U - g / 2
-    r = 0.16 * U
-    c.shadow([(x1, y1 + 3, x2, y2 + 5, r)], 4, alpha=230)
-    c.rrect(x1, y1, x2, y2, r, KEY_EDGE + (255,))
-    # Rounded black cap: lit from above, a soft gloss band near the top.
-    c.vgrad_rrect(x1 + 1.5, y1 + 1, x2 - 1.5, y2 - 3, r - 1, None, None,
-                  stops=[(0.0, lerp(KEY_TOP, (255, 255, 255), 0.18)), (0.10, KEY_TOP), (0.45, KEY),
-                         (0.85, lerp(KEY, KEY_EDGE, 0.4)), (1.0, KEY_EDGE)])
+    r = min(0.24 * U, (y2 - y1) * 0.36)
+    # The socket the key stands in, and the key's shadow on the tray.
+    c.rrect(x1 - 2.5, y1 - 1.5, x2 + 2.5, y2 + 3.5, r + 2, (6, 6, 7, 255))
+    c.shadow([(x1, y1 + 4, x2, y2 + 6, r)], 4, alpha=235)
+    shade_cap([(x1, y1, x2, y2, r)])
     cx, cy = (x1 + x2) / 2, (y1 + y2) / 2 - 2
     s = size or 0.30 * U
     if len(legends) == 1:
@@ -113,34 +168,15 @@ for i, (ch, code) in enumerate(zip("ASDFGHJKL", [m(4, 0x10), m(3, 0x08), m(4, 0x
 key(0, 2, 10.75, 1, [":", ";"], m(3, 0x80))
 key(0, 2, 11.75, 1, ['"', "'"], m(2, 0x80))
 # ENTER: an inverted L, the narrow upper part over the wide lower one, as one cap.
-from PIL import Image, ImageDraw
-g = 0.12 * U
+g = 0.20 * U
 ex1, ey1, ex2, ey2 = MAIN + 12.75 * U + g / 2, TOP + 2 * U + g / 2, MAIN + 14.5 * U - g / 2, TOP + 3 * U - g / 2
 ux1, uy1 = MAIN + 13.5 * U + g / 2, TOP + 1 * U + g / 2
-r = 0.16 * U
-def l_mask(dx1, dy1, dx2, dy2, inset):
-    mk = Image.new("L", c.img.size, 0)
-    d = ImageDraw.Draw(mk)
-    d.rounded_rectangle(c.box(ex1 + dx1, ey1 + dy1, ex2 + dx2, ey2 + dy2), radius=c.s(r - inset), fill=255)
-    d.rounded_rectangle(c.box(ux1 + dx1, uy1 + dy1, ex2 + dx2, ey2 + dy2), radius=c.s(r - inset), fill=255)
-    d.rectangle(c.box(ux1 + dx1, ey1 + dy1, ex2 + dx2 - r, ey1 + r), fill=255)
-    return mk
-sh = l_mask(0, 3, 0, 5, 0).filter(__import__("PIL.ImageFilter", fromlist=["x"]).GaussianBlur(c.s(4)))
-c.img.paste(Image.new("RGBA", c.img.size, (0, 0, 0, 255)), (0, 0), sh.point(lambda v: v * 230 // 255))
-c.img.paste(Image.new("RGBA", c.img.size, KEY_EDGE + (255,)), (0, 0), l_mask(0, 0, 0, 0, 0))
-grad = Image.new("RGBA", c.img.size)
-gd = ImageDraw.Draw(grad)
-gy1, gy2 = c.s(uy1), c.s(ey2)
-for yy in range(gy1, gy2):
-    t = (yy - gy1) / max(1, gy2 - gy1 - 1)
-    stops = [(0.0, lerp(KEY_TOP, (255, 255, 255), 0.18)), (0.05, KEY_TOP), (0.45, KEY), (0.9, lerp(KEY, KEY_EDGE, 0.4)),
-             (1.0, KEY_EDGE)]
-    for (t0, ca), (t1, cb) in zip(stops, stops[1:]):
-        if t0 <= t <= t1:
-            col = lerp(ca, cb, (t - t0) / max(1e-6, t1 - t0))
-            break
-    gd.line([(c.s(ex1), yy), (c.s(ex2), yy)], fill=col + (255,))
-c.img.paste(grad, (0, 0), l_mask(1.5, 1, -1.5, -3, 1))
+r = (ey2 - ey1) * 0.36
+for dx, dy, grow, col in [(0, -1.5, 2.5, (6, 6, 7, 255))]:
+    c.rrect(ex1 - grow, ey1 + dy, ex2 + grow, ey2 + 3.5, r + 2, col)
+    c.rrect(ux1 - grow, uy1 + dy, ex2 + grow, ey2 + 3.5, r + 2, col)
+c.shadow([(ex1, ey1 + 4, ex2, ey2 + 6, r), (ux1, uy1 + 4, ex2, ey2 + 6, r)], 4, alpha=235)
+shade_cap([(ex1, ey1, ex2, ey2, r), (ux1, uy1, ex2, ey2, r), (ux1, ey1 - r, ex2 - r, ey1 + r, 0)])
 c.text((ex1 + ex2) / 2, (ey1 + ey2) / 2 - 2, "ENTER", 0.17 * U, INK, "mm")
 keys.append((m(1, 0x01), 0, (ux1, uy1, ex2, ey1), "ENTER (upper)"))
 keys.append((m(1, 0x01), 0, (ex1, ey1, ex2, ey2), "ENTER"))

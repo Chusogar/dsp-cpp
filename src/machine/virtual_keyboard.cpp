@@ -125,11 +125,12 @@ void VirtualKeyboard::compose() {
         if (!sunk && pressed_ >= 0 && keys_[i].flags == 0 && keys_[pressed_].code == keys_[i].code) sunk = true;
         if (!sunk) continue;
         const VkbKeyDef& k = keys_[i];
-        const uint32_t shade = base_[size_t(k.y1 > 0 ? k.y1 - 1 : 0) * size_t(width_) + size_t(k.x1 + 2)];
         for (int y = k.y2 - 1; y >= k.y1; y--) {
+            // The whole cap rectangle moves down; the band it uncovers at the
+            // top shows what lay just above it (socket rim / background).
+            const int sy = y - travel < 0 ? 0 : y - travel;
             for (int x = k.x1; x < k.x2; x++) {
-                uint32_t p = shade;
-                if (y - travel >= k.y1) p = base_[size_t(y - travel) * size_t(width_) + size_t(x)];
+                const uint32_t p = base_[size_t(sy) * size_t(width_) + size_t(x)];
                 const uint32_t r = ((p >> 16) & 0xff) * 13 / 16, g = ((p >> 8) & 0xff) * 13 / 16,
                                b = (p & 0xff) * 13 / 16;
                 image_[size_t(y) * size_t(width_) + size_t(x)] = (p & 0xff000000u) | r << 16 | g << 8 | b;
