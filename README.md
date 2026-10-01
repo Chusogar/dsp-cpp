@@ -280,6 +280,10 @@ command against a 300 rpm rotation (record not found after 5 revolutions).
 Bob Winner's protection — 70 overlapping sectors with CRC errors on track 79 —
 passes and the game runs. Writes go to the in-memory image only.
 
+Atari ST drives: two floppy drives. The first `--disk` goes in drive A, a
+second one in drive B (`--disk game1.st --disk game2.st`); each drive keeps its
+own image and head position, and both share the WD1772 the PSG port selects.
+
 ### Atari System 1 (Indiana Jones, Marble Madness, Peter Pack Rat, Road Runner)
 
 Atari System 1 is a 7.16 MHz 68000 behind a SLAPSTIC (105 on Indiana Jones, 103

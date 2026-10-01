@@ -536,7 +536,7 @@ add_executable(w65c816_sst EXCLUDE_FROM_ALL tools/w65c816_sst.cpp src/cpu/w65c81
 target_include_directories(w65c816_sst PRIVATE src)
 
 # Atari ST headless runner (screenshots, scripted keys/mouse/joystick):
-# st_run ROMSET FRAMES OUTPREFIX [disk]
+# st_run ROMSET FRAMES OUTPREFIX [diskA [diskB]]
 add_executable(st_run EXCLUDE_FROM_ALL
   tools/st_run.cpp
   src/drivers/computers/atari_st.cpp

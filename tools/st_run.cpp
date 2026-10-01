@@ -1,4 +1,4 @@
-// Headless Atari ST runner: st_run ROMSET FRAMES OUTPREFIX [disk]
+// Headless Atari ST runner: st_run ROMSET FRAMES OUTPREFIX [diskA [diskB]]
 // Saves a screenshot every ST_EVERY frames (default 50) and prints the PC.
 // ST_KEYS="frame:key:down,..." (key = dsp::Key index),
 // ST_MOUSE="frame:dx:dy:button,..." (relative motion in host pixels),
@@ -81,7 +81,7 @@ static std::vector<T> parse(const char* env, F fn) {
 
 int main(int argc, char** argv) {
     if (argc < 4) {
-        std::fprintf(stderr, "usage: %s ROMSET FRAMES OUTPREFIX [disk]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s ROMSET FRAMES OUTPREFIX [diskA [diskB]]\n", argv[0]);
         return 1;
     }
     AtariSt st;
@@ -90,9 +90,11 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "init: %s\n", error.c_str());
         return 1;
     }
-    if (argc > 4 && !st.load_media(argv[4], &error)) {
-        std::fprintf(stderr, "disk: %s\n", error.c_str());
-        return 1;
+    for (int i = 4; i < argc; i++) {  // drive A, then drive B
+        if (!st.load_media(argv[i], &error)) {
+            std::fprintf(stderr, "disk: %s\n", error.c_str());
+            return 1;
+        }
     }
     st.reset();
     int cur_frame = 0;
