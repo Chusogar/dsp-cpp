@@ -104,6 +104,8 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | YM2612 (OPN2) | new (from `fmopn.pas` + YM2612 DAC) | Six FM channels and PCM DAC |
 | 315-5313 VDP | `src/consolas/sega_315_5313.pas` | Planes A/B, window, sprites, DMA, CRAM |
 | Genesis / Mega Drive | `src/consolas/genesis.pas` | 68000 + Z80, VDP, YM2612+PSG, 3-button pads |
+| Hitachi SH-2 (SH7604) | new | CPU core, delay slots, DIVU, DMAC, FRT, WDT, cache RAM |
+| Sega 32X | new | Two SH-2s, 32X VDP (packed / direct / run length), PWM, DREQ FIFO |
 | Atari DVG (Asteroids) | `src/arcade/misc/avg_dvg.pas` | PROM-driven Digital Vector Generator |
 | Asteroids driver | `src/arcade/asteroids_hw.pas` | MOS 6502 @ 1.512 MHz, DVG, discrete sound, 400×320 |
 | Atari AVG (Star Wars) | new (MAME `avgdvg.cpp`) | PROM state machine, colour vector list |
@@ -168,6 +170,7 @@ holding the individual files:
 ./build/dsp --game scv /path/to/scv.zip
 ./build/dsp --game pv2000 --tape game.bin /path/to/pv2000.zip
 ./build/dsp --game genesis /path/to/game.md
+./build/dsp --game 32x --tape game.32x /path/to/32x.zip
 ./build/dsp --game exl100 /path/to/exl100.zip
 ./build/dsp --game pentagon --disk game.trd /path/to/pentagon-roms/
 ./build/dsp --game scorpion --disk game.scl /path/to/scorpion.rom
@@ -228,7 +231,11 @@ Options:
 512 KiB chip RAM, Kickstart overlay, MOS 8520 CIAs, copper/blitter/bitplanes, and
 Paula disk DMA. Point it at a MAME `a500.zip` and it loads Kickstart 1.3
 (`315093-02.u2`) or 1.2. `--disk FILE.adf` mounts an 880K (80×2×11) AmigaDOS ADF;
-tracks are encoded as MFM for Kickstart's trackdisk DSKDMA.
+tracks are encoded as MFM for Kickstart's trackdisk DSKDMA. A second `--disk`
+goes in DF1 (an external drive; `--disk df0.adf --disk df1.adf`): each drive has
+its own head, motor latch and disk-change line on /SEL0 and /SEL1, and answers
+Kickstart's drive-ID probe. Without a second disk DF1 is not connected, as on
+a plain A500.
 
 ```bash
 ./build/dsp --game amiga /path/to/a500.zip
@@ -760,6 +767,37 @@ block, or for dumps of 2 MiB and under. Super Street Fighter II style 512 KiB
 banks at `$A130F3`–`$A130FF` are used when the image is larger than 4 MiB.
 There is no TMSS lock (bit 7 of the version register is set). Interlace mode
 3, EEPROM mappers and the 6-button pad are not emulated.
+
+### Sega 32X
+
+`--game 32x` (also `sega32x`, `mars`; `32x-pal`, `32x-jp` for the other
+regions) is a Genesis with the 32X attached: master and slave SH-2 at
+23 MHz (a new interpreter with the SH7604's division unit, DMA controller,
+free-running timer, watchdog and cache-as-RAM), 256 KiB SDRAM, two 128 KiB
+frame buffers, the 32X VDP (packed pixel, direct colour and run length
+modes, line table, screen shift, auto fill, frame buffer swap at VBlank,
+256-colour palette with the priority bit) mixed over the Genesis planes, PWM
+sound, the eight communication ports, the 68000-to-SH-2 DREQ FIFO and the
+VRES/V/H/CMD/PWM interrupts. The real boot ROMs run: point the driver at
+MAME's `32x.zip` (`32x_g_bios.bin`, `32x_m_bios.bin`, `32x_s_bios.bin`) and
+pass the cartridge with `--tape`.
+
+```bash
+./build/dsp --game 32x --tape "Star Wars Arcade (USA).32x" /path/to/32x.zip
+```
+
+Controls are the Genesis ones. Tested games: Star Wars Arcade (SEGA logo,
+title, ship selection, 3D missions), After Burner Complete (title, menus,
+carrier launch, stage 1) and Spider-Man: Web of Fire (intro, title, first
+level). The SH-2 takes PC-relative loads in a delay slot relative to the
+branch target, the PWM timer only runs with a channel on, and the 68000's
+interrupt acknowledge clears the Genesis VDP's pending VINT / HINT (After
+Burner re-enables VINT inside its own handler). With the 32X priority bit
+(PRI) set, only 32X pixels with bit 15 are opaque; the others show the
+Genesis, backdrop included. The SH-2 caches are not
+modelled (memory is always coherent) and bus wait states are approximate.
+`tools/s32x_run.cpp` (`make s32x_run`) is a headless runner that saves
+screenshots, the PCs, the communication ports and optionally a `.wav`.
 
 ### Commodore 64
 

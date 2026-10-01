@@ -43,11 +43,17 @@ public:
     // Byte write used by the Z80 / 68k MOVE.B to the PSG port.
     void write_byte(uint8_t address, uint8_t value);
 
+    // The 68000 acknowledged interrupt `level` (4 HINT, 6 VINT): the pending
+    // flag clears, so re-enabling the interrupt does not fire it again.
+    void acknowledge(int level);
     void handle_scanline(int line);
     void handle_eof();
     void set_hpos_cycles(int cycles) { hpos_cycles_ = cycles; }
 
     const uint32_t* line_buffer() const { return line_buf_.data(); }
+    // 1 where the last rendered line shows the backdrop colour (no plane or
+    // sprite pixel), which the 32X lets its own picture through.
+    const uint8_t* line_backdrop() const { return line_backdrop_.data(); }
     int screen_width() const { return h40_ ? 320 : 256; }
     int screen_height() const { return visible_scanlines_; }
     int total_scanlines() const { return total_scanlines_; }
@@ -139,6 +145,7 @@ private:
     std::array<uint16_t, kVsramSize> vsram_{};
     std::array<uint32_t, 64> palette_{};
     std::array<uint32_t, kMaxWidth> line_buf_{};
+    std::array<uint8_t, kMaxWidth> line_backdrop_{};
 };
 
 }  // namespace dsp

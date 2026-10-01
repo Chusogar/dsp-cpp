@@ -75,6 +75,16 @@ void Sega3155313::raise_vint(bool state) {
     if (vint_) vint_(state);
 }
 
+void Sega3155313::acknowledge(int level) {
+    if (level == 6) {
+        irq6_pending_ = false;
+        raise_vint(false);
+    } else if (level == 4) {
+        irq4_pending_ = false;
+        raise_hint(false);
+    }
+}
+
 void Sega3155313::raise_z80_irq(bool state) {
     if (z80_irq_) z80_irq_(state);
 }
@@ -586,12 +596,15 @@ void Sega3155313::render_line(int line) {
 
     const int left = h40_ ? 0 : 32;
     line_buf_.fill(palette_[size_t(backdrop)]);
+    line_backdrop_.fill(1);
     for (int x = 0; x < width; x++) {
         uint8_t color = backdrop;
         uint8_t layer_pri = 0;
         bool is_sprite = false;
+        bool drawn = false;
         auto plot = [&](uint8_t col, uint8_t pri, bool sprite) {
             if (col == 0) return;
+            drawn = true;
             color = col;
             layer_pri = pri;
             is_sprite = sprite;
@@ -630,6 +643,7 @@ void Sega3155313::render_line(int line) {
             }
         }
         line_buf_[size_t(left + x)] = palette_rgb(color, shadow, highlight);
+        line_backdrop_[size_t(left + x)] = drawn ? 0 : 1;
     }
     if (!h40_) {
         const uint32_t border = palette_[size_t(backdrop)];
@@ -656,6 +670,7 @@ void Sega3155313::handle_scanline(int line) {
         }
     } else {
         std::fill(line_buf_.begin(), line_buf_.end(), palette_[size_t(regs_[0x07] & 0x3f)]);
+        line_backdrop_.fill(1);
     }
 
     if (line == irq6_scanline_) {
