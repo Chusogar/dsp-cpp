@@ -5390,6 +5390,40 @@ void test_trdos_scl_and_beta() {
     check(!scorpion->init("/no/such/scorpion", &error), "Scorpion init fails without ROMs");
     check(error.find("not found") != std::string::npos, "Scorpion reports the missing ROM");
 
+    if (std::filesystem::exists("/tmp/roms/scorpion/scorpio.zip")) {
+        // Real Scorpion ROM set (MAME "scorpio"): boot menu, the 128 TR-DOS
+        // entry (service ROM polling Beta INTRQ on #1F), and the Magic NMI.
+        dsp::Scorpion256 sc;
+        check(sc.init("/tmp/roms/scorpion/scorpio.zip", &error), "Scorpion ROM set loads");
+        auto frames = [&](int n, dsp::Key key) {
+            for (int i = 0; i < n; i++) {
+                dsp::MachineInputs in;
+                if (key != dsp::Key::Count) in.keys[size_t(key)] = true;
+                sc.set_inputs(in);
+                sc.run_frame();
+                std::vector<int16_t> audio;
+                sc.drain_audio(audio);
+            }
+        };
+        frames(150, dsp::Key::Count);
+        frames(3, dsp::Key::Enter);  // "128 TR-DOS"
+        frames(200, dsp::Key::Count);
+        check(sc.debug_rom_page() != 2, "Scorpion 128 TR-DOS leaves the service ROM (no #1F hang)");
+        sc.reset();
+        frames(150, dsp::Key::Count);
+        frames(3, dsp::Key::Down);
+        frames(10, dsp::Key::Count);
+        frames(3, dsp::Key::Enter);  // "128 BASIC"
+        frames(100, dsp::Key::Count);
+        check(sc.debug_rom_page() == 0, "Scorpion 128 BASIC runs from ROM 0");
+        frames(5, dsp::Key::F5);
+        frames(100, dsp::Key::Count);
+        check(sc.debug_rom_page() == 2, "Scorpion F5 (Magic NMI) opens the service monitor ROM");
+        frames(3, dsp::Key::Num0);  // "0. Continue program"
+        frames(100, dsp::Key::Count);
+        check(sc.debug_rom_page() == 0, "Scorpion service monitor returns to 128 BASIC");
+    }
+
     namespace fs = std::filesystem;
     const fs::path dir = fs::temp_directory_path() / "dsp-zx-clone-roms";
     fs::create_directories(dir);

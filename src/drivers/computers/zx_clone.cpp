@@ -334,9 +334,19 @@ void ZxClone::on_m1(uint16_t pc) {
         if (rom48 && !page0_ram_) beta_.enable();
         update_memory();
     } else if (pc >= 0x4000) {
-        if (nmi_pending_) {
+        if (nmi_pending_ && model_ != ZxCloneModel::Scorpion256) {
             nmi_pending_ = false;
             update_memory();
+        } else if (nmi_pending_) {
+            // MAME scorpion do_nmi: the Magic button only takes effect on
+            // the next opcode fetch outside the ROM. The service ROM (or
+            // TR-DOS in 48K mode) is paged in with the Beta ports and the
+            // NMI is taken; the ROM stays paged until code runs from RAM.
+            beta_.enable();
+            update_memory();
+            nmi_pending_ = false;
+            cpu_.set_nmi(IrqLine::Pulse);
+            return;
         }
         if (beta_.active()) {
             beta_.disable();
@@ -395,6 +405,12 @@ uint8_t ZxClone::io_in(uint16_t port) {
             default: break;
         }
     } else if ((port & 0x21) == 0x01) {
+        if (model_ == ZxCloneModel::Scorpion256 && (port & 0xa3) == 0x03) {
+            // Scorpion: with TR-DOS paged out, port #1F still shows the Beta
+            // INTRQ/DRQ lines on D7-D6 (MAME scorpion_io); the service ROM
+            // polls them. The Kempston joystick keeps D4-D0.
+            return uint8_t((beta_.state_r() & 0xc0) | (joy_ & 0x1f));
+        }
         return uint8_t(joy_ & 0x1f);
     }
 
@@ -549,11 +565,8 @@ void ZxClone::set_inputs(const MachineInputs& inputs) {
     const bool magic = inputs.key(Key::F5);
     if (magic && !magic_down_) {
         nmi_pending_ = true;
-        if (model_ == ZxCloneModel::Scorpion256) {
-            beta_.enable();
-            update_memory();
-        }
-        cpu_.set_nmi(IrqLine::Pulse);
+        // The Scorpion defers it until the CPU fetches from RAM (on_m1).
+        if (model_ != ZxCloneModel::Scorpion256) cpu_.set_nmi(IrqLine::Pulse);
     }
     magic_down_ = magic;
 }

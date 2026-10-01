@@ -536,7 +536,11 @@ is the 1024SL boot monitor. RAM at `$C000` is
 Scorpion ZS-256 wants a 64 KB ROM (`scorpion.rom` / `scorp294.rom`, or
 `scorp0.rom`…`scorp3.rom`): 128 editor, 48 BASIC, service, TR-DOS. Port `$1FFD`
 bit 0 maps RAM page 0 at `$0000`, bit 1 selects the service ROM, bit 4 is the
-256 KB RAM bit. F5 is the Magic button (NMI).
+256 KB RAM bit. F5 is the Magic button (NMI): as in MAME it is taken on the next
+opcode fetch from RAM, pages in the service ROM (TR-DOS in 48K mode) with the
+Beta ports and opens the "Shadow service monitor"; "0. Continue program"
+returns. With TR-DOS paged out, port `#1F` still shows the Beta INTRQ/DRQ lines
+on D7-D6 (the service ROM polls them), with the Kempston joystick on D4-D0.
 
 Keyboard (both clones): Left Shift is CAPS SHIFT; either Ctrl, Right Shift or
 AltGr is SYMBOL SHIFT. The cursor keys send CAPS SHIFT + 5/6/7/8, Backspace and
