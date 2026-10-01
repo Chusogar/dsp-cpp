@@ -35,7 +35,9 @@ public:
     void run_frame() override;
     void set_inputs(const MachineInputs& inputs) override;
     void set_dip_switch(int bank, uint8_t value) override;
-    const uint32_t* framebuffer() const override { return framebuffer_.data(); }
+    const uint32_t* framebuffer() const override {
+        return vkb_visible_ ? display_.data() : framebuffer_.data();
+    }
     int screen_width() const override { return kWidth; }
     int screen_height() const override { return kHeight; }
     double frames_per_second() const override { return kFps; }
@@ -47,6 +49,13 @@ public:
     bool uses_relative_pointer() const override { return true; }
 
     uint32_t debug_pc() const { return cpu_.pc(); }
+    // On-screen keyboard (Hataroid's, toggled with F11).
+    static constexpr int kVkbTop = 187;          // first framebuffer row
+    static constexpr int kVkbHeight = kHeight - kVkbTop;
+    bool vkb_visible() const { return vkb_visible_; }
+    void set_vkb_visible(bool visible);
+    // Framebuffer position of the centre of the key with this ST scancode.
+    bool vkb_key_centre(uint8_t scancode, int* x, int* y) const;
     M68000& debug_cpu() { return cpu_; }
     uint32_t debug_a(int r) const { return cpu_.a[size_t(r)].l; }
     uint8_t peek(uint32_t address) const { return const_cast<AtariSt*>(this)->read_byte(address); }
@@ -81,6 +90,12 @@ private:
     void blit_mem_write(uint32_t address, uint16_t value);
     void run_blitter();
 
+    void vkb_init();
+    int vkb_hit(int x, int y) const;  // key table index or -1
+    void vkb_input(const MachineInputs& inputs);
+    void vkb_release_all();
+    void vkb_compose();
+
     M68000 cpu_;
     AY8910 psg_;
     Mc68901 mfp_;
@@ -89,6 +104,17 @@ private:
     std::vector<uint8_t> ram_;
     std::vector<uint8_t> rom_;
     std::array<uint32_t, kWidth * kHeight> framebuffer_{};
+    std::array<uint32_t, kWidth * kHeight> display_{};
+
+    // On-screen keyboard state.
+    std::vector<uint32_t> vkb_image_;  // 640 x kVkbHeight, scaled once
+    bool vkb_visible_ = false;
+    bool vkb_toggle_down_ = false;
+    bool vkb_button_down_ = false;
+    int vkb_pressed_ = -1;  // key table index held by the mouse
+    std::array<bool, 128> vkb_latched_{};  // sticky Shift / Ctrl / Alt
+    bool vkb_pointer_on_ = false;
+    int vkb_pointer_x_ = 0, vkb_pointer_y_ = 0;
     std::array<uint16_t, 16> palette_{};
     std::array<bool, size_t(Key::Count)> keys_down_{};
 

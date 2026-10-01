@@ -6986,6 +6986,52 @@ void test_st_boot_if_present() {
     check(white > 25000, "opening drive A paints a GEM window");
 }
 
+void test_st_virtual_keyboard() {
+    // Hataroid's on-screen keyboard: F11 toggles it, clicks become IKBD
+    // make/break codes, Shift latches until the next key.
+    dsp::AtariSt st;
+    check(!st.vkb_visible(), "ST on-screen keyboard starts hidden");
+    dsp::MachineInputs in;
+    in.has_pointer = true;
+    in.pointer_x = 320;
+    in.pointer_y = 100;
+    in.keys[size_t(dsp::Key::F11)] = true;
+    st.set_inputs(in);
+    in.keys[size_t(dsp::Key::F11)] = false;
+    st.set_inputs(in);
+    check(st.vkb_visible(), "F11 shows the ST on-screen keyboard");
+    check(st.ikbd_pending_bytes().empty(), "F11 itself is not sent to the ST");
+    auto click = [&](uint8_t scancode) {
+        int x = 0, y = 0;
+        check(st.vkb_key_centre(scancode, &x, &y), "on-screen key exists");
+        in.pointer_x = x;
+        in.pointer_y = y;
+        st.set_inputs(in);
+        in.pointer_button1 = true;
+        st.set_inputs(in);
+        in.pointer_button1 = false;
+        st.set_inputs(in);
+    };
+    click(0x2a);  // Left Shift (latched)
+    click(0x1e);  // A
+    const std::vector<uint8_t> bytes = st.ikbd_pending_bytes();
+    check(bytes == std::vector<uint8_t>({0x2a, 0x1e, 0x9e, 0xaa}),
+          "clicking Shift then A sends Shift down, A down/up, Shift up");
+    click(0x3b);  // F1 (slanted key: quad hit test)
+    const std::vector<uint8_t> f1 = st.ikbd_pending_bytes();
+    check(f1.size() == 6 && f1[4] == 0x3b && f1[5] == 0xbb, "the slanted F1 key is clickable");
+    const uint32_t* fb = st.framebuffer();
+    int light = 0;
+    for (int x = 0; x < 640; x++) {
+        const uint32_t p = fb[size_t(dsp::AtariSt::kVkbTop + 60) * 640 + size_t(x)];
+        if (((p >> 16) & 0xff) > 150) light++;
+    }
+    check(light > 300, "the keyboard picture covers the bottom of the screen");
+    in.keys[size_t(dsp::Key::F11)] = true;
+    st.set_inputs(in);
+    check(!st.vkb_visible(), "F11 hides the ST on-screen keyboard again");
+}
+
 void test_st_dma_acsi_does_not_touch_floppy() {
     // TOS probes ACSI targets at boot by writing $08,$28,...,$E8 with DMA
     // mode bit 3 (HDC) set. Those bytes must not reach the WD1772: $A8
@@ -8355,6 +8401,7 @@ int main() {
     test_st_boot_if_present();
     test_st_north_south_if_present();
     test_st_dma_acsi_does_not_touch_floppy();
+    test_st_virtual_keyboard();
     test_st_world_class_rugby_if_present();
     test_amiga_missing_roms();
     test_amiga_adf_format();
