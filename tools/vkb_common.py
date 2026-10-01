@@ -114,6 +114,7 @@ def write_inc(path, img, keys, prefix, header):
         f.write("// code, flags (1 modifier, 2 lock), cap rect.\n")
         f.write(f"const VkbKeyDef k{prefix}Keys[] = {{\n")
         for code, flags, (x1, y1, x2, y2), comment in keys:
+            comment = comment.replace("\\", "backslash")  # a trailing \ would continue the comment
             f.write(f"    {{{code}, {flags}, {round(x1)}, {round(y1)}, {round(x2)}, {round(y2)}}},  // {comment}\n")
         f.write("};\n")
     return len(data)

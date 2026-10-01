@@ -2,11 +2,18 @@
 
 #include <zlib.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_STATIC
+#define STBI_ONLY_JPEG
+#define STBI_NO_STDIO
+#include "third_party/stb_image.h"
+
 namespace dsp {
 
 VirtualKeyboard::VirtualKeyboard(const unsigned char* picture, size_t picture_size, int width, int height,
-                                 const VkbKeyDef* keys, int key_count)
+                                 const VkbKeyDef* keys, int key_count, Format format)
     : picture_data_(picture),
+      format_(format),
       picture_size_(picture_size),
       width_(width),
       height_(height),
@@ -15,6 +22,20 @@ VirtualKeyboard::VirtualKeyboard(const unsigned char* picture, size_t picture_si
       latched_(size_t(key_count), false) {}
 
 void VirtualKeyboard::build() {
+    if (format_ == Format::Jpeg) {
+        int w = 0, h = 0, n = 0;
+        unsigned char* px = stbi_load_from_memory(picture_data_, int(picture_size_), &w, &h, &n, 4);
+        base_.assign(size_t(width_) * size_t(height_), 0xff404040u);
+        if (px != nullptr && w == width_ && h == height_) {
+            for (size_t i = 0; i < base_.size(); i++) {
+                const unsigned char* p = px + i * 4;
+                base_[i] = 0xff000000u | uint32_t(p[0]) << 16 | uint32_t(p[1]) << 8 | p[2];
+            }
+        }
+        stbi_image_free(px);
+        image_ = base_;
+        return;
+    }
     const size_t stride = size_t(width_) * 4;
     std::vector<uint8_t> rgba(stride * size_t(height_));
     uLongf len = uLongf(rgba.size());
@@ -117,7 +138,7 @@ void VirtualKeyboard::compose() {
     image_ = base_;
     // A key that is down sinks: its cap moves down a few pixels and gets
     // darker, the gap it leaves at the top shows the shadowed surround.
-    const int travel = height_ / 90 + 2;
+    const int travel = travel_ > 0 ? travel_ : height_ / 90 + 2;
     for (int i = 0; i < key_count_; i++) {
         // An ordinary key drawn in several pieces (the QL's L-shaped ENTER)
         // sinks as a whole.

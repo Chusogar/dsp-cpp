@@ -281,13 +281,14 @@ colour names over the number row. `tools/gen_cpc464_vkb.py` draws the Spanish CP
 keyboard with sculpted black caps in the charcoal case: red ESC, green TAB /
 FIJA MAYS / MAYS / CTRL / BORR / COPIA, blue L-shaped INTRO and pad INTRO, the
 cursor cross over the f0-f9 pad, the ventilation slots and the label strip
-with its power LED. `tools/gen_ql_vkb.py` draws the Sinclair QL: low domed
-black keys with white legends in the ribbed black case, the F1-F5 column,
-TABULATE / CAPS LOCK, the inverted-L ENTER and the cursor keys beside the
-space bar. CAPS SHIFT / SYMBOL SHIFT (Spectrum), SHIFT / CTRL (CPC) and
-SHIFT / CTRL / ALT (QL) latch until the next key. No
-logos or badges are drawn. Both run the generators (Pillow, FreeSans) to
-rebuild their `*_vkb_data.inc`.
+with its power LED. The Sinclair QL keyboard is a photo of
+the machine (`tools/ql_keyboard.jpg`) shown unchanged: the JPEG file is
+embedded as is and decoded at run time with stb_image
+(`src/third_party/stb_image.h`, public domain / MIT); `tools/gen_ql_vkb.py`
+only adds the key tiles measured on the photo. CAPS SHIFT / SYMBOL SHIFT (Spectrum), SHIFT / CTRL (CPC) and
+SHIFT / CTRL / ALT (QL) latch until the next key. The drawn keyboards show
+no logos or badges; run their generators (Pillow, FreeSans) to rebuild the
+`*_vkb_data.inc` files.
 
 Atari ST details: the keyboard ACIA keeps its last received byte in the data
 register (programs that poll `$FFFC02` directly, like World Class Rugby's

@@ -27,9 +27,12 @@ class VirtualKeyboard {
 public:
     static constexpr uint8_t kModifier = 1;
     static constexpr uint8_t kLock = 2;
+    // Generated pictures are row-delta RGBA in zlib; a photo can be used as
+    // the JPEG file itself, decoded unchanged on first show.
+    enum class Format { RgbaDeltaZlib, Jpeg };
 
     VirtualKeyboard(const unsigned char* picture, size_t picture_size, int width, int height,
-                    const VkbKeyDef* keys, int key_count);
+                    const VkbKeyDef* keys, int key_count, Format format = Format::RgbaDeltaZlib);
 
     bool visible() const { return visible_; }
     void set_visible(bool visible);
@@ -38,6 +41,8 @@ public:
     // Mouse over the overlay (MachineInputs::overlay_*).
     void input(const MachineInputs& inputs);
     void release_all();
+    // Pixels a held key moves down (0 = picture height / 90 + 2).
+    void set_travel(int pixels) { travel_ = pixels; }
 
     MachineOverlay overlay() const;
     int width() const { return width_; }
@@ -62,6 +67,7 @@ private:
     bool down(int i) const;
 
     const unsigned char* picture_data_;
+    Format format_;
     size_t picture_size_;
     int width_, height_;
     const VkbKeyDef* keys_;
@@ -74,6 +80,7 @@ private:
     bool toggle_down_ = false;
     bool button_down_ = false;
     int pressed_ = -1;
+    int travel_ = 0;
     std::vector<bool> latched_;
 };
 
