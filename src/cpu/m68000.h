@@ -61,6 +61,13 @@ public:
         irq_ack_ = std::move(handler);
     }
     void set_address_mask(uint32_t mask) { address_mask_ = mask & ~1u; }
+    // Model the 68000's two-word prefetch queue: instruction words already
+    // fetched are not re-read when the program overwrites them. Self-
+    // modifying copy protections (Atari ST loaders) depend on it.
+    void set_prefetch_emulation(bool on) {
+        prefetch_ = on;
+        pq_count_ = 0;
+    }
     using ExceptionHandler = std::function<void(uint32_t vector, uint32_t pc)>;
     void set_exception_handler(ExceptionHandler h) { exception_handler_ = std::move(h); }
     // Debug hook called with the PC before each instruction fetch.
@@ -100,6 +107,8 @@ private:
     void putbyte(uint32_t address, uint8_t value);
 
     uint16_t fetch_word();
+    // Instruction-stream word: from the prefetch queue when it holds it.
+    uint16_t prog_word(uint32_t address);
     uint32_t fetch_long();
 
     uint16_t get_flags() const;
@@ -154,6 +163,11 @@ private:
     uint32_t clock_;
     Type type_;
     bool opcode_ = true;
+    bool prefetch_ = false;
+    uint32_t exceptions_ = 0;  // exceptions taken through exception()
+    uint32_t pq_addr_ = 0;  // address of pq_val_[0]
+    uint16_t pq_val_[2] = {0, 0};
+    int pq_count_ = 0;
     uint32_t ea_ = 0;
     Reg32 other_sp_{};  // the stack pointer of the mode we are not in
     bool halted_ = false;

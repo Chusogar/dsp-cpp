@@ -111,6 +111,7 @@ void M68000::reset() {
     reset_request_ = IrqLine::Clear;
     halted_ = false;
     stopped_ = false;
+    pq_count_ = 0;
 }
 
 uint8_t M68000::getbyte(uint32_t address) {
@@ -137,15 +138,41 @@ void M68000::putbyte(uint32_t address, uint8_t value) {
 }
 
 uint16_t M68000::fetch_word() {
-    uint16_t value = getword(pc_.l);
+    if (!prefetch_) {
+        uint16_t value = prog_word(pc_.l);
+        pc_.l += 2;
+        return value;
+    }
+    const uint16_t value = prog_word(pc_.l);
     pc_.l += 2;
+    // Refill the queue with the two words after the one just consumed,
+    // keeping words that were already fetched.
+    uint16_t next[2];
+    for (int i = 0; i < 2; i++) next[i] = prog_word(pc_.l + uint32_t(i) * 2);
+    pq_addr_ = pc_.l;
+    pq_val_[0] = next[0];
+    pq_val_[1] = next[1];
+    pq_count_ = 2;
     return value;
 }
 
 uint32_t M68000::fetch_long() {
-    uint32_t value = (uint32_t(getword(pc_.l)) << 16) | getword(pc_.l + 2);
+    if (prefetch_) {
+        const uint32_t hi = fetch_word();
+        return (hi << 16) | fetch_word();
+    }
+    uint32_t value = (uint32_t(prog_word(pc_.l)) << 16) | prog_word(pc_.l + 2);
     pc_.l += 4;
     return value;
+}
+
+uint16_t M68000::prog_word(uint32_t address) {
+    if (prefetch_) {
+        for (int i = 0; i < pq_count_; i++) {
+            if (address == pq_addr_ + uint32_t(i) * 2) return pq_val_[i];
+        }
+    }
+    return getword(address);
 }
 
 uint16_t M68000::get_flags() const {
@@ -249,7 +276,7 @@ uint8_t M68000::read_b(uint8_t dir) {
     } else if (dir == 0x39) {
         ea_ = fetch_long();
     } else if (dir == 0x3a) {
-        ea_ = pc_.l + uint32_t(int32_t(int16_t(getword(pc_.l))));
+        ea_ = pc_.l + uint32_t(int32_t(int16_t(prog_word(pc_.l))));
         pc_.l += 2;
     } else if (dir == 0x3b) {
         ea_ = indexed_offset(pc_.l);
@@ -319,7 +346,7 @@ uint16_t M68000::read_w(uint8_t dir) {
     } else if (dir == 0x39) {
         ea_ = fetch_long();
     } else if (dir == 0x3a) {
-        ea_ = pc_.l + uint32_t(int32_t(int16_t(getword(pc_.l))));
+        ea_ = pc_.l + uint32_t(int32_t(int16_t(prog_word(pc_.l))));
         pc_.l += 2;
     } else if (dir == 0x3b) {
         ea_ = indexed_offset(pc_.l);
@@ -389,7 +416,7 @@ uint32_t M68000::read_l(uint8_t dir) {
     } else if (dir == 0x39) {
         ea_ = fetch_long();
     } else if (dir == 0x3a) {
-        ea_ = pc_.l + uint32_t(int32_t(int16_t(getword(pc_.l))));
+        ea_ = pc_.l + uint32_t(int32_t(int16_t(prog_word(pc_.l))));
         pc_.l += 2;
     } else if (dir == 0x3b) {
         ea_ = indexed_offset(pc_.l);
@@ -484,6 +511,7 @@ bool M68000::condition(uint8_t code) const {
 }
 
 void M68000::exception(uint32_t vector, int cycles) {
+    exceptions_++;
     cycles_ += cycles;
     if (exception_handler_) exception_handler_(vector, ppc_.l ? ppc_.l : pc_.l);
     const uint16_t sr = get_flags();
@@ -1970,7 +1998,7 @@ void M68000::group_5(uint16_t instruction) {
                     d[orig].set_wl(uint16_t(d[orig].wl() - 1));
                     if (d[orig].wl() != 0xffff) {
                         cycles_ -= 2;
-                        pc_.l += uint32_t(int32_t(int16_t(getword(pc_.l))));
+                        pc_.l += uint32_t(int32_t(int16_t(prog_word(pc_.l))));
                     } else {
                         pc_.l += 2;
                     }
@@ -2036,13 +2064,13 @@ void M68000::group_6(uint16_t instruction) {
     if (code == 1) {
         cycles_ += 18;
         if (offset == 0x00) {
-            const uint16_t displacement = getword(pc_.l);
+            const uint16_t displacement = prog_word(pc_.l);
             a[7].l -= 4;
             putword(a[7].l, uint16_t((pc_.l + 2) >> 16));
             putword(a[7].l + 2, uint16_t(pc_.l + 2));
             pc_.l += uint32_t(int32_t(int16_t(displacement)));
         } else if (offset == 0xff && type_ != Type::M68000) {
-            const uint32_t hi = getword(pc_.l), lo = getword(pc_.l + 2);
+            const uint32_t hi = prog_word(pc_.l), lo = prog_word(pc_.l + 2);
             const uint32_t ret = pc_.l + 4;
             a[7].l -= 4;
             putword(a[7].l, uint16_t(ret >> 16));
@@ -2058,9 +2086,9 @@ void M68000::group_6(uint16_t instruction) {
     }
     if (condition(code)) {
         cycles_ += 10;
-        if (offset == 0x00) pc_.l += uint32_t(int32_t(int16_t(getword(pc_.l))));
+        if (offset == 0x00) pc_.l += uint32_t(int32_t(int16_t(prog_word(pc_.l))));
         else if (offset == 0xff && type_ != Type::M68000) {
-            const uint32_t hi = getword(pc_.l), lo = getword(pc_.l + 2);
+            const uint32_t hi = prog_word(pc_.l), lo = prog_word(pc_.l + 2);
             pc_.l = pc_.l + uint32_t(int32_t((hi << 16) | lo));
         } else pc_.l += uint32_t(int32_t(int8_t(offset)));
     } else {
@@ -2526,6 +2554,7 @@ void M68000::group_4(uint16_t instruction) {
                 cycles_ += 38;
                 const uint16_t flags = get_flags();
                 set_flags(uint16_t(flags | 0x2000));
+                cc.t = false;
                 a[7].l -= 6;
                 putword(a[7].l + 4, pc_.wl());
                 putword(a[7].l + 2, pc_.wh());
@@ -2744,6 +2773,7 @@ bool M68000::take_irq() {
         cycles_ += 44;
         const uint16_t flags = get_flags();
         set_flags(uint16_t(flags | 0x2000));
+        cc.t = false;
         if (type_ != Type::M68000) {
             a[7].l -= 2;
             putword(a[7].l, uint16_t(level << 2));
@@ -2805,7 +2835,13 @@ int M68000::run(int cycles) {
             exception(3, 34);
             continue;
         }
+        // Trace: T set when the instruction starts means a trace exception
+        // after it (not after one that faulted: illegal, privilege, ...).
+        const bool tracing = cc.t;
+        const uint32_t exceptions_before = exceptions_;
         if (instruction_hook_) instruction_hook_(pc_.l);
+        // A jump, exception or interrupt empties the prefetch queue.
+        if (prefetch_ && (pq_count_ == 0 || pq_addr_ != pc_.l)) pq_count_ = 0;
         const uint16_t instruction = fetch_word();
         switch (instruction >> 12) {
             case 0x0: group_0(instruction); break;
@@ -2828,6 +2864,14 @@ int M68000::run(int cycles) {
                 pc_.l = ppc_.l;
                 exception(4, 34);  // illegal instruction
                 break;
+        }
+        // MOVE writes its destination before the last prefetch, so the
+        // second queued word is read after the write (other read-modify-
+        // write instructions prefetch first, then write).
+        if (prefetch_ && pq_count_ == 2 && (instruction >> 12) >= 1 && (instruction >> 12) <= 3) pq_count_ = 1;
+        if (tracing && exceptions_ == exceptions_before && !halted_) {
+            ppc_.l = pc_.l;  // stack the next instruction
+            exception(9, 34);
         }
         if (cycle_handler_) cycle_handler_(cycles_ - start);
     }

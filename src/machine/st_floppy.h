@@ -119,6 +119,7 @@ private:
     bool fdc_irq_ = false;
     bool fdc_busy_ = false;
     bool motor_on_ = false;
+    uint32_t motor_idle_ = 0;  // cycles since the last command ended
     int irq_delay_ = 0;
     bool dma_error_ = false;
     uint8_t last_cmd_ = 0;
