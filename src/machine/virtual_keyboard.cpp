@@ -1,5 +1,7 @@
 #include "machine/virtual_keyboard.h"
 
+#include <algorithm>
+
 #include <zlib.h>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -26,10 +28,25 @@ void VirtualKeyboard::build() {
         int w = 0, h = 0, n = 0;
         unsigned char* px = stbi_load_from_memory(picture_data_, int(picture_size_), &w, &h, &n, 4);
         base_.assign(size_t(width_) * size_t(height_), 0xff404040u);
-        if (px != nullptr && w == width_ && h == height_) {
-            for (size_t i = 0; i < base_.size(); i++) {
-                const unsigned char* p = px + i * 4;
-                base_[i] = 0xff000000u | uint32_t(p[0]) << 16 | uint32_t(p[1]) << 8 | p[2];
+        if (px != nullptr && crop_x_ + width_ <= w && crop_y_ + height_ <= h) {
+            for (int y = 0; y < height_; y++) {
+                for (int x = 0; x < width_; x++) {
+                    const unsigned char* p = px + (size_t(y + crop_y_) * size_t(w) + size_t(x + crop_x_)) * 4;
+                    int r = p[0], g = p[1], b = p[2], a = 255;
+                    if (key_red_) {
+                        // How much redder than the other channels: 60 levels
+                        // or less is the (dark grey) machine, 120 or more the
+                        // backdrop; in between is the anti-aliased outline,
+                        // whose red spill is removed.
+                        const int excess = r - std::max(g, b);
+                        if (excess > 60) {
+                            a = std::max(0, 255 - (excess - 60) * 255 / 60);
+                            r = std::max(g, b);
+                        }
+                    }
+                    base_[size_t(y) * size_t(width_) + size_t(x)] =
+                        uint32_t(a) << 24 | uint32_t(r) << 16 | uint32_t(g) << 8 | uint32_t(b);
+                }
             }
         }
         stbi_image_free(px);

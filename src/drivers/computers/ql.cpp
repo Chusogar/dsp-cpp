@@ -95,6 +95,7 @@ SinclairQl::SinclairQl()
       vkb_(kQlVkbJpeg, sizeof(kQlVkbJpeg), kQlVkbWidth, kQlVkbHeight, kQlVkbKeys,
            int(sizeof(kQlVkbKeys) / sizeof(kQlVkbKeys[0])), VirtualKeyboard::Format::Jpeg) {
     vkb_.set_travel(3);  // the QL's buttons sit low on their tiles
+    vkb_.set_photo_crop(kQlVkbCropX, kQlVkbCropY, true);
     cpu_.set_memory_handlers([this](uint32_t a) { return read_word(a); },
                              [this](uint32_t a, uint16_t v) { write_word(a, v); });
     cpu_.set_byte_handlers([this](uint32_t a) { return read_byte(a); },

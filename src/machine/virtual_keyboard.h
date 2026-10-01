@@ -41,6 +41,14 @@ public:
     // Mouse over the overlay (MachineInputs::overlay_*).
     void input(const MachineInputs& inputs);
     void release_all();
+    // JPEG pictures: the shown area starts at (x, y) of the photo (its size is
+    // the width / height given to the constructor) and, with key_red, a red
+    // studio background is keyed out to transparent.
+    void set_photo_crop(int x, int y, bool key_red) {
+        crop_x_ = x;
+        crop_y_ = y;
+        key_red_ = key_red;
+    }
     // Pixels a held key moves down (0 = picture height / 90 + 2).
     void set_travel(int pixels) { travel_ = pixels; }
 
@@ -81,6 +89,8 @@ private:
     bool button_down_ = false;
     int pressed_ = -1;
     int travel_ = 0;
+    int crop_x_ = 0, crop_y_ = 0;
+    bool key_red_ = false;
     std::vector<bool> latched_;
 };
 

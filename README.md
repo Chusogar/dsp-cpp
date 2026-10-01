@@ -284,8 +284,9 @@ cursor cross over the f0-f9 pad, the ventilation slots and the label strip
 with its power LED. The Sinclair QL keyboard is a photo of
 the machine (`tools/ql_keyboard.jpg`) shown unchanged: the JPEG file is
 embedded as is and decoded at run time with stb_image
-(`src/third_party/stb_image.h`, public domain / MIT); `tools/gen_ql_vkb.py`
-only adds the key tiles measured on the photo. CAPS SHIFT / SYMBOL SHIFT (Spectrum), SHIFT / CTRL (CPC) and
+(`src/third_party/stb_image.h`, public domain / MIT), cropped to the machine
+with the red backdrop keyed out to transparent; `tools/gen_ql_vkb.py` only
+adds the crop and the key tiles measured on the photo. CAPS SHIFT / SYMBOL SHIFT (Spectrum), SHIFT / CTRL (CPC) and
 SHIFT / CTRL / ALT (QL) latch until the next key. The drawn keyboards show
 no logos or badges; run their generators (Pillow, FreeSans) to rebuild the
 `*_vkb_data.inc` files.
