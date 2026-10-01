@@ -63,6 +63,9 @@ public:
     void set_address_mask(uint32_t mask) { address_mask_ = mask & ~1u; }
     using ExceptionHandler = std::function<void(uint32_t vector, uint32_t pc)>;
     void set_exception_handler(ExceptionHandler h) { exception_handler_ = std::move(h); }
+    // Debug hook called with the PC before each instruction fetch.
+    using InstructionHook = std::function<void(uint32_t pc)>;
+    void set_instruction_hook(InstructionHook h) { instruction_hook_ = std::move(h); }
     using AlineHandler = std::function<bool(uint16_t opcode, uint32_t pc)>;
     void set_aline_handler(AlineHandler h) { aline_handler_ = std::move(h); }
     using EmulOpHandler = std::function<bool(uint16_t opcode)>;
@@ -144,6 +147,7 @@ private:
     uint32_t address_mask_ = kAddressMask;
     uint32_t vbr_ = 0;
     ExceptionHandler exception_handler_;
+    InstructionHook instruction_hook_;
     AlineHandler aline_handler_;
     EmulOpHandler emul_op_handler_;
 

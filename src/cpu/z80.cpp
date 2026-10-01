@@ -1196,7 +1196,12 @@ void Z80::exec_index(uint16_t* index_reg) {
                 }
             } else {
                 // Any other opcode behaves as if the prefix was not there.
+                // It is fetched again by the main loop: undo this fetch's R
+                // increment (the prefix and the opcode count once each) and
+                // keep interrupts out between the prefix and the opcode.
                 pc_ = uint16_t(pc_ - 1);
+                r = uint8_t(((r - 1) & 0x7f) | (r & 0x80));
+                after_ei_ = true;
             }
             break;
     }

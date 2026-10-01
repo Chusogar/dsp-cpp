@@ -334,9 +334,19 @@ void ZxClone::on_m1(uint16_t pc) {
         if (rom48 && !page0_ram_) beta_.enable();
         update_memory();
     } else if (pc >= 0x4000) {
-        if (nmi_pending_) {
+        if (nmi_pending_ && model_ != ZxCloneModel::Scorpion256) {
             nmi_pending_ = false;
             update_memory();
+        } else if (nmi_pending_) {
+            // MAME scorpion do_nmi: the Magic button only takes effect on
+            // the next opcode fetch outside the ROM. The service ROM (or
+            // TR-DOS in 48K mode) is paged in with the Beta ports and the
+            // NMI is taken; the ROM stays paged until code runs from RAM.
+            beta_.enable();
+            update_memory();
+            nmi_pending_ = false;
+            cpu_.set_nmi(IrqLine::Pulse);
+            return;
         }
         if (beta_.active()) {
             beta_.disable();
@@ -395,6 +405,12 @@ uint8_t ZxClone::io_in(uint16_t port) {
             default: break;
         }
     } else if ((port & 0x21) == 0x01) {
+        if (model_ == ZxCloneModel::Scorpion256 && (port & 0xa3) == 0x03) {
+            // Scorpion: with TR-DOS paged out, port #1F still shows the Beta
+            // INTRQ/DRQ lines on D7-D6 (MAME scorpion_io); the service ROM
+            // polls them. The Kempston joystick keeps D4-D0.
+            return uint8_t((beta_.state_r() & 0xc0) | (joy_ & 0x1f));
+        }
         return uint8_t(joy_ & 0x1f);
     }
 
@@ -441,14 +457,27 @@ void ZxClone::io_out(uint16_t port, uint8_t value) {
             ay_.write(value);
         }
     } else {
-        if ((port & 0xc023) == 0x4021) {
+        // The board decodes #7FFD as 01xxxxxxxx1xxx01 and #1FFD as
+        // 00xxxxxxxx1xxx01 (MAME scorpion_io). Programs written for the
+        // 128K / Pentagon page with any A15 = 0, A1 = 0 address: the common
+        // "LD A,#11 : OUT (#FD),A" lands on #1FFD here, maps RAM over the
+        // ROM and crashes (Terminator 2/128). With the compatibility
+        // decoding (the default, DIP bank 0 bit 0 clear) only #1FFD itself
+        // reaches the Scorpion port and every other such address is #7FFD.
+        bool is_7ffd = (port & 0xc023) == 0x4021;
+        bool is_1ffd = (port & 0xc023) == 0x0021;
+        if (port_compat_ && (port & 0x8002) == 0 && (port & 1) != 0) {
+            is_1ffd = (port & 0xff00) == 0x1f00;
+            is_7ffd = !is_1ffd;
+        }
+        if (is_7ffd) {
             if (!paging_locked_) {
                 port_7ffd_ = value;
                 paging_locked_ = (value & 0x20) != 0;
                 update_memory();
             }
         }
-        if ((port & 0xc023) == 0x0021) {
+        if (is_1ffd) {
             port_1ffd_ = value;
             update_memory();
         }
@@ -542,18 +571,18 @@ void ZxClone::drain_audio(std::vector<int16_t>& out) {
     audio_.clear();
 }
 
-void ZxClone::set_dip_switch(int, uint8_t) {}
+void ZxClone::set_dip_switch(int bank, uint8_t value) {
+    // Scorpion, bank 0 bit 0: 1 = strict hardware decoding of #7FFD/#1FFD.
+    if (bank == 0) port_compat_ = (value & 1) == 0;
+}
 
 void ZxClone::set_inputs(const MachineInputs& inputs) {
     apply_keyboard(inputs);
     const bool magic = inputs.key(Key::F5);
     if (magic && !magic_down_) {
         nmi_pending_ = true;
-        if (model_ == ZxCloneModel::Scorpion256) {
-            beta_.enable();
-            update_memory();
-        }
-        cpu_.set_nmi(IrqLine::Pulse);
+        // The Scorpion defers it until the CPU fetches from RAM (on_m1).
+        if (model_ != ZxCloneModel::Scorpion256) cpu_.set_nmi(IrqLine::Pulse);
     }
     magic_down_ = magic;
 }

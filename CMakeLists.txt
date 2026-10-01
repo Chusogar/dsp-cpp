@@ -213,7 +213,6 @@ add_executable(dsp
   src/drivers/arcade/retofinv.cpp
   src/drivers/arcade/slapfight.cpp
   src/drivers/arcade/williams.cpp
-  src/drivers/arcade/badlands.cpp
 
   src/drivers/computers/spectrum.cpp
   src/drivers/computers/spectrum_128k.cpp

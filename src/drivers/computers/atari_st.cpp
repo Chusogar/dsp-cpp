@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstring>
 
+#include <zlib.h>
+
 #include "core/rom_loader.h"
 
 namespace dsp {
@@ -43,6 +45,53 @@ const IkbdMap kIkbd[] = {
     {Key::Down, 0x50},
 };
 
+// Hataroid's on-screen keyboard (tools/gen_st_vkb.py).
+struct VkbKey {
+    const char* label;
+    uint8_t scancode;
+    bool poly;      // F keys: quad in v[0..7]; others: rect v[0..3]
+    bool modifier;  // Shift / Ctrl / Alt latch until the next key
+    short v[8];
+};
+#include "drivers/computers/atari_st_vkb_data.inc"
+
+constexpr int kVkbTexW = 768;
+constexpr int kVkbTexH = 256;
+
+bool vkb_contains(const VkbKey& k, int tx, int ty) {
+    if (!k.poly) return tx >= k.v[0] && tx <= k.v[2] && ty >= k.v[1] && ty <= k.v[3];
+    // Convex quad (the slanted function keys): same side of every edge.
+    int sign = 0;
+    for (int i = 0; i < 4; i++) {
+        const int x1 = k.v[i * 2], y1 = k.v[i * 2 + 1];
+        const int x2 = k.v[((i + 1) % 4) * 2], y2 = k.v[((i + 1) % 4) * 2 + 1];
+        const int cross = (x2 - x1) * (ty - y1) - (y2 - y1) * (tx - x1);
+        if (cross == 0) continue;
+        const int s = cross > 0 ? 1 : -1;
+        if (sign == 0) sign = s;
+        else if (s != sign) return false;
+    }
+    return true;
+}
+
+void vkb_bounds(const VkbKey& k, int* x1, int* y1, int* x2, int* y2) {
+    if (!k.poly) {
+        *x1 = k.v[0];
+        *y1 = k.v[1];
+        *x2 = k.v[2];
+        *y2 = k.v[3];
+        return;
+    }
+    *x1 = *x2 = k.v[0];
+    *y1 = *y2 = k.v[1];
+    for (int i = 1; i < 4; i++) {
+        *x1 = std::min(*x1, int(k.v[i * 2]));
+        *x2 = std::max(*x2, int(k.v[i * 2]));
+        *y1 = std::min(*y1, int(k.v[i * 2 + 1]));
+        *y2 = std::max(*y2, int(k.v[i * 2 + 1]));
+    }
+}
+
 uint32_t st_color(uint16_t w) {
     const int r = (w >> 8) & 7;
     const int g = (w >> 4) & 7;
@@ -53,6 +102,7 @@ uint32_t st_color(uint16_t w) {
 }  // namespace
 
 AtariSt::AtariSt() : cpu_(kCpuClock), psg_(2000000, 1.2f) {
+    vkb_init();
     ram_.assign(kRamSize, 0);
     rom_.assign(kRomSize, 0xff);
     cpu_.set_memory_handlers([this](uint32_t a) { return read_word(a); },
@@ -112,13 +162,11 @@ void AtariSt::reset() {
     resolution_ = 0;
     psg_port_a_ = 0xff;
     acia_control_ = 0;
+    acia_rdr_ = 0;
     ikbd_rx_.clear();
     ikbd_pending_.clear();
     ikbd_cmd_ = 0;
     ikbd_reset_step_ = 0;
-    joy0_state_ = joy1_state_ = 0;
-    joy_event_mode_ = true;
-    joy_enabled_ = true;
     last_pointer_x_ = last_pointer_y_ = 0;
     pointer_frac_x_ = pointer_frac_y_ = 0;
     pointer_seen_ = false;
@@ -133,6 +181,9 @@ void AtariSt::reset() {
     blit_hop_ = blit_op_ = blit_ctrl_ = blit_skew_ = 0;
     blit_defer_start_ = false;
     keys_down_.fill(false);
+    vkb_pressed_ = -1;
+    vkb_latched_.fill(false);
+    vkb_button_down_ = false;
     mfp_acc_ = 0;
     audio_acc_ = 0;
     audio_.clear();
@@ -163,6 +214,7 @@ void AtariSt::service_acia() {
     if (!ikbd_rx_.empty()) return;
     if (ikbd_pending_.empty() || ikbd_pending_.front().cycles > 0) return;
     ikbd_rx_.push_back(ikbd_pending_.front().value);
+    acia_rdr_ = ikbd_pending_.front().value;
     ikbd_pending_.pop_front();
     mfp_.set_gpip_bit(4, 0);
 }
@@ -174,38 +226,10 @@ void AtariSt::ikbd_byte(uint8_t value) {
     }
     if (ikbd_reset_step_ == 1) {
         ikbd_reset_step_ = 0;
-        if (value == 0x01) {
-            ikbd_push(0xf1);
-            joy_event_mode_ = true;
-            joy_enabled_ = true;
-            joy0_state_ = joy1_state_ = 0;
-        }
+        if (value == 0x01) ikbd_push(0xf1);
         return;
     }
     ikbd_cmd_ = value;
-    // Joystick IKBD commands (Atari "Intelligent Keyboard Protocol")
-    switch (value) {
-        case 0x14:  // SET JOYSTICK EVENT REPORTING
-            joy_event_mode_ = true;
-            joy_enabled_ = true;
-            break;
-        case 0x15:  // SET JOYSTICK INTERROGATION MODE
-            joy_event_mode_ = false;
-            joy_enabled_ = true;
-            break;
-        case 0x16:  // JOYSTICK INTERROGATE → $FD, joy0, joy1
-            if (joy_enabled_) {
-                ikbd_push(0xfd);
-                ikbd_push(joy0_state_);
-                ikbd_push(joy1_state_);
-            }
-            break;
-        case 0x1a:  // DISABLE JOYSTICKS
-            joy_enabled_ = false;
-            break;
-        default:
-            break;
-    }
 }
 
 std::vector<uint8_t> AtariSt::ikbd_pending_bytes() const {
@@ -225,6 +249,14 @@ void AtariSt::ikbd_mouse_packet(int dx, int dy, bool left, bool right) {
 }
 
 void AtariSt::ikbd_mouse(const MachineInputs& inputs) {
+    if (vkb_visible_ && inputs.has_pointer && !inputs.pointer_relative &&
+        inputs.pointer_y >= kVkbTop) {
+        // The pointer works the on-screen keyboard: freeze the ST mouse and
+        // keep tracking so it does not jump when the pointer comes back up.
+        last_pointer_x_ = inputs.pointer_x;
+        last_pointer_y_ = std::min(inputs.pointer_y, kVkbTop - 1);
+        return;
+    }
     if (!inputs.has_pointer) {
         pointer_seen_ = false;  // re-seed when the pointer comes back
         seed_valid_ = false;
@@ -315,42 +347,6 @@ void AtariSt::ikbd_mouse(const MachineInputs& inputs) {
     }
 }
 
-uint8_t AtariSt::joy_state_from(const InputState& p) {
-    // IKBD joystick byte: bit0=up,1=down,2=left,3=right,7=fire
-    uint8_t st = 0;
-    if (p.up) st = uint8_t(st | 0x01);
-    if (p.down) st = uint8_t(st | 0x02);
-    if (p.left) st = uint8_t(st | 0x04);
-    if (p.right) st = uint8_t(st | 0x08);
-    if (p.button1) st = uint8_t(st | 0x80);
-    return st;
-}
-
-void AtariSt::ikbd_joystick(const MachineInputs& inputs) {
-    if (!joy_enabled_) return;
-    // player1 → Joy1 ($FF): primary stick (port shared with mouse on real HW)
-    // player2 → Joy0 ($FE)
-    // Frontend: arrows + LCtrl/Space → player1; typically no player2 keys unless pad.
-    const uint8_t j1 = joy_state_from(inputs.player1);
-    const uint8_t j0 = joy_state_from(inputs.player2);
-    if (joy_event_mode_) {
-        if (j0 != joy0_state_) {
-            joy0_state_ = j0;
-            ikbd_push(0xfe);
-            ikbd_push(j0);
-        }
-        if (j1 != joy1_state_) {
-            joy1_state_ = j1;
-            ikbd_push(0xff);
-            ikbd_push(j1);
-        }
-    } else {
-        // Interrogation mode: only store; $16 will report
-        joy0_state_ = j0;
-        joy1_state_ = j1;
-    }
-}
-
 void AtariSt::ikbd_keys(const MachineInputs& inputs) {
     for (const IkbdMap& map : kIkbd) {
         const bool down = inputs.key(map.key);
@@ -360,7 +356,6 @@ void AtariSt::ikbd_keys(const MachineInputs& inputs) {
         keys_down_[idx] = down;
     }
     ikbd_mouse(inputs);
-    ikbd_joystick(inputs);
 }
 
 uint8_t AtariSt::acia_status() const {
@@ -370,11 +365,15 @@ uint8_t AtariSt::acia_status() const {
 }
 
 uint8_t AtariSt::acia_read_data() {
-    if (ikbd_rx_.empty()) return 0;
-    const uint8_t v = ikbd_rx_.front();
+    // The 6850 receive data register keeps the last byte: reading only
+    // clears RDRF. Games poll it directly (World Class Rugby's crack intro
+    // does `cmpi.b #$39,$fffc02` while TOS's ACIA interrupt has already
+    // consumed the Space make code).
+    if (ikbd_rx_.empty()) return acia_rdr_;
+    acia_rdr_ = ikbd_rx_.front();
     ikbd_rx_.pop_front();
     if (ikbd_rx_.empty()) mfp_.set_gpip_bit(4, 1);
-    return v;
+    return acia_rdr_;
 }
 
 void AtariSt::acia_write_control(uint8_t value) {
@@ -904,9 +903,173 @@ void AtariSt::run_frame() {
         update_irqs();
     }
     render();
+    if (vkb_visible_) vkb_compose();
 }
 
-void AtariSt::set_inputs(const MachineInputs& inputs) { ikbd_keys(inputs); }
+void AtariSt::set_inputs(const MachineInputs& inputs) {
+    // F11 (not an ST key) shows / hides the on-screen keyboard.
+    const bool toggle = inputs.key(Key::F11);
+    if (toggle && !vkb_toggle_down_) set_vkb_visible(!vkb_visible_);
+    vkb_toggle_down_ = toggle;
+    if (vkb_visible_) vkb_input(inputs);
+    ikbd_keys(inputs);
+}
+
+// ---------------------------------------------------------------------------
+// On-screen keyboard: Hataroid's 1040ST picture, scaled to the bottom of the
+// 640x400 framebuffer. The mouse clicks keys; they go to the IKBD exactly
+// like host keys (make on press, break on release). Shift, Control and
+// Alternate latch until the next key, so combinations can be clicked.
+
+void AtariSt::vkb_init() {
+    std::vector<uint8_t> rgb(size_t(kVkbTexW) * kVkbTexH * 3);
+    uLongf len = uLongf(rgb.size());
+    if (uncompress(rgb.data(), &len, kVkbPictureUk, uLong(sizeof(kVkbPictureUk))) != Z_OK) {
+        rgb.assign(rgb.size(), 0x80);
+    }
+    // Box-filter 768x256 down to 640 x kVkbHeight.
+    vkb_image_.assign(size_t(kWidth) * kVkbHeight, 0);
+    for (int y = 0; y < kVkbHeight; y++) {
+        const int sy0 = y * kVkbTexH / kVkbHeight;
+        const int sy1 = std::max(sy0 + 1, (y + 1) * kVkbTexH / kVkbHeight);
+        for (int x = 0; x < kWidth; x++) {
+            const int sx0 = x * kVkbTexW / kWidth;
+            const int sx1 = std::max(sx0 + 1, (x + 1) * kVkbTexW / kWidth);
+            int r = 0, g = 0, b = 0, n = 0;
+            for (int sy = sy0; sy < sy1; sy++) {
+                for (int sx = sx0; sx < sx1; sx++) {
+                    const uint8_t* p = &rgb[(size_t(sy) * kVkbTexW + size_t(sx)) * 3];
+                    r += p[0];
+                    g += p[1];
+                    b += p[2];
+                    n++;
+                }
+            }
+            vkb_image_[size_t(y) * kWidth + size_t(x)] =
+                0xff000000u | uint32_t(r / n) << 16 | uint32_t(g / n) << 8 | uint32_t(b / n);
+        }
+    }
+}
+
+void AtariSt::set_vkb_visible(bool visible) {
+    if (!visible) vkb_release_all();
+    vkb_visible_ = visible;
+    if (visible) vkb_compose();
+}
+
+int AtariSt::vkb_hit(int x, int y) const {
+    if (y < kVkbTop || y >= kHeight || x < 0 || x >= kWidth) return -1;
+    const int tx = x * kVkbTexW / kWidth;
+    const int ty = (y - kVkbTop) * kVkbTexH / kVkbHeight;
+    for (size_t i = 0; i < sizeof(kVkbKeys) / sizeof(kVkbKeys[0]); i++) {
+        if (vkb_contains(kVkbKeys[i], tx, ty)) return int(i);
+    }
+    return -1;
+}
+
+bool AtariSt::vkb_key_centre(uint8_t scancode, int* x, int* y) const {
+    for (const VkbKey& k : kVkbKeys) {
+        if (k.scancode != scancode) continue;
+        int x1, y1, x2, y2;
+        vkb_bounds(k, &x1, &y1, &x2, &y2);
+        *x = ((x1 + x2) / 2) * kWidth / kVkbTexW;
+        *y = kVkbTop + ((y1 + y2) / 2) * kVkbHeight / kVkbTexH;
+        return true;
+    }
+    return false;
+}
+
+void AtariSt::vkb_release_all() {
+    if (vkb_pressed_ >= 0) {
+        ikbd_push(uint8_t(kVkbKeys[vkb_pressed_].scancode | 0x80));
+        vkb_pressed_ = -1;
+    }
+    for (int code = 0; code < 128; code++) {
+        if (vkb_latched_[size_t(code)]) ikbd_push(uint8_t(code | 0x80));
+    }
+    vkb_latched_.fill(false);
+    vkb_button_down_ = false;
+}
+
+void AtariSt::vkb_input(const MachineInputs& inputs) {
+    vkb_pointer_on_ = inputs.has_pointer && inputs.pointer_y >= kVkbTop;
+    vkb_pointer_x_ = inputs.pointer_x;
+    vkb_pointer_y_ = inputs.pointer_y;
+    const bool button = inputs.has_pointer && inputs.pointer_button1;
+    if (button && !vkb_button_down_ && vkb_pointer_on_) {
+        const int hit = vkb_hit(inputs.pointer_x, inputs.pointer_y);
+        if (hit >= 0) {
+            const VkbKey& key = kVkbKeys[hit];
+            if (key.modifier) {
+                // Toggle the latch.
+                bool& latched = vkb_latched_[size_t(key.scancode & 0x7f)];
+                latched = !latched;
+                ikbd_push(latched ? key.scancode : uint8_t(key.scancode | 0x80));
+            } else {
+                vkb_pressed_ = hit;
+                ikbd_push(key.scancode);
+            }
+        }
+    }
+    if (!button && vkb_pressed_ >= 0) {
+        ikbd_push(uint8_t(kVkbKeys[vkb_pressed_].scancode | 0x80));
+        vkb_pressed_ = -1;
+        // A clicked key consumes the latched modifiers.
+        for (int code = 0; code < 128; code++) {
+            if (vkb_latched_[size_t(code)]) {
+                ikbd_push(uint8_t(code | 0x80));
+                vkb_latched_[size_t(code)] = false;
+            }
+        }
+    }
+    vkb_button_down_ = button;
+}
+
+void AtariSt::vkb_compose() {
+    display_ = framebuffer_;
+    // The keyboard covers the bottom of the picture.
+    std::copy(vkb_image_.begin(), vkb_image_.end(), display_.begin() + ptrdiff_t(kVkbTop) * kWidth);
+    // Pressed and latched keys light up.
+    auto tint = [&](const VkbKey& k) {
+        int x1, y1, x2, y2;
+        vkb_bounds(k, &x1, &y1, &x2, &y2);
+        const int sx1 = x1 * kWidth / kVkbTexW, sx2 = x2 * kWidth / kVkbTexW;
+        const int sy1 = kVkbTop + y1 * kVkbHeight / kVkbTexH;
+        const int sy2 = std::min(kHeight - 1, kVkbTop + y2 * kVkbHeight / kVkbTexH);
+        for (int y = sy1; y <= sy2; y++) {
+            const int ty = (y - kVkbTop) * kVkbTexH / kVkbHeight;
+            for (int x = sx1; x <= sx2 && x < kWidth; x++) {
+                if (!vkb_contains(k, x * kVkbTexW / kWidth, ty)) continue;
+                uint32_t& p = display_[size_t(y) * kWidth + size_t(x)];
+                const uint32_t r = ((p >> 16) & 0xff) / 2;
+                const uint32_t g = ((p >> 8) & 0xff) / 2 + 40;
+                const uint32_t b = (p & 0xff) / 2 + 110;
+                p = 0xff000000u | r << 16 | g << 8 | b;
+            }
+        }
+    };
+    for (size_t i = 0; i < sizeof(kVkbKeys) / sizeof(kVkbKeys[0]); i++) {
+        const VkbKey& k = kVkbKeys[i];
+        if (int(i) == vkb_pressed_ || (k.modifier && vkb_latched_[size_t(k.scancode & 0x7f)])) tint(k);
+    }
+    // The host cursor is hidden over the window: draw an arrow on the
+    // keyboard so the user sees what they click.
+    if (vkb_pointer_on_) {
+        static const char* kArrow[] = {
+            "X.........", "XX........", "X#X.......", "X##X......", "X###X.....",
+            "X####X....", "X#####X...", "X######X..", "X#######X.", "X####XXXXX",
+            "X#X##X....", "XX.X##X...", "X..X##X...", ".....X##X.", ".....XXXX.",
+        };
+        for (int dy = 0; dy < 15; dy++) {
+            for (int dx = 0; dx < 10; dx++) {
+                const char c = kArrow[dy][dx];
+                const int x = vkb_pointer_x_ + dx, y = vkb_pointer_y_ + dy;
+                if (c == '.' || x >= kWidth || y >= kHeight) continue;
+                display_[size_t(y) * kWidth + size_t(x)] = c == 'X' ? 0xff000000u : 0xffffffffu;
+            }
+        }
+    }
+}
 
 void AtariSt::set_dip_switch(int, uint8_t) {}
 

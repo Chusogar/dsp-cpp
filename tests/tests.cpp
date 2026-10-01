@@ -191,6 +191,19 @@ void test_z80_flags_and_blocks() {
     check(cpu.halted, "halt stops execution");
 }
 
+void test_z80_r_register_ignored_prefix() {
+    auto memory = make_memory();
+    dsp::Z80 cpu = make_cpu(memory);
+    // dd 00 (an index prefix in front of a plain NOP) / ld a,r: the prefix
+    // and the opcode count one refresh each, like ED and 5F, so R = 4.
+    // Protections that decrypt with LD A,R (IMP '95 on La Abadia del
+    // Crimen) broke when the ignored prefix counted the opcode twice.
+    const uint8_t program[] = {0xdd, 0x00, 0xed, 0x5f, 0x76};
+    std::memcpy(memory.data(), program, sizeof(program));
+    cpu.run(4 + 4 + 9);
+    check(cpu.a == 4, "Z80 R counts an ignored DD prefix and its opcode once each");
+}
+
 void test_z80_interrupt() {
     auto memory = make_memory();
     dsp::Z80 cpu = make_cpu(memory);
@@ -2410,6 +2423,141 @@ void test_c64_prg_injection() {
     error.clear();
     write_rom("short.prg", std::vector<uint8_t>{0x01, 0x08});
     check(!tiny.load_media(dir + "/short.prg", &error), "a truncated PRG is rejected");
+}
+
+void test_c64_virtual_keyboard() {
+    const std::string dir = "/tmp/dsp-c64-vkb-test";
+    std::filesystem::create_directories(dir);
+    auto write_rom = [&](const char* name, const std::vector<uint8_t>& data) {
+        std::ofstream out(dir + "/" + name, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
+    };
+    // Stand-in KERNAL: clear $02 and spin; NMI does INC $02 / RTI.
+    std::vector<uint8_t> kernal(0x2000, 0x00);
+    const uint8_t code[] = {0xA9, 0x00, 0x85, 0x02, 0x4C, 0x04, 0xE0, 0xE6, 0x02, 0x40, 0x40};
+    std::copy(std::begin(code), std::end(code), kernal.begin());
+    kernal[0x1FFA] = 0x07;
+    kernal[0x1FFB] = 0xE0;
+    kernal[0x1FFC] = 0x00;
+    kernal[0x1FFD] = 0xE0;
+    kernal[0x1FFE] = 0x0A;
+    kernal[0x1FFF] = 0xE0;
+    write_rom("kernal.rom", kernal);
+    write_rom("basic.rom", std::vector<uint8_t>(0x2000, 0x00));
+    write_rom("chargen.rom", std::vector<uint8_t>(0x1000, 0x5A));
+    dsp::C64 m;
+    std::string error;
+    check(m.init(dir, &error), "C64 boots the stand-in KERNAL for the keyboard test");
+    dsp::MachineInputs in;
+    auto frames = [&](int n) {
+        for (int i = 0; i < n; i++) {
+            m.set_inputs(in);
+            m.run_frame();
+        }
+    };
+    frames(5);
+    check(m.screen_overlay().pixels == nullptr, "C64 on-screen keyboard starts hidden");
+    in.keys[size_t(dsp::Key::F11)] = true;
+    frames(1);
+    in.keys[size_t(dsp::Key::F11)] = false;
+    frames(1);
+    const dsp::MachineOverlay ov = m.screen_overlay();
+    check(m.vkb_visible() && ov.pixels != nullptr && ov.width == dsp::C64::vkb_width() &&
+              ov.height == dsp::C64::vkb_height() && ov.width > 1000,
+          "F11 shows the high-resolution C64 keyboard overlay");
+    auto hover = [&](int col, int row) {
+        int x = 0, y = 0;
+        check(m.vkb_key_centre(col, row, &x, &y), "C64 keyboard key is on the picture");
+        in.overlay_pointer = true;
+        in.overlay_x = x;
+        in.overlay_y = y;
+    };
+    // A (column 1, row 2) goes down while the mouse button is held.
+    hover(1, 2);
+    const uint32_t serial = m.screen_overlay().serial;
+    in.overlay_button = true;
+    frames(2);
+    check((m.debug_keyboard(1) & 0x04) == 0, "clicking A on the C64 keyboard presses it in the matrix");
+    check(m.screen_overlay().serial != serial, "the pressed key is redrawn sunk");
+    in.overlay_button = false;
+    frames(2);
+    check(m.debug_keyboard(1) == 0xff, "releasing the mouse releases A");
+    // SHIFT latches until the next key.
+    hover(1, 7);
+    in.overlay_button = true;
+    frames(1);
+    in.overlay_button = false;
+    frames(1);
+    check((m.debug_keyboard(1) & 0x80) == 0, "a clicked SHIFT stays down");
+    hover(1, 5);
+    in.overlay_button = true;
+    frames(1);
+    check((m.debug_keyboard(1) & 0xa0) == 0, "SHIFT + S are down together");
+    in.overlay_button = false;
+    frames(1);
+    check(m.debug_keyboard(1) == 0xff, "the key consumes the latched SHIFT");
+    // SHIFT LOCK holds the left SHIFT until clicked again.
+    hover(-1, 1);
+    in.overlay_button = true;
+    frames(1);
+    in.overlay_button = false;
+    frames(3);
+    check((m.debug_keyboard(1) & 0x80) == 0, "SHIFT LOCK locks the left SHIFT");
+    in.overlay_button = true;
+    frames(1);
+    in.overlay_button = false;
+    frames(1);
+    check((m.debug_keyboard(1) & 0x80) != 0, "SHIFT LOCK releases on the second click");
+    // RESTORE pulls NMI once per press.
+    check(m.debug_read_ram(0x02) == 0, "no NMI before RESTORE");
+    hover(-1, 0);
+    in.overlay_button = true;
+    frames(3);
+    in.overlay_button = false;
+    frames(2);
+    check(m.debug_read_ram(0x02) == 1, "RESTORE on the on-screen keyboard raises one NMI");
+    in.overlay_button = true;
+    frames(1);
+    in.overlay_button = false;
+    frames(1);
+    check(m.debug_read_ram(0x02) == 2, "a second RESTORE raises another NMI");
+    in.overlay_pointer = false;
+    in.keys[size_t(dsp::Key::F11)] = true;
+    frames(1);
+    in.keys[size_t(dsp::Key::F11)] = false;
+    frames(1);
+    check(!m.vkb_visible() && m.screen_overlay().pixels == nullptr, "F11 hides the C64 keyboard again");
+
+    // With the real ROMs, type PRINT"HI" on the on-screen keyboard.
+    if (!std::filesystem::exists("/tmp/roms/c64/kernal.rom")) return;
+    dsp::C64 c64;
+    check(c64.init("/tmp/roms/c64", &error), "C64 boots the real ROMs");
+    dsp::MachineInputs ki;
+    auto run = [&](int n) {
+        for (int i = 0; i < n; i++) {
+            c64.set_inputs(ki);
+            c64.run_frame();
+        }
+    };
+    run(150);
+    c64.set_vkb_visible(true);
+    const int seq[][2] = {{5, 1}, {2, 1}, {4, 1}, {4, 7}, {2, 6}, {1, 7}, {7, 3}, {3, 5}, {4, 1},
+                          {1, 7}, {7, 3}, {0, 1}};
+    for (const auto& k : seq) {
+        int x = 0, y = 0;
+        c64.vkb_key_centre(k[0], k[1], &x, &y);
+        ki.overlay_pointer = true;
+        ki.overlay_x = x;
+        ki.overlay_y = y;
+        ki.overlay_button = true;
+        run(3);
+        ki.overlay_button = false;
+        run(3);
+    }
+    run(10);
+    // Line 7 of the screen holds the output: "HI" in screen codes.
+    check(c64.debug_read_ram(0x0400 + 7 * 40) == 8 && c64.debug_read_ram(0x0400 + 7 * 40 + 1) == 9,
+          "PRINT\"HI\" typed on the on-screen keyboard runs in BASIC");
 }
 
 // Minimal .T64 archive holding one PRG, as written by the common tools.
@@ -5390,6 +5538,119 @@ void test_trdos_scl_and_beta() {
     check(!scorpion->init("/no/such/scorpion", &error), "Scorpion init fails without ROMs");
     check(error.find("not found") != std::string::npos, "Scorpion reports the missing ROM");
 
+    if (std::filesystem::exists("/tmp/roms/scorpion/scorpio.zip")) {
+        // Real Scorpion ROM set (MAME "scorpio"): boot menu, the 128 TR-DOS
+        // entry (service ROM polling Beta INTRQ on #1F), and the Magic NMI.
+        dsp::Scorpion256 sc;
+        check(sc.init("/tmp/roms/scorpion/scorpio.zip", &error), "Scorpion ROM set loads");
+        auto frames = [&](int n, dsp::Key key) {
+            for (int i = 0; i < n; i++) {
+                dsp::MachineInputs in;
+                if (key != dsp::Key::Count) in.keys[size_t(key)] = true;
+                sc.set_inputs(in);
+                sc.run_frame();
+                std::vector<int16_t> audio;
+                sc.drain_audio(audio);
+            }
+        };
+        frames(150, dsp::Key::Count);
+        frames(3, dsp::Key::Enter);  // "128 TR-DOS"
+        frames(200, dsp::Key::Count);
+        check(sc.debug_rom_page() != 2, "Scorpion 128 TR-DOS leaves the service ROM (no #1F hang)");
+        sc.reset();
+        frames(150, dsp::Key::Count);
+        frames(3, dsp::Key::Down);
+        frames(10, dsp::Key::Count);
+        frames(3, dsp::Key::Enter);  // "128 BASIC"
+        frames(100, dsp::Key::Count);
+        check(sc.debug_rom_page() == 0, "Scorpion 128 BASIC runs from ROM 0");
+        frames(5, dsp::Key::F5);
+        frames(100, dsp::Key::Count);
+        check(sc.debug_rom_page() == 2, "Scorpion F5 (Magic NMI) opens the service monitor ROM");
+        frames(3, dsp::Key::Num0);  // "0. Continue program"
+        frames(100, dsp::Key::Count);
+        check(sc.debug_rom_page() == 0, "Scorpion service monitor returns to 128 BASIC");
+
+        // TR-DOS disks: type RUN "name" at the A> prompt of 128 TR-DOS.
+        auto type_run = [&](const char* keys) {
+            // keys: '#'+X = Caps Shift + X, '~'+X = Symbol Shift + X.
+            auto press = [&](std::initializer_list<dsp::Key> ks) {
+                for (int i = 0; i < 3; i++) {
+                    dsp::MachineInputs in;
+                    for (dsp::Key k : ks) in.keys[size_t(k)] = true;
+                    sc.set_inputs(in);
+                    sc.run_frame();
+                    std::vector<int16_t> audio;
+                    sc.drain_audio(audio);
+                }
+                frames(4, dsp::Key::Count);
+            };
+            auto key_of = [](char c) {
+                if (c >= 'A' && c <= 'Z') return dsp::Key(int(dsp::Key::A) + (c - 'A'));
+                if (c >= '0' && c <= '9') return dsp::Key(int(dsp::Key::Num0) + (c - '0'));
+                return dsp::Key::Enter;
+            };
+            for (const char* p = keys; *p; p++) {
+                if (*p == '#') press({dsp::Key::LeftShift, key_of(*++p)});
+                else if (*p == '~') press({dsp::Key::LeftCtrl, key_of(*++p)});
+                else press({key_of(*p)});
+            }
+        };
+        auto boot_disk = [&](const char* disk) {
+            sc.reset();
+            check(sc.load_media(disk, &error), "Scorpion mounts a TR-DOS disk");
+            frames(150, dsp::Key::Count);
+            frames(3, dsp::Key::Enter);  // "128 TR-DOS"
+            frames(200, dsp::Key::Count);
+        };
+        auto count = [&](auto pred) {
+            int n = 0;
+            const uint32_t* fb = sc.framebuffer();
+            for (int i = 0; i < sc.screen_width() * sc.screen_height(); i++) {
+                const int r = int((fb[i] >> 16) & 0xff), g = int((fb[i] >> 8) & 0xff), b = int(fb[i] & 0xff);
+                if (pred(r, g, b)) n++;
+            }
+            return n;
+        };
+        if (std::filesystem::exists("/tmp/roms/scorpion/abadia.trd")) {
+            // La Abadia del Crimen (TRD, "corrected for Scorpion"): the IMP
+            // '95 loader decrypts itself with LD A,R.
+            boot_disk("/tmp/roms/scorpion/abadia.trd");
+            type_run("R~P#LA#A#B#A#D#I#A~P^");
+            frames(1800, dsp::Key::Count);
+            frames(5, dsp::Key::Space);
+            frames(600, dsp::Key::Count);
+            frames(5, dsp::Key::Enter);
+            frames(1500, dsp::Key::Count);
+            check(count([](int r, int g, int b) { return r > 150 && g > 150 && b < 60; }) > 20000,
+                  "La Abadia del Crimen loads from TRD and shows its parchment");
+        }
+        if (std::filesystem::exists("/tmp/roms/scorpion/t2_128.scl")) {
+            // Terminator 2 (SCL) pages with LD A,#11 : OUT (#FD),A.
+            boot_disk("/tmp/roms/scorpion/t2_128.scl");
+            type_run("R~P#T~J2~V128~1~P^");
+            frames(400, dsp::Key::Count);
+            frames(5, dsp::Key::Space);
+            frames(1500, dsp::Key::Count);
+            check(count([](int r, int g, int b) { return r > 150 && g > 150 && b < 60; }) > 1000 &&
+                      count([](int r, int g, int b) { return r > 150 && g < 60 && b < 60; }) > 300,
+                  "Terminator 2 loads from SCL and reaches its joystick menu");
+        }
+    }
+    {
+        // Paging port decoding: 128K-style "OUT (#FD),A" with A = #11.
+        dsp::Scorpion256 compat;
+        compat.io_out(0x11fd, 0x11);
+        check(compat.debug_ram3() == 1 && compat.debug_rom_page() == 1,
+              "Scorpion compatibility decoding: #11FD pages like #7FFD");
+        compat.io_out(0x1ffd, 0x10);
+        check(compat.debug_ram3() == 9, "Scorpion #1FFD bit 4 still selects the upper 128K");
+        dsp::Scorpion256 strict;
+        strict.set_dip_switch(0, 1);
+        strict.io_out(0x11fd, 0x11);
+        check(strict.debug_ram3() == 8, "Scorpion strict decoding (DIP 1): #11FD is #1FFD, like the board");
+    }
+
     namespace fs = std::filesystem;
     const fs::path dir = fs::temp_directory_path() / "dsp-zx-clone-roms";
     fs::create_directories(dir);
@@ -6952,6 +7213,306 @@ void test_st_boot_if_present() {
     check(white > 25000, "opening drive A paints a GEM window");
 }
 
+void test_st_virtual_keyboard() {
+    // Hataroid's on-screen keyboard: F11 toggles it, clicks become IKBD
+    // make/break codes, Shift latches until the next key.
+    dsp::AtariSt st;
+    check(!st.vkb_visible(), "ST on-screen keyboard starts hidden");
+    dsp::MachineInputs in;
+    in.has_pointer = true;
+    in.pointer_x = 320;
+    in.pointer_y = 100;
+    in.keys[size_t(dsp::Key::F11)] = true;
+    st.set_inputs(in);
+    in.keys[size_t(dsp::Key::F11)] = false;
+    st.set_inputs(in);
+    check(st.vkb_visible(), "F11 shows the ST on-screen keyboard");
+    check(st.ikbd_pending_bytes().empty(), "F11 itself is not sent to the ST");
+    auto click = [&](uint8_t scancode) {
+        int x = 0, y = 0;
+        check(st.vkb_key_centre(scancode, &x, &y), "on-screen key exists");
+        in.pointer_x = x;
+        in.pointer_y = y;
+        st.set_inputs(in);
+        in.pointer_button1 = true;
+        st.set_inputs(in);
+        in.pointer_button1 = false;
+        st.set_inputs(in);
+    };
+    click(0x2a);  // Left Shift (latched)
+    click(0x1e);  // A
+    const std::vector<uint8_t> bytes = st.ikbd_pending_bytes();
+    check(bytes == std::vector<uint8_t>({0x2a, 0x1e, 0x9e, 0xaa}),
+          "clicking Shift then A sends Shift down, A down/up, Shift up");
+    click(0x3b);  // F1 (slanted key: quad hit test)
+    const std::vector<uint8_t> f1 = st.ikbd_pending_bytes();
+    check(f1.size() == 6 && f1[4] == 0x3b && f1[5] == 0xbb, "the slanted F1 key is clickable");
+    const uint32_t* fb = st.framebuffer();
+    int light = 0;
+    for (int x = 0; x < 640; x++) {
+        const uint32_t p = fb[size_t(dsp::AtariSt::kVkbTop + 60) * 640 + size_t(x)];
+        if (((p >> 16) & 0xff) > 150) light++;
+    }
+    check(light > 300, "the keyboard picture covers the bottom of the screen");
+    in.keys[size_t(dsp::Key::F11)] = true;
+    st.set_inputs(in);
+    check(!st.vkb_visible(), "F11 hides the ST on-screen keyboard again");
+}
+
+void test_st_dma_acsi_does_not_touch_floppy() {
+    // TOS probes ACSI targets at boot by writing $08,$28,...,$E8 with DMA
+    // mode bit 3 (HDC) set. Those bytes must not reach the WD1772: $A8
+    // would be a Write Sector that clobbers the floppy.
+    const std::string path = "/tmp/dsp-acsi-probe.st";
+    {
+        std::vector<uint8_t> image(737280, 0);
+        for (size_t i = 0; i < image.size(); i++) image[i] = uint8_t(i / 512);
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(image.data()), std::streamsize(image.size()));
+    }
+    dsp::StFloppy fd;
+    std::string error;
+    check(fd.load_file(path, &error), "720K image for the ACSI probe test loads");
+    std::vector<uint8_t> ram(0x10000, 0xaa);
+    fd.set_ram(ram.data(), uint32_t(ram.size()));
+    fd.reset();
+    fd.set_psg_port_a(0x05);  // drive A, side 0
+    fd.dma_addr_w(0, 0);
+    fd.dma_addr_w(1, 0x10);
+    fd.dma_addr_w(2, 0);
+    fd.dma_mode_w(0x98);  // HDC, sector count
+    fd.dma_data_w(1);
+    fd.dma_mode_w(0x88);  // HDC, command byte
+    for (int target = 0; target < 8; target++) fd.dma_data_w(uint16_t((target << 5) | 0x08));
+    check(fd.sector(0, 0, 3)[0] == 2, "ACSI probe bytes do not write floppy sectors");
+    check(fd.dma_data_r() == 0xff, "no ACSI device answers");
+    fd.dma_mode_w(0x84);
+    fd.dma_data_w(3);
+    fd.dma_mode_w(0x90);
+    fd.dma_data_w(1);
+    fd.dma_mode_w(0x80);
+    fd.dma_data_w(0x80);  // FDC read sector 3
+    check(ram[0x1000] == 2, "the FDC still reads sector 3 (logical 2)");
+}
+
+void test_st_stx_images() {
+    // Build a small Pasti image: track 0 with two sectors (the second one
+    // has a CRC error and sits first on the track), track 1 plain.
+    auto u16 = [](std::vector<uint8_t>& v, int x) {
+        v.push_back(uint8_t(x));
+        v.push_back(uint8_t(x >> 8));
+    };
+    auto u32 = [&](std::vector<uint8_t>& v, uint32_t x) {
+        u16(v, int(x & 0xffff));
+        u16(v, int(x >> 16));
+    };
+    std::vector<uint8_t> img = {'R', 'S', 'Y', 0};
+    u16(img, 3);
+    u16(img, 0xcc);
+    u16(img, 0);
+    img.push_back(2);  // tracks
+    img.push_back(0);
+    u32(img, 0);
+    // Track 0: sector blocks + 2 x 512 bytes of data.
+    std::vector<uint8_t> tr;
+    u32(tr, 16 + 2 * 16 + 1024);
+    u32(tr, 0);
+    u16(tr, 2);
+    u16(tr, 0x01);
+    u16(tr, 6250);
+    tr.push_back(0);
+    tr.push_back(0);
+    const struct {
+        uint32_t off;
+        int bitpos, sector, status;
+    } secs[2] = {{512, 100 * 8, 7, 0x08}, {0, 3000 * 8, 1, 0x00}};
+    for (const auto& sc : secs) {
+        u32(tr, sc.off);
+        u16(tr, sc.bitpos);
+        u16(tr, 0);
+        tr.push_back(0);
+        tr.push_back(0);
+        tr.push_back(uint8_t(sc.sector));
+        tr.push_back(2);
+        tr.push_back(0x12);
+        tr.push_back(0x34);
+        tr.push_back(uint8_t(sc.status));
+        tr.push_back(0);
+    }
+    for (int i = 0; i < 512; i++) tr.push_back(0x11);
+    for (int i = 0; i < 512; i++) tr.push_back(0x77);
+    img.insert(img.end(), tr.begin(), tr.end());
+    // Track 1: no sector blocks, 9 plain sectors.
+    tr.clear();
+    u32(tr, 16 + 9 * 512);
+    u32(tr, 0);
+    u16(tr, 9);
+    u16(tr, 0x00);
+    u16(tr, 6250 * 8);
+    tr.push_back(1);
+    tr.push_back(0);
+    for (int i = 0; i < 9 * 512; i++) tr.push_back(uint8_t(i / 512 + 1));
+    img.insert(img.end(), tr.begin(), tr.end());
+    const std::string path = (std::filesystem::temp_directory_path() / "dsp_test.stx").string();
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(img.data()), std::streamsize(img.size()));
+    }
+
+    dsp::StFloppy fd;
+    std::string error;
+    fd.reset();
+    check(fd.load_file(path, &error), "STX image loads");
+    check(fd.is_stx(), "STX image is recognised");
+    check(fd.stx_sector_count(0, 0) == 2 && fd.stx_sector_count(1, 0) == 9 && fd.stx_sector_count(5, 0) == -1,
+          "STX track/sector layout is parsed");
+    std::vector<uint8_t> ram(0x10000, 0);
+    fd.set_ram(ram.data(), uint32_t(ram.size()));
+    fd.set_psg_port_a(0x05);  // drive A, side 0
+    auto reg_w = [&](int reg, uint8_t v) {
+        fd.dma_mode_w(uint16_t(0x80 | (reg << 1)));
+        fd.dma_data_w(v);
+    };
+    auto run_cmd = [&](uint8_t cmd) {
+        reg_w(0, cmd);
+        for (int i = 0; i < 200 && !fd.irq(); i++) fd.tick(100000);
+        fd.dma_mode_w(0x80);
+        return uint8_t(fd.dma_data_r());
+    };
+    auto setup_dma = [&](uint32_t addr) {
+        fd.dma_mode_w(0x190);
+        fd.dma_mode_w(0x90);
+        fd.dma_mode_w(0x90);
+        fd.dma_data_w(1);
+        fd.dma_addr_w(0, uint8_t(addr >> 16));
+        fd.dma_addr_w(1, uint8_t(addr >> 8));
+        fd.dma_addr_w(2, uint8_t(addr));
+    };
+    run_cmd(0x03);  // restore
+    check(fd.head_position() == 0, "STX restore puts the head on track 0");
+    setup_dma(0x1000);
+    reg_w(1, 0);
+    reg_w(2, 1);
+    uint8_t st = run_cmd(0x80);
+    check((st & 0x18) == 0 && ram[0x1000] == 0x11 && ram[0x11ff] == 0x11, "STX reads a good sector by its ID");
+    setup_dma(0x2000);
+    reg_w(2, 7);
+    st = run_cmd(0x80);
+    check((st & 0x08) != 0 && ram[0x2000] == 0x77, "STX sector with a CRC error returns data and CRC status");
+    setup_dma(0x3000);
+    reg_w(2, 3);
+    st = run_cmd(0x80);
+    check((st & 0x10) != 0, "STX missing sector gives Record Not Found");
+    // Step in without updating the track register: IDs say track 1, the
+    // register still says 0, so a read must fail until it is corrected.
+    run_cmd(0x43);
+    check(fd.head_position() == 1, "STX step-in moves the head");
+    setup_dma(0x4000);
+    reg_w(2, 4);
+    st = run_cmd(0x80);
+    check((st & 0x10) != 0, "STX compares the ID track with the track register");
+    reg_w(1, 1);
+    setup_dma(0x4000);
+    st = run_cmd(0x80);
+    check((st & 0x18) == 0 && ram[0x4000] == 4, "STX plain track sectors read back");
+    std::remove(path.c_str());
+}
+
+void test_st_bob_winner_stx_if_present() {
+    const char* rom = "/tmp/roms/st/st.zip";
+    const char* disk = "/tmp/roms/st/bobwinner.stx";
+    if (!std::filesystem::exists(rom) || !std::filesystem::exists(disk)) return;
+    dsp::AtariSt st;
+    std::string error;
+    check(st.init(rom, &error), "ST TOS loads for Bob Winner");
+    check(st.load_media(disk, &error), "Bob Winner STX disk mounts");
+    dsp::MachineInputs in;
+    in.has_pointer = true;
+    in.pointer_x = 500;
+    in.pointer_y = 300;
+    auto frames = [&](int n) {
+        for (int i = 0; i < n; i++) {
+            st.set_inputs(in);
+            st.run_frame();
+        }
+    };
+    frames(500);
+    in.pointer_x = 330;  // BOB.PRG in the drive A window
+    in.pointer_y = 180;
+    frames(20);
+    for (int click = 0; click < 2; click++) {
+        in.pointer_button1 = true;
+        frames(2);
+        in.pointer_button1 = false;
+        frames(2);
+    }
+    frames(2500);
+    for (int k = 0; k < 3; k++) {
+        in.keys[size_t(dsp::Key::Space)] = true;
+        frames(10);
+        in.keys[size_t(dsp::Key::Space)] = false;
+        frames(300);
+    }
+    frames(300);
+    // The protection reads the 70 overlapping sectors of track 79 and
+    // wants CRC errors; past it the first level (a yellow ground) shows.
+    int yellow = 0;
+    const uint32_t* fb = st.framebuffer();
+    for (int i = 0; i < st.screen_width() * st.screen_height(); i++) {
+        const int r = int((fb[i] >> 16) & 0xff), g = int((fb[i] >> 8) & 0xff), b = int(fb[i] & 0xff);
+        if (r > 200 && g > 200 && b < 180) yellow++;
+    }
+    check(yellow > 30000, "Bob Winner passes its track 79 protection and reaches the first level");
+}
+
+void test_st_world_class_rugby_if_present() {
+    const char* rom = "/tmp/roms/st/st.zip";
+    const char* disk = "/tmp/roms/st/World Class Rugby (1992)(Denton Designs)[cr Vmax].st";
+    if (!std::filesystem::exists(rom) || !std::filesystem::exists(disk)) return;
+    dsp::AtariSt st;
+    std::string error;
+    check(st.init(rom, &error), "ST TOS loads for World Class Rugby");
+    check(st.load_media(disk, &error), "World Class Rugby disk mounts");
+    for (int i = 0; i < 500; i++) st.run_frame();
+    dsp::MachineInputs in;
+    in.has_pointer = true;
+    in.pointer_x = 500;
+    in.pointer_y = 300;
+    auto frames = [&](int n) {
+        for (int i = 0; i < n; i++) {
+            st.set_inputs(in);
+            st.run_frame();
+        }
+    };
+    frames(20);
+    in.pointer_x = 330;  // RUGBY.PRG in the drive A window (DESKTOP.INF)
+    in.pointer_y = 170;
+    frames(20);
+    for (int click = 0; click < 2; click++) {
+        in.pointer_button1 = true;
+        frames(2);
+        in.pointer_button1 = false;
+        frames(2);
+    }
+    frames(600);
+    const uint32_t intro_pc = st.debug_pc();
+    check(intro_pc >= 0x12000 && intro_pc < 0x13000, "World Class Rugby crack intro is running");
+    in.keys[size_t(dsp::Key::Space)] = true;
+    frames(10);
+    in.keys[size_t(dsp::Key::Space)] = false;
+    frames(1500);
+    const uint32_t pc = st.debug_pc();
+    check(pc != 0x140 && (pc < 0x12000 || pc >= 0x13000),
+          "Space leaves the intro and the game loads (no FAT corruption, no Line-F storm)");
+    int olive = 0;
+    const uint32_t* fb = st.framebuffer();
+    for (int i = 0; i < st.screen_width() * st.screen_height(); i++) {
+        const int r = int((fb[i] >> 16) & 0xff), g = int((fb[i] >> 8) & 0xff), b = int(fb[i] & 0xff);
+        if (g > r && g > b && g > 120 && r > 80) olive++;
+    }
+    check(olive > 50000, "World Class Rugby reaches its menu screen");
+}
+
 void test_st_north_south_if_present() {
     const char* rom = "/tmp/roms/st.zip";
     const char* disks[] = {"/tmp/st/northsouth.st", "/tmp/st/North & South.st", nullptr};
@@ -8070,6 +8631,7 @@ int main() {
     test_z80_arithmetic();
     test_z80_flags_and_blocks();
     test_z80_interrupt();
+    test_z80_r_register_ignored_prefix();
     test_z80_cpc_wait_states();
     test_z80_irq_cycle_align();
     test_amstrad_crtc_does_not_tear();
@@ -8152,6 +8714,7 @@ int main() {
     test_c64_prg_injection();
     test_c64_t64_and_built_disk();
     test_c64_drive_rom_and_media();
+    test_c64_virtual_keyboard();
     test_m6502_rmw_double_write();
     test_mos6566_bank_and_multicolor_bitmap();
     test_pv2000_missing_roms_and_dummy_bios();
@@ -8236,6 +8799,11 @@ int main() {
     test_st_blitter();
     test_st_boot_if_present();
     test_st_north_south_if_present();
+    test_st_stx_images();
+    test_st_bob_winner_stx_if_present();
+    test_st_dma_acsi_does_not_touch_floppy();
+    test_st_virtual_keyboard();
+    test_st_world_class_rugby_if_present();
     test_amiga_missing_roms();
     test_amiga_adf_format();
     test_amiga_blitter_descending_modulo();

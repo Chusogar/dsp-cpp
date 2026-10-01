@@ -51,6 +51,19 @@ public:
     int sample_rate() const override { return kSampleRate; }
 
     const char* title() const override { return "Commodore 64"; }
+    MachineOverlay screen_overlay() const override;
+
+    // On-screen keyboard (F11): a breadbin C64 keyboard drawn over the
+    // bottom of the window. Click keys with the mouse; SHIFT, C= and CTRL
+    // latch until the next key, SHIFT LOCK locks, RESTORE pulls NMI.
+    bool vkb_visible() const { return vkb_visible_; }
+    void set_vkb_visible(bool visible);
+    // Centre of the key at matrix (column, row) in overlay pixels; RESTORE
+    // is column -1, row 0 and SHIFT LOCK column -1, row 1.
+    bool vkb_key_centre(int column, int row, int* x, int* y) const;
+    const std::vector<uint32_t>& vkb_picture() const { return vkb_image_; }
+    static int vkb_width();
+    static int vkb_height();
     bool uses_keyboard() const override { return true; }
 
     bool load_roms(const std::string& dir, std::string* error);
@@ -68,6 +81,8 @@ public:
     size_t debug_tape_pos() const { return tape_.current_pulse(); }
     bool debug_tape_playing() const { return tape_.is_playing(); }
     bool debug_motor() const { return tape_motor_; }
+    // Keyboard matrix column as CIA1 sees it (active low rows).
+    uint8_t debug_keyboard(int column) const { return keyboard_[size_t(column & 7)]; }
 
 private:
     // PAL frames to wait before dropping a PRG into RAM. BASIC's cold start
@@ -84,6 +99,11 @@ private:
     bool queue_prg(const std::vector<uint8_t>& data, std::string* error);
     void update_pending_prg();
     void inject_prg(const std::vector<uint8_t>& data);
+    void update_nmi();
+    void vkb_build();
+    int vkb_hit(int x, int y) const;
+    void vkb_input(const MachineInputs& inputs);
+    void vkb_compose();
 
     M6502 cpu_;
     Mos6566 vic_;
@@ -121,6 +141,18 @@ private:
     bool cia_irq_ = false, vic_irq_ = false, cia_nmi_ = false;
 
     std::array<uint8_t, 8> keyboard_{};
+
+    // On-screen keyboard.
+    std::vector<uint32_t> vkb_base_;   // picture with the PETSCII fronts
+    std::vector<uint32_t> vkb_image_;  // what is shown (pressed keys sunk)
+    uint32_t vkb_serial_ = 1;
+    bool vkb_visible_ = false;
+    bool vkb_toggle_down_ = false;
+    bool vkb_button_down_ = false;
+    int vkb_pressed_ = -1;                 // key index held by the mouse
+    std::array<bool, 80> vkb_latched_{};   // SHIFT / C= / CTRL clicked
+    bool vkb_shift_lock_ = false;
+    bool restore_ = false;                 // RESTORE held: NMI line low
 
     C64Tape tape_;
     D64Image disk_;  // legacy autoload helper

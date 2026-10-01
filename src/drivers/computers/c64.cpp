@@ -4,8 +4,22 @@
 #include <cstring>
 #include <fstream>
 
+#include <zlib.h>
+
 namespace dsp {
 namespace {
+
+// On-screen keyboard picture and key table (tools/gen_c64_vkb.py).
+struct C64VkbKey {
+    int8_t col, row;
+    uint8_t flags;  // 1 modifier, 2 RESTORE, 4 SHIFT LOCK
+    int16_t x1, y1, x2, y2;
+    int16_t fx1, fy1, fx2, fy2;
+    uint8_t glyph_cbm, glyph_shift;
+};
+#include "drivers/computers/c64_vkb_data.inc"
+constexpr int kVkbKeyCount = int(sizeof(kC64VkbKeys) / sizeof(kC64VkbKeys[0]));
+constexpr int kVkbModifier = 1, kVkbRestore = 2, kVkbLock = 4;
 
 bool read_file(const std::string& path, std::vector<uint8_t>* out) {
     std::ifstream f(path, std::ios::binary);
@@ -75,7 +89,7 @@ C64::C64()
 
     cia2_.set_irq_handler([this](IrqLine s) {
         cia_nmi_ = (s != IrqLine::Clear);
-        cpu_.set_nmi(cia_nmi_ ? IrqLine::Assert : IrqLine::Clear);
+        update_nmi();
     });
     cia2_.set_port_a(
         [this]() {
@@ -281,7 +295,7 @@ void C64::reset() {
     port_val_ = 0x37;
     update_pla();
     vic_.reset(); sid_.reset(); cia1_.reset(); cia2_.reset();
-    cia_irq_ = false; vic_irq_ = false; cia_nmi_ = false;
+    cia_irq_ = false; vic_irq_ = false; cia_nmi_ = false; restore_ = false;
     cpu_.set_irq(IrqLine::Clear); cpu_.set_nmi(IrqLine::Clear);
     cpu_cycle_debt_ = 0;
     boot_frames_ = 0;
@@ -504,6 +518,24 @@ void C64::set_inputs(const MachineInputs& inputs) {
     if (key(Key::Q))                             press(7, 0x40);
     if (key(Key::Escape))                        press(7, 0x80); // RUN/STOP
 
+    // F11 (not a C64 key) shows / hides the on-screen keyboard.
+    const bool toggle = key(Key::F11);
+    if (toggle && !vkb_toggle_down_) set_vkb_visible(!vkb_visible_);
+    vkb_toggle_down_ = toggle;
+    if (vkb_visible_) vkb_input(inputs);
+    for (int i = 0; i < kVkbKeyCount; i++) {
+        const C64VkbKey& k = kC64VkbKeys[i];
+        if (k.col < 0) continue;
+        if (i == vkb_pressed_ || vkb_latched_[size_t(i)]) press(k.col, uint8_t(1u << k.row));
+    }
+    if (vkb_shift_lock_) press(1, 0x80);  // locks the left SHIFT down
+    const bool restore = vkb_visible_ && vkb_pressed_ >= 0 &&
+                         (kC64VkbKeys[vkb_pressed_].flags & kVkbRestore) != 0;
+    if (restore != restore_) {
+        restore_ = restore;
+        update_nmi();
+    }
+
     auto joy = [](const InputState& p) {
         uint8_t v = 0xFF;
         if (p.up)      v &= uint8_t(~0x01);
@@ -519,6 +551,173 @@ void C64::set_inputs(const MachineInputs& inputs) {
 }
 
 void C64::set_dip_switch(int /*bank*/, uint8_t /*value*/) {}
+
+void C64::update_nmi() {
+    // RESTORE and CIA2 share the open-collector NMI line.
+    cpu_.set_nmi((cia_nmi_ || restore_) ? IrqLine::Assert : IrqLine::Clear);
+}
+
+// ---------------------------------------------------------------------------
+// On-screen keyboard
+
+int C64::vkb_width() { return kC64VkbWidth; }
+int C64::vkb_height() { return kC64VkbHeight; }
+
+MachineOverlay C64::screen_overlay() const {
+    MachineOverlay o;
+    if (!vkb_visible_ || vkb_image_.empty()) return o;
+    o.pixels = vkb_image_.data();
+    o.width = kC64VkbWidth;
+    o.height = kC64VkbHeight;
+    o.serial = vkb_serial_;
+    return o;
+}
+
+void C64::vkb_build() {
+    const size_t stride = size_t(kC64VkbWidth) * 3;
+    std::vector<uint8_t> rgb(stride * kC64VkbHeight);
+    uLongf len = uLongf(rgb.size());
+    if (uncompress(rgb.data(), &len, kC64VkbPicture, uLong(sizeof(kC64VkbPicture))) != Z_OK) {
+        rgb.assign(rgb.size(), 0x40);
+    } else {
+        for (size_t i = stride; i < rgb.size(); i++) rgb[i] = uint8_t(rgb[i] + rgb[i - stride]);
+    }
+    vkb_base_.resize(size_t(kC64VkbWidth) * kC64VkbHeight);
+    for (size_t i = 0; i < vkb_base_.size(); i++) {
+        vkb_base_[i] = 0xff000000u | uint32_t(rgb[i * 3]) << 16 | uint32_t(rgb[i * 3 + 1]) << 8 | rgb[i * 3 + 2];
+    }
+    // The PETSCII graphics on the front of the keys come from the
+    // character ROM in use: C= graphic on the left, SHIFT graphic on the
+    // right, anti-aliased down to the height of the front skirt.
+    for (const C64VkbKey& k : kC64VkbKeys) {
+        const int fh = k.fy2 - k.fy1;
+        const int size = std::min(fh - 2, 13);
+        if (size < 5) continue;
+        const int y0 = k.fy1 + (fh - size) / 2;
+        const uint8_t codes[2] = {k.glyph_cbm, k.glyph_shift};
+        const float centres[2] = {0.30f, 0.70f};
+        for (int g = 0; g < 2; g++) {
+            if (codes[g] == 0xff) continue;
+            const uint8_t* glyph = &char_rom_[size_t(codes[g]) * 8];
+            const int x0 = k.fx1 + int((k.fx2 - k.fx1) * centres[g]) - size / 2;
+            for (int py = 0; py < size; py++) {
+                for (int px = 0; px < size; px++) {
+                    int on = 0;
+                    for (int sy = 0; sy < 4; sy++) {
+                        for (int sx = 0; sx < 4; sx++) {
+                            const int gx = ((px * 4 + sx) * 8) / (size * 4);
+                            const int gy = ((py * 4 + sy) * 8) / (size * 4);
+                            if (glyph[gy] & (0x80 >> gx)) on++;
+                        }
+                    }
+                    if (!on) continue;
+                    const int a = on * 235 / 16;
+                    uint32_t& p = vkb_base_[size_t(y0 + py) * kC64VkbWidth + size_t(x0 + px)];
+                    auto mix = [&](int shift, int ink) {
+                        const int c = int((p >> shift) & 0xff);
+                        return uint32_t((c * (255 - a) + ink * a) / 255) << shift;
+                    };
+                    p = 0xff000000u | mix(16, 230) | mix(8, 224) | mix(0, 208);
+                }
+            }
+        }
+    }
+    vkb_image_ = vkb_base_;
+}
+
+void C64::set_vkb_visible(bool visible) {
+    if (visible && vkb_base_.empty()) vkb_build();
+    if (!visible) {
+        vkb_pressed_ = -1;
+        vkb_latched_.fill(false);
+        vkb_button_down_ = false;
+        if (restore_) {
+            restore_ = false;
+            update_nmi();
+        }
+    }
+    vkb_visible_ = visible;
+    if (visible) vkb_compose();
+}
+
+int C64::vkb_hit(int x, int y) const {
+    for (int i = 0; i < kVkbKeyCount; i++) {
+        const C64VkbKey& k = kC64VkbKeys[i];
+        if (x >= k.x1 && x < k.x2 && y >= k.y1 && y < k.y2) return i;
+    }
+    return -1;
+}
+
+bool C64::vkb_key_centre(int column, int row, int* x, int* y) const {
+    for (const C64VkbKey& k : kC64VkbKeys) {
+        bool match = k.col == column && k.row == row;
+        if (column < 0) {
+            match = (row == 0 && (k.flags & kVkbRestore)) || (row == 1 && (k.flags & kVkbLock));
+        }
+        if (!match) continue;
+        *x = (k.x1 + k.x2) / 2;
+        *y = (k.y1 + k.y2) / 2;
+        return true;
+    }
+    return false;
+}
+
+void C64::vkb_input(const MachineInputs& inputs) {
+    const bool button = inputs.overlay_pointer && inputs.overlay_button;
+    const int before_pressed = vkb_pressed_;
+    const auto before_latched = vkb_latched_;
+    const bool before_lock = vkb_shift_lock_;
+    if (button && !vkb_button_down_) {
+        const int hit = vkb_hit(inputs.overlay_x, inputs.overlay_y);
+        if (hit >= 0) {
+            const C64VkbKey& k = kC64VkbKeys[hit];
+            if (k.flags & kVkbLock) {
+                vkb_shift_lock_ = !vkb_shift_lock_;
+            } else if (k.flags & kVkbModifier) {
+                vkb_latched_[size_t(hit)] = !vkb_latched_[size_t(hit)];
+            } else {
+                vkb_pressed_ = hit;
+            }
+        }
+    }
+    if (!button && vkb_pressed_ >= 0) {
+        vkb_pressed_ = -1;
+        // A clicked key consumes the latched modifiers.
+        vkb_latched_.fill(false);
+    }
+    vkb_button_down_ = button;
+    if (before_pressed != vkb_pressed_ || before_latched != vkb_latched_ || before_lock != vkb_shift_lock_) {
+        vkb_compose();
+    }
+}
+
+void C64::vkb_compose() {
+    vkb_image_ = vkb_base_;
+    // A key that is down sinks into the well: the cap moves down and its
+    // front skirt disappears under the frame, in shade.
+    constexpr int kTravel = 5;
+    const uint32_t well = vkb_base_.empty() ? 0xff261d18u : vkb_base_[size_t(kC64VkbKeys[0].y1 - 4) * kC64VkbWidth +
+                                                                    size_t(kC64VkbKeys[0].x1 + 20)];
+    for (int i = 0; i < kVkbKeyCount; i++) {
+        const C64VkbKey& k = kC64VkbKeys[i];
+        const bool down = i == vkb_pressed_ || vkb_latched_[size_t(i)] || ((k.flags & kVkbLock) && vkb_shift_lock_);
+        if (!down) continue;
+        for (int y = k.y2 - 1; y >= k.y1; y--) {
+            for (int x = k.x1; x < k.x2; x++) {
+                const size_t dst = size_t(y) * kC64VkbWidth + size_t(x);
+                uint32_t p = well;
+                if (y - kTravel >= k.y1) {
+                    p = vkb_base_[size_t(y - kTravel) * kC64VkbWidth + size_t(x)];
+                    const uint32_t r = ((p >> 16) & 0xff) * 13 / 16, g = ((p >> 8) & 0xff) * 13 / 16,
+                                   b = (p & 0xff) * 13 / 16;
+                    p = 0xff000000u | r << 16 | g << 8 | b;
+                }
+                vkb_image_[dst] = p;
+            }
+        }
+    }
+    vkb_serial_++;
+}
 
 void C64::tape_toggle_play() {
     if (!tape_.is_loaded()) return;

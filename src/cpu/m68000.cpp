@@ -2805,6 +2805,7 @@ int M68000::run(int cycles) {
             exception(3, 34);
             continue;
         }
+        if (instruction_hook_) instruction_hook_(pc_.l);
         const uint16_t instruction = fetch_word();
         switch (instruction >> 12) {
             case 0x0: group_0(instruction); break;
