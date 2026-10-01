@@ -62,7 +62,26 @@ struct MachineInputs {
     int pointer_dx = 0;
     int pointer_dy = 0;
 
+    // Host mouse over the machine's overlay (see Machine::screen_overlay()), in
+    // overlay pixels. Only set while an overlay is shown and the mouse is
+    // over it.
+    bool overlay_pointer = false;
+    int overlay_x = 0;
+    int overlay_y = 0;
+    bool overlay_button = false;
+
     bool key(Key value) const { return keys[size_t(value)]; }
+};
+
+// A high-resolution picture the front end draws across the full width of
+// the window, anchored to its bottom edge, over the emulated screen (an
+// on-screen keyboard, for instance). ARGB, alpha is honoured. `serial`
+// changes whenever the pixels do, so the front end re-uploads only then.
+struct MachineOverlay {
+    const uint32_t* pixels = nullptr;
+    int width = 0;
+    int height = 0;
+    uint32_t serial = 0;
 };
 
 // Common interface implemented by every arcade driver, so the SDL2 front end
@@ -95,6 +114,8 @@ public:
     // True when the default window should be shrunk to fit a 1080p desktop
     // (tall pictures such as two stacked monitors).
     virtual bool fit_window() const { return false; }
+    // Overlay to draw over the bottom of the window; pixels == nullptr: none.
+    virtual MachineOverlay screen_overlay() const { return {}; }
     virtual double frames_per_second() const = 0;
 
     // Consumes the audio samples generated so far (mono, signed 16 bit).

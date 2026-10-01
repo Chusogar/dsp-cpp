@@ -57,6 +57,13 @@ constexpr struct {
     {Key::RightGui, SDL_SCANCODE_RGUI}, {Key::RightAlt, SDL_SCANCODE_RALT},
 };
 
+// Host mouse over the machine overlay, filled in by the main loop.
+struct OverlayPointer {
+    bool inside = false;
+    int x = 0, y = 0;
+    bool button = false;
+} g_overlay_pointer;
+
 void collect_inputs(Machine& machine, int pointer_x, int pointer_y, uint32_t mouse_buttons,
                     bool has_pointer, bool resync = false) {
     const Uint8* keys = SDL_GetKeyboardState(nullptr);
@@ -99,6 +106,10 @@ void collect_inputs(Machine& machine, int pointer_x, int pointer_y, uint32_t mou
     if (machine.uses_keyboard()) {
         for (const auto& entry : kKeyMap) inputs.keys[size_t(entry.key)] = keys[entry.scancode];
     }
+    inputs.overlay_pointer = g_overlay_pointer.inside;
+    inputs.overlay_x = g_overlay_pointer.x;
+    inputs.overlay_y = g_overlay_pointer.y;
+    inputs.overlay_button = g_overlay_pointer.button;
     machine.set_inputs(inputs);
 }
 
@@ -222,6 +233,20 @@ int SdlApp::run(Machine& machine) {
     const bool relative_mouse = machine.uses_pointer() && machine.uses_relative_pointer();
     if (relative_mouse) SDL_ShowCursor(SDL_DISABLE);
     bool was_inside = false;
+
+    // Machine overlay (on-screen keyboard), drawn smooth-scaled over the
+    // bottom of the picture.
+    SDL_Texture* overlay_texture = nullptr;
+    int overlay_tw = 0, overlay_th = 0;
+    uint32_t overlay_serial = 0;
+    auto overlay_rect = [&](const MachineOverlay& o) {
+        SDL_Rect r;
+        r.w = display_w;
+        r.h = int(double(display_w) * o.height / o.width + 0.5);
+        r.x = 0;
+        r.y = display_h - r.h;
+        return r;
+    };
 
     auto update_title = [&]() {
         std::string t = std::string("DSP C++ - ") + machine.title();
@@ -352,6 +377,23 @@ int SdlApp::run(Machine& machine) {
             pointer_x = std::clamp(static_cast<int>(lx * width / display_w), 0, width - 1);
             pointer_y = std::clamp(static_cast<int>(ly * height / display_h), 0, height - 1);
         }
+        g_overlay_pointer = OverlayPointer{};
+        const MachineOverlay ov = machine.screen_overlay();
+        if (ov.pixels != nullptr && ov.width > 0 && ov.height > 0) {
+            int mx = 0, my = 0;
+            const uint32_t buttons = SDL_GetMouseState(&mx, &my);
+            float lx = 0.0f, ly = 0.0f;
+            SDL_RenderWindowToLogical(renderer, mx, my, &lx, &ly);
+            const SDL_Rect r = overlay_rect(ov);
+            const int ox = int((lx - float(r.x)) * float(ov.width) / float(r.w));
+            const int oy = int((ly - float(r.y)) * float(ov.height) / float(r.h));
+            if (SDL_GetMouseFocus() == window && ox >= 0 && ox < ov.width && oy >= 0 && oy < ov.height) {
+                g_overlay_pointer.inside = true;
+                g_overlay_pointer.x = ox;
+                g_overlay_pointer.y = oy;
+                g_overlay_pointer.button = (buttons & SDL_BUTTON_LMASK) != 0;
+            }
+        }
         if (!relative_mouse)
             collect_inputs(machine, pointer_x, pointer_y, mouse_buttons, machine.uses_pointer());
         machine.run_frame();
@@ -374,6 +416,29 @@ int SdlApp::run(Machine& machine) {
             SDL_UpdateTexture(texture, nullptr, machine.framebuffer(), width * 4);
             SDL_RenderClear(renderer);
             SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+            const MachineOverlay o = machine.screen_overlay();
+            if (o.pixels != nullptr && o.width > 0 && o.height > 0) {
+                if (overlay_texture == nullptr || overlay_tw != o.width || overlay_th != o.height) {
+                    if (overlay_texture != nullptr) SDL_DestroyTexture(overlay_texture);
+                    // Linear filtering for this texture only.
+                    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
+                    overlay_texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                                        SDL_TEXTUREACCESS_STREAMING, o.width, o.height);
+                    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+                    if (overlay_texture != nullptr) SDL_SetTextureBlendMode(overlay_texture, SDL_BLENDMODE_BLEND);
+                    overlay_tw = o.width;
+                    overlay_th = o.height;
+                    overlay_serial = o.serial - 1;
+                }
+                if (overlay_texture != nullptr) {
+                    if (overlay_serial != o.serial) {
+                        SDL_UpdateTexture(overlay_texture, nullptr, o.pixels, o.width * 4);
+                        overlay_serial = o.serial;
+                    }
+                    const SDL_Rect r = overlay_rect(o);
+                    SDL_RenderCopy(renderer, overlay_texture, nullptr, &r);
+                }
+            }
             SDL_RenderPresent(renderer);
         }
 
@@ -406,6 +471,7 @@ int SdlApp::run(Machine& machine) {
     }
 
     if (audio_device != 0) SDL_CloseAudioDevice(audio_device);
+    if (overlay_texture != nullptr) SDL_DestroyTexture(overlay_texture);
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

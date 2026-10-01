@@ -252,6 +252,17 @@ release), Shift / Control / Alternate latch until the next key so
 combinations can be clicked, and pressed or latched keys light up. While the
 pointer is over the keyboard the ST mouse stays still.
 
+Commodore 64 on-screen keyboard: F11 shows or hides a "breadbin" C64
+keyboard across the bottom of the window. The picture is drawn by
+`tools/gen_c64_vkb.py` (brown caps seen in perspective, tan function keys, key
+well, case and power LED) at 1536x488 and the front end scales it smoothly as
+a high-resolution overlay (`Machine::screen_overlay()`), independent of the
+384x270 C64 picture; the PETSCII graphics on the front of the keys are taken
+from the character ROM in use. Click keys with the mouse: they go into the
+CIA1 matrix while the button is held and the cap sinks; SHIFT, C= and CTRL
+latch until the next key, SHIFT LOCK locks the left SHIFT, and RESTORE pulls
+the NMI line like the real key.
+
 Atari ST details: the keyboard ACIA keeps its last received byte in the data
 register (programs that poll `$FFFC02` directly, like World Class Rugby's
 loader intro waiting for Space, see it after TOS's interrupt has read it), and

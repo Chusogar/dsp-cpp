@@ -2412,6 +2412,141 @@ void test_c64_prg_injection() {
     check(!tiny.load_media(dir + "/short.prg", &error), "a truncated PRG is rejected");
 }
 
+void test_c64_virtual_keyboard() {
+    const std::string dir = "/tmp/dsp-c64-vkb-test";
+    std::filesystem::create_directories(dir);
+    auto write_rom = [&](const char* name, const std::vector<uint8_t>& data) {
+        std::ofstream out(dir + "/" + name, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
+    };
+    // Stand-in KERNAL: clear $02 and spin; NMI does INC $02 / RTI.
+    std::vector<uint8_t> kernal(0x2000, 0x00);
+    const uint8_t code[] = {0xA9, 0x00, 0x85, 0x02, 0x4C, 0x04, 0xE0, 0xE6, 0x02, 0x40, 0x40};
+    std::copy(std::begin(code), std::end(code), kernal.begin());
+    kernal[0x1FFA] = 0x07;
+    kernal[0x1FFB] = 0xE0;
+    kernal[0x1FFC] = 0x00;
+    kernal[0x1FFD] = 0xE0;
+    kernal[0x1FFE] = 0x0A;
+    kernal[0x1FFF] = 0xE0;
+    write_rom("kernal.rom", kernal);
+    write_rom("basic.rom", std::vector<uint8_t>(0x2000, 0x00));
+    write_rom("chargen.rom", std::vector<uint8_t>(0x1000, 0x5A));
+    dsp::C64 m;
+    std::string error;
+    check(m.init(dir, &error), "C64 boots the stand-in KERNAL for the keyboard test");
+    dsp::MachineInputs in;
+    auto frames = [&](int n) {
+        for (int i = 0; i < n; i++) {
+            m.set_inputs(in);
+            m.run_frame();
+        }
+    };
+    frames(5);
+    check(m.screen_overlay().pixels == nullptr, "C64 on-screen keyboard starts hidden");
+    in.keys[size_t(dsp::Key::F11)] = true;
+    frames(1);
+    in.keys[size_t(dsp::Key::F11)] = false;
+    frames(1);
+    const dsp::MachineOverlay ov = m.screen_overlay();
+    check(m.vkb_visible() && ov.pixels != nullptr && ov.width == dsp::C64::vkb_width() &&
+              ov.height == dsp::C64::vkb_height() && ov.width > 1000,
+          "F11 shows the high-resolution C64 keyboard overlay");
+    auto hover = [&](int col, int row) {
+        int x = 0, y = 0;
+        check(m.vkb_key_centre(col, row, &x, &y), "C64 keyboard key is on the picture");
+        in.overlay_pointer = true;
+        in.overlay_x = x;
+        in.overlay_y = y;
+    };
+    // A (column 1, row 2) goes down while the mouse button is held.
+    hover(1, 2);
+    const uint32_t serial = m.screen_overlay().serial;
+    in.overlay_button = true;
+    frames(2);
+    check((m.debug_keyboard(1) & 0x04) == 0, "clicking A on the C64 keyboard presses it in the matrix");
+    check(m.screen_overlay().serial != serial, "the pressed key is redrawn sunk");
+    in.overlay_button = false;
+    frames(2);
+    check(m.debug_keyboard(1) == 0xff, "releasing the mouse releases A");
+    // SHIFT latches until the next key.
+    hover(1, 7);
+    in.overlay_button = true;
+    frames(1);
+    in.overlay_button = false;
+    frames(1);
+    check((m.debug_keyboard(1) & 0x80) == 0, "a clicked SHIFT stays down");
+    hover(1, 5);
+    in.overlay_button = true;
+    frames(1);
+    check((m.debug_keyboard(1) & 0xa0) == 0, "SHIFT + S are down together");
+    in.overlay_button = false;
+    frames(1);
+    check(m.debug_keyboard(1) == 0xff, "the key consumes the latched SHIFT");
+    // SHIFT LOCK holds the left SHIFT until clicked again.
+    hover(-1, 1);
+    in.overlay_button = true;
+    frames(1);
+    in.overlay_button = false;
+    frames(3);
+    check((m.debug_keyboard(1) & 0x80) == 0, "SHIFT LOCK locks the left SHIFT");
+    in.overlay_button = true;
+    frames(1);
+    in.overlay_button = false;
+    frames(1);
+    check((m.debug_keyboard(1) & 0x80) != 0, "SHIFT LOCK releases on the second click");
+    // RESTORE pulls NMI once per press.
+    check(m.debug_read_ram(0x02) == 0, "no NMI before RESTORE");
+    hover(-1, 0);
+    in.overlay_button = true;
+    frames(3);
+    in.overlay_button = false;
+    frames(2);
+    check(m.debug_read_ram(0x02) == 1, "RESTORE on the on-screen keyboard raises one NMI");
+    in.overlay_button = true;
+    frames(1);
+    in.overlay_button = false;
+    frames(1);
+    check(m.debug_read_ram(0x02) == 2, "a second RESTORE raises another NMI");
+    in.overlay_pointer = false;
+    in.keys[size_t(dsp::Key::F11)] = true;
+    frames(1);
+    in.keys[size_t(dsp::Key::F11)] = false;
+    frames(1);
+    check(!m.vkb_visible() && m.screen_overlay().pixels == nullptr, "F11 hides the C64 keyboard again");
+
+    // With the real ROMs, type PRINT"HI" on the on-screen keyboard.
+    if (!std::filesystem::exists("/tmp/roms/c64/kernal.rom")) return;
+    dsp::C64 c64;
+    check(c64.init("/tmp/roms/c64", &error), "C64 boots the real ROMs");
+    dsp::MachineInputs ki;
+    auto run = [&](int n) {
+        for (int i = 0; i < n; i++) {
+            c64.set_inputs(ki);
+            c64.run_frame();
+        }
+    };
+    run(150);
+    c64.set_vkb_visible(true);
+    const int seq[][2] = {{5, 1}, {2, 1}, {4, 1}, {4, 7}, {2, 6}, {1, 7}, {7, 3}, {3, 5}, {4, 1},
+                          {1, 7}, {7, 3}, {0, 1}};
+    for (const auto& k : seq) {
+        int x = 0, y = 0;
+        c64.vkb_key_centre(k[0], k[1], &x, &y);
+        ki.overlay_pointer = true;
+        ki.overlay_x = x;
+        ki.overlay_y = y;
+        ki.overlay_button = true;
+        run(3);
+        ki.overlay_button = false;
+        run(3);
+    }
+    run(10);
+    // Line 7 of the screen holds the output: "HI" in screen codes.
+    check(c64.debug_read_ram(0x0400 + 7 * 40) == 8 && c64.debug_read_ram(0x0400 + 7 * 40 + 1) == 9,
+          "PRINT\"HI\" typed on the on-screen keyboard runs in BASIC");
+}
+
 // Minimal .T64 archive holding one PRG, as written by the common tools.
 std::vector<uint8_t> make_t64(const std::vector<uint8_t>& prg,
                               const char* name, uint16_t used_entries) {
@@ -8486,6 +8621,7 @@ int main() {
     test_c64_prg_injection();
     test_c64_t64_and_built_disk();
     test_c64_drive_rom_and_media();
+    test_c64_virtual_keyboard();
     test_m6502_rmw_double_write();
     test_mos6566_bank_and_multicolor_bitmap();
     test_pv2000_missing_roms_and_dummy_bios();
