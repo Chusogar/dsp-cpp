@@ -228,7 +228,11 @@ Options:
 512 KiB chip RAM, Kickstart overlay, MOS 8520 CIAs, copper/blitter/bitplanes, and
 Paula disk DMA. Point it at a MAME `a500.zip` and it loads Kickstart 1.3
 (`315093-02.u2`) or 1.2. `--disk FILE.adf` mounts an 880K (80×2×11) AmigaDOS ADF;
-tracks are encoded as MFM for Kickstart's trackdisk DSKDMA.
+tracks are encoded as MFM for Kickstart's trackdisk DSKDMA. A second `--disk`
+goes in DF1 (an external drive; `--disk df0.adf --disk df1.adf`): each drive has
+its own head, motor latch and disk-change line on /SEL0 and /SEL1, and answers
+Kickstart's drive-ID probe. Without a second disk DF1 is not connected, as on
+a plain A500.
 
 ```bash
 ./build/dsp --game amiga /path/to/a500.zip

@@ -30,18 +30,24 @@ Amiga500::Amiga500() : cpu_(kCpuClock) {
         ciab_.reset();
         chipset_.reset();
         prev_prb_ = 0xFF;
-        motor_ = false;
-        selected_ = false;
+        for (Drive& d : drives_) {
+            d.motor = false;
+            d.selected = false;
+        }
         update_ipl();
     });
     chipset_.set_chip_handlers([this](uint32_t a) { return chip_word(a); },
                                [this](uint32_t a, uint16_t v) { poke_chip_word(a, v); });
     chipset_.set_track_mfm([this]() -> std::vector<uint16_t> {
-        if (!floppy_.loaded() || !selected_ || !motor_) return {};
-        int c = cyl_;
-        if (c < 0) c = 0;
-        if (c >= floppy_.tracks()) c = floppy_.tracks() - 1;
-        return floppy_.encode_track(c, side_);
+        // Data comes from the selected drive whose disk is spinning.
+        for (const Drive& d : drives_) {
+            if (!d.adf.loaded() || !d.selected || !d.motor) continue;
+            int c = d.cyl;
+            if (c < 0) c = 0;
+            if (c >= d.adf.tracks()) c = d.adf.tracks() - 1;
+            return d.adf.encode_track(c, side_);
+        }
+        return {};
     });
     ciaa_.set_port_a([this]() { return cia_a_pra_in(); }, nullptr);
     chipset_.set_joytest_handler([this](uint16_t v) {
@@ -94,11 +100,13 @@ bool Amiga500::init(const std::string& rom_path, std::string* error) {
 void Amiga500::reset() {
     std::fill(chip_.begin(), chip_.end(), 0);
     framebuffer_.fill(0);
-    cyl_ = 0;
     side_ = 0;
-    motor_ = false;
-    selected_ = false;
-    disk_changed_ = true;
+    for (Drive& d : drives_) {
+        d.cyl = 0;
+        d.motor = false;
+        d.selected = false;
+        d.changed = true;
+    }
     prev_prb_ = 0xFF;
     prb_writes_ = 0;
     step_in_ = 0;
@@ -116,8 +124,15 @@ void Amiga500::reset() {
 }
 
 bool Amiga500::load_media(const std::string& path, std::string* error) {
-    if (!floppy_.load_file(path, error)) return false;
-    disk_changed_ = true;
+    // The first disk goes in DF0, the second in DF1 (an external drive).
+    int drive = 0;
+    while (drive < kDrives && drives_[drive].adf.loaded()) drive++;
+    if (drive == kDrives) {
+        if (error) *error = "both Amiga floppy drives (DF0, DF1) already have a disk";
+        return false;
+    }
+    if (!drives_[drive].adf.load_file(path, error)) return false;
+    drives_[drive].changed = true;
     return true;
 }
 
@@ -126,47 +141,59 @@ bool Amiga500::overlay() const {
 }
 
 uint8_t Amiga500::cia_a_pra_in() const {
-    // bit2 /CHNG, bit3 /WPRO, bit4 /TK0, bit5 /RDY  (active low)
+    // bit2 /CHNG, bit3 /WPRO, bit4 /TK0, bit5 /RDY  (active low, wired-OR
+    // over the selected drives)
     uint8_t v = 0xFF;
     if (lmb_) v = uint8_t(v & ~0x40);    // /FIR0: left mouse button
     if (fire1_) v = uint8_t(v & ~0x80);  // /FIR1: joystick fire (port 1)
-    if (!floppy_.loaded() || disk_changed_) v = uint8_t(v & ~0x04);
-    if (cyl_ == 0) v = uint8_t(v & ~0x10);
-    // /RDY is only driven while the drive is selected. With /MTR high
-    // (motor latched off) Kickstart 1.3 disk.resource bit-bangs a 32-bit
-    // GetUnitID on this pin; a 3.5" DD drive shifts all zeros, so RDY
-    // stays low. With the motor latched on, RDY means "disk spinning" and
-    // is independent of the /CHNG latch.
-    if (selected_) {
-        const bool ready = motor_ ? floppy_.loaded() : true;
-        if (ready) v = uint8_t(v & ~0x20);
+    bool any_selected = false;
+    for (int i = 0; i < kDrives; i++) any_selected = any_selected || (drives_[i].selected && drive_connected(i));
+    for (int i = 0; i < kDrives; i++) {
+        const Drive& d = drives_[i];
+        if (!drive_connected(i)) continue;
+        // With nothing selected DF0 still drives /CHNG and /TK0, as before.
+        const bool talking = d.selected || (!any_selected && i == 0);
+        if (!talking) continue;
+        if (!d.adf.loaded() || d.changed) v = uint8_t(v & ~0x04);
+        if (d.cyl == 0) v = uint8_t(v & ~0x10);
+        // /RDY is only driven while the drive is selected. With /MTR high
+        // (motor latched off) Kickstart 1.3 disk.resource bit-bangs a 32-bit
+        // GetUnitID on this pin; a 3.5" DD drive shifts all zeros, so RDY
+        // stays low (an unconnected DF1 leaves it high: no drive). With the
+        // motor latched on, RDY means "disk spinning" and is independent of
+        // the /CHNG latch.
+        if (d.selected) {
+            const bool ready = d.motor ? d.adf.loaded() : true;
+            if (ready) v = uint8_t(v & ~0x20);
+        }
     }
     return v;
 }
 
 void Amiga500::cia_b_floppy(uint8_t prb) {
-    // bit0 /STEP, bit1 DIR, bit2 /SIDE, bit3 /SEL0, bit7 /MTR
+    // bit0 /STEP, bit1 DIR, bit2 /SIDE, bit3 /SEL0, bit4 /SEL1, bit7 /MTR
     // /MTR is sampled and latched on the falling edge of /SELx — it is not
     // combinational. Deselecting must not stop a spinning drive.
     ++prb_writes_;
-    const bool sel0 = (prb & 0x08) == 0;
     const bool mtr_line = (prb & 0x80) == 0;
     side_ = (prb & 0x04) ? 0 : 1;
-    if (sel0 && !selected_) {
-        motor_ = mtr_line;
-    }
-    selected_ = sel0;
-    if (selected_ && ((prev_prb_ & 1) != 0) && ((prb & 1) == 0)) {
+    const bool step = ((prev_prb_ & 1) != 0) && ((prb & 1) == 0);
+    for (int i = 0; i < kDrives; i++) {
+        Drive& d = drives_[i];
+        const bool sel = (prb & (0x08 << i)) == 0;
+        if (sel && !d.selected) d.motor = mtr_line;
+        d.selected = sel;
+        if (!d.selected || !step) continue;
         // HRM: DSKDIREC 0 = towards the spindle (higher cylinders); 1 = towards track 0.
         if (prb & 2) {
-            if (cyl_ > 0) cyl_--;
-            ++step_in_;
+            if (d.cyl > 0) d.cyl--;
+            if (i == 0) ++step_in_;
         } else {
-            if (cyl_ < 82) cyl_++;
-            ++step_out_;
+            if (d.cyl < 82) d.cyl++;
+            if (i == 0) ++step_out_;
         }
-        if (cyl_ > max_cyl_) max_cyl_ = cyl_;
-        if (floppy_.loaded()) disk_changed_ = false;
+        if (i == 0 && d.cyl > max_cyl_) max_cyl_ = d.cyl;
+        if (d.adf.loaded()) d.changed = false;
     }
     prev_prb_ = prb;
 }
@@ -287,7 +314,9 @@ void Amiga500::run_frame() {
     update_ipl();
     ciaa_.tod_tick();
     // Index is generated by a spinning drive, even while /SEL is high.
-    if (motor_) {
+    bool spinning = false;
+    for (int i = 0; i < kDrives; i++) spinning = spinning || (drives_[i].motor && drive_connected(i));
+    if (spinning) {
         index_div_++;
         if (index_div_ >= 10) {
             index_div_ = 0;

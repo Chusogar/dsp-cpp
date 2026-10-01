@@ -7667,6 +7667,35 @@ void test_amiga_adf_format() {
     machine.ciab().write(1, 0xF6);  // falling /STEP, DIR=1
     check(!machine.floppy_cyl(), "DIR=1 steps toward track 0");
     check((machine.ciaa().read(0) & 0x04) != 0, "a step pulse clears /CHNG");
+
+    // DF1: without a disk there is no external drive, so its GetUnitID
+    // reads /RDY high (no drive).
+    machine.ciab().write(1, 0xEF);  // /SEL1 low, /MTR high
+    check(machine.floppy_selected(1) && (machine.ciaa().read(0) & 0x20) != 0,
+          "an empty DF1 is not connected (/RDY high)");
+    machine.ciab().write(1, 0xFF);
+
+    // A second ADF goes in DF1, which then answers like DF0 but keeps its
+    // own head and motor latch; a third is refused.
+    const std::string path_b = "/tmp/amiga-dsptest-b.adf";
+    check(dsp::AmigaAdf::write_color_boot(path_b, 0x00F0, &error), "wrote a second 880K ADF");
+    check(machine.load_media(path_b, &error) && machine.floppy_loaded(1), "second ADF goes in DF1");
+    check(!machine.load_media(path_b, &error), "a third ADF is refused");
+    machine.ciab().write(1, 0xEF);  // select DF1 with /MTR high: ID probe
+    check(machine.floppy_selected(1) && !machine.floppy_selected(0) && !machine.floppy_motor(1),
+          "/SEL1 selects DF1 only");
+    check((machine.ciaa().read(0) & 0x20) == 0, "DF1 GetUnitID sees /RDY low (3.5\" DD drive)");
+    machine.ciab().write(1, 0xED);  // /STEP high, DIR=0
+    machine.ciab().write(1, 0xEC);  // falling /STEP
+    machine.ciab().write(1, 0xED);
+    machine.ciab().write(1, 0xEC);
+    check(machine.floppy_cyl(1) == 2 && machine.floppy_cyl(0) == 0, "steps move only the selected drive");
+    machine.ciab().write(1, 0xFF);
+    machine.ciab().write(1, 0x7F);
+    machine.ciab().write(1, 0x6F);  // /SEL1 low with /MTR low: DF1 motor on
+    check(machine.floppy_motor(1) && !machine.floppy_motor(0), "each drive latches its own motor");
+    check((machine.ciaa().read(0) & 0x10) != 0, "DF1 is not on track 0, so /TK0 is high");
+    std::remove(path_b.c_str());
 }
 
 void test_amiga_kickstart_if_present() {

@@ -178,7 +178,7 @@ void print_usage(const char* program) {
         "                     or a Macintosh SCSI hard disk .img/.dsk (DDM+APM like MAME,\n"
         "                     or a raw 512-byte HFS volume served as-is)\n"
         "                     (repeat --disk/--tape to fill QL mdv1 then mdv2, or\n"
-        "                     Atari ST drive A then B)\n"
+        "                     Atari ST drive A then B, or Amiga DF0 then DF1)\n"
         "  --scale N          window scale factor (default 3)\n"
         "  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one\n"
         "                     bank, mikie has three (0=A, 1=B, 2=C); trackfld: 0=A coinage,\n"

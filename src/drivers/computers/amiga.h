@@ -67,12 +67,13 @@ public:
     int disk_dma_count() const { return chipset_.disk_dma_count(); }
     int disk_dma_empty() const { return chipset_.disk_dma_empty(); }
     int blit_count() const { return chipset_.blit_count(); }
-    bool floppy_loaded() const { return floppy_.loaded(); }
-    int floppy_tracks() const { return floppy_.tracks(); }
-    int floppy_spt() const { return floppy_.spt(); }
-    int floppy_cyl() const { return cyl_; }
-    bool floppy_motor() const { return motor_; }
-    bool floppy_selected() const { return selected_; }
+    static constexpr int kDrives = 2;  // DF0 (internal) and DF1 (external)
+    bool floppy_loaded(int drive = 0) const { return drives_[drive].adf.loaded(); }
+    int floppy_tracks(int drive = 0) const { return drives_[drive].adf.tracks(); }
+    int floppy_spt(int drive = 0) const { return drives_[drive].adf.spt(); }
+    int floppy_cyl(int drive = 0) const { return drives_[drive].cyl; }
+    bool floppy_motor(int drive = 0) const { return drives_[drive].motor; }
+    bool floppy_selected(int drive = 0) const { return drives_[drive].selected; }
     int prb_writes() const { return prb_writes_; }
     int floppy_step_in() const { return step_in_; }
     int floppy_step_out() const { return step_out_; }
@@ -94,16 +95,24 @@ private:
     Cia8520 ciaa_;
     Cia8520 ciab_;
     AmigaChipset chipset_;
-    AmigaAdf floppy_;
+    // One 3.5" DD drive. /STEP, DIR and /SIDE are shared; each drive has
+    // its own /SELx, latches /MTR when selected and reports /CHNG, /TK0 and
+    // /RDY on CIA-A while selected. DF1 is only connected when it has a disk.
+    struct Drive {
+        AmigaAdf adf;
+        int cyl = 0;
+        bool motor = false;
+        bool selected = false;
+        bool changed = true;  // /CHNG latch: set until a step with a disk in
+    };
+    bool drive_connected(int drive) const { return drive == 0 || drives_[drive].adf.loaded(); }
+    Drive drives_[kDrives];
 
     std::vector<uint8_t> chip_;
     std::vector<uint8_t> rom_;
     std::array<uint32_t, AmigaChipset::kWidth * AmigaChipset::kHeight> framebuffer_{};
 
-    int cyl_ = 0;
     int side_ = 0;
-    bool motor_ = false;
-    bool selected_ = false;
     // Mouse in game port 0: 8-bit quadrature counters, buttons.
     void update_joy0();
     static constexpr int kMaxCountsPerFrame = 60;
@@ -113,7 +122,6 @@ private:
     bool seed_valid_ = false;
     int seed_x_ = 0, seed_y_ = 0, sync_frames_ = 0;
     bool lmb_ = false, fire1_ = false;
-    bool disk_changed_ = true;
     uint8_t prev_prb_ = 0xFF;
     int prb_writes_ = 0;
     int step_in_ = 0;
