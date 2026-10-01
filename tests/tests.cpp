@@ -6935,6 +6935,40 @@ void test_st_floppy_formats() {
     dsp::AtariSt machine;
     check(machine.load_media(path, &error), "ST attaches a floppy before TOS is loaded");
     check(machine.floppy_loaded(), "ST reports the floppy");
+
+    // Second disk: drive B, read through the same WD1772 when the PSG
+    // port selects it.
+    const std::string path_b = "/tmp/st-dsptest-b.st";
+    check(make_st_720k(path_b, "DRIVEB"), "wrote a second 720K .ST image");
+    check(machine.load_media(path_b, &error) && machine.floppy_loaded(1), "second ST disk goes in drive B");
+    check(!machine.load_media(path_b, &error), "a third ST disk is refused");
+
+    dsp::StFloppy fd;
+    check(fd.load_file(0, path, &error) && fd.load_file(1, path_b, &error), "both ST drives load");
+    std::vector<uint8_t> ram(0x10000, 0);
+    fd.set_ram(ram.data(), uint32_t(ram.size()));
+    auto read_root = [&](uint8_t psg_a, uint32_t addr) {
+        fd.set_psg_port_a(psg_a);
+        fd.dma_mode_w(0x84);
+        fd.dma_data_w(8);  // sector register: root directory
+        fd.dma_mode_w(0x190);
+        fd.dma_mode_w(0x90);
+        fd.dma_data_w(1);  // sector count
+        fd.dma_addr_w(0, uint8_t(addr >> 16));
+        fd.dma_addr_w(1, uint8_t(addr >> 8));
+        fd.dma_addr_w(2, uint8_t(addr));
+        fd.dma_mode_w(0x80);
+        fd.dma_data_w(0x80);  // read sector
+        for (int i = 0; i < 100 && !fd.irq(); i++) fd.tick(1000);
+        return uint8_t(fd.dma_data_r());
+    };
+    uint8_t st = read_root(0x05, 0x1000);  // drive A, side 0
+    check((st & 0x10) == 0 && std::memcmp(&ram[0x1000], "DSPTEST", 7) == 0, "drive A reads its own disk");
+    st = read_root(0x03, 0x2000);  // drive B, side 0
+    check((st & 0x10) == 0 && std::memcmp(&ram[0x2000], "DRIVEB", 6) == 0, "drive B reads the second disk");
+    st = read_root(0x07, 0x3000);  // no drive selected
+    check((st & 0x10) != 0, "no drive selected: record not found");
+    std::remove(path_b.c_str());
 }
 
 void test_st_ikbd_mouse() {

@@ -62,9 +62,9 @@ public:
     void poke(uint32_t address, uint8_t value) { write_byte(address, value); }
     void poke_word(uint32_t address, uint16_t value) { write_word(address, value); }
     std::vector<uint8_t> ikbd_pending_bytes() const;
-    bool floppy_loaded() const { return floppy_.loaded(); }
-    int floppy_spt() const { return floppy_.spt(); }
-    int floppy_tracks() const { return floppy_.tracks(); }
+    bool floppy_loaded(int drive = 0) const { return floppy_.loaded(drive); }
+    int floppy_spt(int drive = 0) const { return floppy_.spt(drive); }
+    int floppy_tracks(int drive = 0) const { return floppy_.tracks(drive); }
 
 private:
     uint8_t read_byte(uint32_t address);

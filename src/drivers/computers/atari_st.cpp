@@ -202,7 +202,14 @@ void AtariSt::reset() {
 }
 
 bool AtariSt::load_media(const std::string& path, std::string* error) {
-    if (!floppy_.load_file(path, error)) return false;
+    // The first disk goes in drive A, the second in drive B.
+    int drive = 0;
+    if (floppy_.loaded(0)) drive = 1;
+    if (floppy_.loaded(1) && drive == 1) {
+        if (error) *error = "both Atari ST floppy drives already have a disk";
+        return false;
+    }
+    if (!floppy_.load_file(drive, path, error)) return false;
     floppy_.set_ram(ram_.data(), uint32_t(ram_.size()));
     return true;
 }

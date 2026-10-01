@@ -21,16 +21,20 @@ class StFloppy {
 public:
     static constexpr int kSectorSize = 512;
 
+    static constexpr int kDrives = 2;  // A: and B:
+
     void reset();
-    bool load_file(const std::string& path, std::string* error);
-    bool loaded() const { return loaded_; }
-    int tracks() const { return tracks_; }
-    int sides() const { return sides_; }
-    int spt() const { return spt_; }
-    bool is_stx() const { return stx_; }
+    // Inserts an image in drive A (0) or B (1).
+    bool load_file(int drive, const std::string& path, std::string* error);
+    bool load_file(const std::string& path, std::string* error) { return load_file(0, path, error); }
+    bool loaded(int drive = 0) const { return disk(drive).loaded; }
+    int tracks(int drive = 0) const { return disk(drive).tracks; }
+    int sides(int drive = 0) const { return disk(drive).sides; }
+    int spt(int drive = 0) const { return disk(drive).spt; }
+    bool is_stx(int drive = 0) const { return disk(drive).stx; }
     // STX: number of ID fields on a track (-1 if the track is not present).
-    int stx_sector_count(int track, int side) const;
-    int head_position() const { return head_; }
+    int stx_sector_count(int track, int side, int drive = 0) const;
+    int head_position(int drive = 0) const { return disk(drive).head; }
 
     void set_psg_port_a(uint8_t value) { psg_a_ = value; }
 
@@ -54,8 +58,9 @@ public:
         ram_size_ = size;
     }
 
-    const uint8_t* sector(int track, int side, int sector) const;
-    uint8_t* sector(int track, int side, int sector);
+    // Sector of the image in `drive` (A by default), nullptr if absent.
+    const uint8_t* sector(int track, int side, int sector, int drive = 0) const;
+    uint8_t* sector(int track, int side, int sector, int drive = 0);
 
 private:
     uint8_t fdc_status();
@@ -66,10 +71,6 @@ private:
     void do_read_address();
     int selected_drive() const;
     int selected_side() const;
-    bool decode_geometry(size_t bytes);
-    bool load_st(const uint8_t* data, size_t size, std::string* error);
-    bool load_msa(const uint8_t* data, size_t size, std::string* error);
-    bool load_stx(const uint8_t* data, size_t size, std::string* error);
 
     // STX track model.
     struct StxSector {
@@ -88,7 +89,30 @@ private:
         std::vector<StxSector> sectors;
         std::vector<uint8_t> image;  // raw track for Read Track, if dumped
     };
-    StxTrack* stx_track(int track, int side);
+    // One drive and the disk in it. The WD1772 registers are shared; the
+    // head position belongs to each drive.
+    struct Disk {
+        std::vector<uint8_t> image;  // .ST/.MSA sectors
+        int tracks = 80;
+        int sides = 2;
+        int spt = 9;
+        bool loaded = false;
+        bool stx = false;
+        std::vector<StxTrack> stx_tracks;  // [track * 2 + side]
+        int head = 0;  // physical head position (cylinder)
+    };
+    const Disk& disk(int drive) const { return drives_[(drive == 1) ? 1 : 0]; }
+    Disk& disk(int drive) { return drives_[(drive == 1) ? 1 : 0]; }
+    // The drive the PSG port selects; A when none is (commands then fail).
+    Disk& cur() { return disk(selected_drive()); }
+    // A selected drive with a disk in it, or nullptr.
+    Disk* media();
+    static bool decode_geometry(Disk& d, size_t bytes);
+    static bool load_st(Disk& d, const uint8_t* data, size_t size, std::string* error);
+    static bool load_msa(Disk& d, const uint8_t* data, size_t size, std::string* error);
+    static bool load_stx(Disk& d, const uint8_t* data, size_t size, std::string* error);
+    static const uint8_t* disk_sector(const Disk& d, int track, int side, int sector);
+    static StxTrack* stx_track(Disk& d, int track, int side);
     uint32_t rotation_byte() const;
     int stx_next_sector(const StxTrack& t, bool match_sector, uint32_t* wait_bytes);
     void stx_read_sector(uint8_t cmd);
@@ -98,12 +122,6 @@ private:
     void stx_finish(uint32_t cycles);
     void dma_push(const uint8_t* data, size_t n);
     uint8_t random_byte();
-
-    std::vector<uint8_t> image_;
-    int tracks_ = 80;
-    int sides_ = 2;
-    int spt_ = 9;
-    bool loaded_ = false;
 
     uint8_t* ram_ = nullptr;
     uint32_t ram_size_ = 0;
@@ -124,9 +142,7 @@ private:
     bool dma_error_ = false;
     uint8_t last_cmd_ = 0;
 
-    bool stx_ = false;
-    std::vector<StxTrack> stx_tracks_;  // [track * 2 + side]
-    int head_ = 0;          // physical head position (cylinder)
+    Disk drives_[kDrives];
     int step_dir_ = 1;      // last Type I step direction
     uint64_t cycles_ = 0;   // free-running clock for the disk rotation
     uint32_t dma_bytes_ = 0;  // bytes moved in the current 512-byte block

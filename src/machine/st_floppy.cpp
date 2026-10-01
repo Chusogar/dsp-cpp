@@ -83,12 +83,12 @@ void StFloppy::reset() {
     dma_error_ = false;
     psg_a_ = 0xff;
     last_cmd_ = 0;
-    head_ = 0;
+    for (Disk& d : drives_) d.head = 0;
     step_dir_ = 1;
     dma_bytes_ = 0;
 }
 
-bool StFloppy::decode_geometry(size_t bytes) {
+bool StFloppy::decode_geometry(Disk& d, size_t bytes) {
     const int k = int(bytes / kSectorSize);
     const struct {
         int tracks, sides, spt;
@@ -99,47 +99,57 @@ bool StFloppy::decode_geometry(size_t bytes) {
     };
     for (const auto& c : cands) {
         if (c.tracks * c.sides * c.spt == k) {
-            tracks_ = c.tracks;
-            sides_ = c.sides;
-            spt_ = c.spt;
+            d.tracks = c.tracks;
+            d.sides = c.sides;
+            d.spt = c.spt;
             return true;
         }
     }
     if (k >= 9 * 80 && (k % 9) == 0) {
-        tracks_ = 80;
-        spt_ = 9;
-        sides_ = k / (80 * 9);
-        if (sides_ < 1) sides_ = 1;
-        if (sides_ > 2) sides_ = 2;
+        d.tracks = 80;
+        d.spt = 9;
+        d.sides = k / (80 * 9);
+        if (d.sides < 1) d.sides = 1;
+        if (d.sides > 2) d.sides = 2;
         return true;
     }
     return false;
 }
 
-const uint8_t* StFloppy::sector(int track, int side, int sector) const {
-    if (!loaded_ || track < 0 || track >= tracks_ || side < 0 || side >= sides_) return nullptr;
-    if (sector < 1 || sector > spt_) return nullptr;
-    const int index = ((track * sides_ + side) * spt_ + (sector - 1));
+const uint8_t* StFloppy::disk_sector(const Disk& d, int track, int side, int sector) {
+    if (!d.loaded || d.stx || track < 0 || track >= d.tracks || side < 0 || side >= d.sides) return nullptr;
+    if (sector < 1 || sector > d.spt) return nullptr;
+    const int index = ((track * d.sides + side) * d.spt + (sector - 1));
     const size_t off = size_t(index) * kSectorSize;
-    if (off + kSectorSize > image_.size()) return nullptr;
-    return image_.data() + off;
+    if (off + kSectorSize > d.image.size()) return nullptr;
+    return d.image.data() + off;
 }
 
-uint8_t* StFloppy::sector(int track, int side, int sector) {
-    return const_cast<uint8_t*>(static_cast<const StFloppy*>(this)->sector(track, side, sector));
+const uint8_t* StFloppy::sector(int track, int side, int sector, int drive) const {
+    return disk_sector(disk(drive), track, side, sector);
 }
 
-bool StFloppy::load_st(const uint8_t* data, size_t size, std::string* error) {
-    if (!decode_geometry(size)) {
+uint8_t* StFloppy::sector(int track, int side, int sector, int drive) {
+    return const_cast<uint8_t*>(disk_sector(disk(drive), track, side, sector));
+}
+
+StFloppy::Disk* StFloppy::media() {
+    const int drive = selected_drive();
+    if (drive < 0 || !disk(drive).loaded) return nullptr;
+    return &disk(drive);
+}
+
+bool StFloppy::load_st(Disk& d, const uint8_t* data, size_t size, std::string* error) {
+    if (!decode_geometry(d, size)) {
         if (error) *error = "ST image size is not a known floppy geometry";
         return false;
     }
-    image_.assign(data, data + size);
-    loaded_ = true;
+    d.image.assign(data, data + size);
+    d.loaded = true;
     return true;
 }
 
-bool StFloppy::load_msa(const uint8_t* data, size_t size, std::string* error) {
+bool StFloppy::load_msa(Disk& d, const uint8_t* data, size_t size, std::string* error) {
     if (size < 10 || be16(data) != 0x0e0f) {
         if (error) *error = "not an MSA disk";
         return false;
@@ -152,13 +162,13 @@ bool StFloppy::load_msa(const uint8_t* data, size_t size, std::string* error) {
         if (error) *error = "MSA header is corrupt";
         return false;
     }
-    tracks_ = end + 1;
-    sides_ = sides;
-    spt_ = spt;
-    image_.assign(size_t(tracks_ * sides_ * spt_ * kSectorSize), 0);
+    d.tracks = end + 1;
+    d.sides = sides;
+    d.spt = spt;
+    d.image.assign(size_t(d.tracks * d.sides * d.spt * kSectorSize), 0);
     size_t pos = 10;
     for (int t = start; t <= end; t++) {
-        for (int s = 0; s < sides_; s++) {
+        for (int s = 0; s < d.sides; s++) {
             if (pos + 2 > size) {
                 if (error) *error = "MSA track data is truncated";
                 return false;
@@ -169,12 +179,12 @@ bool StFloppy::load_msa(const uint8_t* data, size_t size, std::string* error) {
                 if (error) *error = "MSA track data is truncated";
                 return false;
             }
-            uint8_t* dest = this->sector(t, s, 1);
+            uint8_t* dest = const_cast<uint8_t*>(disk_sector(d, t, s, 1));
             if (!dest) {
                 pos += size_t(packed);
                 continue;
             }
-            const int raw = spt_ * kSectorSize;
+            const int raw = d.spt * kSectorSize;
             if (packed == raw) {
                 std::memcpy(dest, data + pos, size_t(raw));
             } else {
@@ -183,27 +193,31 @@ bool StFloppy::load_msa(const uint8_t* data, size_t size, std::string* error) {
             pos += size_t(packed);
         }
     }
-    loaded_ = true;
+    d.loaded = true;
     return true;
 }
 
-bool StFloppy::load_file(const std::string& path, std::string* error) {
+bool StFloppy::load_file(int drive, const std::string& path, std::string* error) {
     std::vector<uint8_t> raw;
     if (!read_file(path, raw)) {
         if (error) *error = "cannot read " + path;
         return false;
     }
-    loaded_ = false;
-    stx_ = false;
-    stx_tracks_.clear();
+    // Parse into a fresh drive state so a bad image leaves the old disk in.
+    Disk d;
+    d.head = disk(drive).head;
     const std::string ext = lower_ext(path);
+    bool ok;
     if (ext == ".stx" || (raw.size() >= 4 && std::memcmp(raw.data(), "RSY\0", 4) == 0)) {
-        return load_stx(raw.data(), raw.size(), error);
+        ok = load_stx(d, raw.data(), raw.size(), error);
+    } else if (ext == ".msa" || (raw.size() >= 2 && raw[0] == 0x0e && raw[1] == 0x0f)) {
+        ok = load_msa(d, raw.data(), raw.size(), error);
+    } else {
+        ok = load_st(d, raw.data(), raw.size(), error);
     }
-    if (ext == ".msa" || (raw.size() >= 2 && raw[0] == 0x0e && raw[1] == 0x0f)) {
-        return load_msa(raw.data(), raw.size(), error);
-    }
-    return load_st(raw.data(), raw.size(), error);
+    if (!ok) return false;
+    disk(drive) = std::move(d);
+    return true;
 }
 
 uint16_t StFloppy::dma_status() const {
@@ -293,9 +307,9 @@ uint8_t StFloppy::fdc_status() {
     uint8_t v = fdc_status_;
     if (fdc_busy_) v |= 0x01;
     const bool type1 = (last_cmd_ & 0x80) == 0;
-    if (type1 && stx_) {
-        if (head_ == 0) v |= 0x04;
-        if (motor_on_ && loaded_ && selected_drive() == 0 && rotation_byte() < 140) v |= 0x02;  // index
+    if (type1 && cur().stx) {
+        if (cur().head == 0) v |= 0x04;
+        if (motor_on_ && media() && rotation_byte() < 140) v |= 0x02;  // index
         if (motor_on_) v |= 0x20;
     } else if (type1) {
         if (fdc_track_ == 0) v |= 0x04;  // TR00 (type II uses this bit as Lost Data)
@@ -322,20 +336,21 @@ void StFloppy::fdc_command(uint8_t cmd) {
     fdc_status_ = 0;
     if ((cmd & 0xf0) != 0xd0) motor_on_ = true;  // Force Interrupt does not spin up
     const uint8_t type = uint8_t(cmd & 0xf0);
-    if (stx_ && type < 0x80) {
+    Disk& d = cur();
+    if (d.stx && type < 0x80) {
         // Type I on a real head: restore, seek, step, step-in, step-out.
         // Step commands only touch the track register when bit 4 is set.
         int steps = 0;
         if (type == 0x00 || type == 0x10) {
             if (type == 0x00) {
                 step_dir_ = -1;
-                steps = head_;
-                head_ = 0;
+                steps = d.head;
+                d.head = 0;
                 fdc_track_ = 0;
             } else {
                 const int delta = int(fdc_data_) - int(fdc_track_);
                 if (delta != 0) step_dir_ = delta > 0 ? 1 : -1;
-                head_ += delta;
+                d.head += delta;
                 steps = delta < 0 ? -delta : delta;
                 fdc_track_ = fdc_data_;
             }
@@ -343,18 +358,18 @@ void StFloppy::fdc_command(uint8_t cmd) {
             if (type == 0x40 || type == 0x50) step_dir_ = 1;
             else if (type == 0x60 || type == 0x70) step_dir_ = -1;
             if (cmd & 0x10) fdc_track_ = uint8_t(fdc_track_ + step_dir_);
-            if (!(step_dir_ < 0 && head_ == 0)) head_ += step_dir_;
+            if (!(step_dir_ < 0 && d.head == 0)) d.head += step_dir_;
             steps = 1;
         }
-        if (head_ > 85) head_ = 85;
-        if (head_ < 0) head_ = 0;
+        if (d.head > 85) d.head = 85;
+        if (d.head < 0) d.head = 0;
         static const int kStepMs[4] = {6, 12, 2, 3};
         uint32_t cycles = 8000 + uint32_t(steps) * uint32_t(kStepMs[cmd & 3]) * 8000;
         if (cmd & 0x04) {
             // Verify: an ID with the track register's value must turn up.
-            const StxTrack* t = stx_track(head_, selected_side());
+            const StxTrack* t = media() ? stx_track(d, d.head, selected_side()) : nullptr;
             bool ok = false;
-            if (t && selected_drive() == 0) {
+            if (t) {
                 for (const auto& sec : t->sectors) {
                     if (sec.id[0] == fdc_track_) ok = true;
                 }
@@ -370,7 +385,7 @@ void StFloppy::fdc_command(uint8_t cmd) {
         return;
     }
     if (type < 0x80) {
-        // Type I: restore / seek / step. Both drives exist; only A has media.
+        // Type I: restore / seek / step on a flat image.
         if (type == 0x00) fdc_track_ = 0;
         else if (type == 0x10) fdc_track_ = fdc_data_;
         else if (type == 0x40 || type == 0x60) {
@@ -378,7 +393,7 @@ void StFloppy::fdc_command(uint8_t cmd) {
         } else if (type == 0x20 || type == 0x50 || type == 0x70) {
             if (fdc_track_ > 0) fdc_track_--;
         }
-        head_ = fdc_track_;
+        d.head = fdc_track_;
         finish_command();
         return;
     }
@@ -388,7 +403,7 @@ void StFloppy::fdc_command(uint8_t cmd) {
         fdc_irq_ = (cmd & 8) != 0;
         return;
     }
-    if (stx_) {
+    if (d.stx) {
         if ((cmd & 0xe0) == 0x80) stx_read_sector(cmd);
         else if ((cmd & 0xe0) == 0xa0) stx_write_sector(cmd);
         else if (type == 0xc0) stx_read_address();
@@ -418,7 +433,7 @@ void StFloppy::fdc_command(uint8_t cmd) {
 }
 
 void StFloppy::do_read_address() {
-    if (selected_drive() != 0 || !loaded_) {
+    if (!media()) {
         fdc_status_ = 0x10;
         finish_command();
         return;
@@ -435,14 +450,15 @@ void StFloppy::do_read_address() {
 
 void StFloppy::do_dma_read() {
     const int side = selected_side();
-    if (selected_drive() != 0 || !loaded_) {
+    Disk* d = media();
+    if (!d) {
         dma_error_ = true;
         fdc_status_ = 0x10;
         finish_command();
         return;
     }
     while (dma_count_) {
-        const uint8_t* src = sector(fdc_track_, side, fdc_sector_);
+        const uint8_t* src = disk_sector(*d, fdc_track_, side, fdc_sector_);
         if (!src || ram_ == nullptr || dma_addr_ + kSectorSize > ram_size_) {
             dma_error_ = true;
             fdc_status_ = 0x10;
@@ -453,7 +469,7 @@ void StFloppy::do_dma_read() {
         dma_addr_ += kSectorSize;
         dma_count_--;
         fdc_sector_++;
-        if (fdc_sector_ > spt_) {
+        if (fdc_sector_ > d->spt) {
             fdc_sector_ = 1;
             break;
         }
@@ -463,14 +479,15 @@ void StFloppy::do_dma_read() {
 
 void StFloppy::do_dma_write() {
     const int side = selected_side();
-    if (selected_drive() != 0 || !loaded_) {
+    Disk* d = media();
+    if (!d) {
         dma_error_ = true;
         fdc_status_ = 0x10;
         finish_command();
         return;
     }
     while (dma_count_) {
-        uint8_t* dest = sector(fdc_track_, side, fdc_sector_);
+        uint8_t* dest = const_cast<uint8_t*>(disk_sector(*d, fdc_track_, side, fdc_sector_));
         if (!dest || ram_ == nullptr || dma_addr_ + kSectorSize > ram_size_) {
             dma_error_ = true;
             fdc_status_ = 0x10;
@@ -481,7 +498,7 @@ void StFloppy::do_dma_write() {
         dma_addr_ += kSectorSize;
         dma_count_--;
         fdc_sector_++;
-        if (fdc_sector_ > spt_) {
+        if (fdc_sector_ > d->spt) {
             fdc_sector_ = 1;
             break;
         }
@@ -492,16 +509,16 @@ void StFloppy::do_dma_write() {
 // ---------------------------------------------------------------------------
 // Pasti .STX images
 
-bool StFloppy::load_stx(const uint8_t* data, size_t size, std::string* error) {
+bool StFloppy::load_stx(Disk& d, const uint8_t* data, size_t size, std::string* error) {
     auto fail = [&](const char* msg) {
         if (error) *error = msg;
-        stx_tracks_.clear();
+        d.stx_tracks.clear();
         return false;
     };
     if (size < 16 || std::memcmp(data, "RSY\0", 4) != 0) return fail("not an STX disk");
     if (le16(data + 4) != 3) return fail("unsupported STX version");
     const int track_blocks = data[10];
-    stx_tracks_.assign(86 * 2, StxTrack{});
+    d.stx_tracks.assign(86 * 2, StxTrack{});
     int max_track = 0;
     bool two_sides = false;
     size_t pos = 16;
@@ -522,7 +539,7 @@ bool StFloppy::load_stx(const uint8_t* data, size_t size, std::string* error) {
             pos += block_size;
             continue;
         }
-        StxTrack& t = stx_tracks_[size_t(track * 2 + side)];
+        StxTrack& t = d.stx_tracks[size_t(track * 2 + side)];
         t = StxTrack{};
         t.present = true;
         t.bytes = mfm_size ? mfm_size : 6250;
@@ -595,27 +612,28 @@ bool StFloppy::load_stx(const uint8_t* data, size_t size, std::string* error) {
         }
         pos += block_size;
     }
-    tracks_ = max_track + 1;
-    sides_ = two_sides ? 2 : 1;
-    spt_ = 9;
-    if (const StxTrack* t = stx_track(1, 0)) {
-        if (!t->sectors.empty()) spt_ = int(t->sectors.size());
+    d.tracks = max_track + 1;
+    d.sides = two_sides ? 2 : 1;
+    d.spt = 9;
+    if (const StxTrack* t = stx_track(d, 1, 0)) {
+        if (!t->sectors.empty()) d.spt = int(t->sectors.size());
     }
-    image_.clear();
-    stx_ = true;
-    loaded_ = true;
+    d.image.clear();
+    d.stx = true;
+    d.loaded = true;
     return true;
 }
 
-StFloppy::StxTrack* StFloppy::stx_track(int track, int side) {
-    if (!stx_ || track < 0 || track >= 86 || side < 0 || side > 1) return nullptr;
-    StxTrack& t = stx_tracks_[size_t(track * 2 + side)];
+StFloppy::StxTrack* StFloppy::stx_track(Disk& d, int track, int side) {
+    if (!d.stx || track < 0 || track >= 86 || side < 0 || side > 1) return nullptr;
+    StxTrack& t = d.stx_tracks[size_t(track * 2 + side)];
     return t.present ? &t : nullptr;
 }
 
-int StFloppy::stx_sector_count(int track, int side) const {
-    if (!stx_ || track < 0 || track >= 86 || side < 0 || side > 1) return -1;
-    const StxTrack& t = stx_tracks_[size_t(track * 2 + side)];
+int StFloppy::stx_sector_count(int track, int side, int drive) const {
+    const Disk& d = disk(drive);
+    if (!d.stx || track < 0 || track >= 86 || side < 0 || side > 1) return -1;
+    const StxTrack& t = d.stx_tracks[size_t(track * 2 + side)];
     return t.present ? int(t.sectors.size()) : -1;
 }
 
@@ -675,7 +693,7 @@ void StFloppy::dma_push(const uint8_t* data, size_t n) {
 }
 
 void StFloppy::stx_read_sector(uint8_t cmd) {
-    StxTrack* t = (selected_drive() == 0) ? stx_track(head_, selected_side()) : nullptr;
+    StxTrack* t = media() ? stx_track(*media(), media()->head, selected_side()) : nullptr;
     if (t == nullptr || t->sectors.empty()) {
         fdc_status_ = 0x10;
         stx_finish(5 * kCyclesPerRev);
@@ -718,7 +736,7 @@ void StFloppy::stx_read_sector(uint8_t cmd) {
 }
 
 void StFloppy::stx_write_sector(uint8_t cmd) {
-    StxTrack* t = (selected_drive() == 0) ? stx_track(head_, selected_side()) : nullptr;
+    StxTrack* t = media() ? stx_track(*media(), media()->head, selected_side()) : nullptr;
     if (t == nullptr || t->sectors.empty()) {
         fdc_status_ = 0x10;
         stx_finish(5 * kCyclesPerRev);
@@ -759,7 +777,7 @@ void StFloppy::stx_write_sector(uint8_t cmd) {
 }
 
 void StFloppy::stx_read_address() {
-    StxTrack* t = (selected_drive() == 0) ? stx_track(head_, selected_side()) : nullptr;
+    StxTrack* t = media() ? stx_track(*media(), media()->head, selected_side()) : nullptr;
     uint32_t wait = 0;
     const int idx = t ? stx_next_sector(*t, false, &wait) : -1;
     if (idx < 0) {
@@ -785,7 +803,7 @@ void StFloppy::stx_read_address() {
 }
 
 void StFloppy::stx_read_track() {
-    StxTrack* t = (selected_drive() == 0) ? stx_track(head_, selected_side()) : nullptr;
+    StxTrack* t = media() ? stx_track(*media(), media()->head, selected_side()) : nullptr;
     std::vector<uint8_t> raw;
     const uint32_t len = t && t->bytes ? t->bytes : 6250;
     if (t && !t->image.empty()) {
