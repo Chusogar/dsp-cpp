@@ -10,6 +10,7 @@
 #include "machine/i8255.h"
 #include "machine/nec765.h"
 #include "machine/spectrum_tape.h"
+#include "machine/virtual_keyboard.h"
 #include "sound/ay8910.h"
 
 namespace dsp {
@@ -60,6 +61,11 @@ public:
     const char* title() const override;
     bool uses_keyboard() const override { return true; }
     bool load_media(const std::string& path, std::string* error) override;
+    // F11 shows the CPC 464 keyboard over the bottom of the window.
+    MachineOverlay screen_overlay() const override { return vkb_.overlay(); }
+    VirtualKeyboard& vkb() { return vkb_; }
+    // Keyboard matrix line as the PPI/AY scan sees it (active low).
+    uint8_t debug_keyboard_line(int line) const { return ppi_state_.keyb_val[size_t(line & 15)]; }
 	bool load_sna(const std::string& path, std::string* error);
 
 private:
@@ -172,6 +178,7 @@ private:
     Crtc crt_;
     GateArray ga_;
     Ppi ppi_state_;
+    VirtualKeyboard vkb_;
     bool mod_address_ = false;
     bool irq_asserted_ = false;
     int video_acc_ = 0;

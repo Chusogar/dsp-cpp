@@ -2427,6 +2427,108 @@ void test_c64_prg_injection() {
     check(!tiny.load_media(dir + "/short.prg", &error), "a truncated PRG is rejected");
 }
 
+// Clicks a key of a VirtualKeyboard-based on-screen keyboard: hover, press for
+// `hold` frames, release for `rest` frames.
+template <typename M>
+void vkb_click(M& m, int code, int hold = 2, int rest = 2) {
+    int x = 0, y = 0;
+    check(m.vkb().key_centre(code, &x, &y), "on-screen keyboard has the key");
+    dsp::MachineInputs in;
+    in.overlay_pointer = true;
+    in.overlay_x = x;
+    in.overlay_y = y;
+    in.overlay_button = true;
+    for (int i = 0; i < hold; i++) m.set_inputs(in);
+    in.overlay_button = false;
+    for (int i = 0; i < rest; i++) m.set_inputs(in);
+}
+
+template <typename M>
+void vkb_toggle(M& m) {
+    dsp::MachineInputs in;
+    in.keys[size_t(dsp::Key::F11)] = true;
+    m.set_inputs(in);
+    in.keys[size_t(dsp::Key::F11)] = false;
+    m.set_inputs(in);
+}
+
+void test_zx48_virtual_keyboard() {
+    dsp::Spectrum48k zx;
+    check(zx.screen_overlay().pixels == nullptr, "ZX 48K keyboard starts hidden");
+    vkb_toggle(zx);
+    const dsp::MachineOverlay ov = zx.screen_overlay();
+    check(ov.pixels != nullptr && ov.width >= 1024 && ov.height > 300,
+          "F11 shows the ZX Spectrum 48K rubber keyboard overlay");
+    check((ov.pixels[0] >> 24) == 0 && (ov.pixels[size_t(ov.height / 2) * size_t(ov.width) + size_t(ov.width / 2)] >> 24) == 0xff,
+          "the keyboard picture is opaque, its side margins transparent");
+    // Hold P (half-row 5, bit 0).
+    int x = 0, y = 0;
+    zx.vkb().key_centre(5 * 8 + 0, &x, &y);
+    dsp::MachineInputs in;
+    in.overlay_pointer = true;
+    in.overlay_x = x;
+    in.overlay_y = y;
+    in.overlay_button = true;
+    const uint32_t serial = zx.screen_overlay().serial;
+    zx.set_inputs(in);
+    check(zx.debug_keys(5) == 0xfe, "clicking P on the 48K keyboard presses it in the matrix");
+    check(zx.screen_overlay().serial != serial, "the held rubber key is drawn sunk");
+    in.overlay_button = false;
+    zx.set_inputs(in);
+    check(zx.debug_keys(5) == 0xff, "releasing the mouse releases P");
+    // SYMBOL SHIFT latches until the next key: SYMBOL SHIFT + P is '"'.
+    vkb_click(zx, 7 * 8 + 1);
+    check(zx.debug_keys(7) == 0xfd, "SYMBOL SHIFT stays down after a click");
+    in.overlay_button = true;
+    zx.set_inputs(in);
+    check(zx.debug_keys(7) == 0xfd && zx.debug_keys(5) == 0xfe, "SYMBOL SHIFT + P are down together");
+    in.overlay_button = false;
+    zx.set_inputs(in);
+    check(zx.debug_keys(7) == 0xff && zx.debug_keys(5) == 0xff, "the key consumes the latched SYMBOL SHIFT");
+    vkb_click(zx, 0 * 8 + 0);
+    check(zx.debug_keys(0) == 0xfe, "CAPS SHIFT latches too");
+    vkb_toggle(zx);
+    check(zx.screen_overlay().pixels == nullptr && zx.debug_keys(0) == 0xff,
+          "F11 hides the keyboard and lets go of latched keys");
+}
+
+void test_cpc464_virtual_keyboard() {
+    dsp::AmstradCpc cpc(dsp::AmstradCpc::Model::CPC464);
+    vkb_toggle(cpc);
+    const dsp::MachineOverlay ov = cpc.screen_overlay();
+    check(ov.pixels != nullptr && ov.width >= 1024, "F11 shows the CPC 464 keyboard overlay");
+    // Every matrix key of the 464 is on the picture.
+    const int codes[] = {0 * 8 + 0, 0 * 8 + 6, 1 * 8 + 1, 1 * 8 + 7, 2 * 8 + 2, 2 * 8 + 5, 2 * 8 + 7, 3 * 8 + 3,
+                         5 * 8 + 7, 8 * 8 + 2, 8 * 8 + 6, 9 * 8 + 7};
+    bool all = true;
+    for (int code : codes) {
+        int x = 0, y = 0;
+        all = all && cpc.vkb().key_centre(code, &x, &y);
+    }
+    check(all, "CPC keyboard has ENTER, COPY, f0, RETURN, SHIFT, CTRL, P, SPACE, ESC, CAPS LOCK and DEL");
+    int x = 0, y = 0;
+    cpc.vkb().key_centre(8 * 8 + 3, &x, &y);  // Q: line 8, bit 3
+    dsp::MachineInputs in;
+    in.overlay_pointer = true;
+    in.overlay_x = x;
+    in.overlay_y = y;
+    in.overlay_button = true;
+    cpc.set_inputs(in);
+    check(cpc.debug_keyboard_line(8) == 0xf7, "clicking Q on the CPC keyboard presses line 8 bit 3");
+    in.overlay_button = false;
+    cpc.set_inputs(in);
+    check(cpc.debug_keyboard_line(8) == 0xff, "releasing the mouse releases Q");
+    vkb_click(cpc, 2 * 8 + 5);  // SHIFT
+    vkb_click(cpc, 2 * 8 + 7);  // CTRL
+    check(cpc.debug_keyboard_line(2) == 0x5f, "SHIFT and CTRL latch together on the CPC keyboard");
+    in.overlay_button = true;
+    cpc.set_inputs(in);
+    check(cpc.debug_keyboard_line(2) == 0x5f && cpc.debug_keyboard_line(8) == 0xf7, "SHIFT + CTRL + Q");
+    in.overlay_button = false;
+    cpc.set_inputs(in);
+    check(cpc.debug_keyboard_line(2) == 0xff, "the key consumes SHIFT and CTRL");
+}
+
 void test_c64_virtual_keyboard() {
     const std::string dir = "/tmp/dsp-c64-vkb-test";
     std::filesystem::create_directories(dir);
@@ -8928,6 +9030,8 @@ int main() {
     test_c64_t64_and_built_disk();
     test_c64_drive_rom_and_media();
     test_c64_virtual_keyboard();
+    test_zx48_virtual_keyboard();
+    test_cpc464_virtual_keyboard();
     test_m6502_rmw_double_write();
     test_mos6566_bank_and_multicolor_bitmap();
     test_pv2000_missing_roms_and_dummy_bios();

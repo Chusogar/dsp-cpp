@@ -270,6 +270,20 @@ CIA1 matrix while the button is held and the cap sinks; SHIFT, C= and CTRL
 latch until the next key, SHIFT LOCK locks the left SHIFT, and RESTORE pulls
 the NMI line like the real key.
 
+ZX Spectrum 48K and Amstrad CPC on-screen keyboards: F11 shows or hides them
+the same way, through the shared `VirtualKeyboard` (src/machine/
+virtual_keyboard.cpp: RGBA picture with transparent margins, key table,
+mouse handling, sunk keys). `tools/gen_zx48_vkb.py` draws the 48K's 40
+grey-blue rubber keys in the black keyboard plate with everything printed on
+and around them: character, keyword, red SYMBOL SHIFT symbol and block
+graphic on the keys, green extended-mode words above, red ones below and the
+colour names over the number row. `tools/gen_cpc464_vkb.py` draws the CPC 464
+keyboard with sculpted caps: charcoal main block, light grey editing keys, red
+ESC, green f0-f9 pad with the cursor keys, blue ENTER keys. CAPS SHIFT /
+SYMBOL SHIFT (Spectrum) and SHIFT / CTRL (CPC) latch until the next key. No
+logos or badges are drawn. Both run the generators (Pillow, FreeSans) to
+rebuild their `*_vkb_data.inc`.
+
 Atari ST details: the keyboard ACIA keeps its last received byte in the data
 register (programs that poll `$FFFC02` directly, like World Class Rugby's
 loader intro waiting for Space, see it after TOS's interrupt has read it), and

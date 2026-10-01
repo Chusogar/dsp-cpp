@@ -12,6 +12,8 @@
 namespace dsp {
 namespace {
 
+#include "drivers/computers/amstrad_cpc_vkb_data.inc"
+
 const std::vector<RomEntry> kCpc464Rom = {{"cpc464.rom", 0x8000, 0x0000, 0x40852f25}};
 const std::vector<RomEntry> kCpc664Rom = {{"cpc664.rom", 0x8000, 0x0000, 0x9ab5a036}};
 const std::vector<RomEntry> kCpc6128Rom = {{"cpc6128.rom", 0x8000, 0x0000, 0x9e827fe1}};
@@ -182,7 +184,12 @@ constexpr uint8_t kCpcExtra[256] = {
 
 }  // namespace
 
-AmstradCpc::AmstradCpc(Model model) : model_(model), cpu_(kCpuClock), ay_(kAyClock, 0.8f) {
+AmstradCpc::AmstradCpc(Model model)
+    : model_(model),
+      cpu_(kCpuClock),
+      ay_(kAyClock, 0.8f),
+      vkb_(kCpcVkbPicture, sizeof(kCpcVkbPicture), kCpcVkbWidth, kCpcVkbHeight, kCpcVkbKeys,
+           int(sizeof(kCpcVkbKeys) / sizeof(kCpcVkbKeys[0]))) {
     framebuffer_.assign(size_t(kScreenWidth) * kScreenHeight, 0xff000000u);
 
     cpu_.set_memory_handlers([this](uint16_t address) { return read_byte(address); },
@@ -1122,7 +1129,14 @@ void apply_row(std::array<uint8_t, 16>& keyb_val, int row, const std::vector<Key
 }  // namespace
 
 void AmstradCpc::set_inputs(const MachineInputs& inputs) {
+    // F11 (not a CPC key) shows / hides the on-screen keyboard.
+    vkb_.toggle_key(inputs.key(Key::F11));
+    vkb_.input(inputs);
     ppi_state_.keyb_val.fill(0xff);
+    // Keys held or latched on it (code = matrix line * 8 + bit).
+    vkb_.for_each_down([this](int code) {
+        ppi_state_.keyb_val[size_t(code >> 3)] &= uint8_t(~(1u << (code & 7)));
+    });
 
     apply_row(ppi_state_.keyb_val, 0, kRow0, inputs);
     apply_row(ppi_state_.keyb_val, 1, kRow1, inputs);

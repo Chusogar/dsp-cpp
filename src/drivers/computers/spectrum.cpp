@@ -9,6 +9,8 @@
 namespace dsp {
 namespace {
 
+#include "drivers/computers/spectrum_vkb_data.inc"
+
 // Spectrum palette: index is ink/paper 0..15 (bright in high 8).
 // Converted to ARGB8888 (R/G/B from classic $00BBGGRR Delphi order).
 const uint32_t kPalette[16] = {
@@ -66,7 +68,10 @@ uint32_t cto_argb(uint32_t bgr) {
 }
 
 Spectrum48k::Spectrum48k(Model model)
-    : model_(model), cpu_(kClock) {
+    : model_(model),
+      cpu_(kClock),
+      vkb_(kZxVkbPicture, sizeof(kZxVkbPicture), kZxVkbWidth, kZxVkbHeight, kZxVkbKeys,
+           int(sizeof(kZxVkbKeys) / sizeof(kZxVkbKeys[0]))) {
     for (int i = 0; i < 16; ++i) {
         palette_[i] = cto_argb(kPalette[i] | 0xff000000);
         palette_ext_[i] = palette_[i];
@@ -192,7 +197,13 @@ void Spectrum48k::reset() {
 
 void Spectrum48k::set_dip_switch(int, uint8_t) {}
 
-void Spectrum48k::set_inputs(const MachineInputs& inputs) { apply_keyboard(inputs); }
+void Spectrum48k::set_inputs(const MachineInputs& inputs) {
+    vkb_.toggle_key(inputs.key(Key::F11));
+    vkb_.input(inputs);
+    apply_keyboard(inputs);
+    // Keys held or latched on the on-screen keyboard (code = row * 8 + bit).
+    vkb_.for_each_down([this](int code) { keys_[size_t(code >> 3)] &= uint8_t(~(1u << (code & 7))); });
+}
 
 
 void Spectrum48k::apply_keyboard(const MachineInputs& in) {
