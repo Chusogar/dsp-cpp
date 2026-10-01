@@ -277,9 +277,11 @@ mouse handling, sunk keys). `tools/gen_zx48_vkb.py` draws the 48K's 40
 grey-blue rubber keys in the black keyboard plate with everything printed on
 and around them: character, keyword, red SYMBOL SHIFT symbol and block
 graphic on the keys, green extended-mode words above, red ones below and the
-colour names over the number row. `tools/gen_cpc464_vkb.py` draws the CPC 464
-keyboard with sculpted caps: charcoal main block, light grey editing keys, red
-ESC, green f0-f9 pad with the cursor keys, blue ENTER keys. CAPS SHIFT /
+colour names over the number row. `tools/gen_cpc464_vkb.py` draws the Spanish CPC 464
+keyboard with sculpted black caps in the charcoal case: red ESC, green TAB /
+FIJA MAYS / MAYS / CTRL / BORR / COPIA, blue L-shaped INTRO and pad INTRO, the
+cursor cross over the f0-f9 pad, the ventilation slots and the label strip
+with its power LED. CAPS SHIFT /
 SYMBOL SHIFT (Spectrum) and SHIFT / CTRL (CPC) latch until the next key. No
 logos or badges are drawn. Both run the generators (Pillow, FreeSans) to
 rebuild their `*_vkb_data.inc`.
