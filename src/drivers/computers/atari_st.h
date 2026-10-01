@@ -47,6 +47,7 @@ public:
     bool uses_relative_pointer() const override { return true; }
 
     uint32_t debug_pc() const { return cpu_.pc(); }
+    M68000& debug_cpu() { return cpu_; }
     uint32_t debug_a(int r) const { return cpu_.a[size_t(r)].l; }
     uint8_t peek(uint32_t address) const { return const_cast<AtariSt*>(this)->read_byte(address); }
     void poke(uint32_t address, uint8_t value) { write_byte(address, value); }
@@ -101,6 +102,7 @@ private:
     uint8_t psg_port_a_ = 0xff;
 
     uint8_t acia_control_ = 0;
+    uint8_t acia_rdr_ = 0;  // 6850 receive data register (last byte)
     std::deque<uint8_t> ikbd_rx_;
     struct IkbdByte {
         uint8_t value = 0;

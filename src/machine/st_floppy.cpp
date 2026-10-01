@@ -222,6 +222,9 @@ uint8_t StFloppy::dma_addr_r(int which) const {
 
 uint16_t StFloppy::dma_data_r() {
     if (dma_mode_ & 0x10) return dma_count_;
+    // Mode bit 3 selects the ACSI (hard disk) bus instead of the WD1772.
+    // No ACSI device is attached: nothing answers.
+    if (dma_mode_ & 0x08) return 0xff;
     const int reg = (dma_mode_ >> 1) & 3;
     if (reg == 0) return fdc_status();
     if (reg == 1) return fdc_track_;
@@ -234,6 +237,11 @@ void StFloppy::dma_data_w(uint16_t value) {
         dma_count_ = uint8_t(value);
         return;
     }
+    // ACSI command bytes (mode bit 3 set) go to the hard disk bus, not the
+    // FDC. TOS probes ACSI targets 0-7 at boot with $08,$28,...,$E8; fed
+    // to the WD1772 they were Write Sector commands that overwrote the
+    // second FAT sector of the floppy in drive A.
+    if (dma_mode_ & 0x08) return;
     const int reg = (dma_mode_ >> 1) & 3;
     if (reg == 0) fdc_command(uint8_t(value));
     else if (reg == 1) fdc_track_ = uint8_t(value);

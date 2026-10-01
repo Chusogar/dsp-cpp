@@ -112,6 +112,7 @@ void AtariSt::reset() {
     resolution_ = 0;
     psg_port_a_ = 0xff;
     acia_control_ = 0;
+    acia_rdr_ = 0;
     ikbd_rx_.clear();
     ikbd_pending_.clear();
     ikbd_cmd_ = 0;
@@ -160,6 +161,7 @@ void AtariSt::service_acia() {
     if (!ikbd_rx_.empty()) return;
     if (ikbd_pending_.empty() || ikbd_pending_.front().cycles > 0) return;
     ikbd_rx_.push_back(ikbd_pending_.front().value);
+    acia_rdr_ = ikbd_pending_.front().value;
     ikbd_pending_.pop_front();
     mfp_.set_gpip_bit(4, 0);
 }
@@ -302,11 +304,15 @@ uint8_t AtariSt::acia_status() const {
 }
 
 uint8_t AtariSt::acia_read_data() {
-    if (ikbd_rx_.empty()) return 0;
-    const uint8_t v = ikbd_rx_.front();
+    // The 6850 receive data register keeps the last byte: reading only
+    // clears RDRF. Games poll it directly (World Class Rugby's crack intro
+    // does `cmpi.b #$39,$fffc02` while TOS's ACIA interrupt has already
+    // consumed the Space make code).
+    if (ikbd_rx_.empty()) return acia_rdr_;
+    acia_rdr_ = ikbd_rx_.front();
     ikbd_rx_.pop_front();
     if (ikbd_rx_.empty()) mfp_.set_gpip_bit(4, 1);
-    return v;
+    return acia_rdr_;
 }
 
 void AtariSt::acia_write_control(uint8_t value) {

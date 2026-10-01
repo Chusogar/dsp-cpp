@@ -6986,6 +6986,90 @@ void test_st_boot_if_present() {
     check(white > 25000, "opening drive A paints a GEM window");
 }
 
+void test_st_dma_acsi_does_not_touch_floppy() {
+    // TOS probes ACSI targets at boot by writing $08,$28,...,$E8 with DMA
+    // mode bit 3 (HDC) set. Those bytes must not reach the WD1772: $A8
+    // would be a Write Sector that clobbers the floppy.
+    const std::string path = "/tmp/dsp-acsi-probe.st";
+    {
+        std::vector<uint8_t> image(737280, 0);
+        for (size_t i = 0; i < image.size(); i++) image[i] = uint8_t(i / 512);
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(image.data()), std::streamsize(image.size()));
+    }
+    dsp::StFloppy fd;
+    std::string error;
+    check(fd.load_file(path, &error), "720K image for the ACSI probe test loads");
+    std::vector<uint8_t> ram(0x10000, 0xaa);
+    fd.set_ram(ram.data(), uint32_t(ram.size()));
+    fd.reset();
+    fd.set_psg_port_a(0x05);  // drive A, side 0
+    fd.dma_addr_w(0, 0);
+    fd.dma_addr_w(1, 0x10);
+    fd.dma_addr_w(2, 0);
+    fd.dma_mode_w(0x98);  // HDC, sector count
+    fd.dma_data_w(1);
+    fd.dma_mode_w(0x88);  // HDC, command byte
+    for (int target = 0; target < 8; target++) fd.dma_data_w(uint16_t((target << 5) | 0x08));
+    check(fd.sector(0, 0, 3)[0] == 2, "ACSI probe bytes do not write floppy sectors");
+    check(fd.dma_data_r() == 0xff, "no ACSI device answers");
+    fd.dma_mode_w(0x84);
+    fd.dma_data_w(3);
+    fd.dma_mode_w(0x90);
+    fd.dma_data_w(1);
+    fd.dma_mode_w(0x80);
+    fd.dma_data_w(0x80);  // FDC read sector 3
+    check(ram[0x1000] == 2, "the FDC still reads sector 3 (logical 2)");
+}
+
+void test_st_world_class_rugby_if_present() {
+    const char* rom = "/tmp/roms/st/st.zip";
+    const char* disk = "/tmp/roms/st/World Class Rugby (1992)(Denton Designs)[cr Vmax].st";
+    if (!std::filesystem::exists(rom) || !std::filesystem::exists(disk)) return;
+    dsp::AtariSt st;
+    std::string error;
+    check(st.init(rom, &error), "ST TOS loads for World Class Rugby");
+    check(st.load_media(disk, &error), "World Class Rugby disk mounts");
+    for (int i = 0; i < 500; i++) st.run_frame();
+    dsp::MachineInputs in;
+    in.has_pointer = true;
+    in.pointer_x = 500;
+    in.pointer_y = 300;
+    auto frames = [&](int n) {
+        for (int i = 0; i < n; i++) {
+            st.set_inputs(in);
+            st.run_frame();
+        }
+    };
+    frames(20);
+    in.pointer_x = 330;  // RUGBY.PRG in the drive A window (DESKTOP.INF)
+    in.pointer_y = 170;
+    frames(20);
+    for (int click = 0; click < 2; click++) {
+        in.pointer_button1 = true;
+        frames(2);
+        in.pointer_button1 = false;
+        frames(2);
+    }
+    frames(600);
+    const uint32_t intro_pc = st.debug_pc();
+    check(intro_pc >= 0x12000 && intro_pc < 0x13000, "World Class Rugby crack intro is running");
+    in.keys[size_t(dsp::Key::Space)] = true;
+    frames(10);
+    in.keys[size_t(dsp::Key::Space)] = false;
+    frames(1500);
+    const uint32_t pc = st.debug_pc();
+    check(pc != 0x140 && (pc < 0x12000 || pc >= 0x13000),
+          "Space leaves the intro and the game loads (no FAT corruption, no Line-F storm)");
+    int olive = 0;
+    const uint32_t* fb = st.framebuffer();
+    for (int i = 0; i < st.screen_width() * st.screen_height(); i++) {
+        const int r = int((fb[i] >> 16) & 0xff), g = int((fb[i] >> 8) & 0xff), b = int(fb[i] & 0xff);
+        if (g > r && g > b && g > 120 && r > 80) olive++;
+    }
+    check(olive > 50000, "World Class Rugby reaches its menu screen");
+}
+
 void test_st_north_south_if_present() {
     const char* rom = "/tmp/roms/st.zip";
     const char* disks[] = {"/tmp/st/northsouth.st", "/tmp/st/North & South.st", nullptr};
@@ -8270,6 +8354,8 @@ int main() {
     test_st_blitter();
     test_st_boot_if_present();
     test_st_north_south_if_present();
+    test_st_dma_acsi_does_not_touch_floppy();
+    test_st_world_class_rugby_if_present();
     test_amiga_missing_roms();
     test_amiga_adf_format();
     test_amiga_blitter_descending_modulo();

@@ -244,6 +244,13 @@ pushing it against that edge. The Amiga mouse is in port 0 (left button on
 CIA-A /FIR0, right on POTGOR); cursor keys + Left Ctrl/Space are a joystick in
 port 1.
 
+Atari ST details: the keyboard ACIA keeps its last received byte in the data
+register (programs that poll `$FFFC02` directly, like World Class Rugby's
+loader intro waiting for Space, see it after TOS's interrupt has read it), and
+DMA accesses with mode bit 3 set go to the (empty) ACSI bus, not the WD1772 —
+TOS's ACSI probe at boot otherwise wrote over the second FAT sector of the disk
+in drive A.
+
 ### Atari System 1 (Indiana Jones, Marble Madness, Peter Pack Rat, Road Runner)
 
 Atari System 1 is a 7.16 MHz 68000 behind a SLAPSTIC (105 on Indiana Jones, 103
