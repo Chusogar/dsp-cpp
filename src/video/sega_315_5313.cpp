@@ -75,6 +75,16 @@ void Sega3155313::raise_vint(bool state) {
     if (vint_) vint_(state);
 }
 
+void Sega3155313::acknowledge(int level) {
+    if (level == 6) {
+        irq6_pending_ = false;
+        raise_vint(false);
+    } else if (level == 4) {
+        irq4_pending_ = false;
+        raise_hint(false);
+    }
+}
+
 void Sega3155313::raise_z80_irq(bool state) {
     if (z80_irq_) z80_irq_(state);
 }

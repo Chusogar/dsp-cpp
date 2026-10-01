@@ -43,6 +43,9 @@ public:
     // Byte write used by the Z80 / 68k MOVE.B to the PSG port.
     void write_byte(uint8_t address, uint8_t value);
 
+    // The 68000 acknowledged interrupt `level` (4 HINT, 6 VINT): the pending
+    // flag clears, so re-enabling the interrupt does not fire it again.
+    void acknowledge(int level);
     void handle_scanline(int line);
     void handle_eof();
     void set_hpos_cycles(int cycles) { hpos_cycles_ = cycles; }

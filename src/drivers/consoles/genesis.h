@@ -59,6 +59,7 @@ public:
     uint16_t debug_read_word(uint32_t address) { return read_word(address); }
     void debug_write_word(uint32_t address, uint16_t value) { write_word(address, value); }
     Sega3155313& vdp() { return vdp_; }
+    M68000& debug_m68k() { return m68k_; }
     YM2612& ym() { return ym_; }
     bool debug_z80_has_bus() const { return z80_has_bus_; }
     bool debug_z80_reset() const { return z80_is_reset_; }

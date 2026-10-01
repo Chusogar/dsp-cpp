@@ -113,6 +113,7 @@ uint32_t Sh2::read32(uint32_t a) {
 }
 
 void Sh2::write8(uint32_t a, uint8_t v) {
+    if (watch_fn_ && ((a & 0x1ffffffc) == watch_addr_)) watch_fn_(pc_, a, v);
     switch (a >> 29) {
         case 2:
         case 3: return;
@@ -132,6 +133,7 @@ void Sh2::write8(uint32_t a, uint8_t v) {
 }
 
 void Sh2::write16(uint32_t a, uint16_t v) {
+    if (watch_fn_ && ((a & 0x1ffffffc) == watch_addr_)) watch_fn_(pc_, a, v);
     a &= ~1u;
     switch (a >> 29) {
         case 2:
@@ -157,6 +159,7 @@ void Sh2::write16(uint32_t a, uint16_t v) {
 }
 
 void Sh2::write32(uint32_t a, uint32_t v) {
+    if (watch_fn_ && ((a & 0x1ffffffc) == watch_addr_)) watch_fn_(pc_, a, v);
     a &= ~3u;
     switch (a >> 29) {
         case 2:
@@ -546,6 +549,7 @@ wdt:
 // Execution
 
 void Sh2::exception(uint32_t vector) {
+    if (exc_hook_) exc_hook_(vector, pc_);
     r_[15] -= 4;
     write32(r_[15], sr_);
     r_[15] -= 4;
@@ -576,7 +580,10 @@ bool Sh2::check_interrupts() {
 
 void Sh2::delay_slot(uint32_t target) {
     const uint16_t op = fetch(pc_);
-    pc_ += 2;
+    // The pipeline is already fetching from the branch target, so a
+    // PC-relative load or MOVA in the slot is relative to the target
+    // (After Burner Complete's palette code depends on it).
+    pc_ = target;
     in_slot_ = true;
     execute(op);
     in_slot_ = false;
@@ -591,6 +598,7 @@ int Sh2::run(int cycles) {
             cycles_ = cycles;
             break;
         }
+        if (hook_) hook_(pc_);
         const uint16_t op = fetch(pc_);
         pc_ += 2;
         cycles_++;

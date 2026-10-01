@@ -44,6 +44,8 @@ public:
     uint16_t bitmap_mode() const { return bitmap_mode_; }
     const uint8_t* frame_buffer(int index) const { return dram_[size_t(index) & 1].data(); }
     uint16_t palette(int index) const { return palette_[size_t(index) & 255]; }
+    uint16_t int_mask(int cpu) const { return int_mask_[size_t(cpu) & 1]; }
+    uint16_t pending(int cpu) const { return pending_[size_t(cpu) & 1]; }
 
 private:
     class Bus : public Sh2::Bus {

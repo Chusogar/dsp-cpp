@@ -786,8 +786,15 @@ pass the cartridge with `--tape`.
 ./build/dsp --game 32x --tape "Star Wars Arcade (USA).32x" /path/to/32x.zip
 ```
 
-Controls are the Genesis ones. Star Wars Arcade boots through the SEGA logo,
-the title and ship selection into the 3D missions. The SH-2 caches are not
+Controls are the Genesis ones. Tested games: Star Wars Arcade (SEGA logo,
+title, ship selection, 3D missions), After Burner Complete (title, menus,
+carrier launch, stage 1) and Spider-Man: Web of Fire (intro, title, first
+level). The SH-2 takes PC-relative loads in a delay slot relative to the
+branch target, the PWM timer only runs with a channel on, and the 68000's
+interrupt acknowledge clears the Genesis VDP's pending VINT / HINT (After
+Burner re-enables VINT inside its own handler). With the 32X priority bit
+(PRI) set, only 32X pixels with bit 15 are opaque; the others show the
+Genesis, backdrop included. The SH-2 caches are not
 modelled (memory is always coherent) and bus wait states are approximate.
 `tools/s32x_run.cpp` (`make s32x_run`) is a headless runner that saves
 screenshots, the PCs, the communication ports and optionally a `.wav`.

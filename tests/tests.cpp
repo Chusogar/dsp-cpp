@@ -5817,6 +5817,19 @@ void test_sh2_core() {
     check(cpu.r(6) == 14 && cpu.r(7) == 2, "SH-2 division unit: 100 / 7 = 14 r 2");
     check(cpu.r(9) == 42 && cpu.r(8) == 17, "SH-2 BSR / RTS run their delay slots");
     check(cpu.pc() == 0x11e || cpu.pc() == 0x120, "SH-2 ends in the BRA-to-self loop");
+
+    // A PC-relative load in a delay slot is relative to the branch target
+    // (the pipeline is already fetching there).
+    Ram ram2;
+    ram2.write32(0, 0x100);
+    ram2.write32(4, 0x8000);
+    const uint16_t slot_prog[] = {0xa002, 0x9601, 0x0009, 0x0009, 0xaffe, 0x0009, 0x1234};
+    for (size_t i = 0; i < sizeof(slot_prog) / sizeof(slot_prog[0]); i++)
+        ram2.write16(uint32_t(0x100 + i * 2), slot_prog[i]);
+    dsp::Sh2 cpu2(&ram2);
+    cpu2.reset();
+    cpu2.run(20);
+    check(cpu2.r(6) == 0x1234, "SH-2 MOV.W @(disp,PC) in a delay slot uses the branch target");
 }
 
 void test_sega32x_registers() {
@@ -5848,28 +5861,56 @@ void test_sega32x_registers() {
 
 void test_sega32x_boot_if_present() {
     const char* bios = "/tmp/roms/32x.zip";
-    const char* cart = "/tmp/roms/32x/starwars.32x";
-    for (const char* path : {bios, cart}) {
-        std::FILE* f = std::fopen(path, "rb");
+    std::FILE* bf = std::fopen(bios, "rb");
+    if (!bf) {
+        std::printf("skip: %s not found\n", bios);
+        return;
+    }
+    std::fclose(bf);
+    struct Game {
+        const char* path;
+        int frames;
+        const char* name;
+    };
+    // Star Wars: SEGA logo drawn by the SH-2s. After Burner: its VBlank
+    // handler re-enables VINT (needs the 68000 IACK to clear the pending
+    // flag) and its palette code loads from a delay slot. Spider-Man: the
+    // PWM timer must stay off until the game turns a channel on.
+    const Game games[] = {
+        {"/tmp/roms/32x/starwars.32x", 300, "Star Wars Arcade"},
+        {"/tmp/roms/32x/afterburner.32x", 600, "After Burner Complete"},
+        {"/tmp/roms/32x/spiderman.32x", 1800, "Spider-Man: Web of Fire"},
+    };
+    for (const Game& g : games) {
+        std::FILE* f = std::fopen(g.path, "rb");
         if (!f) {
-            std::printf("skip: %s not found\n", path);
-            return;
+            std::printf("skip: %s not found\n", g.path);
+            continue;
         }
         std::fclose(f);
+        dsp::Sega32X md;
+        std::string error;
+        const std::string what = g.name;
+        check(md.init(bios, &error) && md.load_media(g.path, &error), (what + " loads").c_str());
+        int lit = 0;  // most lit pixels seen at the 100-frame samples
+        for (int i = 1; i <= g.frames; i++) {
+            md.run_frame();
+            if (i % 100 != 0) continue;
+            int n = 0;
+            for (int p = 0; p < md.screen_width() * md.screen_height(); p++) {
+                if ((md.framebuffer()[p] & 0xffffff) != 0) n++;
+            }
+            lit = std::max(lit, n);
+        }
+        check(md.adapter_enabled() && md.sh2_running(), (what + ": 32X enabled, SH-2s running").c_str());
+        check((md.master().pc() >> 24) == 0x06 || (md.master().pc() >> 24) == 0x26,
+              (what + ": master SH-2 runs from SDRAM").c_str());
+        check((md.bitmap_mode() & 3) != 0, (what + ": 32X VDP is on").c_str());
+        // Neither the 68000 nor the SDRAM-resident SH-2 code sits in an
+        // exception trap.
+        check(md.debug_pc() != 0x880912 && md.debug_pc() != 0x88091c, (what + ": 68000 is not trapped").c_str());
+        check(lit > 2000, (what + ": the screen shows a picture").c_str());
     }
-    dsp::Sega32X md;
-    std::string error;
-    check(md.init(bios, &error) && md.load_media(cart, &error), "32X BIOS and Star Wars Arcade load");
-    for (int i = 0; i < 300; i++) md.run_frame();
-    check(md.adapter_enabled() && md.sh2_running(), "68000 enables the 32X and releases the SH-2s");
-    check((md.master().pc() >> 24) == 0x06 || (md.master().pc() >> 24) == 0x26,
-          "master SH-2 runs the game from SDRAM");
-    check((md.bitmap_mode() & 3) != 0, "the game switches the 32X VDP on");
-    int lit = 0;
-    for (int i = 0; i < md.screen_width() * md.screen_height(); i++) {
-        if ((md.framebuffer()[i] & 0xffffff) != 0) lit++;
-    }
-    check(lit > 2000, "the SH-2s draw the SEGA logo into the frame buffer");
 }
 
 void test_genesis_vdp() {

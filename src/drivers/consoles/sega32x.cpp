@@ -396,6 +396,10 @@ void Sega32X::pwm_write(uint32_t o, uint16_t v, uint16_t mask) {
 }
 
 void Sega32X::pwm_advance(int sh2_cycles) {
+    // With both channels off (LMD = RMD = 0) the PWM timer is stopped and
+    // raises no interrupts. Spider-Man's slave mixes sound in the PWM
+    // interrupt and runs away if it fires before the voices are set up.
+    if ((pwm_ctl_ & 0x0f) == 0) return;
     const int period = int((pwm_cycle_ - 1) & 0xfff);
     if (period < 16) return;
     pwm_acc_ += sh2_cycles;
@@ -625,9 +629,14 @@ void Sega32X::render_32x_line(int line, uint32_t* out, const uint8_t* backdrop) 
     if (mode == 0) return;
     const uint8_t* d = dram_[size_t(fs_)].data();
     const uint32_t lt = be16(d + (uint32_t(line) * 2 & 0x1ff));
-    const uint16_t inv = (bitmap_mode_ & 0x80) ? 0x8000 : 0;
+    // PRI = 0: the Genesis is in front; the 32X shows where the Genesis
+    // shows its backdrop and wherever a 32X pixel has its priority bit.
+    // PRI = 1: the 32X is in front, but only pixels with the bit set are
+    // opaque; the rest let the Genesis through, backdrop included
+    // (Spider-Man's intro keys palette 0 out this way).
+    const bool pri = (bitmap_mode_ & 0x80) != 0;
     auto put = [&](int x, uint16_t c) {
-        if (backdrop[x] || ((c ^ inv) & 0x8000)) out[x] = rgb555(c);
+        if ((c & 0x8000) || (!pri && backdrop[x])) out[x] = rgb555(c);
     };
     if (mode == 1) {  // packed pixel: one palette index per byte
         const uint32_t base = lt * 2 + (shift_ & 1);

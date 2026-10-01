@@ -106,6 +106,10 @@ Genesis::Genesis(Region region)
     vdp_.set_irq_handlers(
         [this](bool assert) { m68k_.set_irq(4, assert ? IrqLine::Hold : IrqLine::Clear); },
         [this](bool assert) { m68k_.set_irq(6, assert ? IrqLine::Hold : IrqLine::Clear); });
+    m68k_.set_irq_acknowledge([this](int level) {
+        vdp_.acknowledge(level);
+        return -1;  // autovector
+    });
     vdp_.set_z80_irq_handler(
         [this](bool assert) { z80_.set_irq(assert ? IrqLine::Hold : IrqLine::Clear); });
     vdp_.set_dma_reader([this](uint32_t address) { return read_word(address); });

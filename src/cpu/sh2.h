@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <functional>
 #include <cstddef>
 #include <cstdint>
 
@@ -52,9 +53,21 @@ public:
     bool sleeping() const { return sleeping_; }
     uint32_t pc() const { return pc_; }
     uint32_t r(int n) const { return r_[size_t(n) & 15]; }
+    uint32_t pr() const { return pr_; }
+    uint32_t gbr() const { return gbr_; }
+    uint32_t vbr() const { return vbr_; }
     uint32_t sr() const { return sr_; }
     uint64_t total_cycles() const { return total_cycles_; }
 
+    // Debug: called after any write that touches [address & 0x1fffffff].
+    void set_write_watch(uint32_t address, std::function<void(uint32_t pc, uint32_t addr, uint32_t value)> fn) {
+        watch_addr_ = address & 0x1ffffffc;
+        watch_fn_ = std::move(fn);
+    }
+    // Debug: called on every exception / interrupt with its vector.
+    void set_exception_hook(std::function<void(uint32_t vector, uint32_t pc)> fn) { exc_hook_ = std::move(fn); }
+    // Debug hook called with the PC before each instruction.
+    void set_instruction_hook(std::function<void(uint32_t)> hook) { hook_ = std::move(hook); }
     // Debug: on-chip register file and memory as the CPU sees it.
     uint32_t debug_read32(uint32_t address) { return read32(address); }
 
@@ -92,6 +105,10 @@ private:
     int peripheral_level(int* vector);
 
     Bus* bus_;
+    std::function<void(uint32_t)> hook_;
+    std::function<void(uint32_t, uint32_t)> exc_hook_;
+    uint32_t watch_addr_ = 0xffffffff;
+    std::function<void(uint32_t, uint32_t, uint32_t)> watch_fn_;
     std::array<FastPage, 32> pages_{};
 
     std::array<uint32_t, 16> r_{};
