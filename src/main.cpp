@@ -179,7 +179,7 @@ void print_usage(const char* program) {
         "                     or QL microdrive .mdv/.qlpak or QXL.WIN\n"
         "  --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, MSX2 .dsk, Apple II .dsk/.do/.po/.nib,\n"
         "                     Pentagon/Scorpion .trd/.scl, QL microdrive .mdv/.qlpak or QXL.WIN,\n"
-        "                     Atari ST .st/.msa, Amiga .adf, Macintosh 400K/800K/1.44MB SuperDrive .dsk/.img/.dc42,\n"
+        "                     Atari ST .st/.msa/.stx, Amiga .adf, Macintosh 400K/800K/1.44MB SuperDrive .dsk/.img/.dc42,\n"
         "                     or a Macintosh SCSI hard disk .img/.dsk (DDM+APM like MAME,\n"
         "                     or a raw 512-byte HFS volume served as-is)\n"
         "                     (repeat --disk/--tape to fill QL mdv1 then mdv2)\n"

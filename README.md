@@ -218,7 +218,7 @@ Options:
 --tape FILE        tape/cart: Spectrum/CPC/C64 (.tap/.tzx/.cdt/.prg/.t64),
                    EXL-100 / EXELTEL cartridge, or PV-2000 cart (.bin/.rom)
 --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, MSX2 .dsk, Apple II .dsk/.do/.po/.nib,
-                   Pentagon/Scorpion .trd/.scl, Sinclair QL .mdv/.qlpak, Atari ST .st/.msa,
+                   Pentagon/Scorpion .trd/.scl, Sinclair QL .mdv/.qlpak, Atari ST .st/.msa/.stx,
                    Commodore Amiga .adf
 ```
 
@@ -258,6 +258,16 @@ loader intro waiting for Space, see it after TOS's interrupt has read it), and
 DMA accesses with mode bit 3 set go to the (empty) ACSI bus, not the WD1772 —
 TOS's ACSI probe at boot otherwise wrote over the second FAT sector of the disk
 in drive A.
+
+Atari ST Pasti (`.stx`) images keep each track as it was dumped: ID fields in
+their order and bit position, per-sector FDC status (CRC error, missing data,
+deleted mark), fuzzy bits and optional raw track images. With an STX disk the
+WD1772 follows the physical head (step commands only update the track register
+when asked to), matches IDs against the track/sector registers, honours the
+multi-sector flag, returns Read Address / Read Track data, and times every
+command against a 300 rpm rotation (record not found after 5 revolutions).
+Bob Winner's protection — 70 overlapping sectors with CRC errors on track 79 —
+passes and the game runs. Writes go to the in-memory image only.
 
 ### Atari System 1 (Indiana Jones, Marble Madness, Peter Pack Rat, Road Runner)
 

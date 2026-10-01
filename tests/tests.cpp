@@ -7068,6 +7068,176 @@ void test_st_dma_acsi_does_not_touch_floppy() {
     check(ram[0x1000] == 2, "the FDC still reads sector 3 (logical 2)");
 }
 
+void test_st_stx_images() {
+    // Build a small Pasti image: track 0 with two sectors (the second one
+    // has a CRC error and sits first on the track), track 1 plain.
+    auto u16 = [](std::vector<uint8_t>& v, int x) {
+        v.push_back(uint8_t(x));
+        v.push_back(uint8_t(x >> 8));
+    };
+    auto u32 = [&](std::vector<uint8_t>& v, uint32_t x) {
+        u16(v, int(x & 0xffff));
+        u16(v, int(x >> 16));
+    };
+    std::vector<uint8_t> img = {'R', 'S', 'Y', 0};
+    u16(img, 3);
+    u16(img, 0xcc);
+    u16(img, 0);
+    img.push_back(2);  // tracks
+    img.push_back(0);
+    u32(img, 0);
+    // Track 0: sector blocks + 2 x 512 bytes of data.
+    std::vector<uint8_t> tr;
+    u32(tr, 16 + 2 * 16 + 1024);
+    u32(tr, 0);
+    u16(tr, 2);
+    u16(tr, 0x01);
+    u16(tr, 6250);
+    tr.push_back(0);
+    tr.push_back(0);
+    const struct {
+        uint32_t off;
+        int bitpos, sector, status;
+    } secs[2] = {{512, 100 * 8, 7, 0x08}, {0, 3000 * 8, 1, 0x00}};
+    for (const auto& sc : secs) {
+        u32(tr, sc.off);
+        u16(tr, sc.bitpos);
+        u16(tr, 0);
+        tr.push_back(0);
+        tr.push_back(0);
+        tr.push_back(uint8_t(sc.sector));
+        tr.push_back(2);
+        tr.push_back(0x12);
+        tr.push_back(0x34);
+        tr.push_back(uint8_t(sc.status));
+        tr.push_back(0);
+    }
+    for (int i = 0; i < 512; i++) tr.push_back(0x11);
+    for (int i = 0; i < 512; i++) tr.push_back(0x77);
+    img.insert(img.end(), tr.begin(), tr.end());
+    // Track 1: no sector blocks, 9 plain sectors.
+    tr.clear();
+    u32(tr, 16 + 9 * 512);
+    u32(tr, 0);
+    u16(tr, 9);
+    u16(tr, 0x00);
+    u16(tr, 6250 * 8);
+    tr.push_back(1);
+    tr.push_back(0);
+    for (int i = 0; i < 9 * 512; i++) tr.push_back(uint8_t(i / 512 + 1));
+    img.insert(img.end(), tr.begin(), tr.end());
+    const std::string path = (std::filesystem::temp_directory_path() / "dsp_test.stx").string();
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(img.data()), std::streamsize(img.size()));
+    }
+
+    dsp::StFloppy fd;
+    std::string error;
+    fd.reset();
+    check(fd.load_file(path, &error), "STX image loads");
+    check(fd.is_stx(), "STX image is recognised");
+    check(fd.stx_sector_count(0, 0) == 2 && fd.stx_sector_count(1, 0) == 9 && fd.stx_sector_count(5, 0) == -1,
+          "STX track/sector layout is parsed");
+    std::vector<uint8_t> ram(0x10000, 0);
+    fd.set_ram(ram.data(), uint32_t(ram.size()));
+    fd.set_psg_port_a(0x05);  // drive A, side 0
+    auto reg_w = [&](int reg, uint8_t v) {
+        fd.dma_mode_w(uint16_t(0x80 | (reg << 1)));
+        fd.dma_data_w(v);
+    };
+    auto run_cmd = [&](uint8_t cmd) {
+        reg_w(0, cmd);
+        for (int i = 0; i < 200 && !fd.irq(); i++) fd.tick(100000);
+        fd.dma_mode_w(0x80);
+        return uint8_t(fd.dma_data_r());
+    };
+    auto setup_dma = [&](uint32_t addr) {
+        fd.dma_mode_w(0x190);
+        fd.dma_mode_w(0x90);
+        fd.dma_mode_w(0x90);
+        fd.dma_data_w(1);
+        fd.dma_addr_w(0, uint8_t(addr >> 16));
+        fd.dma_addr_w(1, uint8_t(addr >> 8));
+        fd.dma_addr_w(2, uint8_t(addr));
+    };
+    run_cmd(0x03);  // restore
+    check(fd.head_position() == 0, "STX restore puts the head on track 0");
+    setup_dma(0x1000);
+    reg_w(1, 0);
+    reg_w(2, 1);
+    uint8_t st = run_cmd(0x80);
+    check((st & 0x18) == 0 && ram[0x1000] == 0x11 && ram[0x11ff] == 0x11, "STX reads a good sector by its ID");
+    setup_dma(0x2000);
+    reg_w(2, 7);
+    st = run_cmd(0x80);
+    check((st & 0x08) != 0 && ram[0x2000] == 0x77, "STX sector with a CRC error returns data and CRC status");
+    setup_dma(0x3000);
+    reg_w(2, 3);
+    st = run_cmd(0x80);
+    check((st & 0x10) != 0, "STX missing sector gives Record Not Found");
+    // Step in without updating the track register: IDs say track 1, the
+    // register still says 0, so a read must fail until it is corrected.
+    run_cmd(0x43);
+    check(fd.head_position() == 1, "STX step-in moves the head");
+    setup_dma(0x4000);
+    reg_w(2, 4);
+    st = run_cmd(0x80);
+    check((st & 0x10) != 0, "STX compares the ID track with the track register");
+    reg_w(1, 1);
+    setup_dma(0x4000);
+    st = run_cmd(0x80);
+    check((st & 0x18) == 0 && ram[0x4000] == 4, "STX plain track sectors read back");
+    std::remove(path.c_str());
+}
+
+void test_st_bob_winner_stx_if_present() {
+    const char* rom = "/tmp/roms/st/st.zip";
+    const char* disk = "/tmp/roms/st/bobwinner.stx";
+    if (!std::filesystem::exists(rom) || !std::filesystem::exists(disk)) return;
+    dsp::AtariSt st;
+    std::string error;
+    check(st.init(rom, &error), "ST TOS loads for Bob Winner");
+    check(st.load_media(disk, &error), "Bob Winner STX disk mounts");
+    dsp::MachineInputs in;
+    in.has_pointer = true;
+    in.pointer_x = 500;
+    in.pointer_y = 300;
+    auto frames = [&](int n) {
+        for (int i = 0; i < n; i++) {
+            st.set_inputs(in);
+            st.run_frame();
+        }
+    };
+    frames(500);
+    in.pointer_x = 330;  // BOB.PRG in the drive A window
+    in.pointer_y = 180;
+    frames(20);
+    for (int click = 0; click < 2; click++) {
+        in.pointer_button1 = true;
+        frames(2);
+        in.pointer_button1 = false;
+        frames(2);
+    }
+    frames(2500);
+    for (int k = 0; k < 3; k++) {
+        in.keys[size_t(dsp::Key::Space)] = true;
+        frames(10);
+        in.keys[size_t(dsp::Key::Space)] = false;
+        frames(300);
+    }
+    frames(300);
+    // The protection reads the 70 overlapping sectors of track 79 and
+    // wants CRC errors; past it the first level (a yellow ground) shows.
+    int yellow = 0;
+    const uint32_t* fb = st.framebuffer();
+    for (int i = 0; i < st.screen_width() * st.screen_height(); i++) {
+        const int r = int((fb[i] >> 16) & 0xff), g = int((fb[i] >> 8) & 0xff), b = int(fb[i] & 0xff);
+        if (r > 200 && g > 200 && b < 180) yellow++;
+    }
+    check(yellow > 30000, "Bob Winner passes its track 79 protection and reaches the first level");
+}
+
 void test_st_world_class_rugby_if_present() {
     const char* rom = "/tmp/roms/st/st.zip";
     const char* disk = "/tmp/roms/st/World Class Rugby (1992)(Denton Designs)[cr Vmax].st";
@@ -8400,6 +8570,8 @@ int main() {
     test_st_blitter();
     test_st_boot_if_present();
     test_st_north_south_if_present();
+    test_st_stx_images();
+    test_st_bob_winner_stx_if_present();
     test_st_dma_acsi_does_not_touch_floppy();
     test_st_virtual_keyboard();
     test_st_world_class_rugby_if_present();
