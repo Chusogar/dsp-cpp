@@ -85,6 +85,7 @@
 #include "drivers/consoles/sms.h"
 #include "drivers/consoles/gamegear.h"
 #include "drivers/consoles/genesis.h"
+#include "drivers/consoles/sega32x.h"
 #include "drivers/consoles/pv1000.h"
 #include "drivers/consoles/pv2000.h"
 #include "drivers/consoles/colecovision.h"
@@ -154,7 +155,7 @@ void print_supported_emulators() {
 		"    a800, a800xl, a800xe\n"
         "\n"
         "  Consoles:\n"
-        "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp,\n"
+        "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp, 32x, 32x-pal, 32x-jp,\n"
         "    pv1000, pv2000, coleco, sg1000, gb, nes, lynx, scv, pcengine, sgx,\n"
         "    a2600, atari2600, vcs, a7800\n"
         "\n");
@@ -568,6 +569,13 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	}
 	if (game == "genesis-jp" || game == "megadrive-jp") {
 	    return std::make_unique<dsp::Genesis>(dsp::Genesis::Region::Japan);
+	}
+	if (game == "32x" || game == "sega32x" || game == "mars") return std::make_unique<dsp::Sega32X>();
+	if (game == "32x-pal" || game == "sega32x-pal") {
+	    return std::make_unique<dsp::Sega32X>(dsp::Genesis::Region::Europe);
+	}
+	if (game == "32x-jp" || game == "sega32x-jp") {
+	    return std::make_unique<dsp::Sega32X>(dsp::Genesis::Region::Japan);
 	}
 	if (game == "pv1000") return std::make_unique<dsp::Pv1000>();
 	if (game == "pv2000" || game == "pv-2000" || game == "casio-pv2000") {

@@ -586,12 +586,15 @@ void Sega3155313::render_line(int line) {
 
     const int left = h40_ ? 0 : 32;
     line_buf_.fill(palette_[size_t(backdrop)]);
+    line_backdrop_.fill(1);
     for (int x = 0; x < width; x++) {
         uint8_t color = backdrop;
         uint8_t layer_pri = 0;
         bool is_sprite = false;
+        bool drawn = false;
         auto plot = [&](uint8_t col, uint8_t pri, bool sprite) {
             if (col == 0) return;
+            drawn = true;
             color = col;
             layer_pri = pri;
             is_sprite = sprite;
@@ -630,6 +633,7 @@ void Sega3155313::render_line(int line) {
             }
         }
         line_buf_[size_t(left + x)] = palette_rgb(color, shadow, highlight);
+        line_backdrop_[size_t(left + x)] = drawn ? 0 : 1;
     }
     if (!h40_) {
         const uint32_t border = palette_[size_t(backdrop)];
@@ -656,6 +660,7 @@ void Sega3155313::handle_scanline(int line) {
         }
     } else {
         std::fill(line_buf_.begin(), line_buf_.end(), palette_[size_t(regs_[0x07] & 0x3f)]);
+        line_backdrop_.fill(1);
     }
 
     if (line == irq6_scanline_) {

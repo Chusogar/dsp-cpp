@@ -64,7 +64,17 @@ public:
     bool debug_z80_reset() const { return z80_is_reset_; }
     uint8_t debug_io(int index) const { return io_data_[size_t(index) & 0xf]; }
 
-private:
+protected:
+    // Expansion hardware on the 68000 bus (the 32X). When has_ext_ is set,
+    // every 68000 access is offered to these first; returning true claims it.
+    virtual bool ext_read16(uint32_t /*address*/, uint16_t* /*value*/) { return false; }
+    virtual bool ext_write16(uint32_t /*address*/, uint16_t /*value*/) { return false; }
+    virtual bool ext_read8(uint32_t /*address*/, uint8_t* /*value*/) { return false; }
+    virtual bool ext_write8(uint32_t /*address*/, uint8_t /*value*/) { return false; }
+    // Extra audio mixed with the YM2612 and PSG, at kSampleRate.
+    virtual int32_t ext_audio_sample() { return 0; }
+    bool has_ext_ = false;
+
     uint16_t read_word(uint32_t address);
     void write_word(uint32_t address, uint16_t value);
     uint8_t read_byte(uint32_t address);

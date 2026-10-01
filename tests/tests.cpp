@@ -76,6 +76,8 @@
 #include "drivers/computers/spectrum.h"
 #include "drivers/computers/zx_clone.h"
 #include "drivers/consoles/genesis.h"
+#include "drivers/consoles/sega32x.h"
+#include "cpu/sh2.h"
 #include "drivers/arcade/hangon.h"
 #include "drivers/arcade/outrun.h"
 #include "drivers/arcade/xboard.h"
@@ -5763,6 +5765,113 @@ void test_ym2612() {
     check(dac != 0, "the YM2612 DAC is audible when enabled");
 }
 
+void test_sh2_core() {
+    struct Ram : dsp::Sh2::Bus {
+        std::vector<uint8_t> m = std::vector<uint8_t>(0x10000, 0);
+        uint8_t read8(uint32_t a) override { return m[a & 0xffff]; }
+        uint16_t read16(uint32_t a) override { return uint16_t((m[a & 0xffff] << 8) | m[(a + 1) & 0xffff]); }
+        uint32_t read32(uint32_t a) override { return (uint32_t(read16(a)) << 16) | read16(a + 2); }
+        void write8(uint32_t a, uint8_t v) override { m[a & 0xffff] = v; }
+        void write16(uint32_t a, uint16_t v) override {
+            write8(a, uint8_t(v >> 8));
+            write8(a + 1, uint8_t(v));
+        }
+        void write32(uint32_t a, uint32_t v) override {
+            write16(a, uint16_t(v >> 16));
+            write16(a + 2, uint16_t(v));
+        }
+    } ram;
+    ram.write32(0, 0x100);   // reset PC
+    ram.write32(4, 0x8000);  // reset SP
+    const uint16_t prog[] = {
+        0xe00a,  // 100 mov #10,r0
+        0xe100,  // 102 mov #0,r1
+        0x310c,  // 104 add r0,r1
+        0x4010,  // 106 dt r0
+        0x8ffc,  // 108 bf/s 104
+        0x7201,  // 10a add #1,r2 (delay slot, runs every time)
+        0xd305,  // 10c mov.l @(20,pc),r3 -> $FFFFFF00 (DIVU)
+        0xe407,  // 10e mov #7,r4
+        0x2342,  // 110 mov.l r4,@r3 (DVSR)
+        0xe564,  // 112 mov #100,r5
+        0x1351,  // 114 mov.l r5,@(4,r3) (DVDNT: 32/32 divide)
+        0x5631,  // 116 mov.l @(4,r3),r6 (quotient)
+        0x5734,  // 118 mov.l @(16,r3),r7 (remainder, DVDNTH)
+        0xb005,  // 11a bsr 128
+        0x7801,  // 11c add #1,r8 (delay slot)
+        0xaffe,  // 11e bra 11e
+        0x0009,  // 120 nop
+        0x0009,  // 122
+        0xffff, 0xff00,  // 124 literal
+        0xe92a,  // 128 mov #42,r9
+        0x000b,  // 12a rts
+        0x7810,  // 12c add #16,r8 (delay slot)
+    };
+    for (size_t i = 0; i < sizeof(prog) / sizeof(prog[0]); i++) ram.write16(uint32_t(0x100 + i * 2), prog[i]);
+    dsp::Sh2 cpu(&ram);
+    cpu.reset();
+    check(cpu.pc() == 0x100 && cpu.r(15) == 0x8000, "SH-2 reset loads PC and SP from the vectors");
+    cpu.run(400);
+    check(cpu.r(1) == 55, "SH-2 DT / BF/S loop sums 10..1");
+    check(cpu.r(2) == 10, "SH-2 BF/S delay slot runs on every pass");
+    check(cpu.r(6) == 14 && cpu.r(7) == 2, "SH-2 division unit: 100 / 7 = 14 r 2");
+    check(cpu.r(9) == 42 && cpu.r(8) == 17, "SH-2 BSR / RTS run their delay slots");
+    check(cpu.pc() == 0x11e || cpu.pc() == 0x120, "SH-2 ends in the BRA-to-self loop");
+}
+
+void test_sega32x_registers() {
+    dsp::Sega32X md;
+    check(std::strcmp(md.title(), "Sega 32X") == 0, "32X title");
+    std::string error;
+    check(!md.init("/no/such/32x.zip", &error), "missing 32X BIOS fails init");
+    check(md.debug_read_word(0xa130ec) == 0x4d41 && md.debug_read_word(0xa130ee) == 0x5253,
+          "32X answers MARS at $A130EC");
+    md.debug_write_word(0xa15120, 0x1234);
+    check(md.comm(0) == 0x1234 && md.debug_read_word(0xa15120) == 0x1234, "68000 writes a communication port");
+    check(!md.adapter_enabled(), "ADEN is clear after reset");
+    md.debug_write_word(0xa15100, 0x0001);
+    check(md.adapter_enabled() && (md.debug_read_word(0xa15100) & 1) != 0, "68000 sets ADEN");
+    // Frame buffer from the 68000 side, then the overwrite image skips 0 bytes.
+    md.debug_write_word(0x840010, 0xa1b2);
+    md.debug_write_word(0x860010, 0x00c3);
+    check(md.debug_read_word(0x840010) == 0xa1c3, "overwrite image keeps bytes written as 0");
+    md.debug_write_word(0xa15200, 0x7c1f);
+    check(md.palette(0) == 0x7c1f, "68000 writes the 32X palette");
+    // Auto fill: 4 words of $1111 at word address $10 of the CPU-side buffer.
+    md.debug_write_word(0xa15184, 3);
+    md.debug_write_word(0xa15186, 0x0010);
+    md.debug_write_word(0xa15188, 0x1111);
+    check(md.debug_read_word(0x840020) == 0x1111 && md.debug_read_word(0x840026) == 0x1111 &&
+              md.debug_read_word(0x840028) == 0,
+          "auto fill writes len + 1 words");
+}
+
+void test_sega32x_boot_if_present() {
+    const char* bios = "/tmp/roms/32x.zip";
+    const char* cart = "/tmp/roms/32x/starwars.32x";
+    for (const char* path : {bios, cart}) {
+        std::FILE* f = std::fopen(path, "rb");
+        if (!f) {
+            std::printf("skip: %s not found\n", path);
+            return;
+        }
+        std::fclose(f);
+    }
+    dsp::Sega32X md;
+    std::string error;
+    check(md.init(bios, &error) && md.load_media(cart, &error), "32X BIOS and Star Wars Arcade load");
+    for (int i = 0; i < 300; i++) md.run_frame();
+    check(md.adapter_enabled() && md.sh2_running(), "68000 enables the 32X and releases the SH-2s");
+    check((md.master().pc() >> 24) == 0x06 || (md.master().pc() >> 24) == 0x26,
+          "master SH-2 runs the game from SDRAM");
+    check((md.bitmap_mode() & 3) != 0, "the game switches the 32X VDP on");
+    int lit = 0;
+    for (int i = 0; i < md.screen_width() * md.screen_height(); i++) {
+        if ((md.framebuffer()[i] & 0xffffff) != 0) lit++;
+    }
+    check(lit > 2000, "the SH-2s draw the SEGA logo into the frame buffer");
+}
+
 void test_genesis_vdp() {
     dsp::Sega3155313 vdp(false);
     vdp.reset();
@@ -8834,6 +8943,9 @@ int main() {
     test_sega_roms_if_present();
     test_indy_coin_if_present();
     test_ym2612();
+    test_sh2_core();
+    test_sega32x_registers();
+    test_sega32x_boot_if_present();
     test_genesis_vdp();
     test_genesis_boot();
     test_v9938_status_and_hmmv();

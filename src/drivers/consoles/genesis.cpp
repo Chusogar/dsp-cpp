@@ -348,6 +348,10 @@ void Genesis::z80_write(uint16_t address, uint8_t value) {
 
 uint16_t Genesis::read_word(uint32_t address) {
     address &= 0xfffffe;
+    if (has_ext_) {
+        uint16_t value;
+        if (ext_read16(address, &value)) return value;
+    }
     if (address <= 0x3fffff) {
         return uint16_t((uint16_t(cart_read(address)) << 8) | cart_read(address + 1));
     }
@@ -380,6 +384,7 @@ uint16_t Genesis::read_word(uint32_t address) {
 
 void Genesis::write_word(uint32_t address, uint16_t value) {
     address &= 0xfffffe;
+    if (has_ext_ && ext_write16(address, value)) return;
     if (address <= 0x3fffff) {
         cart_write(address, uint8_t(value >> 8));
         cart_write(address + 1, uint8_t(value));
@@ -425,6 +430,10 @@ void Genesis::write_word(uint32_t address, uint16_t value) {
 
 uint8_t Genesis::read_byte(uint32_t address) {
     address &= 0xffffff;
+    if (has_ext_) {
+        uint8_t value;
+        if (ext_read8(address, &value)) return value;
+    }
     if (address <= 0x3fffff) return cart_read(address);
     if (address >= 0xa00000 && address <= 0xa0ffff) {
         if (!z80_has_bus_ && !z80_is_reset_) return z80_read(uint16_t(address & 0x7fff));
@@ -444,6 +453,7 @@ uint8_t Genesis::read_byte(uint32_t address) {
 
 void Genesis::write_byte(uint32_t address, uint8_t value) {
     address &= 0xffffff;
+    if (has_ext_ && ext_write8(address, value)) return;
     if (address <= 0x3fffff) {
         cart_write(address, value);
         return;
@@ -489,6 +499,7 @@ void Genesis::on_m68k_cycles(int cycles) {
     while (audio_accumulator_ >= clock) {
         audio_accumulator_ -= clock;
         int32_t sample = ym_.update() + vdp_.psg().update() / 4;
+        if (has_ext_) sample += ext_audio_sample();
         if (sample > 32767) sample = 32767;
         if (sample < -32768) sample = -32768;
         audio_.push_back(int16_t(sample));

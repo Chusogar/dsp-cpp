@@ -241,6 +241,8 @@ add_executable(dsp
   src/video/sega_315_5313.cpp
   src/sound/ym2612.cpp
   src/drivers/consoles/genesis.cpp
+  src/drivers/consoles/sega32x.cpp
+  src/cpu/sh2.cpp
   src/drivers/consoles/gamegear.cpp
   src/drivers/consoles/pv1000.cpp
   src/drivers/consoles/pv2000.cpp
@@ -428,6 +430,8 @@ add_executable(dsp_tests
   src/drivers/arcade/atari_system2.cpp
   src/drivers/computers/zx_clone.cpp
   src/drivers/consoles/genesis.cpp
+  src/drivers/consoles/sega32x.cpp
+  src/cpu/sh2.cpp
   src/drivers/arcade/outrun.cpp
   src/drivers/arcade/xboard.cpp
   src/drivers/arcade/hangon.cpp
@@ -549,3 +553,22 @@ add_executable(st_run EXCLUDE_FROM_ALL
 target_include_directories(st_run PRIVATE src)
 target_link_libraries(st_run PRIVATE ZLIB::ZLIB musashi)
 target_compile_options(st_run PRIVATE -Wall -Wextra)
+
+# Sega 32X headless runner (screenshots, SH-2 PCs, comm ports):
+# s32x_run BIOSSET CART FRAMES OUTPREFIX
+add_executable(s32x_run EXCLUDE_FROM_ALL
+  tools/s32x_run.cpp
+  src/drivers/consoles/sega32x.cpp
+  src/drivers/consoles/genesis.cpp
+  src/video/sega_315_5313.cpp
+  src/sound/ym2612.cpp
+  src/sound/fmopn.cpp
+  src/sound/sn76496.cpp
+  src/cpu/sh2.cpp
+  src/cpu/m68000.cpp
+  src/cpu/z80.cpp
+  src/core/rom_loader.cpp
+)
+target_include_directories(s32x_run PRIVATE src)
+target_link_libraries(s32x_run PRIVATE ZLIB::ZLIB musashi)
+target_compile_options(s32x_run PRIVATE -Wall -Wextra)
