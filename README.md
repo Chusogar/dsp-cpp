@@ -881,6 +881,11 @@ ROMs are **not** shipped. Point the emulator at a directory or zip from
 
 * II+: MAME `apple2p.zip` (`341-0011.d0` … `341-0020-00.f8` + `341-0036.chr`) or the
   concatenated `apple2-asoft-auto.rom` (12 KiB)
+* Original ][: MAME `apple2.zip` (`341-0001-00.e0` … `341-0003-00.f0`, Autostart
+  `341-0020-00.f8` or else the old monitor `341-0004-00.f8`, optional Programmer's Aid
+  `341-0016-00.d0`, `a2.chr`, and the Disk II PROM). `--game apple2` with this zip
+  runs it as the original ][ (Integer BASIC: an Applesoft HELLO answers LANGUAGE NOT
+  AVAILABLE, `BRUN` works)
 * IIe: `apple2e.zip` (`342-0135-b.64` + `342-0134-a.64` + `342-0133-a.chr`)
 * IIe Enhanced: `apple2ee.zip` (`342-0304-a.e10` + `342-0303-a.e8` + `342-0265-a.chr`)
 * Disk II P5 PROM (optional, slot 6): `341-0027-a.p5` / `disk2-16boot.rom` (256 bytes).
@@ -888,6 +893,12 @@ ROMs are **not** shipped. Point the emulator at a directory or zip from
   the same way a real Disk II does.
 
 `--disk` accepts 140K DOS 3.3 `.dsk`/`.do`, ProDOS-order `.po`, and `.nib` tracks.
+Nibbles arrive every 32 cycles (4 µs bit cells) and `$C0E8` only arms the card's
+~1 s motor-off delay, so RWTS finds the disk still spinning on its next call
+instead of waiting for a full spin-up on every sector.
+The joystick (arrow keys, Space / Ctrl fire) is wired to the game port: paddles 0/1
+are 558 timers started by `$C070` (left/up 0, centre 127, right/down 255) and fire is
+button 0 (`$C061`). Double hi-res follows `PAGE2` and uses MAME's colour mapping.
 The host keyboard is the Apple keyboard (high-bit ASCII, Ctrl as Control). On the
 IIe, Z / Left Alt is Open-Apple and X is Closed-Apple. F3 still resets the machine.
 

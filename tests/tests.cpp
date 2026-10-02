@@ -6697,7 +6697,7 @@ void test_diskii_encode_roundtrip() {
     check(saw_d5, "Disk II track contains an address/data prologue");
 
     disk.read_io(0xE9);  // motor on
-    disk.tick(40);
+    disk.tick(32);  // one 4 us bit cell x 8
     check((disk.latch() & 0x80) != 0, "Disk II latch bit 7 is set when a nibble is ready");
     const int pos = disk.nibble_pos();
     disk.tick(27);
@@ -6707,6 +6707,22 @@ void test_diskii_encode_roundtrip() {
     check((disk.latch() & 0x80) == 0, "Disk II $C0EC consumes the nibble (clears bit 7)");
     disk.tick(40);
     check(disk.nibble_pos() != pos, "Disk II advances after the CPU consumes the nibble");
+
+    // $C0E8 only arms the card's ~1 s motor-off one-shot: RWTS switches the
+    // motor off after every call and expects the disk still spinning on the
+    // next (otherwise each sector waits for a full spin-up).
+    disk.read_io(0xE8);
+    disk.tick(500000);
+    check(disk.motor_on(), "Disk II keeps spinning right after $C0E8");
+    const int spin = disk.nibble_pos();
+    disk.tick(64);
+    check(disk.nibble_pos() != spin, "Disk II still delivers nibbles during the motor-off delay");
+    disk.read_io(0xE9);
+    disk.tick(800000);
+    check(disk.motor_on(), "$C0E9 cancels the pending motor-off");
+    disk.read_io(0xE8);
+    disk.tick(1100000);
+    check(!disk.motor_on(), "Disk II stops about a second after $C0E8");
 }
 
 void test_ql_missing_roms() {
@@ -8606,6 +8622,47 @@ void test_apple2_missing_roms_and_dummy() {
     check((machine.peek(0xC000) & 0x7F) == 'A', "Apple II keyboard returns ASCII A");
     machine.peek(0xC010);
     check((machine.peek(0xC000) & 0x80) == 0, "Apple II $C010 clears the keyboard strobe");
+
+    // Joystick on the game port: $C070 starts the paddle timers; a stick
+    // pushed right keeps PDL(0) busy (255), one pushed left reads 0 at once.
+    dsp::MachineInputs stick{};
+    stick.player1.right = true;
+    stick.player1.up = true;
+    machine.set_inputs(stick);
+    machine.peek(0xC070);
+    check((machine.peek(0xC064) & 0x80) != 0, "PDL(0) right: timer still running after PTRIG");
+    check((machine.peek(0xC065) & 0x80) == 0, "PDL(1) up: timer already expired");
+    machine.run_frame();
+    check((machine.peek(0xC064) & 0x80) == 0, "PDL(0) timer expires after 255 x 11 cycles");
+    stick.player1.right = false;
+    stick.player1.button1 = true;
+    machine.set_inputs(stick);
+    check((machine.peek(0xC061) & 0x80) != 0, "joystick fire is button 0 ($C061)");
+
+    // Double hi-res: 560 dots from aux+main, four dots per colour, the
+    // colour being the dot pattern rotated left by one in lo-res order.
+    {
+        std::vector<uint8_t> main_ram(0x10000, 0), aux_ram(0x10000, 0);
+        aux_ram[0x2000] = 0x01;                        // dot 0 on -> 0b0010 = dark blue
+        aux_ram[0x2027] = 0x7F;
+        main_ram[0x2027] = 0x7F;                       // last 14 dots on -> white
+        main_ram[0x4000] = 0x7F;                       // page 2 marker
+        std::vector<uint32_t> fb(dsp::Apple2Video::kWidth * dsp::Apple2Video::kHeight, 0);
+        dsp::Apple2Video video;
+        video.text = false;
+        video.hires = true;
+        video.dhires = true;
+        video.col80 = true;
+        video.iie = true;
+        video.render(fb.data(), main_ram.data(), aux_ram.data(), nullptr, 0);
+        check(fb[0] == 0xFF000099u && fb[3] == 0xFF000099u && fb[4] == 0xFF000000u,
+              "DHR dot pattern 0001 is dark blue over four dots");
+        check(fb[559] == 0xFFFFFFFFu && fb[548] == 0xFFFFFFFFu, "DHR covers the full 560-dot line");
+        video.page2 = true;
+        video.render(fb.data(), main_ram.data(), aux_ram.data(), nullptr, 0);
+        check(fb[8] == 0xFFFFFFFFu && fb[11] == 0xFFFFFFFFu && fb[0] == 0xFF000000u,
+              "DHR shows page 2 when PAGE2 is set");
+    }
 }
 
 void test_apple2_roms_if_present() {
@@ -8630,6 +8687,62 @@ void test_apple2_roms_if_present() {
         check(iie.init(iie_zip, &error), "Apple IIe BIOS set loads");
         for (int frame = 0; frame < 180; frame++) iie.run_frame();
         check(count_lit_pixels(iie) > 200, "Apple IIe firmware paints the text screen");
+    }
+    // MAME apple2.zip: the original Apple II (Integer BASIC, Autostart
+    // monitor 341-0020, a2.chr, Disk II PROM). --game apple2 asks for a II+,
+    // which falls back to that set instead of failing.
+    const char* ii_zip = "/tmp/roms/apple2/apple2.zip";
+    const char* hero = "/tmp/roms/apple2/hero.dsk";
+    if (exists(ii_zip)) {
+        dsp::Apple2 ii(dsp::Apple2::Model::IIPlus);
+        std::string error;
+        check(ii.init(ii_zip, &error), "MAME apple2.zip (Integer BASIC chips) loads");
+        check(std::strcmp(ii.title(), "Apple II") == 0, "apple2.zip runs as the original Apple II");
+        check(ii.disk_prom_loaded(), "apple2.zip maps the Disk II PROM in slot 6");
+        check(ii.peek(0xFFFD) == 0xFA && ii.peek(0xFFFC) == 0x62, "Autostart monitor reset vector is $FA62");
+    }
+    // H.E.R.O. / Pitfall II / Narnia (DOS 3.3 compilation) on a IIe: DOS
+    // boots to the catalog and BRUN PITFALL II reaches the hires title.
+    if (exists(iie_zip) && exists(hero)) {
+        dsp::Apple2 iie(dsp::Apple2::Model::IIe);
+        std::string error;
+        check(iie.init(iie_zip, &error) && iie.load_media(hero, &error), "IIe boots the H.E.R.O. disk");
+        auto screen_has = [&iie](const char* text) {
+            std::string screen;
+            for (int row = 0; row < 24; row++) {
+                const uint16_t base = uint16_t(0x400 + (row & 7) * 0x80 + (row >> 3) * 0x28);
+                for (int col = 0; col < 40; col++) screen.push_back(char(iie.peek(uint16_t(base + col)) & 0x7F));
+            }
+            return screen.find(text) != std::string::npos;
+        };
+        bool catalog = false;
+        for (int frame = 0; frame < 600 && !catalog; frame++) {
+            iie.run_frame();
+            catalog = screen_has("PITFALL II");
+        }
+        check(catalog, "DOS 3.3 boots and CATALOGs the disk");
+        const std::string cmd = "BRUN PITFALL II\n";
+        for (size_t i = 0; i < cmd.size(); i++) {
+            for (int f = 0; f < 4; f++) {
+                dsp::MachineInputs in;
+                if (f < 2) {
+                    const char c = cmd[i];
+                    dsp::Key k = dsp::Key::Space;
+                    if (c >= 'A' && c <= 'Z') k = dsp::Key(int(dsp::Key::A) + (c - 'A'));
+                    if (c == '\n') k = dsp::Key::Enter;
+                    in.keys[size_t(k)] = true;
+                }
+                iie.set_inputs(in);
+                iie.run_frame();
+            }
+        }
+        bool hires = false;
+        for (int frame = 0; frame < 2400 && !hires; frame++) {
+            iie.set_inputs(dsp::MachineInputs{});
+            iie.run_frame();
+            hires = (iie.peek(0xC01A) & 0x80) == 0 && (iie.peek(0xC01D) & 0x80) != 0;
+        }
+        check(hires, "BRUN PITFALL II loads the game and switches to hires");
     }
     if (exists(ee_zip)) {
         dsp::Apple2 ee(dsp::Apple2::Model::IIeEnhanced);

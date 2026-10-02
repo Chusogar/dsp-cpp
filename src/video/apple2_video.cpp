@@ -196,16 +196,16 @@ void Apple2Video::draw_dhires(uint32_t* dest, const uint8_t* main, const uint8_t
             const uint16_t addr = hires_address(y, col, page2);
             push(aux != nullptr ? aux[addr] : 0);
             push(main[addr]);
+            // 14 dots per column (aux then main), 560 per line: each group
+            // of four dots is one double hi-res colour.
             while (count >= 4 && x < 560) {
                 const int nibble = bits & 0x0F;
                 bits >>= 4;
                 count -= 4;
-                put(dest, x, y, kDhgr[nibble], 1);
-                x++;
-                if (x < 560) {
-                    put(dest, x, y, kDhgr[nibble], 1);
-                    x++;
-                }
+                // The first dot is the low bit; the colour (in lo-res order)
+                // is that pattern rotated left by one (MAME rotl4(n, 1)).
+                const int color = ((nibble << 1) | (nibble >> 3)) & 0x0F;
+                for (int i = 0; i < 4 && x < 560; i++, x++) put(dest, x, y, kDhgr[color], 1);
             }
         }
     }

@@ -112,6 +112,10 @@ private:
     bool speaker_ = false;
     bool open_apple_ = false;
     bool closed_apple_ = false;
+    std::array<uint8_t, 4> paddle_{127, 127, 127, 127};
+    uint64_t cycles_ = 0;
+    uint64_t paddle_start_ = 0;
+    uint8_t paddle_bit(int n) const;
 
     uint8_t keyboard_ = 0;
     bool any_key_ = false;

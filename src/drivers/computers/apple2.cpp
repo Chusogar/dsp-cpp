@@ -27,6 +27,22 @@ const std::vector<RomEntry> kIiPlusConcat = {
 const std::vector<RomEntry> kIiInteger = {
     {"apple2-int-auto.rom|apple2integer.rom", 0x2000, 0x0000, 0x2dcec5cb},
 };
+// MAME apple2.zip: Integer BASIC in E0-F0 and the Autostart monitor
+// (341-0020, boots slot 6) or else the original one at F8, from $D000.
+const std::vector<RomEntry> kIiIntegerChips = {
+    {"341-0001-00.e0|341-0001.e0", 0x0800, 0x1000, 0xc0a4ad3b},
+    {"341-0002-00.e8|341-0002.e8", 0x0800, 0x1800, 0xa99c2cf6},
+    {"341-0003-00.f0|341-0003.f0", 0x0800, 0x2000, 0x62230d38},
+};
+const std::vector<RomEntry> kIiAutostartMonitor = {
+    {"341-0020-00.f8|341-0020.f8", 0x0800, 0x0000, 0x079589c4},
+};
+const std::vector<RomEntry> kIiOriginalMonitor = {
+    {"341-0004-00.f8|341-0004.f8", 0x0800, 0x0000, 0x020a86d0},
+};
+const std::vector<RomEntry> kIiProgrammersAid = {
+    {"341-0016-00.d0|341-0016.d0", 0x0800, 0x0000, 0x4234e88a},
+};
 const std::vector<RomEntry> kIIeChips = {
     {"342-0135-b.64|342-0135-b.bin", 0x2000, 0x0000, 0xe248835e},
     {"342-0134-a.64|342-0134-a.bin", 0x2000, 0x2000, 0xfc3d59d8},
@@ -39,7 +55,7 @@ const std::vector<RomEntry> kIIeConcat = {
     {"AppleIIe.rom|apple2ee.rom|apple2e_enhanced.rom", 0x4000, 0x0000, 0},
 };
 const std::vector<RomEntry> kChargenIi = {
-    {"341-0036.chr|apple2-character.rom|apple2.chr", 0x0800, 0x0000, 0x64f415c6},
+    {"341-0036.chr|a2.chr|apple2-character.rom|apple2.chr", 0x0800, 0x0000, 0x64f415c6},
 };
 const std::vector<RomEntry> kChargenIIe = {
     {"342-0133-a.chr|apple2e-character.rom|apple2e.chr", 0x1000, 0x0000, 0xb081df66},
@@ -146,13 +162,34 @@ bool Apple2::load_roms(const std::string& rom_path, std::string* error) {
     std::vector<uint8_t> firmware;
     std::vector<uint8_t> chargen;
 
+    // The Integer BASIC chip set, as a $D000-$FFFF image.
+    auto load_integer_chips = [&](RomLoader& loader) -> bool {
+        std::vector<uint8_t> chips;
+        std::vector<uint8_t> monitor;
+        std::vector<uint8_t> aid;
+        if (!load_optional(loader, kIiIntegerChips, chips)) {
+            return false;
+        }
+        if (!load_optional(loader, kIiAutostartMonitor, monitor) &&
+            !load_optional(loader, kIiOriginalMonitor, monitor)) {
+            return false;
+        }
+        firmware.assign(0x3000, 0xFF);
+        std::memcpy(firmware.data() + 0x1000, chips.data() + 0x1000, 0x1800);
+        std::memcpy(firmware.data() + 0x2800, monitor.data(), 0x0800);
+        if (load_optional(loader, kIiProgrammersAid, aid)) {
+            std::memcpy(firmware.data(), aid.data(), 0x0800);
+        }
+        return true;
+    };
+
     auto load_from_loader = [&](RomLoader& loader) -> bool {
         firmware.clear();
         chargen.clear();
         std::string ignored;
         switch (model_) {
             case Model::II:
-                if (!loader.load(kIiInteger, firmware, &ignored)) {
+                if (!load_integer_chips(loader) && !loader.load(kIiInteger, firmware, &ignored)) {
                     return false;
                 }
                 load_optional(loader, kChargenIi, chargen);
@@ -161,7 +198,12 @@ bool Apple2::load_roms(const std::string& rom_path, std::string* error) {
                 if (!loader.load(kIiPlusChips, firmware, &ignored)) {
                     ignored.clear();
                     if (!loader.load(kIiPlusConcat, firmware, &ignored)) {
-                        return false;
+                        // MAME's apple2.zip is the original Apple II
+                        // (Integer BASIC + Autostart): run it as that model.
+                        if (!load_integer_chips(loader)) {
+                            return false;
+                        }
+                        model_ = Model::II;
                     }
                 }
                 load_optional(loader, kChargenIi, chargen);
@@ -235,6 +277,8 @@ bool Apple2::load_roms(const std::string& rom_path, std::string* error) {
     if (is_iie()) {
         const size_t n = std::min(firmware.size(), rom_.size());
         std::memcpy(rom_.data(), firmware.data(), n);
+    } else if (model_ == Model::II && firmware.size() >= 0x3000) {
+        std::memcpy(rom_.data() + 0x1000, firmware.data(), 0x3000);
     } else if (model_ == Model::II) {
         const size_t n = std::min(firmware.size(), size_t(0x2000));
         std::memcpy(rom_.data() + 0x2000, firmware.data(), n);
@@ -419,7 +463,8 @@ uint8_t Apple2::read_io(uint16_t address) {
         case 0x18:
             return store80_ ? 0x80 : 0x00;
         case 0x19:
-            return (scanline_ >= 192) ? 0x80 : 0x00;
+            // RDVBLBAR: on the IIe bit 7 is low during vertical blanking.
+            return (scanline_ < 192) ? 0x80 : 0x00;
         case 0x1A:
             return text_ ? 0x80 : 0x00;
         case 0x1B:
@@ -470,19 +515,34 @@ uint8_t Apple2::read_io(uint16_t address) {
         case 0x62:
             return closed_apple_ ? 0x80 : 0x00;
         case 0x63:
+            return 0x00;
         case 0x64:
         case 0x65:
         case 0x66:
         case 0x67:
-            return 0x00;
+            return paddle_bit(a - 0x64);
         default:
             break;
+    }
+    if (a >= 0x70 && a <= 0x7F) {
+        paddle_start_ = cycles_;  // PTRIG: start the four 558 timers
     }
     return 0x00;
 }
 
+uint8_t Apple2::paddle_bit(int n) const {
+    // A 558 timer per paddle: bit 7 stays high for about 11 cycles per unit
+    // of the 0-255 paddle value after $C070 (PREAD counts in 11-cycle loops).
+    const uint64_t elapsed = cycles_ - paddle_start_;
+    return elapsed < uint64_t(paddle_[size_t(n & 3)]) * 11 ? 0x80 : 0x00;
+}
+
 void Apple2::write_io(uint16_t address, uint8_t value) {
     const uint16_t a = address & 0x00FF;
+    if (a >= 0x70 && a <= 0x7F) {
+        paddle_start_ = cycles_;
+        return;
+    }
     if (a >= 0xE0 && a <= 0xEF) {
         disk_.write_io(uint8_t(a), value);
         return;
@@ -649,6 +709,7 @@ void Apple2::write_byte(uint16_t address, uint8_t value) {
 }
 
 void Apple2::on_cpu_cycles(int cycles) {
+    cycles_ += uint64_t(cycles);
     disk_.tick(cycles);
     audio_acc_ += int64_t(cycles) * kSampleRate;
     while (audio_acc_ >= kClock) {
@@ -736,6 +797,12 @@ void Apple2::set_inputs(const MachineInputs& inputs) {
     apply_keyboard(inputs);
     open_apple_ = inputs.player1.button2 || inputs.player1.button1;
     closed_apple_ = inputs.player1.button3;
+    // Joystick on paddles 0 (X) and 1 (Y): the digital directions push the
+    // stick to either end, centred otherwise.
+    paddle_[0] = inputs.player1.left ? 0 : inputs.player1.right ? 255 : 127;
+    paddle_[1] = inputs.player1.up ? 0 : inputs.player1.down ? 255 : 127;
+    paddle_[2] = inputs.player2.left ? 0 : inputs.player2.right ? 255 : 127;
+    paddle_[3] = inputs.player2.up ? 0 : inputs.player2.down ? 255 : 127;
 }
 
 void Apple2::set_dip_switch(int, uint8_t) {}
@@ -747,7 +814,9 @@ void Apple2::run_frame() {
     }
     video_.text = text_;
     video_.mixed = mixed_;
-    video_.page2 = page2_ && !store80_ && !col80_;
+    // With 80STORE off PAGE2 picks the displayed page, in 80-column and
+    // double hi-res modes too (with 80STORE on it banks main/aux instead).
+    video_.page2 = page2_ && !store80_;
     video_.hires = hires_;
     video_.col80 = col80_;
     video_.altcharset = altcharset_;

@@ -11,8 +11,9 @@ namespace {
 
 // ~32.5 is authentic (4 µs bit cells). 40 keeps the P5 PROM 27-cycle data
 // field loop from missing a nibble with post-instruction Disk II ticks.
-constexpr int kCyclesPerNibble = 40;
+constexpr int kCyclesPerNibble = 32;
 constexpr uint8_t kVolume = 0xFE;
+constexpr int kMotorOffDelay = 1020484;  // ~1 s at the Apple II clock
 constexpr uint8_t kGap = 0xFF;
 
 const uint8_t kDiskByte[0x40] = {
@@ -136,6 +137,7 @@ void DiskIi::reset() {
     phases_ = 0;
     half_track_ = 0;
     motor_on_ = false;
+    motor_off_delay_ = 0;
     drive_ = 0;
     q6_ = false;
     q7_ = false;
@@ -337,6 +339,17 @@ void DiskIi::step_phase(int phase, bool on) {
 }
 
 void DiskIi::tick(int cycles) {
+    if (motor_on_ && motor_off_delay_ > 0) {
+        // The Disk II card keeps the drive enabled for about a second after
+        // $C0E8 (a 556 one-shot); RWTS turns the motor off after every call
+        // and expects the disk still spinning on the next one.
+        motor_off_delay_ -= cycles;
+        if (motor_off_delay_ <= 0) {
+            motor_off_delay_ = 0;
+            motor_on_ = false;
+            flush_write();
+        }
+    }
     if (!motor_on_ || !loaded_) {
         return;
     }
@@ -365,11 +378,11 @@ uint8_t DiskIi::read_io(uint8_t offset) {
             step_phase(n / 2, true);
             break;
         case 0x8:
-            motor_on_ = false;
-            flush_write();
+            if (motor_on_ && motor_off_delay_ == 0) motor_off_delay_ = kMotorOffDelay;
             break;
         case 0x9:
             motor_on_ = true;
+            motor_off_delay_ = 0;
             break;
         case 0xA:
             drive_ = 0;

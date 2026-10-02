@@ -62,6 +62,7 @@ private:
     int encoded_track_ = -1;
     uint8_t phases_ = 0;
     bool motor_on_ = false;
+    int motor_off_delay_ = 0;  // CPU cycles until the drive stops
     int drive_ = 0;
     bool q6_ = false;
     bool q7_ = false;
