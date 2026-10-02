@@ -71,6 +71,9 @@ void AmigaChipset::reset() {
     lof_ = false;
     cop_stopped_ = true;
     copper_active_ = false;
+    for (AudioChannel& a : aud_) a = AudioChannel{};
+    aud_irq_ = false;
+    aud_sum_ = aud_cck_ = 0;
     sprpt_.fill(0);
     sprpos_.fill(0);
     sprctl_.fill(0);
@@ -93,7 +96,7 @@ void AmigaChipset::poke_ptr(uint32_t& p, bool high, uint16_t value) {
     if (high)
         p = (uint32_t(value) << 16) | (p & 0xFFFF);
     else
-        p = (p & 0xFFFF0000u) | value;
+        p = (p & 0xFFFF0000u) | (value & 0xFFFEu);  // DMA pointers address words
 }
 
 void AmigaChipset::setclr(uint16_t& reg, uint16_t value, uint16_t mask) {
@@ -210,9 +213,12 @@ void AmigaChipset::write(uint16_t reg, uint16_t value) {
         case 0x094:
             ddfstop_ = value;
             break;
-        case 0x096:
+        case 0x096: {
+            const uint16_t old = dmacon_;
             setclr(dmacon_, value, 0x07FF);
+            audio_dma_changed(old);
             break;
+        }
         case 0x09A:
             setclr(intena_, value, 0x7FFF);
             break;
@@ -263,16 +269,16 @@ void AmigaChipset::write(uint16_t reg, uint16_t value) {
             blit();
             break;
         case 0x060:
-            bltcmod_ = int16_t(value);
+            bltcmod_ = int16_t(value & 0xFFFE);  // bit 0 is not implemented
             break;
         case 0x062:
-            bltbmod_ = int16_t(value);
+            bltbmod_ = int16_t(value & 0xFFFE);  // bit 0 is not implemented
             break;
         case 0x064:
-            bltamod_ = int16_t(value);
+            bltamod_ = int16_t(value & 0xFFFE);  // bit 0 is not implemented
             break;
         case 0x066:
-            bltdmod_ = int16_t(value);
+            bltdmod_ = int16_t(value & 0xFFFE);  // bit 0 is not implemented
             break;
         case 0x070:
             bltcdat_ = value;
@@ -293,10 +299,10 @@ void AmigaChipset::write(uint16_t reg, uint16_t value) {
             bplcon2_ = value;
             break;
         case 0x108:
-            bpl1mod_ = int16_t(value);
+            bpl1mod_ = int16_t(value & 0xFFFE);  // bit 0 is not implemented
             break;
         case 0x10A:
-            bpl2mod_ = int16_t(value);
+            bpl2mod_ = int16_t(value & 0xFFFE);  // bit 0 is not implemented
             break;
         default:
             if (r >= 0x0E0 && r <= 0x0F6) {
@@ -323,6 +329,34 @@ void AmigaChipset::write(uint16_t reg, uint16_t value) {
                 }
             } else if (r >= 0x180 && r <= 0x1BE) {
                 color_[(r - 0x180) >> 1] = uint16_t(value & 0x0FFF);
+            } else if (r >= 0x0A0 && r < 0x0E0) {
+                AudioChannel& a = aud_[size_t((r - 0x0A0) >> 4)];
+                switch (r & 0x0E) {
+                    case 0x0: a.lc = (uint32_t(value) << 16) | (a.lc & 0xFFFF); break;
+                    case 0x2: a.lc = (a.lc & 0xFFFF0000u) | (value & 0xFFFEu); break;
+                    case 0x4: a.len = value; break;
+                    case 0x6: a.per = value; break;
+                    case 0x8: a.vol = uint16_t(std::min<uint16_t>(value & 0x7F, 64)); break;
+                    case 0xA:
+                        // AUDxDAT with DMA off feeds the DAC directly; the
+                        // channel interrupt asks for the next word.
+                        if (!a.dma_on) {
+                            if (a.manual) {
+                                a.manual_dat = value;
+                                a.manual_next = true;
+                            } else {
+                                a.manual = true;
+                                a.dat = value;
+                                a.byte = 0;
+                                a.out = int8_t(value >> 8);
+                                a.counter = a.per ? a.per : 65536;
+                            }
+                        } else {
+                            a.dat = value;
+                        }
+                        break;
+                    default: break;
+                }
             }
             break;
     }
@@ -353,7 +387,7 @@ void AmigaChipset::copper_line(int vpos) {
 }
 
 void AmigaChipset::sprite_dma_line(int vpos) {
-    const int y = vpos - 0x2C;
+    const int y = vpos - kFirstLine;
     for (int s = 0; s < 8; s++) {
         auto& pt = sprpt_[size_t(s)];
         auto& pos = sprpos_[size_t(s)];
@@ -655,6 +689,95 @@ void AmigaChipset::disk_dma() {
     dsklen_ = uint16_t(dsklen_ & 0x7FFF);
 }
 
+void AmigaChipset::audio_fetch(int ch) {
+    AudioChannel& a = aud_[size_t(ch)];
+    a.dat = chip_read(a.pt);
+    a.pt += 2;
+    if (--a.words_left == 0) {
+        // Block done: the location/length latches reload and the channel
+        // interrupt tells the program it may queue the next block.
+        a.pt = a.lc;
+        a.words_left = a.len ? a.len : 0x10000u;
+        intreq_ = uint16_t(intreq_ | (0x0080 << ch));
+        aud_irq_ = true;
+    }
+}
+
+void AmigaChipset::audio_dma_changed(uint16_t old_dmacon) {
+    for (int ch = 0; ch < 4; ch++) {
+        const uint16_t bit = uint16_t(1 << ch);
+        const bool was = (old_dmacon & kDmaen) && (old_dmacon & bit);
+        const bool now = (dmacon_ & kDmaen) && (dmacon_ & bit);
+        AudioChannel& a = aud_[size_t(ch)];
+        if (!was && now) {
+            a.dma_on = true;
+            a.manual = a.manual_next = false;
+            a.pt = a.lc;
+            a.words_left = a.len ? a.len : 0x10000u;
+            intreq_ = uint16_t(intreq_ | (0x0080 << ch));  // first word fetched
+            aud_irq_ = true;
+            audio_fetch(ch);
+            a.byte = 0;
+            a.out = int8_t(a.dat >> 8);
+            a.counter = a.per ? a.per : 65536;
+        } else if (was && !now) {
+            a.dma_on = false;
+            a.out = 0;
+        }
+    }
+}
+
+bool AmigaChipset::audio_run(int cck) {
+    int level = 0;
+    for (const AudioChannel& a : aud_) level += int(a.out) * int(a.vol);
+    aud_sum_ += int64_t(level) * cck;
+    aud_cck_ += cck;
+    aud_irq_ = false;
+    for (int ch = 0; ch < 4; ch++) {
+        AudioChannel& a = aud_[size_t(ch)];
+        if (!a.dma_on && !a.manual) continue;
+        a.counter -= cck;
+        while (a.counter <= 0) {
+            // A DMA channel cannot fetch faster than its slot allows.
+            int per = a.per ? a.per : 65536;
+            if (a.dma_on && per < 124) per = 124;
+            a.counter += per;
+            if (a.byte == 0) {
+                a.byte = 1;
+                a.out = int8_t(a.dat & 0xFF);
+                continue;
+            }
+            a.byte = 0;
+            if (a.dma_on) {
+                audio_fetch(ch);
+            } else {
+                intreq_ = uint16_t(intreq_ | (0x0080 << ch));
+                aud_irq_ = true;
+                if (!a.manual_next) {
+                    a.manual = false;  // the DAC holds; nothing more to play
+                    a.out = 0;
+                    break;
+                }
+                a.dat = a.manual_dat;
+                a.manual_next = false;
+            }
+            a.out = int8_t(a.dat >> 8);
+        }
+    }
+    return aud_irq_;
+}
+
+int AmigaChipset::audio_take_sample() {
+    if (aud_cck_ == 0) {
+        int level = 0;
+        for (const AudioChannel& a : aud_) level += int(a.out) * int(a.vol);
+        return level;
+    }
+    const int v = int(aud_sum_ / aud_cck_);
+    aud_sum_ = aud_cck_ = 0;
+    return v;
+}
+
 uint32_t AmigaChipset::rgb(uint16_t c) const {
     const int r = (c >> 8) & 0xF;
     const int g = (c >> 4) & 0xF;
@@ -662,78 +785,154 @@ uint32_t AmigaChipset::rgb(uint16_t c) const {
     return 0xFF000000u | uint32_t(r * 17) << 16 | uint32_t(g * 17) << 8 | uint32_t(b * 17);
 }
 
-void AmigaChipset::plot_sprites(uint32_t* framebuffer) const {
-    const int h0 = diwstrt_ & 0xFF;
-    for (int y = 0; y < kHeight; y++) {
-        for (int s = 0; s < 8; s++) {
-            if (!spr_line_on_[size_t(s)][size_t(y)]) continue;
-            const uint16_t pos = spr_line_pos_[size_t(s)][size_t(y)];
-            const uint16_t ctl = spr_line_ctl_[size_t(s)][size_t(y)];
-            if (s & 1) {
-                const uint16_t even_ctl = spr_line_ctl_[size_t(s - 1)][size_t(y)];
-                if (even_ctl & 0x80) continue;  // attached: drawn with the even sprite
-            }
-            const bool attached = (s + 1 < 8) && (spr_line_ctl_[size_t(s + 1)][size_t(y)] & 0x80) &&
-                                  spr_line_on_[size_t(s + 1)][size_t(y)];
-            // SH8..SH0 is already in lores pixels, the same units as the
-            // DIWSTRT horizontal start.
-            const int hstart = ((pos & 0xFF) << 1) | (ctl & 1);
-            const int x0 = hstart - h0;
-            const uint16_t da = spr_line_data_[size_t(s)][size_t(y)];
-            const uint16_t db = spr_line_datb_[size_t(s)][size_t(y)];
-            const uint16_t oa = attached ? spr_line_data_[size_t(s + 1)][size_t(y)] : 0;
-            const uint16_t ob = attached ? spr_line_datb_[size_t(s + 1)][size_t(y)] : 0;
-            const int base = 16 + (s & ~1) * 2;
-            for (int i = 0; i < 16; i++) {
-                const int x = x0 + i;
-                if (x < 0 || x >= kWidth) continue;
-                const int bit = 15 - i;
-                int idx = 0;
-                if (da & (1u << bit)) idx |= 1;
-                if (db & (1u << bit)) idx |= 2;
-                if (attached) {
-                    if (oa & (1u << bit)) idx |= 4;
-                    if (ob & (1u << bit)) idx |= 8;
-                }
-                if (!idx) continue;
-                framebuffer[y * kWidth + x] = rgb(color_[size_t((base + idx) & 31)]);
-            }
-        }
-    }
-}
-
 void AmigaChipset::render_line(uint32_t* framebuffer, int vpos) {
-    const int y = vpos - 0x2C;
-    if (y < 0 || y >= kHeight) return;
-    const int bpu = std::min(6, (bplcon0_ >> 12) & 7);
+    // Display window: DIWSTOP's vertical V8 is the inverse of its V7.
+    const int vstart = diwstrt_ >> 8;
+    const int vstop = (diwstop_ >> 8) | ((diwstop_ & 0x8000) ? 0 : 0x100);
+    const int hstart = diwstrt_ & 0xFF;
+    const int hstop = (diwstop_ & 0xFF) | 0x100;
+    const bool vwin = vpos >= vstart && vpos < vstop;
     const bool hires = (bplcon0_ & 0x8000) != 0;
-    const bool planes = bpu > 0 && dma(kBplen);
-    const uint32_t bg = rgb(color_[0]);
-    uint32_t* row = framebuffer + y * kWidth;
-    if (!planes) {
-        for (int x = 0; x < kWidth; x++) row[x] = bg;
-        return;
-    }
-    for (int x = 0; x < kWidth; x++) {
-        const int hx = hires ? x * 2 : x;
-        const int bit = 15 - (hx & 15);
-        const int word = hx >> 4;
-        int idx = 0;
+    const bool ham = (bplcon0_ & 0x0800) != 0;
+    const bool dpf = (bplcon0_ & 0x0400) != 0;
+    int bpu = (bplcon0_ >> 12) & 7;
+    if (bpu > 6) bpu = 4;  // OCS: seven planes fetch four
+    if (hires && bpu > 4) bpu = 4;
+
+    // Bitplane DMA: DDFSTRT..DDFSTOP words per plane, then the modulo.
+    // Pointers advance on every fetched line, also outside the visible area.
+    const int ddfs = std::max(0x18, ddfstrt_ & 0xFC);
+    const int ddfe = std::min(0xD8, ddfstop_ & 0xFC);
+    int nwords = 0;
+    // Fetches go in 8-cycle units: one word per plane in lores, two in hires
+    // (DDFSTRT $3C / DDFSTOP $D0 in hires is 40 words).
+    if (ddfe >= ddfs) nwords = (((ddfe - ddfs + 7) >> 3) + 1) * (hires ? 2 : 1);
+    nwords = std::min(nwords, kMaxFetchWords);
+    const bool fetch = vwin && bpu > 0 && dma(kBplen) && nwords > 0;
+    if (fetch) {
         for (int p = 0; p < bpu; p++) {
-            const uint16_t w = chip_read(bplpt_[size_t(p)] + uint32_t(word * 2));
-            if (w & (1u << bit)) idx |= 1 << p;
+            for (int i = 0; i < nwords; i++) line_words_[size_t(p)][size_t(i)] = chip_read(bplpt_[size_t(p)] + uint32_t(i * 2));
+            const int16_t mod = (p & 1) ? bpl2mod_ : bpl1mod_;
+            bplpt_[size_t(p)] = uint32_t(int32_t(bplpt_[size_t(p)]) + nwords * 2 + mod);
         }
-        row[x] = rgb(color_[size_t(idx & 31)]);
     }
-    const int row_bytes = hires ? 80 : 40;
-    for (int p = 0; p < bpu; p++) {
-        const int16_t mod = (p & 1) ? bpl2mod_ : bpl1mod_;
-        bplpt_[size_t(p)] += uint32_t(row_bytes + mod);
+
+    const int y = vpos - kFirstLine;
+    if (y < 0 || y >= kHeight) return;
+    uint32_t* row = framebuffer + y * kWidth;
+
+    // Playfield colour indices at hires resolution (two per lores pixel).
+    // The first fetched pixel reaches the screen at 2*DDFSTRT+17 (lores) or
+    // 2*DDFSTRT+9 (hires) in DIWSTRT units; BPLCON1 delays the odd planes
+    // (PF1H) and the even planes (PF2H) by up to 15 lores pixels.
+    std::array<uint8_t, kWidth * 2> pix{};
+    const int sub = hires ? 2 : 1;
+    if (fetch) {
+        const int first = 2 * ddfs + (hires ? 9 : 17);
+        for (int p = 0; p < bpu; p++) {
+            const int delay = (p & 1) ? ((bplcon1_ >> 4) & 15) : (bplcon1_ & 15);
+            const int origin = (kFirstHpos - (first + delay)) * sub;  // pixel offset of x = 0
+            const auto& words = line_words_[size_t(p)];
+            for (int xs = 0; xs < kWidth * sub; xs++) {
+                const int off = origin + xs;
+                if (off < 0) continue;
+                const int w = off >> 4;
+                if (w >= nwords) break;
+                if (words[size_t(w)] & (0x8000u >> (off & 15))) pix[size_t(xs)] = uint8_t(pix[size_t(xs)] | (1 << p));
+            }
+        }
+    }
+
+    // Sprites for this line: the lowest-numbered sprite wins.
+    std::array<uint8_t, kWidth> spr_col{};   // colour register (0 = none)
+    std::array<uint8_t, kWidth> spr_pair{};  // sprite pair 0..3
+    for (int s = 7; s >= 0; s--) {
+        if (!spr_line_on_[size_t(s)][size_t(y)]) continue;
+        if ((s & 1) && (spr_line_ctl_[size_t(s)][size_t(y)] & 0x80) && spr_line_on_[size_t(s - 1)][size_t(y)]) {
+            continue;  // attached odd sprite: drawn with its even partner
+        }
+        const uint16_t pos = spr_line_pos_[size_t(s)][size_t(y)];
+        const uint16_t ctl = spr_line_ctl_[size_t(s)][size_t(y)];
+        const bool attached = !(s & 1) && (spr_line_ctl_[size_t(s + 1)][size_t(y)] & 0x80) &&
+                              spr_line_on_[size_t(s + 1)][size_t(y)];
+        const int x0 = (((pos & 0xFF) << 1) | (ctl & 1)) - kFirstHpos;
+        const uint16_t da = spr_line_data_[size_t(s)][size_t(y)];
+        const uint16_t db = spr_line_datb_[size_t(s)][size_t(y)];
+        const uint16_t oa = attached ? spr_line_data_[size_t(s + 1)][size_t(y)] : 0;
+        const uint16_t ob = attached ? spr_line_datb_[size_t(s + 1)][size_t(y)] : 0;
+        for (int i = 0; i < 16; i++) {
+            const int x = x0 + i;
+            if (x < 0 || x >= kWidth) continue;
+            const uint16_t m = uint16_t(0x8000u >> i);
+            int idx = ((da & m) ? 1 : 0) | ((db & m) ? 2 : 0);
+            if (attached) idx |= ((oa & m) ? 4 : 0) | ((ob & m) ? 8 : 0);
+            if (!idx) continue;
+            spr_col[size_t(x)] = uint8_t(attached ? 16 + idx : 16 + (s & ~1) * 2 + idx);
+            spr_pair[size_t(x)] = uint8_t(s >> 1);
+        }
+    }
+
+    // BPLCON2: a playfield with priority code P is in front of sprite pairs
+    // P..3. In single-playfield mode the PF2P code applies.
+    const int pf1p = bplcon2_ & 7;
+    const int pf2p = (bplcon2_ >> 3) & 7;
+    const bool pf2pri = (bplcon2_ & 0x40) != 0;
+    const uint16_t c0 = color_[0];
+    uint16_t ham_col = c0;
+    for (int x = 0; x < kWidth; x++) {
+        const int h = kFirstHpos + x;
+        if (!vwin || h < hstart || h >= hstop) {
+            row[x] = rgb(c0);
+            ham_col = c0;
+            continue;
+        }
+        int rsum = 0, gsum = 0, bsum = 0;
+        bool front1 = false, front2 = false;  // non-transparent playfield pixels
+        for (int k = 0; k < sub; k++) {
+            const int idx = pix[size_t(x * sub + k)];
+            uint16_t c;
+            if (dpf) {
+                const int p1 = (idx & 1) | ((idx >> 1) & 2) | ((idx >> 2) & 4);
+                const int p2 = ((idx >> 1) & 1) | ((idx >> 2) & 2) | ((idx >> 3) & 4);
+                if (p1) front1 = true;
+                if (p2) front2 = true;
+                if (pf2pri) c = p2 ? color_[size_t(8 + p2)] : p1 ? color_[size_t(p1)] : c0;
+                else c = p1 ? color_[size_t(p1)] : p2 ? color_[size_t(8 + p2)] : c0;
+            } else if (ham && bpu >= 5) {
+                const int v = idx & 15;
+                switch ((idx >> 4) & 3) {
+                    case 0: ham_col = color_[size_t(v)]; break;
+                    case 1: ham_col = uint16_t((ham_col & 0xFF0) | v); break;
+                    case 2: ham_col = uint16_t((ham_col & 0x0FF) | (v << 8)); break;
+                    default: ham_col = uint16_t((ham_col & 0xF0F) | (v << 4)); break;
+                }
+                c = ham_col;
+                if (idx) front2 = true;
+            } else {
+                if (idx) front2 = true;
+                if (idx >= 32) c = uint16_t((color_[size_t(idx - 32)] >> 1) & 0x777);  // EHB
+                else c = color_[size_t(idx)];
+            }
+            rsum += (c >> 8) & 15;
+            gsum += (c >> 4) & 15;
+            bsum += c & 15;
+        }
+        const int sc = spr_col[size_t(x)];
+        if (sc) {
+            const int pair = spr_pair[size_t(x)];
+            bool hidden;
+            if (dpf) hidden = (front1 && pair >= pf1p) || (front2 && pair >= pf2p);
+            else hidden = front2 && pair >= pf2p;
+            if (!hidden) {
+                row[x] = rgb(color_[size_t(sc)]);
+                continue;
+            }
+        }
+        const int r = rsum * 17 / sub, g = gsum * 17 / sub, b = bsum * 17 / sub;
+        row[x] = 0xFF000000u | uint32_t(r) << 16 | uint32_t(g) << 8 | uint32_t(b);
     }
 }
 
-void AmigaChipset::render(uint32_t* framebuffer) {
-    plot_sprites(framebuffer);
-}
+void AmigaChipset::render(uint32_t*) {}
 
 }  // namespace dsp

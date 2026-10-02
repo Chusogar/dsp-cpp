@@ -23,6 +23,10 @@ public:
     static constexpr int kLines = 313;
     static constexpr int kCyclesPerLine = 454;
     static constexpr uint32_t kChipSize = 0x80000;
+    // A501 trapdoor expansion: 512 KiB "slow" RAM at $C00000 (CPU only),
+    // the usual 1 MiB A500. Kickstart finds it by itself.
+    static constexpr uint32_t kSlowBase = 0xC00000;
+    static constexpr uint32_t kSlowSize = 0x80000;
 
     Amiga500();
 
@@ -67,6 +71,8 @@ public:
     int disk_dma_count() const { return chipset_.disk_dma_count(); }
     int disk_dma_empty() const { return chipset_.disk_dma_empty(); }
     int blit_count() const { return chipset_.blit_count(); }
+    const AmigaChipset& chipset() const { return chipset_; }
+    M68000& debug_cpu() { return cpu_; }
     static constexpr int kDrives = 2;  // DF0 (internal) and DF1 (external)
     bool floppy_loaded(int drive = 0) const { return drives_[drive].adf.loaded(); }
     int floppy_tracks(int drive = 0) const { return drives_[drive].adf.tracks(); }
@@ -109,6 +115,7 @@ private:
     Drive drives_[kDrives];
 
     std::vector<uint8_t> chip_;
+    std::vector<uint8_t> slow_;
     std::vector<uint8_t> rom_;
     std::array<uint32_t, AmigaChipset::kWidth * AmigaChipset::kHeight> framebuffer_{};
 
@@ -130,6 +137,16 @@ private:
     int cia_acc_ = 0;
     int index_div_ = 0;
     int64_t audio_acc_ = 0;
+    int cck_acc_ = 0;
+    int16_t filter_sample(int in);
+    // 1-pole 4.9 kHz, 2-pole 3.3 kHz Butterworth (Q 0.707) and ~5 Hz DC
+    // block, all at 44.1 kHz.
+    static constexpr double kFixedAlpha = 0.5025;
+    static constexpr double kLedB0 = 0.04109, kLedB1 = 0.08218, kLedB2 = 0.04109;
+    static constexpr double kLedA1 = -1.35039, kLedA2 = 0.51475;
+    static constexpr double kDcAlpha = 0.000712;
+    double lp_fixed_ = 0.0, dc_ = 0.0;
+    double led_x1_ = 0.0, led_x2_ = 0.0, led_y1_ = 0.0, led_y2_ = 0.0;
     std::vector<int16_t> audio_;
 };
 

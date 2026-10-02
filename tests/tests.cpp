@@ -8026,6 +8026,20 @@ void test_amiga_kickstart_if_present() {
     check(boot.color00() != 0, "Kickstart programmed Denise COLOR00");
     check(count_lit_pixels(boot) > 80, "Kickstart paints the Denise framebuffer");
     check((boot.intena() & 0x4000) != 0, "Kickstart enabled Paula INTEN");
+    {
+        // exec found the A501 trapdoor RAM: a second MemHeader at $C00000.
+        auto peek_long = [&boot](uint32_t a) {
+            return uint32_t(boot.peek(a) << 24 | boot.peek(a + 1) << 16 | boot.peek(a + 2) << 8 | boot.peek(a + 3));
+        };
+        const uint32_t exec_base = peek_long(4);
+        bool slow = false;
+        int headers = 0;
+        for (uint32_t mh = peek_long(exec_base + 0x142); mh && peek_long(mh) && headers < 8; mh = peek_long(mh)) {
+            headers++;
+            if (peek_long(mh + 0x14) >= 0xC00000 && peek_long(mh + 0x18) <= 0xC80000) slow = true;
+        }
+        check(slow, "Kickstart adds the 512K slow RAM at $C00000 to the free memory list");
+    }
 
     // The hand-and-disk picture is drawn with blitter lines and area fill.
     for (int i = 0; i < 240; i++) boot.run_frame();
@@ -8947,6 +8961,215 @@ void test_amiga_blitter_descending_modulo() {
     check(ok, "Amiga descending blit subtracts the modulos");
 }
 
+// Agnus has no bit 0 in the blitter and bitplane modulos (nor in DMA
+// pointers): Defender of the Crown blits its text mask with BLTAMOD = -1,
+// which must step back one word, not one byte.
+void test_amiga_blitter_odd_modulo() {
+    std::vector<uint8_t> mem(0x2000, 0);
+    dsp::AmigaChipset chip;
+    chip.set_chip_handlers([&mem](uint32_t a) { return uint16_t((mem[a & 0x1FFF] << 8) | mem[(a + 1) & 0x1FFF]); },
+                           [&mem](uint32_t a, uint16_t v) {
+                               mem[a & 0x1FFF] = uint8_t(v >> 8);
+                               mem[(a + 1) & 0x1FFF] = uint8_t(v);
+                           });
+    mem[0x100] = 0x12; mem[0x101] = 0x34; mem[0x102] = 0x56; mem[0x103] = 0x78;
+    chip.write(0x040, 0x09F0);  // A -> D
+    chip.write(0x042, 0x0000);
+    chip.write(0x064, 0xFFFF);  // A modulo -1: really -2
+    chip.write(0x066, 0x0000);
+    chip.write(0x050, 0);
+    chip.write(0x052, 0x100);
+    chip.write(0x054, 0);
+    chip.write(0x056, 0x800);
+    chip.write(0x058, uint16_t((3 << 6) | 1));
+    bool ok = true;
+    for (int r = 0; r < 3; r++) ok = ok && mem[size_t(0x800 + r * 2)] == 0x12 && mem[size_t(0x801 + r * 2)] == 0x34;
+    check(ok, "Amiga blitter ignores bit 0 of the modulos");
+}
+
+namespace {
+struct AmigaChipRig {
+    std::vector<uint16_t> mem = std::vector<uint16_t>(0x8000, 0);
+    dsp::AmigaChipset chip;
+    std::vector<uint32_t> fb = std::vector<uint32_t>(dsp::AmigaChipset::kWidth * dsp::AmigaChipset::kHeight, 0);
+    AmigaChipRig() {
+        chip.set_chip_handlers([this](uint32_t a) { return mem[(a >> 1) & 0x7FFF]; },
+                               [this](uint32_t a, uint16_t v) { mem[(a >> 1) & 0x7FFF] = v; });
+        chip.reset();
+    }
+    void plane_ptr(int p, uint32_t a) {
+        chip.write(uint16_t(0x0E0 + p * 4), uint16_t(a >> 16));
+        chip.write(uint16_t(0x0E2 + p * 4), uint16_t(a));
+    }
+    uint32_t px(int x, int y = 0) const { return fb[size_t(y * dsp::AmigaChipset::kWidth + x)] & 0xFFFFFF; }
+};
+}  // namespace
+
+void test_amiga_denise_modes() {
+    {
+        // Hires DDFSTRT $3C / DDFSTOP $D0 (Intuition's 640 screen) fetches 40
+        // words per plane; lores $38/$D0 fetches 20.
+        AmigaChipRig r;
+        r.chip.write(0x096, 0x8300);
+        r.chip.write(0x100, 0x9200);
+        r.chip.write(0x092, 0x003C);
+        r.chip.write(0x094, 0x00D0);
+        r.plane_ptr(0, 0x1000);
+        r.chip.render_line(r.fb.data(), 0x2C);
+        check(r.chip.bplpt0() == 0x1000 + 80, "Amiga hires $3C-$D0 fetches 40 words");
+        r.chip.write(0x100, 0x1200);
+        r.chip.write(0x092, 0x0038);
+        r.plane_ptr(0, 0x1000);
+        r.chip.write(0x108, 0x0FFF);  // odd modulo: bit 0 ignored
+        r.chip.render_line(r.fb.data(), 0x2C);
+        check(r.chip.bplpt0() == 0x1000 + 40 + 0x0FFE, "Amiga lores fetches 20 words, modulo bit 0 ignored");
+        r.plane_ptr(0, 0x1000);
+        r.chip.write(0x08E, 0x4081);  // window starts at line $40
+        r.chip.render_line(r.fb.data(), 0x2C);
+        check(r.chip.bplpt0() == 0x1000, "Amiga fetches no bitplanes outside the display window");
+    }
+    {
+        // EHB: index 33 is COLOR01 at half brightness. HAM: control 01
+        // modifies blue of the previous pixel.
+        AmigaChipRig r;
+        r.chip.write(0x096, 0x8300);
+        r.chip.write(0x100, 0x6200);  // 6 planes lores, no HAM -> EHB
+        for (int p = 0; p < 6; p++) r.plane_ptr(p, uint32_t(0x1000 + p * 0x100));
+        r.mem[0x1000 / 2] = 0x8000;            // plane 1, pixel 0
+        r.mem[(0x1000 + 5 * 0x100) / 2] = 0x8000;  // plane 6, pixel 0
+        r.chip.write(0x182, 0x0EEE);
+        r.chip.render_line(r.fb.data(), 0x2C);
+        check(r.px(0) == 0x777777, "Amiga EHB halves COLOR01 for index 33");
+        for (int p = 0; p < 6; p++) r.plane_ptr(p, uint32_t(0x1000 + p * 0x100));
+        r.chip.write(0x100, 0x6A00);  // HAM6
+        r.chip.write(0x184, 0x0F00);  // COLOR02 red
+        // pixel 0: set COLOR02 (control 00); pixel 1: modify blue = 15 (01).
+        for (int p = 0; p < 6; p++) r.mem[size_t((0x1000 + p * 0x100) / 2)] = 0;
+        r.mem[(0x1000 + 1 * 0x100) / 2] = 0x8000;                 // index 2 at pixel 0
+        for (int p : {0, 1, 2, 3}) r.mem[size_t((0x1000 + p * 0x100) / 2)] |= 0x4000;  // value 15
+        r.mem[(0x1000 + 4 * 0x100) / 2] = 0x4000;                 // control 01 at pixel 1
+        r.chip.render_line(r.fb.data(), 0x2D);
+        check(r.px(0, 1) == 0xFF0000 && r.px(1, 1) == 0xFF00FF, "Amiga HAM6 holds and modifies the colour");
+    }
+    {
+        // BPLCON1 PF1H delays the odd planes; dual playfield puts PF2 in
+        // colours 8-15.
+        AmigaChipRig r;
+        r.chip.write(0x096, 0x8300);
+        r.chip.write(0x100, 0x2200);
+        r.plane_ptr(0, 0x1000);
+        r.plane_ptr(1, 0x1100);
+        r.mem[0x1000 / 2] = 0x8000;
+        r.mem[0x1100 / 2] = 0x0800;
+        r.chip.write(0x102, 0x0003);
+        r.chip.write(0x182, 0x0F00);
+        r.chip.write(0x184, 0x00F0);
+        r.chip.write(0x192, 0x000F);  // COLOR09
+        r.chip.render_line(r.fb.data(), 0x2C);
+        check(r.px(0) == 0 && r.px(3) == 0xFF0000 && r.px(4) == 0x00FF00, "Amiga BPLCON1 delays the odd planes");
+        r.plane_ptr(0, 0x1000);
+        r.plane_ptr(1, 0x1100);
+        r.chip.write(0x102, 0x0000);
+        r.chip.write(0x100, 0x2600);  // dual playfield
+        r.chip.render_line(r.fb.data(), 0x2C);
+        check(r.px(0) == 0xFF0000 && r.px(4) == 0x0000FF, "Amiga dual playfield maps PF2 to COLOR08+");
+    }
+}
+
+void test_amiga_paula_audio() {
+    AmigaChipRig r;
+    // Eight bytes of square wave at $200.
+    for (int i = 0; i < 4; i++) r.mem[size_t(0x200 / 2 + i)] = 0x7F80;
+    r.chip.write(0x0A0, 0x0000);
+    r.chip.write(0x0A2, 0x0200);
+    r.chip.write(0x0A4, 4);    // words
+    r.chip.write(0x0A6, 200);  // period (colour clocks per byte)
+    r.chip.write(0x0A8, 64);
+    r.chip.write(0x09A, 0xC080);
+    r.chip.write(0x096, 0x8201);  // DMAEN | AUD0EN
+    check((r.chip.intreq() & 0x0080) != 0, "Paula AUD0 interrupt when DMA starts a block");
+    check(r.chip.audio_channel_active(0), "Paula channel 0 runs");
+    r.chip.write(0x09C, 0x0080);
+    int peak = 0, low = 0;
+    bool irq = false;
+    for (int i = 0; i < 8 * 200 / 50; i++) {
+        irq = r.chip.audio_run(50) || irq;
+        const int v = r.chip.audio_take_sample();
+        peak = std::max(peak, v);
+        low = std::min(low, v);
+    }
+    check(peak > 7000 && low < -7000, "Paula plays signed 8-bit samples scaled by volume");
+    check(irq && (r.chip.intreq() & 0x0080) != 0, "Paula AUD0 interrupt again when the block repeats");
+    r.chip.write(0x096, 0x0001);
+    check(!r.chip.audio_channel_active(0) && r.chip.audio_take_sample() == 0 && r.chip.audio_take_sample() == 0,
+          "Paula channel stops with its DMA bit");
+    // CPU-fed: AUDxDAT with DMA off plays two bytes, then asks for more.
+    r.chip.write(0x09C, 0x7FFF);
+    r.chip.write(0x0B6, 100);
+    r.chip.write(0x0B8, 64);
+    r.chip.write(0x0BA, 0x4040);
+    check(r.chip.audio_channel_active(1), "Paula AUD1DAT write starts the CPU-fed channel");
+    r.chip.audio_run(150);
+    check((r.chip.intreq() & 0x0100) == 0, "no AUD1 interrupt in the middle of the word");
+    r.chip.audio_run(60);
+    check((r.chip.intreq() & 0x0100) != 0 && !r.chip.audio_channel_active(1),
+          "AUD1 interrupt after the CPU word is played");
+}
+
+// Kickstart 1.3 with Defender of the Crown (/tmp/amiga/dotc1.adf, dotc2.adf):
+// the "Master Designer Software ... presents" panel has eight text rows
+// (garbled into six smeared bands when BLTAMOD = -1 stepped by a byte)
+// and the title music plays through Paula.
+void test_amiga_defender_of_the_crown_if_present() {
+    const char* rom = "/tmp/roms/a500.zip";
+    const char* d1 = "/tmp/amiga/dotc1.adf";
+    const char* d2 = "/tmp/amiga/dotc2.adf";
+    for (const char* f : {rom, d1, d2}) {
+        std::FILE* fp = std::fopen(f, "rb");
+        if (!fp) return;
+        std::fclose(fp);
+    }
+    dsp::Amiga500 m;
+    std::string error;
+    check(m.init(rom, &error) && m.load_media(d1, &error) && m.load_media(d2, &error), "DotC boots");
+    std::vector<int16_t> audio;
+    double energy = 0;
+    size_t samples = 0;
+    auto text_bands = [&m]() {
+        const uint32_t* fb = m.framebuffer();
+        int bands = 0;
+        bool prev = false;
+        for (int y = 0; y < m.screen_height(); y++) {
+            bool lit = false;
+            for (int x = 16; x < m.screen_width() && !lit; x++) lit = (fb[y * m.screen_width() + x] & 0xC0C0C0) != 0;
+            if (lit && !prev) bands++;
+            prev = lit;
+        }
+        return bands;
+    };
+    int bands = 0;
+    for (int i = 0; i < 1000; i++) {
+        m.run_frame();
+        m.set_inputs(dsp::MachineInputs{});
+        audio.clear();
+        m.drain_audio(audio);
+        if (i >= 640)
+            for (int16_t v : audio) {
+                energy += double(v) * v;
+                samples++;
+            }
+        // The panel is up for a few seconds, between the CLI and the title.
+        if (i >= 600 && i % 10 == 0 && bands != 8) {
+            bands = text_bands();
+            if (bands == 8) write_amiga_ppm("/tmp/amiga-dotc-presents.ppm", m);
+        }
+    }
+    check(bands == 8, "DotC presents panel shows its eight text rows");
+    const double rms = samples ? std::sqrt(energy / double(samples)) : 0.0;
+    check(rms > 500.0, "DotC title music plays through Paula");
+    check((m.dmacon() & 0x000F) != 0, "DotC enabled audio DMA");
+}
+
 void test_amiga_north_south_if_present() {
     const char* rom = "/tmp/roms/a500.zip";
     const char* disk = "/tmp/amiga/North & South.adf";
@@ -9187,6 +9410,10 @@ int main() {
     test_amiga_missing_roms();
     test_amiga_adf_format();
     test_amiga_blitter_descending_modulo();
+    test_amiga_blitter_odd_modulo();
+    test_amiga_denise_modes();
+    test_amiga_paula_audio();
+    test_amiga_defender_of_the_crown_if_present();
     test_amiga_kickstart_if_present();
     test_amiga_north_south_if_present();
     test_amiga_bootblock_if_present();

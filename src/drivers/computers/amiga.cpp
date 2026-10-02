@@ -19,6 +19,7 @@ const std::vector<RomEntry> kKickstart = {{"kickstart.rom", 0x40000, 0x0000, 0}}
 
 Amiga500::Amiga500() : cpu_(kCpuClock) {
     chip_.assign(kChipSize, 0);
+    slow_.assign(kSlowSize, 0);
     rom_.assign(0x40000, 0xFF);
     cpu_.set_memory_handlers([this](uint32_t a) { return read_word(a); },
                              [this](uint32_t a, uint16_t v) { write_word(a, v); });
@@ -99,6 +100,7 @@ bool Amiga500::init(const std::string& rom_path, std::string* error) {
 
 void Amiga500::reset() {
     std::fill(chip_.begin(), chip_.end(), 0);
+    std::fill(slow_.begin(), slow_.end(), 0);
     framebuffer_.fill(0);
     side_ = 0;
     for (Drive& d : drives_) {
@@ -115,6 +117,9 @@ void Amiga500::reset() {
     cia_acc_ = 0;
     index_div_ = 0;
     audio_acc_ = 0;
+    cck_acc_ = 0;
+    lp_fixed_ = dc_ = 0.0;
+    led_x1_ = led_x2_ = led_y1_ = led_y2_ = 0.0;
     audio_.clear();
     ciaa_.reset();
     ciab_.reset();
@@ -215,6 +220,7 @@ uint8_t Amiga500::read_byte(uint32_t address) {
         if (overlay() && address < rom_.size()) return rom_[address];
         return chip_[address & (kChipSize - 1)];
     }
+    if (address - kSlowBase < kSlowSize) return slow_[address - kSlowBase];
     if (address >= 0x00BF0000u && address <= 0x00BFFFFFu) {
         // CIA-A is selected by A12 low and sits on the odd (low) byte, CIA-B
         // by A13 low on the even byte. A long read of $BFDD00 (CIA-B ICR)
@@ -245,6 +251,10 @@ void Amiga500::write_byte(uint32_t address, uint8_t value) {
     address &= 0x00FFFFFFu;
     if (address < 0x200000u) {
         chip_[address & (kChipSize - 1)] = value;
+        return;
+    }
+    if (address - kSlowBase < kSlowSize) {
+        slow_[address - kSlowBase] = value;
         return;
     }
     if (address >= 0x00BF0000u && address <= 0x00BFFFFFu) {
@@ -293,11 +303,40 @@ void Amiga500::on_cpu_cycles(int cycles) {
         ciab_.tick(1);
         cia_acc_ -= 10;
     }
+    // Paula runs on the colour clock (CPU clock / 2).
+    cck_acc_ += cycles;
+    const int cck = cck_acc_ >> 1;
+    cck_acc_ &= 1;
+    if (cck > 0 && chipset_.audio_run(cck)) update_ipl();
     audio_acc_ += int64_t(cycles) * kSampleRate;
     while (audio_acc_ >= kCpuClock) {
-        audio_.push_back(0);
         audio_acc_ -= kCpuClock;
+        audio_.push_back(filter_sample(chipset_.audio_take_sample()));
     }
+}
+
+int16_t Amiga500::filter_sample(int in) {
+    // A500 output stage: a fixed ~4.9 kHz RC low-pass, the "LED" 3.3 kHz
+    // two-pole Butterworth (on while CIA-A PRA bit 1 drives the power LED
+    // bright) and the AC coupling of the line output.
+    double x = double(in);
+    x = lp_fixed_ += kFixedAlpha * (x - lp_fixed_);
+    const bool led = (ciaa_.ddra() & 0x02) && !(ciaa_.pra() & 0x02);
+    if (led) {
+        // RBJ biquad, direct form I.
+        const double y = kLedB0 * x + kLedB1 * led_x1_ + kLedB2 * led_x2_ - kLedA1 * led_y1_ - kLedA2 * led_y2_;
+        led_x2_ = led_x1_;
+        led_x1_ = x;
+        led_y2_ = led_y1_;
+        led_y1_ = y;
+        x = y;
+    } else {
+        led_x2_ = led_x1_ = x;
+        led_y2_ = led_y1_ = x;
+    }
+    dc_ += kDcAlpha * (x - dc_);
+    x -= dc_;
+    return int16_t(std::clamp(x, -32768.0, 32767.0));
 }
 
 void Amiga500::update_ipl() {

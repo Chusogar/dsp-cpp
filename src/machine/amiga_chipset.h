@@ -12,6 +12,10 @@ class AmigaChipset {
 public:
     static constexpr int kWidth = 320;
     static constexpr int kHeight = 256;
+    // Framebuffer origin in beam coordinates (the standard PAL window).
+    static constexpr int kFirstLine = 0x2C;
+    static constexpr int kFirstHpos = 0x81;
+    static constexpr int kMaxFetchWords = 64;
 
     using ChipRead16 = std::function<uint16_t(uint32_t)>;
     using ChipWrite16 = std::function<void(uint32_t, uint16_t)>;
@@ -63,6 +67,16 @@ public:
     int blit_count() const { return blit_count_; }
     uint16_t last_bltsize() const { return last_bltsize_; }
 
+    // Paula audio: advance the four channels by `cck` colour clocks
+    // (CPU clock / 2). Returns true if an AUDx interrupt was raised.
+    bool audio_run(int cck);
+    // Average mixed output since the last call, about -32768..32767
+    // (channels 0+3 and 1+2 summed to mono).
+    int audio_take_sample();
+    int audio_channel_volume(int ch) const { return aud_[size_t(ch & 3)].vol; }
+    uint16_t audio_channel_period(int ch) const { return aud_[size_t(ch & 3)].per; }
+    bool audio_channel_active(int ch) const { return aud_[size_t(ch & 3)].dma_on || aud_[size_t(ch & 3)].manual; }
+
     bool dma_master() const { return (dmacon_ & 0x0200) != 0; }
 
 private:
@@ -76,8 +90,9 @@ private:
     void sprite_dma_line(int vpos);
     void blit();
     void disk_dma();
+    void audio_dma_changed(uint16_t old_dmacon);
+    void audio_fetch(int ch);
     uint32_t rgb(uint16_t c) const;
-    void plot_sprites(uint32_t* framebuffer) const;
 
     ChipRead16 read16_;
     ChipWrite16 write16_;
@@ -101,6 +116,7 @@ private:
     int16_t bpl1mod_ = 0, bpl2mod_ = 0;
     std::array<uint32_t, 6> bplpt_{};
     std::array<uint16_t, 32> color_{};
+    std::array<std::array<uint16_t, kMaxFetchWords>, 6> line_words_{};
 
     uint16_t bltcon0_ = 0, bltcon1_ = 0;
     uint16_t bltafwm_ = 0xFFFF, bltalwm_ = 0xFFFF;
@@ -119,6 +135,23 @@ private:
     bool ciab_irq_ = false;
     bool cop_stopped_ = true;
     bool copper_active_ = false;
+
+    struct AudioChannel {
+        uint32_t lc = 0, pt = 0;
+        uint16_t len = 0, per = 0, vol = 0, dat = 0;
+        uint32_t words_left = 0;
+        int counter = 0;     // colour clocks left for the current sample
+        int byte = 0;        // 0: high byte playing, 1: low byte
+        int8_t out = 0;      // sample on the DAC
+        bool dma_on = false;
+        bool manual = false;       // CPU-fed (AUDxDAT written with DMA off)
+        bool manual_next = false;  // another CPU word is waiting
+        uint16_t manual_dat = 0;
+    };
+    std::array<AudioChannel, 4> aud_{};
+    bool aud_irq_ = false;
+    int64_t aud_sum_ = 0;
+    int64_t aud_cck_ = 0;
 
     std::array<uint32_t, 8> sprpt_{};
     std::array<uint16_t, 8> sprpos_{};

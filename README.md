@@ -228,14 +228,22 @@ Options:
 ### Commodore Amiga 500
 
 `--game amiga` (also `a500`, `amiga500`) is a PAL OCS Amiga 500: 68000 @ 7.09 MHz,
-512 KiB chip RAM, Kickstart overlay, MOS 8520 CIAs, copper/blitter/bitplanes, and
-Paula disk DMA. Point it at a MAME `a500.zip` and it loads Kickstart 1.3
+512 KiB chip RAM plus the A501 trapdoor's 512 KiB slow RAM at $C00000 (the usual
+1 MiB A500), Kickstart overlay, MOS 8520 CIAs, copper/blitter, and Paula disk DMA
+and audio. Point it at a MAME `a500.zip` and it loads Kickstart 1.3
 (`315093-02.u2`) or 1.2. `--disk FILE.adf` mounts an 880K (80×2×11) AmigaDOS ADF;
 tracks are encoded as MFM for Kickstart's trackdisk DSKDMA. A second `--disk`
 goes in DF1 (an external drive; `--disk df0.adf --disk df1.adf`): each drive has
 its own head, motor latch and disk-change line on /SEL0 and /SEL1, and answers
 Kickstart's drive-ID probe. Without a second disk DF1 is not connected, as on
 a plain A500.
+
+Denise follows DIWSTRT/DIWSTOP and DDFSTRT/DDFSTOP (hires and lores fetch widths,
+overscan), BPLCON1 scrolling, EHB, HAM6, dual playfield and BPLCON2 sprite
+priorities; hires screens are blended down to the 320-pixel framebuffer. Paula
+plays the four DMA channels (period, volume, block-repeat AUDx interrupts) and
+CPU-fed AUDxDAT, mixed to mono through the A500's fixed 4.9 kHz filter and the
+"LED" 3.3 kHz filter (on while the power LED is bright).
 
 ```bash
 ./build/dsp --game amiga /path/to/a500.zip
