@@ -101,6 +101,9 @@ public:
     const char* title() const override;
 
     uint32_t debug_pc() const { return main_cpu_.pc(); }
+    // Test hook: bit n clear hides layer n (0 sprites, 1-3 scroll 1-3).
+    void debug_set_layer_mask(int mask) { debug_layer_mask_ = mask; }
+    uint32_t debug_palette(int index) const { return palette_[size_t(index) % palette_.size()]; }
     uint16_t debug_layer() const { return cps1_layer_; }
     uint16_t debug_palctrl() const { return cps1_palcltr_; }
     uint16_t debug_videocontrol() const { return video_control_; }
@@ -123,6 +126,7 @@ public:
     const uint8_t* debug_char0(int code) const { return chars0_.element(code); }
     const uint8_t* debug_char1(int code) const { return chars1_.element(code); }
     const uint8_t* debug_tile16(int code) const { return tiles16_.element(code); }
+    const uint8_t* debug_tile32(int code) const { return tiles32_.element(code); }
 
 private:
     bool uses_qsound() const { return game_ == Game::Dino || game_ == Game::Punisher; }
@@ -228,6 +232,7 @@ private:
     uint16_t cps1_rowscrollstart_ = 0;
     uint16_t cps1_mula_ = 0;
     uint16_t cps1_mulb_ = 0;
+    int debug_layer_mask_ = 0xf;
     uint16_t cps1_layer_ = 0;
     uint16_t cps1_palcltr_ = 0;
     uint16_t pri_mask0_ = 0;

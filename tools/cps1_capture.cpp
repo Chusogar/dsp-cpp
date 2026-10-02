@@ -1,6 +1,7 @@
 // Headless CPS1 capture: run Street Fighter II / Final Fight and write BMP screenshots.
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -93,7 +94,11 @@ int main(int argc, char** argv) {
     }
     std::printf("loaded %s pc=%06x\n", machine.title(), machine.debug_pc());
 
-    const int frames[] = {30, 180, 600, 900, 1200, 1800};
+    std::vector<int> frames = {30, 180, 600, 900, 1200, 1800};
+    if (argc > 4) {
+        frames.clear();
+        for (int i = 4; i < argc; i++) frames.push_back(std::atoi(argv[i]));
+    }
     int at = 0;
     dsp::MachineInputs idle;
     machine.set_inputs(idle);

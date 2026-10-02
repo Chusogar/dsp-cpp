@@ -486,7 +486,11 @@ void Cps1::write_io(uint16_t dir, uint16_t value) {
             cps1_pal_ = object_base(value) & 0x3ffff;
             cps1_pal_ &= ~0x3ffu;
             palette_dirty_.fill(1);
-            pal_change_ = true;
+            // The CPS-B copies the palette from gfxram into its own palette
+            // RAM only when this register is written (MAME cps1_cps_a_w).
+            // Games keep using that gfxram afterwards, so re-reading it every
+            // frame painted stages with whatever was left there.
+            pal_calc();
             break;
         case 0x10c: scroll_x1_ = value & 0x1ff; break;
         case 0x10e: scroll_y1_ = value & 0x1ff; break;
@@ -717,7 +721,10 @@ void Cps1::draw_tile(const GfxSet& gfx, std::vector<uint32_t>& dest, int dest_w,
             if (trans_alt != nullptr && trans_alt[pen]) continue;
             int dx = x + col;
             if (dx < 0 || dx >= dest_w) continue;
-            dest[size_t(dy * dest_w + dx)] = palette_[size_t((color + pen) & 0xbff)];
+            // color is a palette offset up to 0x7f0: masking it with 0xbff
+            // (the old "last pen" mask) dropped bit 10 and drew scroll 2 and
+            // scroll 3 with the sprite / scroll 1 palette pages.
+            dest[size_t(dy * dest_w + dx)] = palette_[size_t(color + pen) % palette_.size()];
         }
     }
 }
@@ -784,7 +791,7 @@ void Cps1::draw_sprites() {
                 if (pen == 15) continue;
                 int dx_pix = (x + px) & 0x1ff;
                 composite_[size_t(dy_pix * kWorkSize + dx_pix)] =
-                    palette_[size_t((pal_base + pen) & 0xbff)];
+                    palette_[size_t(pal_base + pen) % palette_.size()];
             }
         }
     };
@@ -829,6 +836,7 @@ void Cps1::draw_sprites() {
 }
 
 void Cps1::draw_layer(int nlayer, bool sprite_next) {
+    if ((debug_layer_mask_ & (1 << nlayer)) == 0) return;
     const CpsB& b = kCpsB[size_t(cps_b_index_)];
     if (nlayer == 0) {
         draw_sprites();
@@ -981,7 +989,6 @@ void Cps1::copy_final() {
 }
 
 void Cps1::update_video() {
-    pal_calc();
     uint32_t fill = palette_[0xbff];
     if ((fill & 0xff000000u) == 0) fill = 0xff000000u;
     std::fill(composite_.begin(), composite_.end(), fill);

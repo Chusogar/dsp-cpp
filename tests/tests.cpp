@@ -4420,6 +4420,7 @@ void test_cps1_roms_if_present() {
     dsp::Cps1 machine(dsp::Cps1::Game::Sf2);
     std::string error;
     check(machine.init(rom, &error), "Street Fighter II MAME set loads");
+    machine.set_inputs(dsp::MachineInputs{});  // nothing pressed: the attract loop runs
     check(machine.debug_pc() != 0, "Street Fighter II 68000 left reset");
     const uint8_t* letter_s = machine.debug_char0(0x14053);
     check(letter_s[0] == 15 && letter_s[7] == 15, "SF2 8x8 S has rounded top corners");
@@ -4442,6 +4443,27 @@ void test_cps1_roms_if_present() {
         if ((fb[i] & 0x00ffffffu) != 0) lit++;
     }
     check(lit > 1000, "Street Fighter II attract paints the visible area");
+
+    // Scroll 2 / 3 use palette pages 2 and 3 (0x400-0x7ff). The player
+    // select screen (frame 3000 of the attract loop) is the world map on a
+    // blue sea; with the pages folded onto 0x000-0x3ff it came out red.
+    for (int i = 900; i < 3000; i++) machine.run_frame();
+    int blue = 0, red = 0;
+    for (int i = 0; i < machine.screen_width() * machine.screen_height(); i++) {
+        const int r = int((fb[i] >> 16) & 0xff), g = int((fb[i] >> 8) & 0xff), b = int(fb[i] & 0xff);
+        if (b > r + 60 && b > g + 30) blue++;
+        if (r > 180 && g < 90 && b < 120) red++;
+    }
+    check(blue > 30000 && red < 5000, "SF2 player select shows the map on a blue sea (scroll palettes)");
+    // Guile's stage (frame 3600): the jet and the hangar are grey scroll 2 /
+    // 3 tiles (they were pink and red).
+    for (int i = 3000; i < 3600; i++) machine.run_frame();
+    int grey = 0;
+    for (int i = 0; i < machine.screen_width() * machine.screen_height(); i++) {
+        const int r = int((fb[i] >> 16) & 0xff), g = int((fb[i] >> 8) & 0xff), b = int(fb[i] & 0xff);
+        if (r > 90 && std::abs(r - g) < 20 && std::abs(g - b) < 24) grey++;
+    }
+    check(grey > 25000, "SF2 Guile stage draws the grey jet and hangar");
 }
 
 void test_terraf_without_roms() {
