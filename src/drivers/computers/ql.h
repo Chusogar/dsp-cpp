@@ -10,6 +10,7 @@
 #include "cpu/mcs48.h"
 #include "machine/ql_mdv.h"
 #include "machine/ql_win.h"
+#include "machine/virtual_keyboard.h"
 #include "machine/zx8302.h"
 #include "video/zx8301.h"
 
@@ -41,6 +42,11 @@ public:
     int sample_rate() const override { return kSampleRate; }
     const char* title() const override { return "Sinclair QL"; }
     bool uses_keyboard() const override { return true; }
+    // F11 shows the QL keyboard over the bottom of the window.
+    MachineOverlay screen_overlay() const override { return vkb_.overlay(); }
+    VirtualKeyboard& vkb() { return vkb_; }
+    // Keyboard matrix row as the IPC scans it (active high).
+    uint8_t debug_keys(int row) const { return keys_[size_t(row & 7)]; }
 
     uint32_t debug_pc() const { return cpu_.pc(); }
     uint16_t debug_ipc_pc() const { return ipc_.pc(); }
@@ -90,6 +96,7 @@ private:
     std::array<uint8_t, 0x10000> rom_{};
     std::array<uint32_t, kWidth * kHeight> framebuffer_{};
     std::array<uint8_t, 8> keys_{};
+    VirtualKeyboard vkb_;
     MachineInputs inputs_{};
 
     int comdata_to_ipc_ = 1;

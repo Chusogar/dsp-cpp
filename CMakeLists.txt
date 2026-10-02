@@ -99,6 +99,7 @@ add_executable(dsp
   src/machine/kabuki.cpp
   src/machine/eeprom93c46.cpp
   src/machine/spectrum_tape.cpp
+  src/machine/virtual_keyboard.cpp
   src/machine/tape_tzx.cpp
   src/machine/i8255.cpp
   src/machine/nec765.cpp
@@ -341,6 +342,7 @@ add_executable(dsp_tests
   src/machine/slapstic.cpp
   src/machine/via6522.cpp
   src/machine/spectrum_tape.cpp
+  src/machine/virtual_keyboard.cpp
   src/machine/tape_tzx.cpp
   src/machine/i8255.cpp
   src/machine/kabuki.cpp

@@ -34,6 +34,8 @@ struct KeyMap {
     uint8_t bit;
 };
 
+#include "drivers/computers/ql_vkb_data.inc"
+
 const KeyMap kKeyMap[] = {
     {Key::F4, 0, 0x01},      {Key::F1, 0, 0x02},      {Key::Num5, 0, 0x04},
     {Key::F2, 0, 0x08},      {Key::F3, 0, 0x10},      {Key::F5, 0, 0x20},
@@ -87,7 +89,13 @@ constexpr uint32_t kFsMname = 0x16;
 
 }  // namespace
 
-SinclairQl::SinclairQl() : cpu_(kCpuClock), ipc_(kIpcClock, Mcs48::Chip::I8749) {
+SinclairQl::SinclairQl()
+    : cpu_(kCpuClock),
+      ipc_(kIpcClock, Mcs48::Chip::I8749),
+      vkb_(kQlVkbJpeg, sizeof(kQlVkbJpeg), kQlVkbWidth, kQlVkbHeight, kQlVkbKeys,
+           int(sizeof(kQlVkbKeys) / sizeof(kQlVkbKeys[0])), VirtualKeyboard::Format::Jpeg) {
+    vkb_.set_travel(3);  // the QL's buttons sit low on their tiles
+    vkb_.set_photo_crop(kQlVkbCropX, kQlVkbCropY, true);
     cpu_.set_memory_handlers([this](uint32_t a) { return read_word(a); },
                              [this](uint32_t a, uint16_t v) { write_word(a, v); });
     cpu_.set_byte_handlers([this](uint32_t a) { return read_byte(a); },
@@ -208,7 +216,12 @@ void SinclairQl::run_frame() {
 
 void SinclairQl::set_inputs(const MachineInputs& inputs) {
     inputs_ = inputs;
+    // F11 (not a QL key) shows / hides the on-screen keyboard.
+    vkb_.toggle_key(inputs.key(Key::F11));
+    vkb_.input(inputs);
     apply_keyboard(inputs);
+    // Keys held or latched on it (code = matrix row * 8 + bit, active high).
+    vkb_.for_each_down([this](int code) { keys_[size_t(code >> 3)] |= uint8_t(1u << (code & 7)); });
 }
 
 void SinclairQl::set_dip_switch(int, uint8_t) {}

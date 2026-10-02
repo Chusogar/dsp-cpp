@@ -8,6 +8,7 @@
 #include "core/machine.h"
 #include "cpu/z80.h"
 #include "machine/tape_tzx.h"
+#include "machine/virtual_keyboard.h"
 
 namespace dsp {
 
@@ -43,6 +44,11 @@ public:
     const char* title() const override;
     bool uses_keyboard() const override { return true; }
     bool load_media(const std::string& path, std::string* error) override;
+    // F11 shows the 48K rubber keyboard over the bottom of the window.
+    MachineOverlay screen_overlay() const override { return vkb_.overlay(); }
+    VirtualKeyboard& vkb() { return vkb_; }
+    // Keyboard half-row as the ULA sees it (active low, bits 0-4).
+    uint8_t debug_keys(int row) const { return keys_[size_t(row & 7)]; }
 
     bool load_tape(const std::string& path, std::string* error);
     void tape_play();
@@ -84,6 +90,7 @@ private:
     uint8_t speaker_ = 0;   // bit 4 of port $FE → 0x00 / 0x10
     uint8_t ear_ = 0;       // tape level 0x00 / 0x40
     std::array<uint8_t, 8> keys_{};
+    VirtualKeyboard vkb_;
     uint8_t joy_ = 0x00;    // Kempston active-high bits
     bool flash_ = false;
     int flash_count_ = 0;

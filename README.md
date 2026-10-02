@@ -270,6 +270,27 @@ CIA1 matrix while the button is held and the cap sinks; SHIFT, C= and CTRL
 latch until the next key, SHIFT LOCK locks the left SHIFT, and RESTORE pulls
 the NMI line like the real key.
 
+ZX Spectrum 48K, Amstrad CPC and Sinclair QL on-screen keyboards: F11 shows or hides them
+the same way, through the shared `VirtualKeyboard` (src/machine/
+virtual_keyboard.cpp: RGBA picture with transparent margins, key table,
+mouse handling, sunk keys). `tools/gen_zx48_vkb.py` draws the 48K's 40
+grey-blue rubber keys in the black keyboard plate with everything printed on
+and around them: character, keyword, red SYMBOL SHIFT symbol and block
+graphic on the keys, green extended-mode words above, red ones below and the
+colour names over the number row. `tools/gen_cpc464_vkb.py` draws the Spanish CPC 464
+keyboard with sculpted black caps in the charcoal case: red ESC, green TAB /
+FIJA MAYS / MAYS / CTRL / BORR / COPIA, blue L-shaped INTRO and pad INTRO, the
+cursor cross over the f0-f9 pad, the ventilation slots and the label strip
+with its power LED. The Sinclair QL keyboard is a photo of
+the machine (`tools/ql_keyboard.jpg`) shown unchanged: the JPEG file is
+embedded as is and decoded at run time with stb_image
+(`src/third_party/stb_image.h`, public domain / MIT), cropped to the machine
+with the red backdrop keyed out to transparent; `tools/gen_ql_vkb.py` only
+adds the crop and the key tiles measured on the photo. CAPS SHIFT / SYMBOL SHIFT (Spectrum), SHIFT / CTRL (CPC) and
+SHIFT / CTRL / ALT (QL) latch until the next key. The drawn keyboards show
+no logos or badges; run their generators (Pillow, FreeSans) to rebuild the
+`*_vkb_data.inc` files.
+
 Atari ST details: the keyboard ACIA keeps its last received byte in the data
 register (programs that poll `$FFFC02` directly, like World Class Rugby's
 loader intro waiting for Space, see it after TOS's interrupt has read it), and
