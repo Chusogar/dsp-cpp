@@ -18,7 +18,7 @@ Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
 **MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
 **EXL-100** / **EXELTEL**, **Sinclair QL**, **Atari ST**, **Commodore Amiga 500**. Consoles: NES, Game Boy / Game Boy
-Color, **Atari 2600**, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
+Color, **Game Boy Advance**, **Atari 2600**, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
 **Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
 
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
@@ -84,6 +84,8 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Apple Sound Chip | new (MAME `asc`) | FIFO (22257 Hz, half-empty IRQ) and 4-voice wavetable modes |
 | Macintosh II driver | new (MAME `macii`, `nubus_48gc`; Mini vMac ADB) | 8 MB, HMMU 24/32-bit, Display Card 8•24 at 640×480, NCR 5380 SCSI, ADB, RTC/PRAM; boots System 7.5 to the Finder |
 | Game Boy driver | `src/consolas/gb.pas` | DMG / CGB from cart header `$0143`, optional boot ROMs |
+| ARM7TDMI | new | ARMv4T: ARM + Thumb, banked modes, IRQ/SWI/undefined; passes jsmolka `arm`/`thumb` |
+| Game Boy Advance driver | new (GBATEK) | real BIOS boot, PPU modes 0-5, sprites, windows, blending, DMA, timers, PSG + Direct Sound, SRAM/Flash/EEPROM saves |
 | VIC-II | `mos6566.pas` | PAL 6569, 384×270, sprites, bad lines |
 | MOS 6526 CIA | `mos6526_old.pas` | Two chips: CIA1 IRQ + keyboard, CIA2 NMI + VIC bank |
 | SID 6581 | `sid_sound.pas` | Three voices, 44100 Hz mono |
@@ -165,6 +167,7 @@ holding the individual files:
 ./build/dsp --game spectrum48 --tape /path/to/game.tzx /path/to/48.rom
 ./build/dsp --game c64 --tape /path/to/game.prg /path/to/c64-roms/
 ./build/dsp --game gb /path/to/game.gbc
+./build/dsp --game gba --cart /path/to/game.gba /path/to/gba.zip
 ./build/dsp --game nes /path/to/game.nes
 ./build/dsp --game lynx /path/to/game.lnx
 ./build/dsp --game scv /path/to/scv.zip
@@ -963,6 +966,42 @@ of it. Writes go straight back to the image file.
 
 Keys: the host mouse drives the pointer; Left Alt or the Windows/Command key is
 Command, Right Alt is Option, F11 is Esc.
+
+### Game Boy Advance
+
+`--game gba` is a Game Boy Advance: an ARM7TDMI at 16.78 MHz (new interpreter,
+ARM and Thumb), 256 KiB EWRAM, 32 KiB IWRAM, the 16 KiB BIOS, and the cartridge
+bus with the WAITCNT wait states and prefetch buffer. The BIOS is **required**
+and is not shipped: point the emulator at MAME's `gba.zip` (`gba.bin`) or at a
+directory holding `gba.bin`, and give the cartridge with `--cart` (a `.gba`,
+plain or zipped). `--game gba game.gba` also works when `gba.bin`/`gba.zip`
+sits next to the cartridge. The real BIOS runs: Nintendo logo, header check and
+the SWI services (with its read protection, as games and test ROMs expect).
+
+* Video: modes 0-2 (text backgrounds 256/512 px, 4/8 bpp, flips; affine
+  backgrounds with wrap), bitmap modes 3/4/5 with page flipping, 128 sprites
+  (regular and affine/double size, 4/8 bpp, 1D/2D mapping, semi-transparent and
+  OBJ-window sprites), windows 0/1/OBJ/outside, alpha blending, brighten/darken,
+  mosaic; affine reference points latched per frame and stepped per line.
+  Drawn one line at a time, so HBlank DMA and raster effects work.
+* DMA 0-3 (immediate, VBlank, HBlank and the sound FIFO requests), the four
+  timers with prescalers and count-up, all interrupts, HALT, keypad IRQ.
+* Sound: the Game Boy PSG channels (with the GBA's 64-sample wave mode) and the
+  two Direct Sound FIFOs clocked by timer 0/1 and refilled by DMA1/DMA2, mixed
+  with SOUNDCNT_L/H to 32768 Hz.
+* Saves are detected from the library tag in the ROM (`SRAM_V`, `FLASH_V`,
+  `FLASH512_V`, `FLASH1M_V`, `EEPROM_V`): 32 KiB SRAM, 64/128 KiB Flash
+  (Panasonic/Sanyo IDs, sector/chip erase, bank switch) or a 512 B / 8 KiB
+  EEPROM (size from the DMA bit-stream length). They are kept in a `.sav` next
+  to the ROM, written every few seconds and on exit.
+
+Controls: arrows = D-pad, Ctrl/Space = A, Z/Left Alt = B, X = L, C = R,
+1 = Start, 3 = Select. The [jsmolka/gba-tests](https://github.com/jsmolka/gba-tests)
+`arm`, `thumb`, `memory`, `bios`, `sram`, `flash64` and `flash128` ROMs all pass.
+
+```bash
+./build/dsp --game gba --cart /path/to/game.gba /path/to/gba.zip
+```
 
 ### Game Boy / Game Boy Color
 

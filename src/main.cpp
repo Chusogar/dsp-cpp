@@ -92,6 +92,7 @@
 #include "drivers/consoles/colecovision.h"
 #include "drivers/consoles/sg1000.h"
 #include "drivers/consoles/gameboy.h"
+#include "drivers/consoles/gba.h"
 #include "drivers/consoles/nes.h"
 #include "drivers/consoles/atari_lynx.h"
 #include "drivers/consoles/a2600.h"
@@ -160,7 +161,7 @@ void print_supported_emulators() {
         "\n"
         "  Consoles:\n"
         "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp, 32x, 32x-pal, 32x-jp,\n"
-        "    pv1000, pv2000, coleco, sg1000, gb, nes, lynx, scv, pcengine, sgx,\n"
+        "    pv1000, pv2000, coleco, sg1000, gb, gba, nes, lynx, scv, pcengine, sgx,\n"
         "    a2600, atari2600, vcs, a7800, vectrex, snes\n"
         "\n");
 }
@@ -178,6 +179,7 @@ void print_usage(const char* program) {
         "                     EXL-100 / EXELTEL cartridge (.bin/.rom) or cassette (.k7/.wav),\n"
         "                     PV-2000 cart (.bin/.rom),\n"
         "                     or QL microdrive .mdv/.qlpak or QXL.WIN\n"
+        "  --cart FILE        cartridge image (Game Boy Advance .gba, plain or zipped)\n"
         "  --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, MSX2 .dsk, Apple II .dsk/.do/.po/.nib,\n"
         "                     Pentagon/Scorpion .trd/.scl, QL microdrive .mdv/.qlpak or QXL.WIN,\n"
         "                     Atari ST .st/.msa/.stx, Amiga .adf, Macintosh 400K/800K/1.44MB SuperDrive .dsk/.img/.dc42,\n"
@@ -596,6 +598,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "coleco") return std::make_unique<dsp::ColecoVision>();
 	if (game == "sg1000") return std::make_unique<dsp::Sg1000>();
 	if (game == "gb") return std::make_unique<dsp::GameBoy>();
+    if (game == "gba" || game == "agb" || game == "gameboyadvance") return std::make_unique<dsp::Gba>();
 	if (game == "nes") return std::make_unique<dsp::Nes>();
 	if (game == "lynx") return std::make_unique<dsp::AtariLynx>();
 	if (game == "a2600" || game == "atari2600" || game == "vcs" || game == "2600") {
@@ -654,6 +657,8 @@ int main(int argc, char** argv) {
             media.emplace_back(next("--tape"));
         } else if (argument == "--disk") {
             media.emplace_back(next("--disk"));
+        } else if (argument == "--cart") {
+            media.emplace_back(next("--cart"));
         } else if (argument == "--mute") {
             options.mute = true;
         } else if (argument == "--fullscreen") {

@@ -57,6 +57,8 @@
 #include "machine/mac_dsk.h"
 #include "machine/iwm.h"
 #include "drivers/consoles/gameboy.h"
+#include "drivers/consoles/gba.h"
+#include "cpu/arm7tdmi.h"
 #include "drivers/arcade/mcr.h"
 #include "drivers/computers/msx2.h"
 #include "drivers/consoles/nes.h"
@@ -9337,6 +9339,197 @@ void test_mfp_stopped_timer_data() {
     check(mfp.read(0x10) == 0x21, "MFP: a second write while stopped reloads it again");
 }
 
+
+// ---------------------------------------------------------------------------
+// ARM7TDMI / Game Boy Advance
+// ---------------------------------------------------------------------------
+
+namespace {
+struct ArmTestBus : dsp::ArmBus {
+    std::vector<uint8_t> mem = std::vector<uint8_t>(0x10000, 0);
+    uint8_t read8(uint32_t a) override { return mem[a & 0xFFFF]; }
+    uint16_t read16(uint32_t a, bool) override {
+        a &= 0xFFFE;
+        return uint16_t(mem[a] | (mem[a + 1] << 8));
+    }
+    uint32_t read32(uint32_t a, bool) override {
+        a &= 0xFFFC;
+        return uint32_t(mem[a] | (mem[a + 1] << 8) | (mem[a + 2] << 16) | (uint32_t(mem[a + 3]) << 24));
+    }
+    void write8(uint32_t a, uint8_t v) override { mem[a & 0xFFFF] = v; }
+    void write16(uint32_t a, uint16_t v) override {
+        a &= 0xFFFE;
+        mem[a] = uint8_t(v);
+        mem[a + 1] = uint8_t(v >> 8);
+    }
+    void write32(uint32_t a, uint32_t v) override {
+        a &= 0xFFFC;
+        for (int i = 0; i < 4; i++) mem[a + uint32_t(i)] = uint8_t(v >> (8 * i));
+    }
+    void idle(int) override {}
+    void arm(uint32_t a, uint32_t op) { write32(a, op); }
+    void thumb(uint32_t a, uint16_t op) { write16(a, op); }
+};
+}  // namespace
+
+void test_arm7tdmi_core() {
+    ArmTestBus bus;
+    dsp::Arm7tdmi cpu(bus);
+    cpu.reset();
+    // ARM: MOV r0,#0xFF000000 ; ADDS r1,r0,r0 (C=1) ; ADC r2,r0,#1 ; MOV r3,r0,ROR #28
+    bus.arm(0x00, 0xE3A004FF);
+    bus.arm(0x04, 0xE0901000);
+    bus.arm(0x08, 0xE2A02001);
+    bus.arm(0x0C, 0xE1A03E60);
+    // STMDB sp!,{r0-r3} ; LDMIA sp!,{r4-r7}
+    bus.arm(0x10, 0xE92D000F);
+    bus.arm(0x14, 0xE8BD00F0);
+    // ADR r8,thumb+1 ; BX r8
+    bus.arm(0x18, 0xE28F8001);  // ADD r8, pc, #1 -> 0x21
+    bus.arm(0x1C, 0xE12FFF18);
+    bus.arm(0x20, 0);           // (pc + 8 lands here: 0x20 + 1)
+    // Thumb at 0x20: MOV r0,#5 ; LSL r0,r0,#3 ; SUB r0,#1 ; CMP r0,#39 ; BEQ +2 ; MOV r0,#0 ; SWI 1
+    bus.thumb(0x20, 0x2005);
+    bus.thumb(0x22, 0x00C0);
+    bus.thumb(0x24, 0x3801);
+    bus.thumb(0x26, 0x2827);
+    bus.thumb(0x28, 0xD000);
+    bus.thumb(0x2A, 0x2000);
+    bus.thumb(0x2C, 0xDF01);
+    cpu.set_reg(13, 0x8000);
+    for (int i = 0; i < 4; i++) cpu.step();
+    check(cpu.reg(0) == 0xFF000000u && cpu.reg(1) == 0xFE000000u, "ARM MOV imm / ADDS");
+    check(cpu.reg(2) == 0xFF000002u, "ARM ADC picks up the carry from ADDS");
+    check(cpu.reg(3) == 0xF000000Fu, "ARM ROR #28 operand");
+    cpu.step();
+    cpu.step();
+    check(cpu.reg(4) == 0xFF000000u && cpu.reg(7) == 0xF000000Fu && cpu.reg(13) == 0x8000,
+          "ARM STMDB/LDMIA round trip with write-back");
+    cpu.step();
+    cpu.step();
+    check(cpu.thumb() && cpu.pc() == 0x20, "BX to an odd address enters Thumb");
+    for (int i = 0; i < 5; i++) cpu.step();
+    check(cpu.reg(0) == 39 && cpu.pc() == 0x2C, "Thumb MOV/LSL/SUB/CMP/BEQ");
+    // Put MOVS pc, lr at the SWI vector.
+    bus.arm(0x08, 0xE1B0F00E);
+    cpu.step();
+    check(!cpu.thumb() && cpu.mode() == dsp::Arm7tdmi::kSvc && cpu.pc() == 0x08 && cpu.reg(14) == 0x2E,
+          "Thumb SWI enters SVC mode in ARM state with LR = next instruction");
+    cpu.step();
+    check(cpu.thumb() && cpu.pc() == 0x2E && cpu.mode() == dsp::Arm7tdmi::kSvc,
+          "MOVS pc, lr restores CPSR (Thumb) from SPSR_svc");
+    // IRQ: banked r13, LR = next + 4, I set.
+    cpu.set_reg(13, 0x7000);
+    uint32_t c = cpu.cpsr();
+    cpu.set_cpsr((c & ~0x9Fu) | dsp::Arm7tdmi::kSystem);
+    cpu.set_irq(true);
+    cpu.step();
+    check(cpu.mode() == dsp::Arm7tdmi::kIrq && cpu.pc() == 0x18 && cpu.reg(14) == 0x32 &&
+              (cpu.cpsr() & 0x80),
+          "IRQ enters IRQ mode at $18 with LR = next instruction + 4");
+}
+
+namespace {
+bool gba_bios_present() {
+    std::ifstream in("/tmp/roms/gba/gba.zip", std::ios::binary);
+    return bool(in);
+}
+}  // namespace
+
+void test_gba_eeprom_if_present() {
+    if (!gba_bios_present()) return;
+    // A minimal cartridge: an endless loop and the EEPROM library tag.
+    std::vector<uint8_t> rom(0x400, 0);
+    const uint32_t loop = 0xEAFFFFFE;  // B .
+    std::memcpy(rom.data(), &loop, 4);
+    std::memcpy(rom.data() + 0x200, "EEPROM_V124", 11);
+    const std::string path = "/tmp/gba-eeprom-test.gba";
+    std::remove("/tmp/gba-eeprom-test.sav");
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(rom.data()), std::streamsize(rom.size()));
+    }
+    dsp::Gba gba;
+    std::string error;
+    check(gba.init("/tmp/roms/gba/gba.zip", &error) && gba.load_media(path, &error), "GBA test cart loads");
+    check(gba.save_type() == dsp::Gba::SaveType::Eeprom, "EEPROM_V tag selects an EEPROM save");
+    auto send = [&](std::initializer_list<int> bits) {
+        for (int b : bits) gba.poke16(0x0D000000, uint16_t(b));
+    };
+    // Write block 3: 10, address 000011, 64 data bits, 0.
+    send({1, 0, 0, 0, 0, 0, 1, 1});
+    const uint64_t data = 0x0123456789ABCDEFull;
+    for (int i = 63; i >= 0; i--) gba.poke16(0x0D000000, uint16_t((data >> i) & 1));
+    send({0});
+    check((gba.peek16(0x0D000000) & 1) == 1, "EEPROM reports ready after a write");
+    // Read request: 11, address, 0; then 4 dummy bits and 64 data bits.
+    send({1, 1, 0, 0, 0, 0, 1, 1, 0});
+    for (int i = 0; i < 4; i++) gba.peek16(0x0D000000);
+    uint64_t back = 0;
+    for (int i = 0; i < 64; i++) back = (back << 1) | (gba.peek16(0x0D000000) & 1);
+    check(back == data, "EEPROM returns the 64-bit block it stored");
+    gba.flush_save();
+    std::ifstream sav("/tmp/gba-eeprom-test.sav", std::ios::binary);
+    std::vector<uint8_t> saved((std::istreambuf_iterator<char>(sav)), std::istreambuf_iterator<char>());
+    check(saved.size() == 0x200 && saved[24] == 0x01 && saved[31] == 0xEF, "EEPROM is saved to the .sav (512 B)");
+    std::remove(path.c_str());
+    std::remove("/tmp/gba-eeprom-test.sav");
+}
+
+// jsmolka/gba-tests (https://github.com/jsmolka/gba-tests) in
+// /tmp/roms/gbatests: each leaves the failing test number in r12 (0: all
+// passed) and prints the result.
+void test_gba_test_roms_if_present() {
+    if (!gba_bios_present()) return;
+    for (const char* name : {"arm", "thumb", "memory", "bios", "sram", "flash64", "flash128"}) {
+        const std::string path = std::string("/tmp/roms/gbatests/") + name + ".gba";
+        std::ifstream probe(path, std::ios::binary);
+        if (!probe) continue;
+        std::remove((std::string("/tmp/roms/gbatests/") + name + ".sav").c_str());
+        dsp::Gba gba;
+        std::string error;
+        check(gba.init("/tmp/roms/gba/gba.zip", &error) && gba.load_media(path, &error), "gba-tests ROM loads");
+        for (int f = 0; f < 300; f++) gba.run_frame();
+        check(gba.debug_reg(12) == 0 && (gba.debug_pc() >> 24) == 0x08,
+              (std::string("gba-tests ") + name + " passes").c_str());
+        std::remove((std::string("/tmp/roms/gbatests/") + name + ".sav").c_str());
+    }
+}
+
+// The three cartridges from the user, if present in /tmp/roms/gba: each
+// boots through the BIOS to its own screens and plays sound.
+void test_gba_games_if_present() {
+    if (!gba_bios_present()) return;
+    struct Game { const char* file; const char* title; int frames; };
+    for (const Game& g : {Game{"dotc.gba", "DOTC", 1300}, Game{"starwars.gba", "STAR WARS TR", 900},
+                          Game{"et.gba", "ETTHEEXTRAT", 1450}}) {
+        const std::string path = std::string("/tmp/roms/gba/") + g.file;
+        std::ifstream probe(path, std::ios::binary);
+        if (!probe) continue;
+        dsp::Gba gba;
+        std::string error;
+        check(gba.init("/tmp/roms/gba/gba.zip", &error) && gba.load_media(path, &error), "GBA game loads");
+        check(gba.game_title() == g.title, "GBA header title");
+        double energy = 0;
+        size_t samples = 0;
+        std::vector<int16_t> audio;
+        for (int f = 0; f < g.frames; f++) {
+            gba.run_frame();
+            audio.clear();
+            gba.drain_audio(audio);
+            for (int16_t v : audio) {
+                energy += double(v) * v;
+                samples++;
+            }
+        }
+        std::set<uint32_t> colors;
+        for (int i = 0; i < 240 * 160; i++) colors.insert(gba.framebuffer()[i]);
+        check(colors.size() > 16, (std::string(g.file) + " draws its own screens").c_str());
+        check(samples > 0 && std::sqrt(energy / double(samples)) > 300.0,
+              (std::string(g.file) + " plays sound").c_str());
+    }
+}
+
 int main() {
     test_z80_arithmetic();
     test_z80_flags_and_blocks();
@@ -9409,6 +9602,10 @@ int main() {
     test_nes_nestest_if_present();
     test_gbc_cart_detection();
     test_gb_cgb_registers_absent_on_dmg();
+    test_arm7tdmi_core();
+    test_gba_eeprom_if_present();
+    test_gba_test_roms_if_present();
+    test_gba_games_if_present();
     test_gbc_hdma_control();
     test_gbc_boot_rom_map();
     test_gbc_ppu_lcdc0_and_priority();

@@ -251,6 +251,10 @@ add_executable(dsp
   src/machine/i2cmem.cpp
   src/drivers/consoles/sg1000.cpp
   src/drivers/consoles/gameboy.cpp
+  src/drivers/consoles/gba.cpp
+  src/cpu/arm7tdmi.cpp
+  src/video/gba_ppu.cpp
+  src/sound/gba_apu.cpp
   src/machine/gb_mapper.cpp
   src/sound/gb_apu.cpp
   src/video/gb_ppu.cpp
@@ -410,6 +414,10 @@ add_executable(dsp_tests
   src/sound/es5503.cpp
   src/sound/asc.cpp
   src/drivers/consoles/gameboy.cpp
+  src/drivers/consoles/gba.cpp
+  src/cpu/arm7tdmi.cpp
+  src/video/gba_ppu.cpp
+  src/sound/gba_apu.cpp
   src/drivers/arcade/mcr.cpp
   src/drivers/consoles/atari_lynx.cpp
   src/drivers/consoles/a2600.cpp
