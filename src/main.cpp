@@ -65,6 +65,7 @@
 #include "drivers/computers/spectrum.h"
 #include "drivers/computers/spectrum_128k.h"
 #include "drivers/computers/spectrum_3.h"
+#include "drivers/computers/specnext.h"
 #include "drivers/computers/amstrad_cpc.h"
 #include "drivers/computers/msx1.h"
 #include "drivers/computers/msx2.h"
@@ -152,7 +153,7 @@ void print_supported_emulators() {
 		"    defender, mayday, colony7, joust, robotron, stargate\n"
 		"\n"
         "  Computers:\n"
-        "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
+        "    spectrum48, spectrum128, plus3, pentagon, scorpion, specnext (tbblue),\n"
         "    cpc464, cpc664, cpc6128, msx, msx2, msx2-jp, msx2-eu, nms8250, c64,\n"
         "    apple2, apple2gs, apple2plus, apple2e, apple2ee, exl100, exeltel, ql,\n"
         "    st, atarist, atari-st, amiga, a500, amiga500,\n"
@@ -511,6 +512,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     }
 	if (game == "spectrum128") return std::make_unique<dsp::Spectrum128k>(dsp::Spectrum128k::Model::Spec128k);
 	if (game == "plus3") return std::make_unique<dsp::Spectrum3>();
+	if (game == "specnext" || game == "tbblue" || game == "next" || game == "zxnext") {
+	    return std::make_unique<dsp::SpecNext>();
+	}
 	if (game == "pentagon" || game == "pentagon1024" || game == "pent1024") {
 	    return std::make_unique<dsp::Pentagon1024>();
 	}
