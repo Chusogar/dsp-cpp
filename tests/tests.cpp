@@ -60,6 +60,8 @@
 #include "drivers/consoles/gba.h"
 #include "cpu/arm7tdmi.h"
 #include "drivers/arcade/mcr.h"
+#include "drivers/computers/specnext.h"
+#include "machine/sdcard_spi.h"
 #include "drivers/computers/msx2.h"
 #include "drivers/consoles/nes.h"
 #include "drivers/consoles/pv2000.h"
@@ -9530,6 +9532,444 @@ void test_gba_games_if_present() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// ZX Spectrum Next
+
+void test_z80n_opcodes() {
+    auto memory = make_memory();
+    dsp::Z80 cpu = make_cpu(memory);
+    std::vector<std::pair<uint8_t, uint8_t>> nextregs;
+    cpu.enable_z80n([&](uint8_t r, uint8_t v) { nextregs.emplace_back(r, v); });
+    uint8_t out_port_value = 0;
+    uint16_t out_port = 0;
+    cpu.set_io_handlers([](uint16_t) { return uint8_t(0x05); },
+                        [&](uint16_t p, uint8_t v) { out_port = p; out_port_value = v; });
+    const uint8_t program[] = {
+        0x3e, 0x12, 0xed, 0x23,              // ld a,0x12 / swapnib       -> a=0x21
+        0x32, 0x00, 0x90,                    // ld (0x9000),a
+        0x3e, 0x01, 0xed, 0x24,              // ld a,0x01 / mirror a      -> a=0x80
+        0x32, 0x01, 0x90,                    // ld (0x9001),a
+        0x16, 0x0c, 0x1e, 0x0d, 0xed, 0x30,  // ld d,12 / ld e,13 / mul d,e -> de=156
+        0xed, 0x53, 0x02, 0x90,              // ld (0x9002),de
+        0x21, 0xff, 0x10, 0x3e, 0x02, 0xed, 0x31,  // ld hl,0x10ff / ld a,2 / add hl,a
+        0x22, 0x04, 0x90,                    // ld (0x9004),hl            -> 0x1101
+        0xed, 0x34, 0x00, 0x01,              // add hl,0x0100             -> 0x1201
+        0x22, 0x06, 0x90,                    // ld (0x9006),hl
+        0x16, 0x47, 0x1e, 0x2b, 0xed, 0x94,  // ld d,71 / ld e,43 / pixelad
+        0x22, 0x08, 0x90,                    // ld (0x9008),hl            -> 0x4f05
+        0xed, 0x93,                          // pixeldn                   -> 0x4825
+        0x22, 0x0a, 0x90,                    // ld (0x900a),hl
+        0xed, 0x95,                          // setae (e=43 -> 0x10)
+        0x32, 0x0c, 0x90,                    // ld (0x900c),a
+        0x11, 0x34, 0x12, 0x06, 0x04, 0xed, 0x28,  // ld de,0x1234 / ld b,4 / bsla de,b
+        0xed, 0x53, 0x0e, 0x90,              // -> 0x2340
+        0x11, 0x00, 0x80, 0x06, 0x03, 0xed, 0x29,  // ld de,0x8000 / ld b,3 / bsra de,b
+        0xed, 0x53, 0x10, 0x90,              // -> 0xf000
+        0x11, 0x01, 0x80, 0x06, 0x01, 0xed, 0x2c,  // ld de,0x8001 / ld b,1 / brlc de,b
+        0xed, 0x53, 0x12, 0x90,              // -> 0x0003
+        0xed, 0x8a, 0xbe, 0xef,              // push 0xbeef (big endian operand)
+        0xe1, 0x22, 0x14, 0x90,              // pop hl / ld (0x9014),hl
+        0xed, 0x91, 0x07, 0x03,              // nextreg 7,3
+        0x3e, 0x55, 0xed, 0x92, 0x15,        // ld a,0x55 / nextreg 0x15,a
+        0x3e, 0xf0, 0xed, 0x27, 0x0f,        // ld a,0xf0 / test 0x0f -> Z set, a kept
+        0xf5, 0xe1, 0x22, 0x16, 0x90,        // push af / pop hl / ld (0x9016),hl
+        0x21, 0x00, 0xa0, 0x11, 0x00, 0xb0, 0x01, 0x04, 0x00, 0x3e, 0x33,  // ld hl,a000/de,b000/bc,4/a,33
+        0xed, 0xb4,                          // ldirx (skips bytes equal to A)
+        0x21, 0x00, 0xa0, 0x01, 0xfe, 0x12, 0xed, 0x90,  // ld hl,a000 / ld bc,0x12fe / outinb
+        0x76,                                // halt
+    };
+    std::memcpy(memory.data(), program, sizeof(program));
+    const uint8_t src[4] = {0x11, 0x33, 0x22, 0x33};
+    std::memcpy(&memory[0xa000], src, 4);
+    std::memset(&memory[0xb000], 0xee, 4);
+    cpu.sp = 0xf000;
+    cpu.run(4000);
+    auto w16 = [&](int a) { return memory[size_t(a)] | (memory[size_t(a + 1)] << 8); };
+    check(memory[0x9000] == 0x21, "Z80N swapnib");
+    check(memory[0x9001] == 0x80, "Z80N mirror a");
+    check(w16(0x9002) == 156, "Z80N mul d,e");
+    check(w16(0x9004) == 0x1101, "Z80N add hl,a");
+    check(w16(0x9006) == 0x1201, "Z80N add hl,nn");
+    check(w16(0x9008) == 0x4f05, "Z80N pixelad");
+    check(w16(0x900a) == 0x4825, "Z80N pixeldn");
+    check(memory[0x900c] == 0x10, "Z80N setae");
+    check(w16(0x900e) == 0x2340, "Z80N bsla de,b");
+    check(w16(0x9010) == 0xf000, "Z80N bsra de,b");
+    check(w16(0x9012) == 0x0003, "Z80N brlc de,b");
+    check(w16(0x9014) == 0xbeef, "Z80N push nn takes a big endian operand");
+    check(nextregs.size() == 2 && nextregs[0] == std::make_pair(uint8_t(7), uint8_t(3)) &&
+              nextregs[1] == std::make_pair(uint8_t(0x15), uint8_t(0x55)),
+          "Z80N nextreg n,n and nextreg n,a reach the Next registers");
+    check(memory[0x9017] == 0xf0 && (memory[0x9016] & dsp::Z80::ZF), "Z80N test n sets flags and keeps A");
+    check(memory[0xb000] == 0x11 && memory[0xb001] == 0xee && memory[0xb002] == 0x22 && memory[0xb003] == 0xee,
+          "Z80N ldirx skips bytes equal to A");
+    check(out_port == 0x12fe && out_port_value == 0x11, "Z80N outinb");
+    check(cpu.halted, "Z80N test program reached its halt");
+}
+
+void test_sdcard_spi() {
+    namespace fs = std::filesystem;
+    const fs::path path = fs::temp_directory_path() / "dsp_sdcard_test.img";
+    {
+        std::ofstream f(path, std::ios::binary);
+        std::vector<uint8_t> sector(512);
+        for (int s = 0; s < 2048; ++s) {
+            std::fill(sector.begin(), sector.end(), uint8_t(s));
+            sector[0] = uint8_t(s >> 8);
+            f.write(reinterpret_cast<const char*>(sector.data()), 512);
+        }
+    }
+    dsp::SdCardSpi sd;
+    std::string err;
+    check(sd.open(path.string(), true, &err), "SD card image opens");
+    sd.select(true);
+    auto command = [&](uint8_t cmd, uint32_t arg) {
+        const uint8_t frame[6] = {uint8_t(0x40 | cmd), uint8_t(arg >> 24), uint8_t(arg >> 16), uint8_t(arg >> 8),
+                                  uint8_t(arg), 0x95};
+        for (uint8_t b : frame) sd.exchange(b);
+        for (int i = 0; i < 16; ++i) {
+            const uint8_t r = sd.exchange(0xff);
+            if (r != 0xff) return r;
+        }
+        return uint8_t(0xff);
+    };
+    check(command(0, 0) == 0x01, "SD CMD0 enters the idle state");
+    check(command(8, 0x1aa) == 0x01, "SD CMD8 is accepted (v2 card)");
+    uint8_t r7[4];
+    for (auto& b : r7) b = sd.exchange(0xff);
+    check(r7[2] == 0x01 && r7[3] == 0xaa, "SD CMD8 echoes the check pattern");
+    command(55, 0);
+    check(command(41, 0x40000000) == 0x00, "SD ACMD41 leaves the idle state");
+    check(command(58, 0) == 0x00 && (sd.exchange(0xff) & 0x40), "SD CMD58 reports an SDHC card");
+    for (int i = 0; i < 3; ++i) sd.exchange(0xff);
+    check(command(17, 300) == 0x00, "SD CMD17 accepted");
+    uint8_t token = 0xff;
+    for (int i = 0; i < 16 && token == 0xff; ++i) token = sd.exchange(0xff);
+    uint8_t data[512];
+    for (auto& b : data) b = sd.exchange(0xff);
+    sd.exchange(0xff);
+    sd.exchange(0xff);
+    check(token == 0xfe && data[0] == 1 && data[1] == uint8_t(300) && data[511] == uint8_t(300),
+          "SD CMD17 returns the addressed block");
+    // Write a block (kept in memory: read-only image) and read it back.
+    check(command(24, 5) == 0x00, "SD CMD24 accepted");
+    sd.exchange(0xff);
+    sd.exchange(0xfe);
+    for (int i = 0; i < 512; ++i) sd.exchange(uint8_t(i * 3));
+    sd.exchange(0xff);
+    uint8_t resp = sd.exchange(0xff);
+    for (int i = 0; i < 8 && resp == 0xff; ++i) resp = sd.exchange(0xff);
+    check((resp & 0x1f) == 0x05, "SD write data accepted");
+    for (int i = 0; i < 8; ++i) sd.exchange(0xff);
+    uint8_t back[512];
+    sd.read_sector(5, back);
+    check(back[0] == 0 && back[1] == 3 && back[100] == uint8_t(300), "SD written block reads back");
+    // Multi-block read stops with CMD12.
+    check(command(18, 10) == 0x00, "SD CMD18 accepted");
+    int blocks = 0;
+    for (int b = 0; b < 3; ++b) {
+        token = 0xff;
+        for (int i = 0; i < 16 && token == 0xff; ++i) token = sd.exchange(0xff);
+        for (auto& x : data) x = sd.exchange(0xff);
+        sd.exchange(0xff);
+        sd.exchange(0xff);
+        if (token == 0xfe && data[1] == uint8_t(10 + b)) ++blocks;
+    }
+    check(blocks == 3, "SD CMD18 streams consecutive blocks");
+    check(command(12, 0) == 0x00, "SD CMD12 stops the transfer");
+    sd.close();
+    fs::remove(path);
+}
+
+namespace {
+
+// A Next with a stand-in boot ROM (DI / JR $) and no SD card.
+std::unique_ptr<dsp::SpecNext> make_test_next() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "dsp_specnext_test";
+    fs::create_directories(dir);
+    {
+        std::vector<uint8_t> rom(0x2000, 0);
+        rom[0] = 0xf3;
+        rom[1] = 0x18;
+        rom[2] = 0xfe;
+        std::ofstream f(dir / "boot-30204.bin", std::ios::binary);
+        f.write(reinterpret_cast<const char*>(rom.data()), std::streamsize(rom.size()));
+    }
+    auto m = std::make_unique<dsp::SpecNext>();
+    std::string err;
+    if (!m->init(dir.string(), &err)) return nullptr;
+    return m;
+}
+
+uint32_t next_pixel(const dsp::SpecNext& m, int x320, int y) { return m.framebuffer()[size_t(y) * 640 + size_t(x320) * 2]; }
+
+}  // namespace
+
+void test_specnext_memory_map() {
+    auto m = make_test_next();
+    check(m != nullptr, "Next starts with a boot ROM and no SD card");
+    if (!m) return;
+    check(m->peek(0x0000) == 0xf3 && m->peek(0x2000) == 0xf3, "Next boot ROM mapped (and mirrored) at 0x0000");
+    check(m->bootrom_enabled() && m->config_mode(), "Next powers up in config mode");
+    // Config mode: 0x0000-0x3FFF is SRAM selected by nr_04 and writable.
+    m->nextreg_write(0x03, 0x07);
+    m->nextreg_write(0x04, 0x05);
+    m->poke(0x0010, 0x5a);
+    check(!m->bootrom_enabled() && m->sram(0x14010) == 0x5a, "Next config mode maps writable SRAM bank nr_04");
+    // Leave config mode as a +3: ROM 0 from SRAM pages 0/1, read only.
+    m->sram_write(0x0000, 0xab);
+    m->nextreg_write(0x03, 0x03);
+    check(!m->config_mode() && m->peek(0x0000) == 0xab, "Next ROM 0 comes from SRAM after config mode");
+    m->poke(0x0000, 0x12);
+    check(m->peek(0x0000) == 0xab, "Next ROM area is read only");
+    // MMU: page p is SRAM 0x40000 + p * 8K.
+    m->nextreg_write(0x52, 0x10);
+    m->poke(0x4001, 0x77);
+    check(m->sram(0x40000 + 0x10 * 0x2000 + 1) == 0x77, "Next MMU2 maps 8K page 0x10");
+    check(m->nextreg_read(0x52) == 0x10, "Next MMU registers read back");
+    // 128K paging through $7FFD lands in MMU6/7.
+    m->io_write(0x7ffd, 0x03);
+    check(m->mmu(6) == 6 && m->mmu(7) == 7, "Next $7FFD bank 3 maps pages 6/7");
+    m->poke(0xc000, 0x42);
+    check(m->sram(0x40000 + 3 * 0x4000) == 0x42, "Next bank 3 at 0xC000");
+    // +3 ROM selection: $1FFD bit 2 + $7FFD bit 4 = ROM 3.
+    m->sram_write(3 * 0x4000, 0x33);
+    m->io_write(0x1ffd, 0x04);
+    m->io_write(0x7ffd, 0x10);
+    check(m->peek(0x0000) == 0x33, "Next +3 paging selects ROM 3");
+    // Layer 2 write mapping over 0x0000-0x3FFF (bank nr_12 = 8).
+    m->io_write(0x123b, 0x01);
+    m->poke(0x0005, 0x99);
+    check(m->sram(0x40000 + 8 * 0x4000 + 5) == 0x99 && m->peek(0x0005) != 0x99,
+          "Next Layer 2 write-only mapping");
+    m->io_write(0x123b, 0x00);
+    // DivMMC conmem pages its ROM (page 8) and RAM bank 3 (page 0x13).
+    m->sram_write(8 * 0x2000, 0xd1);
+    m->io_write(0x00e3, 0x83);
+    check(m->peek(0x0000) == 0xd1, "Next DivMMC conmem maps the DivMMC ROM");
+    m->poke(0x2000, 0x4d);
+    check(m->sram(0x13 * 0x2000) == 0x4d, "Next DivMMC RAM bank 3 at 0x2000");
+    m->io_write(0x00e3, 0x00);
+    check(m->peek(0x0000) == 0x33, "Next DivMMC pages out");
+    check(m->nextreg_read(0x00) == 0x08 && m->nextreg_read(0x01) == 0x32, "Next machine id and core version");
+}
+
+void test_specnext_video_layers() {
+    auto m = make_test_next();
+    if (!m) return;
+    m->nextreg_write(0x03, 0x03);
+    m->cpu().set_pc(0x8000);
+    m->poke(0x8000, 0x18);  // jr $
+    m->poke(0x8001, 0xfe);
+    // ULA: 8 white ink pixels at the top left of the paper, red border.
+    for (int i = 0; i < 0x1800; ++i) m->poke(uint16_t(0x4000 + i), 0);
+    for (int i = 0; i < 0x300; ++i) m->poke(uint16_t(0x5800 + i), 0x47);
+    m->poke(0x4000, 0xff);
+    m->io_write(0x00fe, 0x02);
+    m->run_frame();
+    check(next_pixel(*m, 32, 32) == 0xffffffff, "Next ULA ink pixel");
+    check(next_pixel(*m, 40, 32) == 0xff000000, "Next ULA paper pixel");
+    check(next_pixel(*m, 2, 2) == 0xffb60000, "Next ULA border colour");
+
+    // Layer 2 256x192 over the ULA: green pixel, then a transparent one.
+    m->sram_write(0x40000 + 8 * 0x4000 + 0, 0x1c);
+    m->sram_write(0x40000 + 8 * 0x4000 + 1, 0xe3);
+    for (int i = 2; i < 256; ++i) m->sram_write(0x40000 + 8 * 0x4000 + uint32_t(i), 0xe3);
+    for (int i = 256; i < 49152; ++i) m->sram_write(0x40000 + 8 * 0x4000 + uint32_t(i), 0xe3);
+    m->io_write(0x123b, 0x02);
+    m->run_frame();
+    check(next_pixel(*m, 32, 32) == 0xff00ff00, "Next Layer 2 pixel over the ULA");
+    check(next_pixel(*m, 33, 32) == 0xffffffff, "Next Layer 2 global transparency shows the ULA");
+    // Layer 2 scroll by one pixel moves the green pixel off the left edge.
+    m->nextreg_write(0x16, 1);
+    m->run_frame();
+    check(next_pixel(*m, 32, 32) == 0xffffffff, "Next Layer 2 horizontal scroll");
+    m->nextreg_write(0x16, 0);
+    // Priority ULS puts the ULA (opaque here) above Layer 2.
+    m->nextreg_write(0x15, 0x14);
+    m->run_frame();
+    check(next_pixel(*m, 32, 32) == 0xffffffff, "Next layer priority ULS");
+    m->nextreg_write(0x15, 0x00);
+
+    // Sprite 0: 16x16 of colour 0x03 at (132, 82).
+    m->io_write(0x303b, 0x00);
+    for (int i = 0; i < 256; ++i) m->io_write(0x005b, 0x03);
+    m->io_write(0x303b, 0x00);
+    m->io_write(0x0057, 132);
+    m->io_write(0x0057, 82);
+    m->io_write(0x0057, 0x00);
+    m->io_write(0x0057, 0x00);  // invisible, 4-byte form (attr 3 bit 6 clear)
+    m->nextreg_write(0x34, 0);
+    m->nextreg_write(0x38, 0x80);  // attr 3 through the nextreg mirror: visible, pattern 0
+    m->nextreg_write(0x15, 0x01);
+    m->run_frame();
+    const uint32_t blue = 0xff0000ff;
+    check(next_pixel(*m, 132, 82) == blue && next_pixel(*m, 147, 97) == blue, "Next sprite drawn");
+    check(next_pixel(*m, 148, 82) != blue && next_pixel(*m, 131, 82) != blue, "Next sprite is 16 pixels wide");
+    // 2x horizontal scale through the 5-byte form.
+    m->nextreg_write(0x34, 0);
+    m->nextreg_write(0x38, 0xc0);
+    m->nextreg_write(0x39, 0x08);
+    m->run_frame();
+    check(next_pixel(*m, 160, 82) == blue && next_pixel(*m, 164, 82) != blue, "Next sprite X scaling");
+    m->nextreg_write(0x15, 0x00);
+
+    // Tilemap 40x32: map at 0x6000, tiles at 0x6800; tile 1 = colour 1, tile 0 transparent.
+    for (int i = 0; i < 40 * 32 * 2; ++i) m->poke(uint16_t(0x6000 + i), 0);
+    for (int i = 0; i < 32; ++i) m->poke(uint16_t(0x6800 + i), 0xff);
+    for (int i = 0; i < 32; ++i) m->poke(uint16_t(0x6820 + i), 0x11);
+    m->poke(uint16_t(0x6000 + (10 * 40 + 5) * 2), 1);
+    m->nextreg_write(0x6e, 0x20);
+    m->nextreg_write(0x6f, 0x28);
+    m->nextreg_write(0x6b, 0x80);
+    m->run_frame();
+    check(next_pixel(*m, 40, 80) == 0xff00006d && next_pixel(*m, 47, 87) == 0xff00006d, "Next tilemap tile drawn");
+    check(next_pixel(*m, 48, 80) != 0xff00006d, "Next tilemap transparent index");
+    m->nextreg_write(0x6b, 0x00);
+
+    // ULA off and every layer transparent: the fallback colour (0xE3).
+    m->io_write(0x123b, 0x00);
+    m->nextreg_write(0x68, 0x80);
+    m->run_frame();
+    check(next_pixel(*m, 100, 100) == 0xffff00ff, "Next fallback colour");
+    m->nextreg_write(0x4a, 0x00);
+    m->run_frame();
+    check(next_pixel(*m, 100, 100) == 0xff000000, "Next fallback colour register");
+    // Palette write through nr_40/41: ULA entry 0x10+2 (border red) becomes blue.
+    m->nextreg_write(0x68, 0x00);
+    m->nextreg_write(0x43, 0x00);
+    m->nextreg_write(0x40, 0x12);
+    m->nextreg_write(0x41, 0x03);
+    m->run_frame();
+    check(next_pixel(*m, 2, 2) == 0xff0000ff, "Next ULA palette write");
+}
+
+void test_specnext_copper_and_interrupts() {
+    auto m = make_test_next();
+    if (!m) return;
+    m->nextreg_write(0x03, 0x03);
+    // Copper: fallback colour green from paper line 50, red from line 100.
+    const uint16_t list[] = {0x8000 | 50, 0x4a1c, 0x8000 | 100, 0x4ae0, 0x8000 | 300};
+    m->nextreg_write(0x61, 0x00);
+    m->nextreg_write(0x62, 0x00);
+    for (uint16_t ins : list) {
+        m->nextreg_write(0x60, uint8_t(ins >> 8));
+        m->nextreg_write(0x60, uint8_t(ins));
+    }
+    m->nextreg_write(0x62, 0xc0);  // restart every frame
+    m->nextreg_write(0x68, 0x80);  // ULA off: the fallback colour shows everywhere
+
+    // IM2 hardware interrupts: line interrupt at line 100, the ULA frame
+    // interrupt and CTC channel 0, each counting into 0xA000+.
+    const uint8_t code[] = {0xf3, 0x31, 0x00, 0xc0, 0x3e, 0x90, 0xed, 0x47, 0xed, 0x5e, 0xfb, 0x18, 0xfe};
+    for (size_t i = 0; i < sizeof(code); ++i) m->poke(uint16_t(0x8000 + i), code[i]);
+    const uint8_t line_h[] = {0xf5, 0x3a, 0x00, 0xa0, 0x3c, 0x32, 0x00, 0xa0, 0xf1, 0xfb, 0xed, 0x4d};
+    const uint8_t ula_h[] = {0xf5, 0x3a, 0x01, 0xa0, 0x3c, 0x32, 0x01, 0xa0, 0xf1, 0xfb, 0xed, 0x4d};
+    const uint8_t ctc_h[] = {0xf5, 0x3a, 0x02, 0xa0, 0x3c, 0x32, 0x02, 0xa0, 0xf1, 0xfb, 0xed, 0x4d};
+    for (size_t i = 0; i < sizeof(line_h); ++i) {
+        m->poke(uint16_t(0x8100 + i), line_h[i]);
+        m->poke(uint16_t(0x8200 + i), ula_h[i]);
+        m->poke(uint16_t(0x8300 + i), ctc_h[i]);
+    }
+    for (int i = 0; i < 3; ++i) m->poke(uint16_t(0xa000 + i), 0);
+    auto vec = [&](int v, uint16_t a) {
+        m->poke(uint16_t(0x9000 + v), uint8_t(a));
+        m->poke(uint16_t(0x9001 + v), uint8_t(a >> 8));
+    };
+    vec(0x00, 0x8100);  // line
+    vec(0x16, 0x8200);  // ULA
+    vec(0x06, 0x8300);  // CTC 0
+    m->nextreg_write(0xc0, 0x01);
+    m->nextreg_write(0x22, 0x02);
+    m->nextreg_write(0x23, 100);
+    m->io_write(0x183b, 0xa5);  // CTC 0: interrupt, prescaler 256, constant follows
+    m->io_write(0x183b, 0x00);  // 256 -> 28 MHz / 65536 = 427 Hz
+    m->cpu().set_pc(0x8000);
+    for (int f = 0; f < 10; ++f) m->run_frame();
+    check(next_pixel(*m, 100, 32 + 60) == 0xff00ff00, "Next copper changes nr_4A at line 50");
+    check(next_pixel(*m, 100, 32 + 120) == 0xffff0000, "Next copper changes nr_4A again at line 100");
+    const int line_count = m->peek(0xa000), ula_count = m->peek(0xa001), ctc_count = m->peek(0xa002);
+    check(line_count >= 9 && line_count <= 11, "Next line interrupt once per frame (IM2 hardware vector)");
+    check(ula_count >= 9 && ula_count <= 11, "Next ULA interrupt once per frame (IM2 hardware vector)");
+    check(ctc_count >= 70 && ctc_count <= 100, "Next CTC channel 0 interrupts at 427 Hz");
+}
+
+void test_specnext_dma() {
+    auto m = make_test_next();
+    if (!m) return;
+    m->nextreg_write(0x03, 0x03);
+    m->poke(0x8000, 0x18);
+    m->poke(0x8001, 0xfe);
+    m->cpu().set_pc(0x8000);
+    for (int i = 0; i < 16; ++i) m->poke(uint16_t(0xa000 + i), uint8_t(0x30 + i));
+    const uint8_t prog[] = {0x7d, 0x00, 0xa0, 0x10, 0x00,  // WR0: A->B, port A = 0xA000, length 16
+                            0x14,                          // WR1: port A memory, increment
+                            0x10,                          // WR2: port B memory, increment
+                            0xad, 0x00, 0xb0,              // WR4: continuous, port B = 0xB000
+                            0xcf, 0x87};                   // LOAD, ENABLE
+    for (uint8_t b : prog) m->io_write(0x006b, b);
+    m->run_frame();
+    bool ok = true;
+    for (int i = 0; i < 16; ++i) ok = ok && m->peek(uint16_t(0xb000 + i)) == uint8_t(0x30 + i);
+    check(ok && m->peek(0xb010) != 0x40, "Next zxnDMA memory to memory transfer");
+}
+
+void test_specnext_boot_if_present() {
+    namespace fs = std::filesystem;
+    const char* rom = "/tmp/roms/next/tbblue.zip";
+    std::string sd;
+    for (const char* p : {"/tmp/roms/next/2gb/cspect-next-2gb.img", "/tmp/roms/next/tbblue.mmc"})
+        if (fs::exists(p)) {
+            sd = p;
+            break;
+        }
+    if (!fs::exists(rom) || sd.empty()) {
+        std::printf("skipping ZX Spectrum Next boot test (no %s / SD image)\n", rom);
+        return;
+    }
+    dsp::SpecNext m;
+    std::string err;
+    check(m.init(rom, &err), "Next boot ROM loads from tbblue.zip");
+    check(m.insert_sd(sd, true, &err), "Next SD card image inserted");
+    dsp::MachineInputs in{};
+    int os_frame = -1;
+    for (int f = 0; f < 1600 && os_frame < 0; ++f) {
+        in = dsp::MachineInputs{};
+        // First boot runs the firmware's video mode test: ENTER, then Y.
+        if (f >= 400 && f < 405) in.keys[size_t(dsp::Key::Enter)] = true;
+        if (f >= 450 && f < 455) in.keys[size_t(dsp::Key::Y)] = true;
+        m.set_inputs(in);
+        m.run_frame();
+        if (!m.config_mode() && !m.bootrom_enabled()) os_frame = f;
+    }
+    check(os_frame > 0 && m.sd_sectors_read() > 200, "Next firmware loads from the SD card and starts the machine");
+    for (int f = 0; f < 300; ++f) {
+        m.set_inputs(dsp::MachineInputs{});
+        m.run_frame();
+    }
+    // NextZXOS welcome screen: grey paper with dark text.
+    int grey = 0, dark = 0;
+    for (int i = 0; i < 640 * 256; ++i) {
+        const uint32_t c = m.framebuffer()[i];
+        if (c == 0xffb6b6b6) ++grey;
+        if (c == 0xff000000) ++dark;
+    }
+    check(grey > 60000 && dark > 2000, "NextZXOS starts (welcome screen)");
+    const char* nex = "/tmp/roms/next/nex/Warhawk.nex";
+    if (fs::exists(nex)) {
+        std::ifstream f(nex, std::ios::binary);
+        std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        check(m.load_nex(data, &err), "Next NEX program loads");
+        for (int fr = 0; fr < 600; ++fr) {
+            m.set_inputs(dsp::MachineInputs{});
+            m.run_frame();
+        }
+        std::set<uint32_t> colours(m.framebuffer(), m.framebuffer() + 640 * 256);
+        check(colours.size() > 16 && (m.io_read(0x123b) & 0x02), "Warhawk runs (Layer 2 title screen)");
+    }
+}
+
 int main() {
     test_z80_arithmetic();
     test_z80_flags_and_blocks();
@@ -9741,6 +10181,13 @@ int main() {
     test_macii_missing_roms();
     test_macii_boot_if_present();
     test_vectrex_if_present();
+    test_z80n_opcodes();
+    test_sdcard_spi();
+    test_specnext_memory_map();
+    test_specnext_video_layers();
+    test_specnext_copper_and_interrupts();
+    test_specnext_dma();
+    test_specnext_boot_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

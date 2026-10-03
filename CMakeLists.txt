@@ -218,6 +218,10 @@ add_executable(dsp
   src/drivers/computers/spectrum.cpp
   src/drivers/computers/spectrum_128k.cpp
   src/drivers/computers/spectrum_3.cpp
+  src/drivers/computers/specnext.cpp
+  src/drivers/computers/specnext_video.cpp
+  src/machine/sdcard_spi.cpp
+  src/machine/zxn_dma.cpp
   src/drivers/computers/zx_clone.cpp
   src/drivers/computers/amstrad_cpc.cpp
   src/drivers/computers/msx1.cpp
@@ -398,6 +402,10 @@ add_executable(dsp_tests
   src/machine/konami_decrypt.cpp
   src/machine/nb1414_m4.cpp
   src/drivers/computers/spectrum.cpp
+  src/drivers/computers/specnext.cpp
+  src/drivers/computers/specnext_video.cpp
+  src/machine/sdcard_spi.cpp
+  src/machine/zxn_dma.cpp
   src/drivers/computers/amstrad_cpc.cpp
   src/drivers/computers/msx2.cpp
   src/drivers/consoles/nes.cpp
@@ -517,6 +525,20 @@ target_include_directories(dsp_zexdoc PRIVATE src)
 target_compile_options(dsp_zexdoc PRIVATE -Wall -Wextra)
 
 # Apple IIGS headless runner (screenshots, scripted keys/mouse) for boot debugging.
+add_executable(specnext_run EXCLUDE_FROM_ALL
+  tools/specnext_run.cpp
+  src/drivers/computers/specnext.cpp
+  src/drivers/computers/specnext_video.cpp
+  src/machine/sdcard_spi.cpp
+  src/machine/zxn_dma.cpp
+  src/cpu/z80.cpp
+  src/sound/ay8910.cpp
+  src/core/rom_loader.cpp
+)
+target_include_directories(specnext_run PRIVATE src)
+target_link_libraries(specnext_run PRIVATE ZLIB::ZLIB)
+target_compile_options(specnext_run PRIVATE -Wall -Wextra)
+
 add_executable(a2gs_run EXCLUDE_FROM_ALL
   tools/a2gs_run.cpp
   src/drivers/computers/apple2gs.cpp

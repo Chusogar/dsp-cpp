@@ -41,6 +41,23 @@ public:
     // Round accepted-IRQ T-states up to a multiple of `align` (0 disables).
     // The CPC Gate Array needs this so the CRTC stays on a 4 T-state grid.
     void set_irq_cycle_align(int align) { irq_cycle_align_ = align; }
+    // ZX Spectrum Next Z80N: enables the extended ED opcodes (SWAPNIB,
+    // MIRROR, TEST, barrel shifts, MUL, ADD rr,A/nn, PUSH nn, OUTINB,
+    // NEXTREG, PIXELDN/PIXELAD/SETAE, JP (C) and the LDIX family). NEXTREG
+    // writes go to `nextreg`.
+    using NextregHandler = std::function<void(uint8_t reg, uint8_t value)>;
+    using NextregReadHandler = std::function<uint8_t(uint8_t reg)>;
+    void enable_z80n(NextregHandler nextreg, NextregReadHandler nextreg_read = nullptr) {
+        z80n_ = true;
+        nextreg_ = std::move(nextreg);
+        nextreg_read_ = std::move(nextreg_read);
+    }
+    // Z80N stackless NMI (nextreg C0 bit 3).
+    void set_nmi_stackless(bool enabled) { nmi_stackless_ = enabled; }
+    // Called when RETI (true) or RETN (false) executes, before the return
+    // address is popped (Z80 peripherals and the Next's DivMMC watch them).
+    using ReturnHandler = std::function<void(bool reti)>;
+    void set_return_callback(ReturnHandler handler) { return_cb_ = std::move(handler); }
 
     void reset();
     // Runs until at least `cycles` T states have elapsed, returns the amount executed.
@@ -137,6 +154,13 @@ private:
     CycleHandler cycle_handler_;
     InstructionHook instruction_hook_;
     IrqAckHandler irq_ack_;
+    NextregHandler nextreg_;
+    NextregReadHandler nextreg_read_;
+    ReturnHandler return_cb_;
+    bool z80n_ = false;
+    bool nmi_stackless_ = false;
+    bool stackless_retn_en_ = false;
+    bool exec_z80n(uint8_t opcode);
 
     const uint8_t* t_main_ = nullptr;
     const uint8_t* t_cb_ = nullptr;

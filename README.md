@@ -40,6 +40,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | M6502 CPU | `src/cpu/m6502.pas` | Gauntlet sound CPU, NES 2A03, optional 65C02 CMOS opcodes for the Lynx |
 | Mr. Do driver | `src/arcade/mrdo_hw.pas` | `rol90` tile/sprite decode |
 | MCR driver | `src/arcade/mcr_hw.pas` | Tapper / Tron family: dual Z80, CTC, SSIO |
+| ZX Spectrum Next | MAME `specnext` (TBBlue core 3.02) | Z80N, MMU/DivMMC/Multiface, ULA/LoRes/Layer 2/tilemap/sprites/copper, zxnDMA, CTC, IM2, 3×AY + DACs, SPI SD card; boots the firmware and NextZXOS from an SD image |
 | Amstrad CPC | `src/computer/amstrad_cpc.pas` | Gate Array wait-states (opcodes on a 4 T-state grid) |
 | Lynx Suzy / Mikey | new | Sprite blitter, math coprocessor, timers, LCD DMA, 4-channel sound |
 | Atari Lynx driver | new | 64 KiB DRAM, MAPCTL, LNX/LYX carts, 160×102 LCD |
@@ -661,6 +662,72 @@ archive; pass the zip or the extracted files.
 TR-DOS is paged in by executing at `$3D00` while the 48K ROM is selected
 (`RANDOMIZE USR 15616`). Kempston on port `$1F` is disabled while DOS is paged
 so it does not clash with the FDC.
+
+### ZX Spectrum Next
+
+`--game specnext` (also `tbblue`, `next`, `zxnext`) is the ZX Spectrum Next
+running the real boot sequence: the FPGA boot ROM reads `TBBLUE.FW` from the
+SD card, the firmware loads the NextZXOS ROMs into SRAM through config mode and
+starts the machine, NextZXOS then boots from the same card. Emulated hardware
+(TBBlue core 3.02.04, "Emulators" machine id 8, 2 MB RAM):
+
+- Z80N CPU at 3.5/7/14/28 MHz (all the extended `ED` opcodes: `NEXTREG`,
+  `LDIRX`, `PIXELAD`, `MUL`, barrel shifts, `PUSH nn`, …; stackless NMI).
+- Memory: 224 8 KB pages behind the MMU (nextregs `$50-$57`), boot ROM,
+  config mode, ROM/alt ROM selection, the 128K/+3/Pentagon paging ports
+  (`$7FFD`, `$1FFD`, `$DFFD`, `$EFF7`) mapped onto the MMU, Layer 2 memory
+  mapping (`$123B`), DivMMC (`$E3`, automap entry points, its own ROM/RAM
+  pages) and the Multiface (NextZXOS NMI menu).
+- Video, mixed per pixel at 640 across the 320×256 picture: ULA with Timex
+  hi-colour/hi-res, ULANext and ULA+, LoRes/Radastan, Layer 2 256×192,
+  320×256 and 640×256, the 40/80 column tilemap (4 bpp and text mode,
+  mirror/rotate, 512 tiles), 128 sprites (4/8 bpp, anchors and relatives,
+  scaling, mirroring, rotation), clip windows, scrolling, palettes
+  (nextregs `$40-$44`), layer priorities and blend modes, global
+  transparency and fallback colour, the copper (`WAIT`/`MOVE` at raster
+  positions) and the line interrupt.
+- Interrupts: ULA frame and line interrupts in pulse mode or through the
+  hardware IM2 controller (vectors from nextreg `$C0`), CTC (4 channels at
+  28 MHz), zxnDMA (`$6B`, and Zilog mode on `$0B`; burst, continuous and the
+  prescaled mode used for sampled sound).
+- Sound: three AY-3-8912 (TurboSound), beeper and the four 8-bit DACs
+  (Covox/Soundrive/Specdrum ports and nextregs `$2C-$2E`), mono 44.1 kHz.
+- SD card in SPI mode (`$E7`/`$EB`) over a card image, SDHC block addressing.
+
+Files: the boot ROM comes from the tbblue distribution (`boot-30204.bin`,
+GPL; `tbblue.zip` as attached works, as does a directory with the file or
+ZEsarUX's `tbblue_loader.rom`). The SD card is an image of a Next card
+(`.img`, `.mmc`, `.hdf`): the official distribution, CSpect's
+`cspect-next-2gb.img` or ZEsarUX's `tbblue.mmc`. An image next to the ROM
+(or in a `2gb/` / `sd/` subfolder) is inserted automatically; `--disk`
+selects one. Writes go to the image like on a real card: the firmware saves
+`CONFIG.INI` there, so the video mode test it shows on the first boot (press
+ENTER and then Y) only appears once.
+
+```bash
+./build/dsp --game specnext /path/to/next/            # tbblue.zip + next.img
+./build/dsp --game specnext --disk next.img tbblue.zip
+./build/dsp --game specnext --disk game.nex /path/to/next/
+```
+
+Programs are started from the NextZXOS Browser (`.nex`, `.tap`, `.snx`,
+`.bas`, … on the card). A `.nex` given with `--disk` is loaded into memory
+about five seconds after NextZXOS starts, the way NEXLOAD leaves the machine
+(ROM 3, banks 5/2 and the entry bank, loading screen, palette, copper).
+Programs that load more files from their own folder only work from the
+Browser.
+
+Keys: Left Shift is CAPS SHIFT and Ctrl is SYMBOL SHIFT; the cursor keys,
+Backspace (DELETE), Esc (BREAK), Caps Lock, Tab (EXTEND), the backquote
+(EDIT) and `; ' , .` are the Next keyboard's extended keys (nextregs
+`$B0/$B1`). Player 1 is joystick 1 and player 2 joystick 2 in the mode
+NextZXOS sets (Kempston, MD, Sinclair or cursor). F3 is a hard reset, F4 the
+reset button (soft reset), F9 the NMI button (NextZXOS NMI menu: snapshots,
+POKEs, debugger) and F10 the DivMMC "drive" NMI.
+
+Not emulated: memory contention, the UARTs (ESP Wi-Fi / Raspberry Pi), the
+I2C real-time clock, the expansion bus, mice and HDMI timings (VGA 50/60 Hz
+only).
 
 ### MSX1 and MSX2
 
@@ -1396,6 +1463,15 @@ Apple IIGS has a headless runner (screenshots every N frames, scripted keys and 
 cmake --build build --target w65c816_sst a2gs_run
 ./build/w65c816_sst /path/to/65816/v1
 ./build/a2gs_run /path/to/apple2gs.zip 1500 /tmp/gs System.Disk.po
+```
+
+The ZX Spectrum Next has one too (`SPECNEXT_EVERY`, `SPECNEXT_KEYS`,
+`SPECNEXT_WAV`; the SD image is opened read-only unless `SPECNEXT_WRITE` is
+set):
+
+```bash
+cmake --build build --target specnext_run
+SPECNEXT_KEYS="400:enter,450:y" ./build/specnext_run tbblue.zip next.img 1200 /tmp/next
 ```
 
 The Macintosh II runner works the same way (`MACII_EVERY`, `MACII_KEYS`,

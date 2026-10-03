@@ -1,5 +1,7 @@
 #include "cpu/z80.h"
 
+#include <algorithm>
+
 #include <array>
 
 namespace dsp {
@@ -487,7 +489,18 @@ int Z80::take_nmi() {
     halted = false;
     iff2 = iff1;
     iff1 = false;
-    push(pc_);
+    if (z80n_ && nextreg_) {
+        // The Z80N keeps the NMI return address in nextregs C2/C3 and, in
+        // stackless mode, leaves the stack untouched (SP still moves).
+        nextreg_(0xc2, uint8_t(pc_));
+        nextreg_(0xc3, uint8_t(pc_ >> 8));
+    }
+    if (z80n_ && nmi_stackless_) {
+        stackless_retn_en_ = true;
+        sp = uint16_t(sp - 2);
+    } else {
+        push(pc_);
+    }
     pc_ = 0x0066;
     wz = pc_;
     r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
@@ -961,6 +974,8 @@ void Z80::exec_ed() {
     static uint8_t Z80::*const regs[8] = {&Z80::b, &Z80::c, &Z80::d, &Z80::e,
                                           &Z80::h, &Z80::l, nullptr, &Z80::a};
 
+    if (z80n_ && exec_z80n(opcode)) return;
+
     switch (opcode) {
         case 0x40: case 0x48: case 0x50: case 0x58:
         case 0x60: case 0x68: case 0x70: case 0x78: {  // in r,(c)
@@ -1037,8 +1052,16 @@ void Z80::exec_ed() {
         case 0x45: case 0x55: case 0x65: case 0x75:
         case 0x5d: case 0x6d: case 0x7d:  // retn
         case 0x4d:                        // reti
+            if (return_cb_) return_cb_(opcode == 0x4d);
             iff1 = iff2;
-            pc_ = pop();
+            if (z80n_ && stackless_retn_en_ && opcode != 0x4d) {
+                // Z80N stackless NMI: the return address is in nextregs C2/C3
+                sp = uint16_t(sp + 2);
+                pc_ = uint16_t(nextreg_read_ ? (nextreg_read_(0xc2) | (nextreg_read_(0xc3) << 8)) : pc_);
+            } else {
+                pc_ = pop();
+            }
+            if (opcode != 0x4d) stackless_retn_en_ = false;
             wz = pc_;
             break;
         case 0x46: case 0x4e: case 0x66: case 0x6e: im = 0; break;
@@ -1074,6 +1097,153 @@ void Z80::exec_ed() {
         case 0xbb: block_out(-1, true); break;
         default: break;  // nop
     }
+}
+
+// Z80N (ZX Spectrum Next) extended opcodes, after the MAME z80.lst
+// reference. Returns false for opcodes that are not Z80N additions.
+// T-states: the ED table charges 4 + 4 for these slots, the extra is added.
+bool Z80::exec_z80n(uint8_t opcode) {
+    auto extra = [this](int total) { cycles_ += total - 8; };
+    switch (opcode) {
+        case 0x23:  // swapnib
+            a = uint8_t((a << 4) | (a >> 4));
+            break;
+        case 0x24: {  // mirror a
+            uint8_t v = 0;
+            for (int i = 0; i < 8; ++i) v = uint8_t(v | (((a >> i) & 1) << (7 - i)));
+            a = v;
+            break;
+        }
+        case 0x27: {  // test n
+            const uint8_t keep = a;
+            and_a(fetch());
+            a = keep;
+            extra(11);
+            break;
+        }
+        case 0x28: {  // bsla de,b
+            const int n = std::min(b & 31, 16);
+            set_de(uint16_t(n >= 16 ? 0 : de() << n));
+            break;
+        }
+        case 0x29: {  // bsra de,b
+            const int n = std::min(b & 31, 16);
+            const int16_t v = int16_t(de());
+            set_de(uint16_t(n >= 16 ? (v < 0 ? 0xffff : 0) : uint16_t(v >> n)));
+            break;
+        }
+        case 0x2a: {  // bsrl de,b
+            const int n = std::min(b & 31, 16);
+            set_de(uint16_t(n >= 16 ? 0 : de() >> n));
+            break;
+        }
+        case 0x2b: {  // bsrf de,b
+            const int n = std::min(b & 31, 16);
+            const uint32_t v = (uint32_t(de()) | 0xffff0000u) >> n;
+            set_de(uint16_t(v));
+            break;
+        }
+        case 0x2c: {  // brlc de,b
+            const int n = b & 15;
+            set_de(uint16_t((de() << n) | (de() >> ((16 - n) & 15))));
+            break;
+        }
+        case 0x30:  // mul d,e
+            set_de(uint16_t(d * e));
+            break;
+        case 0x31: set_hl(uint16_t(hl() + a)); break;  // add hl,a
+        case 0x32: set_de(uint16_t(de() + a)); break;  // add de,a
+        case 0x33: set_bc(uint16_t(bc() + a)); break;  // add bc,a
+        case 0x34: set_hl(uint16_t(hl() + fetch16())); extra(16); break;
+        case 0x35: set_de(uint16_t(de() + fetch16())); extra(16); break;
+        case 0x36: set_bc(uint16_t(bc() + fetch16())); extra(16); break;
+        case 0x8a: {  // push nn (big endian immediate)
+            const uint8_t hi = fetch();
+            const uint8_t lo = fetch();
+            push(uint16_t((hi << 8) | lo));
+            extra(23);
+            break;
+        }
+        case 0x90: {  // outinb
+            const uint8_t v = rd(hl());
+            out_(bc(), v);
+            set_hl(uint16_t(hl() + 1));
+            extra(16);
+            break;
+        }
+        case 0x91: {  // nextreg n,n
+            const uint8_t reg = fetch();
+            const uint8_t val = fetch();
+            if (nextreg_) nextreg_(reg, val);
+            extra(20);
+            break;
+        }
+        case 0x92: {  // nextreg n,a
+            const uint8_t reg = fetch();
+            if (nextreg_) nextreg_(reg, a);
+            extra(17);
+            break;
+        }
+        case 0x93: {  // pixeldn
+            uint16_t v = hl();
+            if ((h & 7) != 7) v = uint16_t(v + 0x100);
+            else if ((l & 0xe0) != 0xe0) v = uint16_t((v & 0xf8ff) + 0x20);
+            else v = uint16_t((v & 0xf81f) + 0x800);
+            set_hl(v);
+            break;
+        }
+        case 0x94:  // pixelad
+            set_hl(uint16_t(0x4000 + ((d & 0xc0) << 5) + ((d & 0x07) << 8) + ((d & 0x38) << 2) +
+                            (e >> 3)));
+            break;
+        case 0x95:  // setae
+            a = uint8_t(0x80 >> (e & 7));
+            break;
+        case 0x98: {  // jp (c)
+            const uint8_t v = in_(bc());
+            pc_ = uint16_t((pc_ & 0xc000) + (v << 6));
+            extra(13);
+            break;
+        }
+        case 0xa4:  // ldix
+        case 0xac:  // lddx
+        case 0xb4:  // ldirx
+        case 0xbc: {  // lddrx
+            const uint8_t v = rd(hl());
+            if (v != a) wr(de(), v);
+            set_de(uint16_t(de() + 1));
+            set_hl(uint16_t(hl() + ((opcode & 0x08) ? -1 : 1)));
+            set_bc(uint16_t(bc() - 1));
+            extra(16);
+            if ((opcode & 0x10) && bc() != 0) {
+                pc_ = uint16_t(pc_ - 2);
+                cycles_ += 5;
+            }
+            break;
+        }
+        case 0xa5: {  // ldws
+            wr(de(), rd(hl()));
+            l = uint8_t(l + 1);
+            d = inc8(d);
+            extra(14);
+            break;
+        }
+        case 0xb7: {  // ldpirx
+            const uint8_t v = rd(uint16_t((hl() & 0xfff8) + (e & 7)));
+            if (v != a) wr(de(), v);
+            set_de(uint16_t(de() + 1));
+            set_bc(uint16_t(bc() - 1));
+            extra(16);
+            if (bc() != 0) {
+                pc_ = uint16_t(pc_ - 2);
+                cycles_ += 5;
+            }
+            break;
+        }
+        default:
+            return false;
+    }
+    return true;
 }
 
 void Z80::exec_index(uint16_t* index_reg) {
