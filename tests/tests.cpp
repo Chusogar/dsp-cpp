@@ -61,6 +61,11 @@
 #include "cpu/arm7tdmi.h"
 #include "drivers/arcade/mcr.h"
 #include "drivers/computers/specnext.h"
+#include "drivers/arcade/model3.h"
+#include "cpu/ppc603.h"
+#include "sound/scsp.h"
+#include "video/model3_tilegen.h"
+#include "video/real3d.h"
 #include "machine/sdcard_spi.h"
 #include "drivers/computers/msx2.h"
 #include "drivers/consoles/nes.h"
@@ -9915,6 +9920,311 @@ void test_specnext_dma() {
     check(ok && m->peek(0xb010) != 0x40, "Next zxnDMA memory to memory transfer");
 }
 
+// ---------------------------------------------------------------------------
+// Sega Model 3
+
+namespace m3t {
+
+struct PpcRam : dsp::Ppc603::Bus {
+    std::vector<uint8_t> mem = std::vector<uint8_t>(0x10000, 0);
+    uint8_t read8(uint32_t a) override { return mem[a & 0xffff]; }
+    uint16_t read16(uint32_t a) override { return uint16_t(read8(a) << 8 | read8(a + 1)); }
+    uint32_t read32(uint32_t a) override { return uint32_t(read16(a)) << 16 | read16(a + 2); }
+    void write8(uint32_t a, uint8_t v) override { mem[a & 0xffff] = v; }
+    void write16(uint32_t a, uint16_t v) override { write8(a, uint8_t(v >> 8)); write8(a + 1, uint8_t(v)); }
+    void write32(uint32_t a, uint32_t v) override { write16(a, uint16_t(v >> 16)); write16(a + 2, uint16_t(v)); }
+    void put(uint32_t& a, uint32_t op) { write32(a, op); a += 4; }
+};
+
+uint32_t addi(int d, int a, int16_t imm) { return 14u << 26 | uint32_t(d) << 21 | uint32_t(a) << 16 | uint16_t(imm); }
+uint32_t xform(int d, int a, int b, int xo) { return 31u << 26 | uint32_t(d) << 21 | uint32_t(a) << 16 | uint32_t(b) << 11 | uint32_t(xo) << 1; }
+uint32_t mtspr(int spr, int s) { return 31u << 26 | uint32_t(s) << 21 | uint32_t(spr & 0x1f) << 16 | uint32_t(spr >> 5) << 11 | 467u << 1; }
+
+uint32_t fbits(float f) { uint32_t v; std::memcpy(&v, &f, 4); return v; }
+
+}  // namespace m3t
+
+void test_ppc603_integer_and_branches() {
+    using namespace m3t;
+    PpcRam ram;
+    dsp::Ppc603 cpu(ram);
+    uint32_t a = 0x1000;
+    ram.put(a, addi(3, 0, 0));                  // li r3,0
+    ram.put(a, addi(4, 0, 10));                 // li r4,10
+    ram.put(a, mtspr(9, 4));                    // mtctr r4
+    ram.put(a, addi(3, 3, 3));                  // loop: addi r3,r3,3
+    ram.put(a, 16u << 26 | 16u << 21 | 0xfffc); // bdnz loop
+    ram.put(a, addi(5, 0, 7));                  // li r5,7
+    ram.put(a, xform(6, 3, 5, 235));            // mullw r6,r3,r5
+    ram.put(a, addi(7, 0, -3));                 // li r7,-3
+    ram.put(a, xform(8, 6, 7, 491));            // divw r8,r6,r7
+    ram.put(a, 21u << 26 | 6u << 21 | 9u << 16 | 4u << 11 | 0u << 6 | 27u << 1);  // rlwinm r9,r6,4,0,27
+    ram.put(a, 36u << 26 | 8u << 21 | 0u << 16 | 0x2000);  // stw r8,0x2000(0)
+    ram.put(a, 32u << 26 | 10u << 21 | 0u << 16 | 0x2000); // lwz r10,0x2000(0)
+    ram.put(a, 8u << 26 | 11u << 21 | 3u << 16 | 100);     // subfic r11,r3,100
+    ram.put(a, 18u << 26);                      // b .
+    cpu.reset();
+    cpu.set_pc(0x1000);
+    cpu.run(2000);
+    check(cpu.gpr(3) == 30, "PPC bdnz loop runs ten times (spin detection leaves counting loops alone)");
+    check(cpu.gpr(6) == 210, "PPC mullw");
+    check(int32_t(cpu.gpr(8)) == -70, "PPC divw with a negative divisor");
+    check(cpu.gpr(9) == 3360, "PPC rlwinm");
+    check(int32_t(cpu.gpr(10)) == -70 && ram.mem[0x2000] == 0xff, "PPC stw/lwz are big-endian");
+    check(cpu.gpr(11) == 70, "PPC subfic");
+
+    // External interrupt: vector 0x500 (MSR[IP] clear), SRR0 = interrupted PC.
+    uint32_t h = 0x500;
+    ram.put(h, addi(20, 0, 0x55));
+    ram.put(h, 18u << 26);
+    uint32_t m = 0x3000;
+    ram.put(m, addi(1, 0, 0x2000) | 0);         // li r1,0x2000 (FP)
+    ram.put(m, addi(1, 1, 0x6000));             // r1 = 0x8000 (EE)
+    ram.put(m, xform(1, 0, 0, 146));            // mtmsr r1
+    ram.put(m, 18u << 26);                      // b .
+    cpu.reset();
+    cpu.set_pc(0x3000);
+    cpu.run(100);
+    check(cpu.gpr(20) == 0, "PPC ignores a clear IRQ line");
+    cpu.set_irq(true);
+    cpu.run(100);
+    check(cpu.gpr(20) == 0x55, "PPC takes the external interrupt at 0x500 when MSR[EE] is set");
+    check((cpu.msr() & 0x8000) == 0, "PPC clears MSR[EE] on interrupt entry");
+}
+
+void test_ppc603_float() {
+    using namespace m3t;
+    PpcRam ram;
+    dsp::Ppc603 cpu(ram);
+    ram.write32(0x2000, fbits(1.5f));
+    ram.write32(0x2004, fbits(2.25f));
+    uint32_t a = 0x1000;
+    ram.put(a, addi(1, 0, 0x2000));
+    ram.put(a, xform(1, 0, 0, 146));               // mtmsr r1 (MSR[FP])
+    ram.put(a, 48u << 26 | 1u << 21 | 0u << 16 | 0x2000);  // lfs f1,0x2000(0)
+    ram.put(a, 48u << 26 | 2u << 21 | 0u << 16 | 0x2004);  // lfs f2,0x2004(0)
+    ram.put(a, 59u << 26 | 3u << 21 | 1u << 16 | 0u << 11 | 2u << 6 | 25u << 1);  // fmuls f3,f1,f2
+    ram.put(a, 63u << 26 | 4u << 21 | 3u << 16 | 1u << 11 | 21u << 1);           // fadd f4,f3,f1
+    ram.put(a, 63u << 26 | 5u << 21 | 0u << 16 | 4u << 11 | 15u << 1);           // fctiwz f5,f4
+    ram.put(a, 54u << 26 | 5u << 21 | 0u << 16 | 0x2010);  // stfd f5,0x2010(0)
+    ram.put(a, 18u << 26);
+    cpu.reset();
+    cpu.set_pc(0x1000);
+    cpu.run(200);
+    check(cpu.fpr(3) == 3.375, "PPC fmuls");
+    check(cpu.fpr(4) == 4.875, "PPC fadd");
+    check(ram.read32(0x2014) == 4, "PPC fctiwz truncates toward zero");
+}
+
+void test_model3_real3d_render() {
+    using namespace m3t;
+    dsp::Real3D gpu;
+    // Viewport node at 0x800000.
+    auto vp = [&](int w, uint32_t v) { gpu.write_culling_high(uint32_t(w) * 4, v); };
+    vp(0x00, 0);
+    vp(0x01, 0x01000000);            // no next viewport
+    vp(0x02, 0x00800100);            // child: culling node
+    vp(0x08, fbits(0.5f));           // cv
+    vp(0x09, fbits(0.5f));           // cw
+    vp(0x0a, fbits(0.5f));           // io
+    vp(0x0b, fbits(0.5f));           // jo  -> 90 degree frustum
+    vp(0x14, uint32_t(384 * 4) << 16 | uint32_t(496 * 4));
+    vp(0x16, 0x1000);                // matrix base (culling RAM low)
+    vp(0x17, 0x2000);                // LOD table
+    vp(0x1a, 0);
+    vp(0x24, 0xff << 8);             // ambient 1.0
+    vp(0x25, 0xff << 16);            // fog ambient
+    // Matrix 0: identity camera.
+    const float ident[12] = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
+    for (int i = 0; i < 12; ++i) gpu.write_culling_low(0x1000 * 4 + uint32_t(i) * 4, fbits(ident[i]));
+    for (int i = 0; i < 4; ++i) {
+        gpu.write_culling_low(0x2000 * 4 + uint32_t(i) * 8, fbits(0.0f));
+        gpu.write_culling_low(0x2000 * 4 + uint32_t(i) * 8 + 4, fbits(1000.0f));
+    }
+    // Culling node -> model at polygon RAM 0x200.
+    auto node = [&](int w, uint32_t v) { gpu.write_culling_high((0x100 + uint32_t(w)) * 4, v); };
+    node(0, 0x02);
+    node(7, 0x01000200);
+    node(8, 0x01000000);
+    // One red, unlit, opaque quad 10 units in front of the camera.
+    auto poly = [&](int w, uint32_t v) { gpu.write_polygon_ram((0x200 + uint32_t(w)) * 4, v); };
+    poly(0, 0x40);                                           // quad
+    poly(1, (uint32_t(-(1 << 22)) << 8) | 0x40 | 0x04 | 0x02);  // normal -X, last, RGB colour
+    poly(2, 0);
+    poly(3, 0);
+    poly(4, 0xff000000);                                     // red
+    poly(5, 0);
+    poly(6, 0x00800000 | 0x10000);                           // opaque, no lighting
+    const float pts[4][3] = {{10, -5, -5}, {10, 5, -5}, {10, 5, 5}, {10, -5, 5}};
+    for (int v = 0; v < 4; ++v)
+        for (int c = 0; c < 4; ++c)
+            poly(7 + v * 4 + c, c < 3 ? uint32_t(int32_t(pts[v][c] * 2048.0f)) << 8 : 0);
+    poly(7 + 16 + 6, 0);  // terminator
+    std::vector<uint32_t> out;
+    gpu.render(out);
+    check(gpu.last_viewport_count() == 1 && gpu.last_polygon_count() == 1, "Real3D walks viewport -> node -> model");
+    check(out[192 * 496 + 248] == 0xffff0000u, "Real3D rasterizes the quad in the centre of the screen");
+    check(out[10 * 496 + 10] == 0, "Real3D leaves pixels outside the quad transparent");
+    check(out[192 * 496 + 130] == 0xffff0000u && out[192 * 496 + 118] == 0, "Real3D perspective: quad spans x 124..372");
+
+    // Ping-pong: after the flip, polygon RAM writes wait for the next vblank.
+    gpu.flip_ping_pong();
+    poly(4, 0x00ff0000);  // green
+    check(gpu.polygon(0x204) == 0xff000000, "Real3D buffers polygon RAM writes after the ping-pong flip");
+    gpu.begin_vblank();
+    check(gpu.polygon(0x204) == 0x00ff0000, "Real3D applies buffered writes at vblank");
+    check((gpu.read_register(0) & 0x02000000) != 0, "Real3D status reports the ping-pong bit");
+}
+
+void test_model3_real3d_texture_and_jtag() {
+    dsp::Real3D gpu;
+    std::vector<uint16_t> data(32 * 32 * 2, 0);
+    for (size_t i = 0; i < data.size(); ++i) data[i] = uint16_t(i);
+    // 32x32 16-bit texture at (64, 32), no mipmaps.
+    const uint32_t header = 0x01000000 | 0x800000 | (1u << 7) | 2u;
+    gpu.upload_texture(header, data.data());
+    check(gpu.texel(64, 32) == 1 && gpu.texel(65, 32) == 0, "Real3D texture upload uses the 8x8 tile order");
+    check(gpu.texel(64, 33) == 3 && gpu.texel(72, 32) == 65, "Real3D texture tiles are 8x8 texels");
+
+    // JTAG: read the chain's ID codes (3 bypassed 3D-RAMs, then Mars 1/1).
+    auto clock = [&](bool tms, bool tdi) {
+        gpu.jtag_write(false, tms, tdi, true);
+        gpu.jtag_write(true, tms, tdi, true);
+        gpu.jtag_write(false, tms, tdi, true);
+        return gpu.jtag_tdo();
+    };
+    for (int i = 0; i < 5; ++i) clock(true, false);
+    clock(false, false);  // Run-Test/Idle
+    clock(true, false);   // Select-DR
+    clock(false, false);  // Capture-DR
+    std::vector<int> bits;
+    bits.push_back(clock(false, false));  // first bit in Shift-DR
+    for (int i = 0; i < 40; ++i) bits.push_back(clock(false, false));
+    uint32_t id = 0;
+    for (int i = 0; i < 32; ++i) id |= uint32_t(bits[size_t(3 + i)]) << i;
+    check(bits[0] == 0 && bits[1] == 0 && bits[2] == 0, "JTAG 3D-RAMs sit in bypass");
+    check(id == 0x316c6057, "JTAG shifts out the Mars ASIC ID code (step 2.1)");
+}
+
+void test_model3_tilegen() {
+    dsp::Model3TileGen tg;
+    auto put32 = [&](uint32_t off, uint32_t v) {
+        for (int i = 0; i < 4; ++i) tg.write8(off + uint32_t(i), uint8_t(v >> (8 * i)));
+    };
+    put32(0x100000 + 4, 0x001f);          // palette 1 = red
+    put32(0x100000 + 0x20 * 4, 0x8000);   // palette 0x20 = transparent
+    put32(64, 0x11111111);                // 4-bit tile 2, row 0: colour 1
+    put32(0xF8000, 0x00010000);           // layer A pair 0: left tile entry 1
+    put32(0xF7000, 0xffff0000);           // line 0: primary layers everywhere
+    tg.write_register(0x20, 1u << 12, nullptr);  // layer A is 4-bit, below 3D
+    tg.write_register(0x60, 0x80000000u, nullptr);
+    tg.begin_frame();
+    tg.draw_line(0);
+    check(tg.bottom()[0] == 0xffff0000u && tg.bottom()[7] == 0xffff0000u, "tilegen draws a 4-bit tile with its palette");
+    check(tg.top()[0] == 0, "tilegen keeps the above-3D surface empty");
+    tg.write_register(0x40, 0x00000010, nullptr);  // red offset +32: already saturated
+    tg.write_register(0x40, 0x000000f0, nullptr);  // red offset -32
+    tg.begin_frame();
+    tg.draw_line(0);
+    check(tg.bottom()[0] == 0xffdf0000u, "tilegen colour offset registers shift the palette");
+    bool acked = false;
+    tg.write_register(0x10, 0x02, [&](uint8_t bits) { acked = bits == 0x02; });
+    check(acked, "tilegen IRQ acknowledge register reaches the IRQ controller");
+}
+
+void test_scsp_slot_and_timer() {
+    std::vector<uint8_t> ram(0x80000, 0);
+    for (int i = 0; i < 0x100; ++i) {  // 16-bit square wave at 0x1000
+        const int16_t v = (i & 16) ? 12000 : -12000;
+        ram[0x1000 + size_t(i) * 2] = uint8_t(uint16_t(v) >> 8);
+        ram[0x1000 + size_t(i) * 2 + 1] = uint8_t(v);
+    }
+    dsp::Scsp scsp;
+    scsp.set_ram(ram.data(), 0x7ffff);
+    scsp.write16(0x400, 0x000f);           // MVOL
+    scsp.write16(0x02, 0x1000);            // SA low
+    scsp.write16(0x04, 0x0000);            // LSA
+    scsp.write16(0x06, 0x0100);            // LEA
+    scsp.write16(0x08, 0x001f);            // AR fast
+    scsp.write16(0x0a, 0x001f);            // RR
+    scsp.write16(0x0c, 0x0000);            // TL 0
+    scsp.write16(0x10, 0x0000);            // pitch 1:1
+    scsp.write16(0x16, 0xe000);            // DISDL 7, centre
+    scsp.write16(0x00, 0x1800 | 0x20);     // KYONEX + KYONB, normal loop
+    int32_t peak = 0;
+    for (int i = 0; i < 2000; ++i) {
+        int32_t l, r;
+        scsp.sample(l, r);
+        peak = std::max(peak, std::abs(l));
+    }
+    check(scsp.slot_active(0), "SCSP key on starts slot 0");
+    check(peak > 1000, "SCSP plays a looping 16-bit sample from sound RAM");
+
+    // Timer A -> 68000 level 3 after (255 - 0xf0) samples.
+    scsp.write16(0x424, 0x40);   // SCILV0: timer A bit
+    scsp.write16(0x426, 0x40);   // SCILV1
+    scsp.write16(0x41e, 0x40);   // SCIEB: timer A
+    scsp.write16(0x418, 0x00f0); // timer A, prescale 1
+    int fired_at = -1;
+    for (int i = 0; i < 40 && fired_at < 0; ++i) {
+        int32_t l, r;
+        scsp.sample(l, r);
+        if (scsp.irq_level() == 3) fired_at = i;
+    }
+    check(fired_at >= 13 && fired_at <= 16, "SCSP timer A raises its interrupt level on time");
+    scsp.write16(0x422, 0x40);   // SCIRE
+    check(scsp.irq_level() == 0, "SCSP SCIRE clears the pending timer interrupt");
+
+    scsp.midi_in(0x90);
+    check(scsp.irq_level() == 0, "SCSP MIDI interrupt stays masked until enabled");
+    scsp.write16(0x41e, 0x08);
+    scsp.write16(0x428, 0x08);   // SCILV2: MIDI -> level 4
+    check(scsp.irq_level() == 4, "SCSP MIDI input raises its interrupt");
+    check((scsp.read16(0x404) & 0xff) == 0x90 && scsp.irq_level() == 0, "SCSP MIDI FIFO read pops the byte");
+}
+
+void test_model3_missing_roms() {
+    dsp::Model3 m;
+    std::string err;
+    check(!m.init("/nonexistent/swtrilgy.zip", &err) && !err.empty(), "Model 3 reports missing ROMs");
+}
+
+void test_model3_swtrilgy_if_present() {
+    const char* rom = "/tmp/roms/swtrilgy/swtrilgy.zip";
+    if (!std::filesystem::exists(rom)) {
+        std::printf("skipping Star Wars Trilogy test (no %s)\n", rom);
+        return;
+    }
+    dsp::Model3 m;
+    m.set_threaded(false);
+    std::string err;
+    check(m.init(rom, &err), "Star Wars Trilogy ROM set loads");
+    check(m.warnings().empty(), "Star Wars Trilogy ROM CRCs match");
+    int max_polys = 0;
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 0; f < 640; ++f) {
+        m.set_inputs(dsp::MachineInputs{});
+        m.run_frame();
+        max_polys = std::max(max_polys, m.real3d().last_polygon_count());
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    check(max_polys > 2000, "swtrilgy attract mode renders the Darth Vader 3D scene");
+    std::set<uint32_t> colours(m.framebuffer(), m.framebuffer() + 496 * 384);
+    check(colours.size() > 200, "swtrilgy frame has shaded, textured 3D graphics");
+    check(peak > 200, "swtrilgy sound board produces audio");
+    // Test button: the service menu (tilegen text).
+    dsp::MachineInputs in{};
+    in.service = true;
+    for (int f = 0; f < 4; ++f) { m.set_inputs(in); m.run_frame(); }
+    for (int f = 0; f < 90; ++f) { m.set_inputs(dsp::MachineInputs{}); m.run_frame(); }
+    int white = 0;
+    for (int i = 0; i < 496 * 384; ++i) white += (m.framebuffer()[i] & 0xffffff) > 0xc0c0c0 ? 1 : 0;
+    check(white > 1500 && m.real3d().last_polygon_count() < 10, "swtrilgy test button opens the TEST MENU");
+}
+
 void test_specnext_boot_if_present() {
     namespace fs = std::filesystem;
     const char* rom = "/tmp/roms/next/tbblue.zip";
@@ -10188,6 +10498,14 @@ int main() {
     test_specnext_copper_and_interrupts();
     test_specnext_dma();
     test_specnext_boot_if_present();
+    test_ppc603_integer_and_branches();
+    test_ppc603_float();
+    test_model3_real3d_render();
+    test_model3_real3d_texture_and_jtag();
+    test_model3_tilegen();
+    test_scsp_slot_and_timer();
+    test_model3_missing_roms();
+    test_model3_swtrilgy_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

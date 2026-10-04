@@ -41,6 +41,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Mr. Do driver | `src/arcade/mrdo_hw.pas` | `rol90` tile/sprite decode |
 | MCR driver | `src/arcade/mcr_hw.pas` | Tapper / Tron family: dual Z80, CTC, SSIO |
 | ZX Spectrum Next | MAME `specnext` (TBBlue core 3.02) | Z80N, MMU/DivMMC/Multiface, ULA/LoRes/Layer 2/tilemap/sprites/copper, zxnDMA, CTC, IM2, 3×AY + DACs, SPI SD card; boots the firmware and NextZXOS from an SD image |
+| Sega Model 3 (Step 2.1) | MAME `model3` / Supermodel (behaviour), new code | PowerPC 603r interpreter, Real3D Pro-1000 software renderer (scene graph, LOD, textures with mipmaps, lighting, fog, translucency), tile generator, MPC106, JTAG, 315-5881 (MAME port), SCSP ×2 + 68000 sound board (MAME SCSP port), DSB2 MPEG-1 layer II music (MAME decoder); runs *Star Wars Trilogy Arcade* |
 | Amstrad CPC | `src/computer/amstrad_cpc.pas` | Gate Array wait-states (opcodes on a 4 T-state grid) |
 | Lynx Suzy / Mikey | new | Sprite blitter, math coprocessor, timers, LCD DMA, 4-channel sound |
 | Atari Lynx driver | new | 64 KiB DRAM, MAPCTL, LNX/LYX carts, 160×102 LCD |
@@ -1318,6 +1319,57 @@ averaged per output sample (no aliasing), the mix follows MAME (POKEY 0.20,
 TMS5220 0.50) with the DC removed, and the two CPUs run in ~100 µs slices so
 commands are not lost between them.
 
+### Sega Model 3: Star Wars Trilogy Arcade
+
+`--game swtrilgy` (also `model3`) runs *Star Wars Trilogy Arcade* (Sega /
+LucasArts 1998, Revision A, MAME set `swtrilgy`) on an emulated Model 3
+Step 2.1 board:
+
+```bash
+./build/dsp --game swtrilgy /path/to/swtrilgy.zip
+```
+
+- **CPU**: a PowerPC 603r interpreter (`src/cpu/ppc603.*`) at the real
+  166 MHz: integer, branch, FPU, SPRs, time base / decrementer and the
+  exceptions the board uses. Short load/compare/branch loops that only wait for
+  an interrupt or a device are detected and skipped to the end of the time
+  slice, which is what makes 166 MHz affordable.
+- **Real3D Pro-1000** (`src/video/real3d.*`): culling / polygon / texture RAM
+  with the ping-pong update buffers, texture FIFO and VROM uploads (8x8 tiled,
+  8/16-bit, mipmaps), DMA, the JTAG chain of the ASICs and a software renderer
+  for the scene graph: viewports with their frustum, sun / ambient lighting and
+  fog, culling nodes with matrices, LOD blend tables and pointer lists, models
+  of triangles and quads (shared vertices, flat / smooth / fixed shading, back
+  face culling, colour tables) and 12 texture formats with bilinear filtering,
+  mipmaps, wrapping and mirroring, alpha test and two translucency passes per
+  priority layer. Rasterization runs on a second thread while the next frame
+  is emulated (the picture is one frame late), split in horizontal bands over
+  the remaining cores.
+- **Tile generator** (`src/video/model3_tilegen.*`): four layers (4/8-bit
+  tiles, per-line scroll, the 32-pixel layer mask), palette with colour
+  offsets, layers below or above the 3D picture.
+- **Board**: memory map, CROM banking, MPC106 PCI bridge, IRQ controller,
+  315-5649 I/O (inputs, ADC, 93C46 EEPROM), RTC 72421, backup RAM and the
+  315-5881 security chip (ported from MAME), frame timing at 57.524 Hz with
+  the ping-pong flip on the tilegen-programmed line.
+- **Sound** (`src/machine/model3_sound.*`): the 68000 sound board with two
+  SCSPs (`src/sound/scsp.*`, port of MAME's SCSP + DSP) fed by the MIDI port,
+  and the DSB2 68000 with an MPEG-1 layer II decoder (`src/sound/mpeg_audio.*`,
+  from MAME) playing the John Williams score from the MPEG ROMs, mixed to mono.
+
+The force feedback drive board is not emulated: its set-up is skipped with
+MAME's patches. Controls: arrows = flight lever (an analog stick, ramped from
+the keys; on the stage select screen the lever position picks the stage
+directly: left = Yavin, centre = Hoth, right = Endor), button 1 (Left Ctrl /
+Space) = trigger 1, button 2 = trigger 2, buttons 3 / 4 = event buttons, 5 =
+coin, 1 = start, F1 = test, 3 = service. The test menu, input test and
+calibration screens work.
+
+ROMs (MAME `swtrilgy`): `epr-21379a.17` … `epr-21382a.20` (program),
+`mpr-21339.01` … `mpr-21350.12` (banked CROM), `mpr-21359.26` …
+`mpr-21374.41` (VROM), `epr-21383.21`, `mpr-21355.22`, `mpr-21357.24`
+(sound), `epr-21384.2`, `mpr-21375.18` … `mpr-21378.24` (DSB2 MPEG).
+
 ### Nintendo Punch-Out!!
 
 After MAME `punchout.cpp` (set `punchout`, Rev B). Z80 at 4 MHz; a 2A03 (NES
@@ -1499,7 +1551,7 @@ src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556
 src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, Lynx, WD1793/Beta
 src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556, AVG
 src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, 6532, Lynx, mathbox
-src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805, µPD7801, TMS7000, NEC V30, MCS-51
+src/cpu/        Z80, M6809, M6502, M68000, HD63701, M6805, µPD7801, TMS7000, NEC V30, MCS-51, PowerPC 603
 src/sound/      AY-3-8910, SN76496, NES APU, SID, µPD1771C, QSound, TMS5220, Sega PCM
 src/video/      graphics decode, palettes, NES PPU, VIC-II, GB PPU, TMS3556, V9938, AVG, Sega 16, TIA
 src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, 6532, Lynx, mathbox, 315-5195, MSX FDC/RTC

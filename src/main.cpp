@@ -23,6 +23,7 @@
 #include "drivers/arcade/m72.h"
 #include "drivers/arcade/punchout.h"
 #include "drivers/arcade/starwars.h"
+#include "drivers/arcade/model3.h"
 #include "drivers/arcade/asteroid.h"
 #include "drivers/arcade/polepos.h"
 #include "drivers/arcade/hangon.h"
@@ -119,7 +120,7 @@ void print_supported_emulators() {
         "\n"
         "  Arcade:\n"
         "    bagman, mikie, trackfld, gauntlet, mrdo, ddragon, ddragon2,\n"
-        "    elevator, junglek, indydoom, peter, marble, skullxbo, shuuz, starwars, esb, punchout, asteroid, roadrunn,\n"
+        "    elevator, junglek, indydoom, peter, marble, skullxbo, shuuz, starwars, esb, swtrilgy (Sega Model 3), punchout, asteroid, roadrunn,\n"
         "    paperboy, ssprint, apb, 720,\n"
         "    tapper, tron, shollow, domino, wacko, dotron, timber,\n"
 		"    robocop, baddudes, hippodrm, slyspy, bouldash,\n"
@@ -240,6 +241,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "peter") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::PeterPak);	
 	if (game == "marble") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Marble);
 	if (game == "punchout" || game == "punch-out") return std::make_unique<dsp::PunchOut>();
+	if (game == "swtrilgy" || game == "model3") return std::make_unique<dsp::Model3>();
 	if (game == "starwars" || game == "star-wars") {
 		return std::make_unique<dsp::StarWars>(dsp::StarWars::Game::StarWars);
 	}

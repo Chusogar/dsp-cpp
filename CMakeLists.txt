@@ -222,6 +222,14 @@ add_executable(dsp
   src/drivers/computers/specnext_video.cpp
   src/machine/sdcard_spi.cpp
   src/machine/zxn_dma.cpp
+  src/drivers/arcade/model3.cpp
+  src/cpu/ppc603.cpp
+  src/video/real3d.cpp
+  src/video/model3_tilegen.cpp
+  src/machine/sega_315_5881.cpp
+  src/machine/model3_sound.cpp
+  src/sound/scsp.cpp
+  src/sound/mpeg_audio.cpp
   src/drivers/computers/zx_clone.cpp
   src/drivers/computers/amstrad_cpc.cpp
   src/drivers/computers/msx1.cpp
@@ -406,6 +414,14 @@ add_executable(dsp_tests
   src/drivers/computers/specnext_video.cpp
   src/machine/sdcard_spi.cpp
   src/machine/zxn_dma.cpp
+  src/drivers/arcade/model3.cpp
+  src/cpu/ppc603.cpp
+  src/video/real3d.cpp
+  src/video/model3_tilegen.cpp
+  src/machine/sega_315_5881.cpp
+  src/machine/model3_sound.cpp
+  src/sound/scsp.cpp
+  src/sound/mpeg_audio.cpp
   src/drivers/computers/amstrad_cpc.cpp
   src/drivers/computers/msx2.cpp
   src/drivers/consoles/nes.cpp
