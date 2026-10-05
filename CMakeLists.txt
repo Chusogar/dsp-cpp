@@ -66,6 +66,7 @@ add_executable(dsp
   src/sound/polepos_engine.cpp
   src/sound/sega_pcm.cpp
   src/sound/upd7759.cpp
+  src/sound/rf5c68.cpp
   src/sound/huc6280_psg.cpp
   src/sound/vlm5030.cpp
   src/sound/es5503.cpp
@@ -174,6 +175,8 @@ add_executable(dsp
   src/drivers/arcade/polepos.cpp
   src/drivers/arcade/hangon.cpp
   src/drivers/arcade/system16.cpp
+  src/drivers/arcade/system18.cpp
+  src/machine/sega_315_5296.cpp
   src/drivers/arcade/outrun.cpp
   src/drivers/arcade/xboard.cpp
   src/drivers/arcade/galaxian.cpp
@@ -349,6 +352,7 @@ add_executable(dsp_tests
   src/sound/ym2203.cpp
   src/sound/sega_pcm.cpp
   src/sound/upd7759.cpp
+  src/sound/rf5c68.cpp
   src/sound/huc6280_psg.cpp
   src/sound/vlm5030.cpp
   src/sound/cem3394.cpp
@@ -492,6 +496,8 @@ add_executable(dsp_tests
   src/drivers/arcade/xboard.cpp
   src/drivers/arcade/hangon.cpp
   src/drivers/arcade/system16.cpp
+  src/drivers/arcade/system18.cpp
+  src/machine/sega_315_5296.cpp
   src/drivers/consoles/pcengine.cpp
   src/drivers/arcade/neogeo.cpp
   src/drivers/arcade/opwolf.cpp

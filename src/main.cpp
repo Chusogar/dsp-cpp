@@ -28,6 +28,7 @@
 #include "drivers/arcade/polepos.h"
 #include "drivers/arcade/hangon.h"
 #include "drivers/arcade/system16.h"
+#include "drivers/arcade/system18.h"
 #include "drivers/arcade/sega_system1.h"
 #include "drivers/arcade/outrun.h"
 #include "drivers/arcade/xboard.h"
@@ -140,7 +141,7 @@ void print_supported_emulators() {
         "    outrun, aburner2, hangon, enduro, sharrier, fantzone, shinobi,\n"
 		"    alexkidd, aliensyn, wb3, tetris, altbeast, goldnaxe, ddux, eswat,\n"
 		"    passsht, aurail, riotcity, sdi, sdib, cotton, bayroute, sonicbom,\n"
-		"    timescan,\n"
+		"    timescan, mwalk,\n"
         "    pitfall2, teddyboy, wboy, mrviking, seganinj, upndown,\n"
 		"    flicky, gardia,\n"
 		"    galaxian, mooncrst, scramble,\n"
@@ -409,6 +410,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     }
     if (game == "timescan" || game == "timescanner") {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Timescan);
+    }
+    if (game == "mwalk" || game == "moonwalker" || game == "moonwalk") {
+        return std::make_unique<dsp::System18>(dsp::System18::Game::Mwalk);
     }
 	
 	// Sega System 1
