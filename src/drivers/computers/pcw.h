@@ -8,6 +8,7 @@
 #include "core/machine.h"
 #include "cpu/z80.h"
 #include "machine/nec765.h"
+#include "sound/ay8910.h"
 
 namespace dsp {
 
@@ -71,6 +72,7 @@ private:
     void render_screen();
     uint8_t system_status() const;
     void system_control(uint8_t data);
+    void maybe_patch_blit_setup();
 
     size_t ram_size() const { return size_t(ram_banks_) * 0x4000; }
     uint8_t* bank_ptr(int bank);
@@ -80,6 +82,8 @@ private:
 
     Z80 cpu_;
     Nec765Fdc fdc_;
+    AY8910 ay_;
+    uint8_t ay_latch_ = 0;
 
     std::vector<uint8_t> ram_;
     std::vector<uint8_t> printer_mcu_rom_;
@@ -112,6 +116,10 @@ private:
     int beeper_phase_ = 0;
 
     int timer_line_counter_ = 0;
+
+    // Habisoft Abadia (and similar) blit: CALL $32BC skips LD IY/$3309 setup at
+    // $32B3. Once the game bank is resident, retarget those CALLs to $32B3.
+    bool blit_setup_patched_ = false;
 };
 
 }  // namespace dsp
