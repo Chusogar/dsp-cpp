@@ -1444,6 +1444,18 @@ not already next to the game zip:
 
 Steer with the arrows, accelerate with Left Ctrl / Space, brake with Z / Down,
 toggle gear with X, coin with 5. DIP bank 0 is DSWA, bank 1 is DSWB.
+
+### Namco Baraduke / Metro-Cross
+
+Ported from `baraduke_hw.pas`. Main M6809 + HD63701V MCU (CUS60), shared Namco
+CUS30 8-voice wave-RAM sound, dual scrolling tilemaps, text layer and sprites.
+288×224 at ~60.6 Hz. Games: `baraduke` (Alien Sector) and `metrocrs`.
+
+```bash
+./build/dsp --game baraduke /path/to/baraduke.zip
+./build/dsp --game metrocrs /path/to/metrocrs.zip
+```
+
 ### Sega OutRun, Hang-On, and System 16
 
 Ported from [dsp-emulator](https://github.com/leniad/dsp-emulator)

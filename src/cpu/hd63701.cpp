@@ -272,6 +272,12 @@ uint8_t HD63701::read(uint16_t address) {
     if (address <= 0x001f) return read_io(uint8_t(address));
     if (address >= 0x0040 && address <= 0x01ff) return internal_ram_[address];
     if (address >= 0x0200 && address <= 0xbfff) return read_(address);
+    if (type_ == Type::HD63701V) {
+        // 4KB internal ROM at $e000-$ffff; $c000-$dfff is external.
+        if (address >= 0xc000 && address <= 0xdfff) return read_(address);
+        if (address >= 0xe000) return rom_[address & 0x1fff];
+        return 0xff;
+    }
     if (address >= 0xc000) return rom_[address & 0x3fff];
     return 0xff;
 }
@@ -297,8 +303,15 @@ void HD63701::write(uint16_t address, uint8_t value) {
         internal_ram_[address] = value;
         return;
     }
-    if (address >= 0x0200 && address <= 0xbfff) write_(address, value);
-    // $c000-$ffff is the internal ROM.
+    if (address >= 0x0200 && address <= 0xbfff) {
+        write_(address, value);
+        return;
+    }
+    if (type_ == Type::HD63701V && address >= 0xc000 && address <= 0xdfff) {
+        write_(address, value);
+        return;
+    }
+    // $c000-$ffff (Y) / $e000-$ffff (V) is internal ROM.
 }
 
 uint16_t HD63701::read_word(uint16_t address) {
