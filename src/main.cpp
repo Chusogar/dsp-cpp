@@ -61,6 +61,7 @@
 #include "drivers/arcade/retofinv.h"
 #include "drivers/arcade/baraduke_hw.h"
 #include "drivers/arcade/bankpanic_hw.h"
+#include "drivers/arcade/balsente.h"
 #include "drivers/arcade/slapfight.h"
 #include "drivers/arcade/williams.h"
 
@@ -157,6 +158,10 @@ void print_supported_emulators() {
 		"    retofinv, slapfight, tigerheli,\n"
 		"    baraduke, metrocrs, bankp, combh\n"
 		"    defender, mayday, colony7, joust, robotron, stargate\n"
+		"    sentetst, cshift, hattrick, gghost, otwalls, snakepit, triviag1,\n"
+		"    snakjack, stocker, triviabb, triviag2, triviayp, triviasp,\n"
+		"    gimeabrk, minigolf, teamht, grudge, triviaes, toggle, nstocker,\n"
+		"    sfootbal, spiker, stompin, nametune, rescraid\n"
 		"\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion, specnext (tbblue),\n"
@@ -553,7 +558,32 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "joust") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Joust);
 	if (game == "robotron") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Robotron);
 	if (game == "stargate") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Stargate);
-	
+
+	if (game == "sentetst") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Sentetst);
+	if (game == "cshift") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Cshift);
+	if (game == "hattrick") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Hattrick);
+	if (game == "gghost") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Gghost);
+	if (game == "otwalls") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Otwalls);
+	if (game == "snakepit") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Snakepit);
+	if (game == "triviag1") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviag1);
+	if (game == "snakjack") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Snakjack);
+	if (game == "stocker") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Stocker);
+	if (game == "triviabb") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviabb);
+	if (game == "triviag2") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviag2);
+	if (game == "triviayp") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviayp);
+	if (game == "triviasp") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviasp);
+	if (game == "gimeabrk") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Gimeabrk);
+	if (game == "minigolf") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Minigolf);
+	if (game == "teamht") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Teamht);
+	if (game == "grudge") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Grudge);
+	if (game == "triviaes") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviaes);
+	if (game == "toggle") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Toggle);
+	if (game == "nstocker") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Nstocker);
+	if (game == "sfootbal") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Sfootbal);
+	if (game == "spiker") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Spiker);
+	if (game == "stompin") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Stompin);
+	if (game == "nametune") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Nametune);
+	if (game == "rescraid") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Rescraid);
 
 	// computers
     if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48k>();

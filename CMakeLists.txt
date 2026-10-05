@@ -71,6 +71,7 @@ add_executable(dsp
   src/sound/es5503.cpp
   src/sound/asc.cpp
   src/sound/saa1099.cpp
+  src/sound/cem3394.cpp
     
   src/video/gfx.cpp
   src/video/atari_mo.cpp
@@ -215,6 +216,7 @@ add_executable(dsp
   src/drivers/arcade/retofinv.cpp
   src/drivers/arcade/baraduke_hw.cpp
   src/drivers/arcade/bankpanic_hw.cpp
+  src/drivers/arcade/balsente.cpp
   src/drivers/arcade/slapfight.cpp
   src/drivers/arcade/williams.cpp
 
@@ -340,6 +342,7 @@ add_executable(dsp_tests
   src/sound/upd7759.cpp
   src/sound/huc6280_psg.cpp
   src/sound/vlm5030.cpp
+  src/sound/cem3394.cpp
   src/video/huc6270.cpp
   src/video/huc6260.cpp
   src/video/gfx.cpp
@@ -436,6 +439,7 @@ add_executable(dsp_tests
   src/cpu/m6800.cpp
   src/machine/pia6821.cpp
   src/drivers/arcade/williams.cpp
+  src/drivers/arcade/balsente.cpp
   src/cpu/spc700.cpp
   src/video/snes_ppu.cpp
   src/drivers/consoles/snes.cpp

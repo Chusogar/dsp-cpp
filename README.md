@@ -1145,6 +1145,25 @@ arrows + Ctrl/Space for the left stick, `1` is RESET (start a game), `3` is
 SELECT. Fire is `button1` (INPT4/INPT5). DIP bank 0 bit 3 is colour
 (default on); bits 6–7 are the P0/P1 difficulty switches.
 
+### Bally/Sente SAC-1
+
+6809 main @ 1.25 MHz, Z80 sound @ 4 MHz, soft m6850 UART link, 8253 timers and
+six CEM3394 synth voices. 256×240 packed 4bpp playfield plus 40 hardware sprites.
+
+```bash
+./build/dsp --game hattrick /path/to/hattrick.zip
+./build/dsp --game cshift /path/to/cshift.zip
+./build/dsp --game gghost /path/to/gghost.zip
+```
+
+Supported parents: `sentetst`, `cshift`, `hattrick`, `gghost`, `otwalls`,
+`snakepit`, `triviag1`, `snakjack`, `stocker`, `triviabb`, `triviag2`,
+`triviayp`, `triviasp`, `gimeabrk`, `minigolf`, `teamht`, `grudge`,
+`triviaes`, `toggle`, `nstocker`, `sfootbal`, `spiker`, `stompin`,
+`nametune`, `rescraid`. (Shrike Avenger needs a 68000 and is not included.)
+
+Coin `5`/`6`, start `1`/`2`. Stick = arrows; B1 = Ctrl/Space, B2 = Alt/Z.
+
 ### Williams (Defender, Mayday, Colony 7, Joust, Robotron, Stargate)
 
 6809 main CPU, 6800 sound CPU, three PIA 6821 and (Joust/Robotron/Stargate)
