@@ -119,6 +119,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Z8002 CPU | new (MAME `z8000`) | Unsegmented 16-bit Z8002 used by Pole Position |
 | MB88xx MCU | new (MAME `mb88xx`) | Fujitsu 4-bit MCU used by Namco 51/52/53/54xx |
 | Pole Position driver | new (MAME `namco/polepos.cpp`) | Z80 + dual Z8002, road, sprites, real 51/52/53/54xx, WSG/engine |
+| Bank Panic HW | `src/arcade/bankpanic_hw.pas` | Z80 + 3×SN76496, Bank Panic and Combat Hawk |
 | Sega PCM | `src/snd/sega_pcm.pas`, MAME `segapcm.cpp` | 315-5218 (16 voices) and the discrete 8-voice board (Hang-On, Space Harrier) |
 | 315-5195 mapper | `src/arcade/misc/sega_315_5195.pas` | 68000 memory mapper used by OutRun and System 16B |
 | OutRun driver | `src/arcade/outrun_hw.pas` | Dual 68000, Z80, YM2151, Sega PCM, road + sprites |
@@ -1454,6 +1455,17 @@ CUS30 8-voice wave-RAM sound, dual scrolling tilemaps, text layer and sprites.
 ```bash
 ./build/dsp --game baraduke /path/to/baraduke.zip
 ./build/dsp --game metrocrs /path/to/metrocrs.zip
+```
+
+### Sanritsu / Sega Bank Panic / Combat Hawk
+
+Ported from `bankpanic_hw.pas`. Z80 @ ~2.58 MHz, three SN76496, FG+BG
+tilemaps with priority and X scroll. 224×224 @ ~61 Hz. Games: `bankp`,
+`combh` (Combat Hawk, monitor rotated 270°).
+
+```bash
+./build/dsp --game bankp /path/to/bankp.zip
+./build/dsp --game combh /path/to/combh.zip
 ```
 
 ### Sega OutRun, Hang-On, and System 16
