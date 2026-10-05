@@ -16,7 +16,7 @@ Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 **OutRun**, **After Burner II** (X-Board), **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
 **Altered Beast**).
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
-**MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
+**MSX1** / **MSX2**, **Commodore 64**, **Commodore 128**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
 **EXL-100** / **EXELTEL**, **Sinclair QL**, **Atari ST**, **Commodore Amiga 500**. Consoles: NES, Game Boy / Game Boy
 Color, **Game Boy Advance**, **Atari 2600**, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
 **Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
@@ -945,6 +945,27 @@ structure, so its files are placed on a disk image built in memory and served
 through the drive as well. Without a drive ROM there is no device on the bus and
 `.d64`/`.t64` fall back to injecting their first program into RAM
 (`.g64` is rejected).
+
+### Commodore 128
+
+C128 mode with the 40-column VIC-II. Needs the MAME `c128.zip` / `c128p.zip` set
+(revision 4/5 preferred, revision 2/3 accepted):
+
+| File | Role |
+| --- | --- |
+| `318018-04.u33` (or `-02`) | BASIC LO 16K |
+| `318019-04.u34` (or `-02`) | BASIC HI 16K |
+| `318020-05.u35` (or `-03`) | KERNAL / Editor 16K |
+| `251913-01.u32` | C64 BASIC+KERNAL 16K |
+| `390059-01.u18` | Character ROM 8K |
+
+Z80 BIOS (middle of the KERNAL chip) is loaded but the Z80 stays halted — the
+8502 boots directly. VDC 80-column and disk drives are stubbed.
+
+```bash
+./build/dsp --game c128 /tmp/roms/computers/c128.zip
+./build/dsp --game commodore128 /path/to/c128-roms/
+```
 
 ### Apple II, II+, IIe and IIe Enhanced
 

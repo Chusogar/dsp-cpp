@@ -73,6 +73,8 @@
 #include "drivers/computers/msx1.h"
 #include "drivers/computers/msx2.h"
 #include "drivers/computers/c64.h"
+#include "drivers/computers/vic20.h"
+#include "drivers/computers/c128.h"
 #include "drivers/computers/apple2.h"
 #include "drivers/computers/apple2gs.h"
 #include "drivers/computers/exelv.h"
@@ -160,7 +162,8 @@ void print_supported_emulators() {
 		"\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion, specnext (tbblue),\n"
-        "    cpc464, cpc664, cpc6128, msx, msx2, msx2-jp, msx2-eu, nms8250, c64,\n"
+        "    cpc464, cpc664, cpc6128, msx, msx2, msx2-jp, msx2-eu, nms8250, c64, vic20, vic20p,\n"
+        "    c128, commodore128,\n"
         "    apple2, apple2gs, apple2plus, apple2e, apple2ee, exl100, exeltel, ql,\n"
         "    st, atarist, atari-st, amiga, a500, amiga500,\n"
         "    macplus, mac, macintosh, plus, macii, samcoupe\n"
@@ -585,6 +588,15 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	}
 	if (game == "c64" || game == "commodore64" || game == "commodore") {
         return std::make_unique<dsp::C64>();
+    }
+    if (game == "vic20p" || game == "vic-20p" || game == "vic20-pal") {
+        return std::make_unique<dsp::Vic20>(dsp::Vic20::Region::Pal);
+    }
+    if (game == "vic20" || game == "vic-20" || game == "vic20n" || game == "vic20-ntsc") {
+        return std::make_unique<dsp::Vic20>(dsp::Vic20::Region::Pal);
+    }
+	if (game == "c128" || game == "commodore128") {
+        return std::make_unique<dsp::C128>();
     }
     if (game == "apple2orig" || game == "apple2integer" || game == "appleii-integer") {
         return std::make_unique<dsp::Apple2>(dsp::Apple2::Model::II);
