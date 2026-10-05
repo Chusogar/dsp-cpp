@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 
+#include "drivers/arcade/system16_roms.h"
 #include "machine/fd1089.h"
 
 namespace dsp {
@@ -187,6 +188,7 @@ const std::vector<RomEntry> kAltbeastSprites = {
     {"epr-11684.b8", 0x20000, 0xc0000, 0xb20c0edb},
 };
 
+
 void scramble_s16a_sprites(std::vector<uint16_t>& dest, const std::vector<uint8_t>& raw) {
     std::vector<uint8_t> out(0x80000, 0);
     auto copy64k = [&](uint32_t dst, uint32_t src) {
@@ -223,18 +225,262 @@ bool load_sprites_16b_bytes(RomLoader& loader, const std::vector<RomEntry>& entr
     return true;
 }
 
+bool is_16b_game(System16::Game game) {
+    switch (game) {
+        case System16::Game::Altbeast:
+        case System16::Game::Goldnaxe:
+        case System16::Game::Ddux:
+        case System16::Game::Eswat:
+        case System16::Game::Passsht:
+        case System16::Game::Aurail:
+        case System16::Game::Riotcity:
+        case System16::Game::Sdi:
+        case System16::Game::Cotton:
+        case System16::Game::Bayroute:
+        case System16::Game::Sonicbom:
+        case System16::Game::Timescan:
+            return true;
+        default:
+            return false;
+    }
+}
+
 }  // namespace
+
+bool System16::is_16b() const { return is_16b_game(game_); }
+
+void System16::remap_sprites_5797(std::vector<uint16_t>& sprites) {
+    // Pascal goldnaxe/eswat/riotcity: split each 0x40000-word pair into halves at +0 / +0x100000.
+    std::vector<uint16_t> temp = sprites;
+    sprites.assign(0x100000, 0);  // 2MB worth of words
+    const uint32_t half = 0x20000;
+    const uint32_t src_bases[3] = {0, 0x40000, 0x80000};
+    const uint32_t dst_lo[3] = {0, 0x20000, 0x40000};
+    const uint32_t dst_hi[3] = {0x80000, 0xa0000, 0xc0000};
+    for (int pair = 0; pair < 3; pair++) {
+        const uint32_t src = src_bases[pair];
+        if (src + half > temp.size()) break;
+        for (uint32_t i = 0; i < half; i++) {
+            if (dst_lo[pair] + i < sprites.size()) sprites[dst_lo[pair] + i] = temp[src + i];
+            if (src + half + i < temp.size() && dst_hi[pair] + i < sprites.size())
+                sprites[dst_hi[pair] + i] = temp[src + half + i];
+        }
+    }
+}
+
+uint8_t System16::calc_sound_bank(uint8_t value) const {
+    switch (sound_bank_mode_) {
+        case SoundBankMode::Bank5704:
+            return uint8_t(value & 0xf);
+        case SoundBankMode::Bank5797:
+            return uint8_t((value & 7) | ((value & 0x10) >> 1));
+        case SoundBankMode::Bank5358:
+            return uint8_t((value & 3) + ((~value & 0x38) >> 1));
+        default:
+            return uint8_t(value & 0xf);
+    }
+}
+
+void System16::exec_5250(bool history) {
+    const int16_t bound1 = int16_t(s315_5250_regs_[0]);
+    const int16_t bound2 = int16_t(s315_5250_regs_[1]);
+    const int16_t value = int16_t(s315_5250_regs_[2]);
+    const int16_t minv = bound1 < bound2 ? bound1 : bound2;
+    const int16_t maxv = bound1 > bound2 ? bound1 : bound2;
+    if (value < minv) {
+        s315_5250_regs_[7] = uint16_t(minv);
+        s315_5250_regs_[3] = 0x8000;
+    } else if (value > maxv) {
+        s315_5250_regs_[7] = uint16_t(maxv);
+        s315_5250_regs_[3] = 0x4000;
+    } else {
+        s315_5250_regs_[7] = uint16_t(value);
+        s315_5250_regs_[3] = 0;
+    }
+    if (history) {
+        s315_5250_regs_[4] =
+            uint16_t(s315_5250_regs_[4] | (uint16_t(s315_5250_regs_[3] == 0) << s315_5250_bit_));
+        s315_5250_bit_++;
+    }
+}
+
+void System16::configure_16b_game() {
+    // Defaults matching Altered Beast / 5704 board.
+    use_mcu_ = false;
+    use_fd1094_ = false;
+    use_fd1089_ = false;
+    rotated_ = false;
+    mb_type_ = false;
+    sdi_io_ = false;
+    region1_mode_ = Region1Mode::None;
+    region2_mode_ = Region2Mode::None;
+    sound_bank_mode_ = SoundBankMode::Bank5704;
+    sound_bank_count_ = 16;
+    sound_bank_base_ = 0x8000;
+    tile_color_shift_ = 6;
+    text_color_shift_ = 9;
+    text_code_mask_ = 0x1ff;
+    tile_n_ = 4;
+    sprite_banks_ = 8;
+    dsw_b_ = 0xfd;
+    video_.tile_banks = 3;
+
+    switch (game_) {
+        case Game::Altbeast:
+            use_mcu_ = true;
+            region2_mode_ = Region2Mode::Write5704;
+            break;
+        case Game::Goldnaxe:
+            use_mcu_ = true;
+            region1_mode_ = Region1Mode::Chip5797;
+            sound_bank_mode_ = SoundBankMode::Bank5797;
+            sound_bank_count_ = 8;
+            sprite_banks_ = 16;
+            break;
+        case Game::Ddux:
+            use_fd1094_ = true;
+            region1_mode_ = Region1Mode::Rom;
+            region1_rom_pos_ = 0x40000 >> 1;
+            region1_rom_mask_ = 0x3ffff;
+            region2_mode_ = Region2Mode::Write5704;
+            tile_n_ = 2;
+            video_.tile_banks = 1;
+            sprite_banks_ = 4;
+            dsw_b_ = 0xfe;
+            break;
+        case Game::Eswat:
+            use_fd1094_ = true;
+            region1_mode_ = Region1Mode::Chip5797;
+            sound_bank_mode_ = SoundBankMode::Bank5797;
+            sound_bank_count_ = 16;
+            tile_n_ = 8;
+            video_.tile_banks = 7;
+            sprite_banks_ = 16;
+            break;
+        case Game::Passsht:
+            use_fd1094_ = true;
+            sound_bank_mode_ = SoundBankMode::Bank5358;
+            sound_bank_count_ = 16;
+            tile_n_ = 2;
+            video_.tile_banks = 1;
+            sprite_banks_ = 3;
+            dsw_b_ = 0xfe;
+            mb_type_ = true;
+            rotated_ = true;
+            break;
+        case Game::Aurail:
+            region1_mode_ = Region1Mode::Rom;
+            region1_rom_pos_ = 0x40000 >> 1;
+            region1_rom_mask_ = 0x3ffff;
+            region2_mode_ = Region2Mode::Write5704;
+            sound_bank_count_ = 8;
+            tile_n_ = 8;
+            video_.tile_banks = 7;
+            sprite_banks_ = 16;
+            break;
+        case Game::Riotcity:
+            region1_mode_ = Region1Mode::Rom;
+            region1_rom_pos_ = 0x40000 >> 1;
+            region1_rom_mask_ = 0x3ffff;
+            region2_mode_ = Region2Mode::Write5704;
+            sound_bank_count_ = 8;
+            sound_bank_base_ = 0x10000;
+            tile_n_ = 8;
+            video_.tile_banks = 7;
+            sprite_banks_ = 16;
+            break;
+        case Game::Sdi:
+            use_fd1089_ = true;
+            region1_mode_ = Region1Mode::RomFd1089;
+            region1_rom_pos_ = 0x10000 >> 1;
+            region1_rom_mask_ = 0xffff;
+            region2_mode_ = Region2Mode::RomFd1089;
+            region2_rom_pos_ = 0x20000 >> 1;
+            region2_rom_mask_ = 0x1ffff;
+            sound_bank_mode_ = SoundBankMode::None;
+            tile_n_ = 2;
+            video_.tile_banks = 1;
+            sprite_banks_ = 3;
+            mb_type_ = true;
+            sdi_io_ = true;
+            break;
+        case Game::Cotton:
+            use_fd1094_ = true;
+            region1_mode_ = Region1Mode::Rom;
+            region1_rom_pos_ = 0x40000 >> 1;
+            region1_rom_mask_ = 0x3ffff;
+            region2_mode_ = Region2Mode::Write5704;
+            sound_bank_count_ = 8;
+            tile_n_ = 8;
+            video_.tile_banks = 7;
+            sprite_banks_ = 16;
+            dsw_b_ = 0xfe;
+            break;
+        case Game::Bayroute:
+            use_fd1094_ = true;
+            region1_mode_ = Region1Mode::Rom;
+            region1_rom_pos_ = 0x40000 >> 1;
+            region1_rom_mask_ = 0x3ffff;
+            region2_mode_ = Region2Mode::Write5704;
+            sound_bank_count_ = 16;
+            tile_n_ = 2;
+            video_.tile_banks = 1;
+            sprite_banks_ = 4;
+            dsw_b_ = 0xbd;
+            break;
+        case Game::Sonicbom:
+            use_fd1094_ = true;
+            region1_mode_ = Region1Mode::Rom;
+            region1_rom_pos_ = 0x20000 >> 1;
+            region1_rom_mask_ = 0x1ffff;
+            sound_bank_mode_ = SoundBankMode::Bank5358;
+            sound_bank_count_ = 4;
+            tile_n_ = 2;
+            video_.tile_banks = 1;
+            sprite_banks_ = 4;
+            dsw_b_ = 0x7f;
+            mb_type_ = true;
+            rotated_ = true;
+            break;
+        case Game::Timescan:
+            region1_mode_ = Region1Mode::Rom;
+            region1_rom_pos_ = 0x10000 >> 1;
+            region1_rom_mask_ = 0xffff;
+            region2_mode_ = Region2Mode::Rom;
+            region2_rom_pos_ = 0x20000 >> 1;
+            region2_rom_mask_ = 0xffff;
+            sound_bank_mode_ = SoundBankMode::Bank5358;
+            sound_bank_count_ = 2;
+            tile_n_ = 1;
+            video_.tile_banks = 1;
+            sprite_banks_ = 4;
+            dsw_b_ = 0xff;
+            dsw_c_ = 0xff;
+            mb_type_ = true;
+            rotated_ = true;
+            tile_color_shift_ = 5;
+            text_color_shift_ = 8;
+            text_code_mask_ = 0xff;
+            break;
+        default:
+            break;
+    }
+}
 
 System16::System16(Game game)
     : game_(game),
       main_cpu_(kMainClock),
-      sound_cpu_(game == Game::Altbeast ? 5000000u : 4000000u),
-      ym_(4000000, 0.5f),  // update() sums L+R: halve it for a mono mix
-      framebuffer_(kScreenWidth * kScreenHeight, 0) {
+      sound_cpu_(is_16b_game(game) ? 5000000u : 4000000u),
+      ym_(4000000, 0.5f),
+      framebuffer_(kNativeWidth * kNativeHeight, 0),
+      rotated_fb_(kNativeWidth * kNativeHeight, 0) {
     fps_ = is_16b() ? 60.05439 : 60.0;
     sound_clock_ = is_16b() ? 5000000u : 4000000u;
-    use_mcu_ = (game == Game::Altbeast);
-    use_fd1089_ = uses_fd1089();
+    if (is_16b()) configure_16b_game();
+    else {
+        use_mcu_ = false;
+        use_fd1089_ = uses_fd1089();
+    }
     main_cpu_.set_memory_handlers([this](uint32_t a) { return main_read(a); },
                                   [this](uint32_t a, uint16_t v) { main_write(a, v); });
     sound_cpu_.set_memory_handlers([this](uint16_t a) { return sound_read(a); },
@@ -254,9 +500,6 @@ System16::System16(Game game)
         });
     }
     if (!is_16b()) {
-        // PPI port A runs in mode 2: a write fills the output buffer, /OBF
-        // (PC7) pulls the Z80 NMI low, and the Z80's read of the latch
-        // strobes /ACK (sound_data_r in MAME segas16a).
         ppi_.set_handshake(true);
         ppi_.set_port_handlers(nullptr, nullptr, nullptr,
                                [this](uint8_t value) {
@@ -282,21 +525,30 @@ System16::System16(Game game)
         mapper_.set_reset_handler([this](IrqLine state) { main_cpu_.set_reset_line(state); });
         mapper_.set_irq_handler(
             [this](int level, IrqLine state) { main_cpu_.set_irq(level, state); });
-        mcu_ = std::make_unique<Mcs51>(8000000);
-        mcu_->set_external_handlers(
-            [this](uint16_t address) { return mapper_.read_reg(uint8_t(address & 0x1f)); },
-            [this](uint16_t address, uint8_t value) {
-                const uint32_t old = mapper_.dirs_start(5);
-                mapper_.write_reg(uint8_t(address & 0x1f), value);
-                if (old != mapper_.dirs_start(5)) {
-                    for (auto& page : video_.tile_dirty) page.fill(false);
-                }
-            });
-        mcu_->set_port_read_handler(1, [this]() { return uint8_t(in0_); });
+        if (use_mcu_) {
+            mcu_ = std::make_unique<Mcs51>(8000000);
+            mcu_->set_external_handlers(
+                [this](uint16_t address) { return mapper_.read_reg(uint8_t(address & 0x1f)); },
+                [this](uint16_t address, uint8_t value) {
+                    const uint32_t old = mapper_.dirs_start(5);
+                    mapper_.write_reg(uint8_t(address & 0x1f), value);
+                    if (old != mapper_.dirs_start(5)) {
+                        for (auto& page : video_.tile_dirty) page.fill(false);
+                    }
+                });
+            mcu_->set_port_read_handler(1, [this]() { return uint8_t(in0_); });
+        }
         upd_ = std::make_unique<Upd7759>(0.9f, true);
         upd_->set_drq_handler([this](uint8_t value) {
             if (value & 1) sound_cpu_.set_nmi(IrqLine::Pulse);
         });
+        if (use_fd1094_) {
+            main_cpu_.set_cmpild_handler([this](uint8_t reg, uint32_t data) {
+                fd1094_.on_cmpild(reg, data);
+            });
+            main_cpu_.set_rte_handler([this]() { fd1094_.on_rte(); });
+            main_cpu_.set_irq_taken_handler([this](int) { fd1094_.on_irq(); });
+        }
     }
 }
 
@@ -309,6 +561,17 @@ const char* System16::title() const {
         case Game::Alexkidd: return "Alex Kidd: The Lost Stars";
         case Game::Aliensyn: return "Alien Syndrome";
         case Game::Wb3: return "Wonder Boy III: Monster Lair";
+        case Game::Goldnaxe: return "Golden Axe";
+        case Game::Ddux: return "Dynamite Dux";
+        case Game::Eswat: return "E-Swat";
+        case Game::Passsht: return "Passing Shot";
+        case Game::Aurail: return "Aurail";
+        case Game::Riotcity: return "Riot City";
+        case Game::Sdi: return "SDI";
+        case Game::Cotton: return "Cotton";
+        case Game::Bayroute: return "Bay Route";
+        case Game::Sonicbom: return "Sonic Boom";
+        case Game::Timescan: return "Time Scanner";
     }
     return "System 16";
 }
@@ -321,6 +584,7 @@ bool System16::init(const std::string& rom_path, std::string* error) {
 }
 
 bool System16::load_roms(const std::string& rom_path, std::string* error) {
+    using namespace system16_roms;
     RomLoader loader;
     if (!loader.open(rom_path, error)) return false;
     const std::vector<RomEntry>* main = nullptr;
@@ -328,88 +592,92 @@ bool System16::load_roms(const std::string& rom_path, std::string* error) {
     const std::vector<RomEntry>* tiles = nullptr;
     const std::vector<RomEntry>* sprites = nullptr;
     const std::vector<RomEntry>* key = nullptr;
+    const std::vector<RomEntry>* mcu_rom = nullptr;
     const std::vector<RomEntry>* n7751_data = nullptr;
     Fd1089Type fd_type = Fd1089Type::B;
     bool scramble = false;
+    bool remap_sprites = false;
+
     switch (game_) {
         case Game::Fantzone:
-            main = &kFantzoneMain;
-            sound = &kFantzoneSound;
-            tiles = &kFantzoneTiles;
-            sprites = &kFantzoneSprites;
-            tile_n_ = 1;
-            sprite_banks_ = 4;
-            dsw_b_ = 0xfc;
+            main = &kFantzoneMain; sound = &kFantzoneSound; tiles = &kFantzoneTiles;
+            sprites = &kFantzoneSprites; tile_n_ = 1; sprite_banks_ = 4; dsw_b_ = 0xfc;
             break;
         case Game::Shinobi:
-            main = &kShinobiMain;
-            sound = &kShinobiSound;
-            tiles = &kShinobiTiles;
-            sprites = &kShinobiSprites;
-            n7751_data = &kShinobiN7751;
-            n7751_numroms_ = 1;
-            tile_n_ = 2;
-            sprite_banks_ = 8;
-            dsw_b_ = 0xfc;
-            scramble = true;
+            main = &kShinobiMain; sound = &kShinobiSound; tiles = &kShinobiTiles;
+            sprites = &kShinobiSprites; n7751_data = &kShinobiN7751; n7751_numroms_ = 1;
+            tile_n_ = 2; sprite_banks_ = 8; dsw_b_ = 0xfc; scramble = true;
             break;
         case Game::Alexkidd:
-            main = &kAlexkiddMain;
-            sound = &kAlexkiddSound;
-            tiles = &kAlexkiddTiles;
-            sprites = &kAlexkiddSprites;
-            n7751_data = &kAlexkiddN7751;
-            n7751_numroms_ = 2;
-            tile_n_ = 1;
-            sprite_banks_ = 4;
-            dsw_b_ = 0xfc;
+            main = &kAlexkiddMain; sound = &kAlexkiddSound; tiles = &kAlexkiddTiles;
+            sprites = &kAlexkiddSprites; n7751_data = &kAlexkiddN7751; n7751_numroms_ = 2;
+            tile_n_ = 1; sprite_banks_ = 4; dsw_b_ = 0xfc;
             break;
         case Game::Aliensyn:
-            main = &kAliensynMain;
-            sound = &kAliensynSound;
-            tiles = &kAliensynTiles;
-            sprites = &kAliensynSprites;
-            key = &kAliensynKey;
-            n7751_data = &kAliensynN7751;
-            n7751_numroms_ = 3;
-            fd_type = Fd1089Type::B;
-            tile_n_ = 2;
-            sprite_banks_ = 8;
-            dsw_b_ = 0xfd;
-            scramble = true;
+            main = &kAliensynMain; sound = &kAliensynSound; tiles = &kAliensynTiles;
+            sprites = &kAliensynSprites; key = &kAliensynKey; n7751_data = &kAliensynN7751;
+            n7751_numroms_ = 3; fd_type = Fd1089Type::B; tile_n_ = 2; sprite_banks_ = 8;
+            dsw_b_ = 0xfd; scramble = true;
             break;
         case Game::Wb3:
-            main = &kWb3Main;
-            sound = &kWb3Sound;
-            tiles = &kWb3Tiles;
-            sprites = &kWb3Sprites;
-            key = &kWb3Key;
-            fd_type = Fd1089Type::A;
-            tile_n_ = 2;
-            sprite_banks_ = 8;
-            dsw_b_ = 0x7c;
-            scramble = true;
+            main = &kWb3Main; sound = &kWb3Sound; tiles = &kWb3Tiles; sprites = &kWb3Sprites;
+            key = &kWb3Key; fd_type = Fd1089Type::A; tile_n_ = 2; sprite_banks_ = 8;
+            dsw_b_ = 0x7c; scramble = true;
             break;
         case Game::Tetris:
-            main = &kTetrisMain;
-            sound = &kTetrisSound;
-            tiles = &kTetrisTiles;
-            sprites = &kTetrisSprites;
-            tile_n_ = 2;
-            sprite_banks_ = 1;
-            dsw_b_ = 0x30;
+            main = &kTetrisMain; sound = &kTetrisSound; tiles = &kTetrisTiles;
+            sprites = &kTetrisSprites; tile_n_ = 2; sprite_banks_ = 1; dsw_b_ = 0x30;
             break;
         case Game::Altbeast:
-            main = &kAltbeastMain;
-            sound = &kAltbeastSound;
-            tiles = &kAltbeastTiles;
-            sprites = &kAltbeastSprites;
-            tile_n_ = 4;
-            sprite_banks_ = 8;
-            dsw_b_ = 0xfd;
-            video_.tile_banks = 3;
+            main = &kAltbeastMain; sound = &kAltbeastSound; tiles = &kAltbeastTiles;
+            sprites = &kAltbeastSprites; mcu_rom = &kAltbeastMcu;
+            break;
+        case Game::Goldnaxe:
+            main = &kGoldnaxeMain; sound = &kGoldnaxeSound; tiles = &kGoldnaxeTiles;
+            sprites = &kGoldnaxeSprites; mcu_rom = &kGoldnaxeMcu; remap_sprites = true;
+            break;
+        case Game::Ddux:
+            main = &kDduxMain; sound = &kDduxSound; tiles = &kDduxTiles;
+            sprites = &kDduxSprites; key = &kDduxKey;
+            break;
+        case Game::Eswat:
+            main = &kEswatMain; sound = &kEswatSound; tiles = &kEswatTiles;
+            sprites = &kEswatSprites; key = &kEswatKey; remap_sprites = true;
+            break;
+        case Game::Passsht:
+            main = &kPassshtMain; sound = &kPassshtSound; tiles = &kPassshtTiles;
+            sprites = &kPassshtSprites; key = &kPassshtKey;
+            break;
+        case Game::Aurail:
+            main = &kAurailMain; sound = &kAurailSound; tiles = &kAurailTiles;
+            sprites = &kAurailSprites;
+            break;
+        case Game::Riotcity:
+            main = &kRiotcityMain; sound = &kRiotcitySound; tiles = &kRiotcityTiles;
+            sprites = &kRiotcitySprites; remap_sprites = true;
+            break;
+        case Game::Sdi:
+            main = &kSdiMain; sound = &kSdiSound; tiles = &kSdiTiles;
+            sprites = &kSdiSprites; key = &kSdiKey; fd_type = Fd1089Type::A;
+            break;
+        case Game::Cotton:
+            main = &kCottonMain; sound = &kCottonSound; tiles = &kCottonTiles;
+            sprites = &kCottonSprites; key = &kCottonKey;
+            break;
+        case Game::Bayroute:
+            main = &kBayrouteMain; sound = &kBayrouteSound; tiles = &kBayrouteTiles;
+            sprites = &kBayrouteSprites; key = &kBayrouteKey;
+            break;
+        case Game::Sonicbom:
+            main = &kSonicbomMain; sound = &kSonicbomSound; tiles = &kSonicbomTiles;
+            sprites = &kSonicbomSprites; key = &kSonicbomKey;
+            break;
+        case Game::Timescan:
+            main = &kTimescanMain; sound = &kTimescanSound; tiles = &kTimescanTiles;
+            sprites = &kTimescanSprites;
             break;
     }
+
     if (game_ == Game::Tetris) {
         std::string ignored;
         if (load_roms16w(loader, *main, rom_, &ignored)) {
@@ -427,7 +695,16 @@ bool System16::load_roms(const std::string& rom_path, std::string* error) {
                            uint32_t(encrypted.size() * 2), key_bytes.data(), Fd1089Type::A);
             use_fd1089_ = true;
         }
-    } else if (key) {
+    } else if (use_fd1094_ && key) {
+        std::vector<uint16_t> encrypted;
+        if (!load_roms16w(loader, *main, encrypted, error)) return false;
+        std::vector<uint8_t> key_bytes;
+        if (!load_rom_bytes(loader, *key, key_bytes, error)) return false;
+        key_bytes.resize(Fd1094::kKeySize, 0);
+        fd1094_.set_key(key_bytes.data(), key_bytes.size());
+        rom_ = std::move(encrypted);  // data space = encrypted image
+        use_fd1094_ = true;
+    } else if (key && (use_fd1089_ || uses_fd1089() || game_ == Game::Sdi)) {
         std::vector<uint16_t> encrypted;
         if (!load_roms16w(loader, *main, encrypted, error)) return false;
         std::vector<uint8_t> key_bytes;
@@ -441,26 +718,34 @@ bool System16::load_roms(const std::string& rom_path, std::string* error) {
     } else if (!load_roms16w(loader, *main, rom_, error)) {
         return false;
     }
+
     std::vector<uint8_t> sound_bytes;
     if (!load_rom_bytes(loader, *sound, sound_bytes, error)) return false;
     std::fill(sound_mem_.begin(), sound_mem_.end(), 0);
-    const size_t copy_n = std::min(sound_bytes.size(), size_t(0x8000));
+    const size_t copy_n = std::min(sound_bytes.size(), size_t(0x10000));
     std::copy(sound_bytes.begin(), sound_bytes.begin() + int(copy_n), sound_mem_.begin());
     if (is_16b()) {
-        for (int bank = 0; bank < 16; bank++) {
-            const size_t src = 0x8000 + size_t(bank) * 0x4000;
-            sound_bank_[size_t(bank)].fill(0);
+        for (int bank = 0; bank < 16; bank++) sound_bank_[size_t(bank)].fill(0);
+        for (int bank = 0; bank < sound_bank_count_; bank++) {
+            const size_t src = size_t(sound_bank_base_) + size_t(bank) * 0x4000;
             if (src < sound_bytes.size()) {
                 const size_t n = std::min(size_t(0x4000), sound_bytes.size() - src);
                 std::copy(sound_bytes.begin() + int(src), sound_bytes.begin() + int(src + n),
                           sound_bank_[size_t(bank)].begin());
             }
         }
-        std::vector<uint8_t> mcu_rom;
-        if (!load_rom_bytes(loader, kAltbeastMcu, mcu_rom, error)) return false;
-        std::fill(mcu_->rom(), mcu_->rom() + Mcs51::kRomSize, 0);
-        std::copy(mcu_rom.begin(), mcu_rom.end(), mcu_->rom());
+        if (use_mcu_ && mcu_ && mcu_rom) {
+            std::vector<uint8_t> mcu_bytes;
+            if (!load_rom_bytes(loader, *mcu_rom, mcu_bytes, error)) return false;
+            std::fill(mcu_->rom(), mcu_->rom() + Mcs51::kRomSize, 0);
+            std::copy(mcu_bytes.begin(), mcu_bytes.end(), mcu_->rom());
+        }
         if (!load_roms16w(loader, *sprites, sprite_rom_, error)) return false;
+        if (remap_sprites) remap_sprites_5797(sprite_rom_);
+        // Timescan leaves gaps in sprite ROM (Pascal fills with zeros first).
+        if (game_ == Game::Timescan && sprite_rom_.size() < 0x40000) {
+            sprite_rom_.resize(0x40000, 0);
+        }
     } else if (scramble) {
         std::vector<uint8_t> raw;
         if (!load_sprites_16b_bytes(loader, *sprites, raw, error)) return false;
@@ -484,6 +769,7 @@ bool System16::load_roms(const std::string& rom_path, std::string* error) {
 
 void System16::reset() {
     if (is_16b()) mapper_.reset();
+    if (use_fd1094_) fd1094_.reset();
     main_cpu_.reset();
     sound_cpu_.reset();
     ym_.reset();
@@ -496,6 +782,14 @@ void System16::reset() {
     video_.screen_enabled = !is_16b();
     video_.tile_bank[0] = 0;
     video_.tile_bank[1] = 1;
+    if (mb_type_) {
+        video_.sprite_bank.fill(0xff);
+        video_.sprite_bank[0] = 0;
+        video_.sprite_bank[7] = 3;
+        video_.sprite_bank[11] = 2;
+        video_.sprite_bank[13] = 1;
+        video_.sprite_bank[14] = 0;
+    }
     ram_.fill(0);
     in0_ = 0xffff;
     in1_ = 0xffff;
@@ -504,6 +798,10 @@ void System16::reset() {
     sound_bank_num_ = 0;
     n7751_command_ = 0;
     n7751_rom_address_ = 0;
+    s315_5248_regs_.fill(0);
+    s315_5250_regs_.fill(0);
+    s315_5250_bit_ = 0;
+    analog_x_ = analog_y_ = 0x80;
     audio_acc_ = 0;
     main_debt_ = sound_debt_ = mcu_debt_ = n7751_debt_ = 0;
     dc_in_ = dc_out_ = 0;
@@ -511,6 +809,7 @@ void System16::reset() {
     sound_commands_ = 0;
     audio_.clear();
     std::fill(framebuffer_.begin(), framebuffer_.end(), 0);
+    std::fill(rotated_fb_.begin(), rotated_fb_.end(), 0);
 }
 
 void System16::set_inputs(const MachineInputs& inputs) {
@@ -541,8 +840,6 @@ void System16::set_inputs(const MachineInputs& inputs) {
             else port |= 0x0001;
         }
     };
-    // SERVICE port (MAME system16a/16b_generic): D0 coin 1, D1 coin 2,
-    // D2 test (service mode), D3 service coin, D4 start 1, D5 start 2.
     if (is_16b()) {
         in0_ = 0xffff;
         if (inputs.service) in0_ &= ~0x0004;
@@ -552,6 +849,17 @@ void System16::set_inputs(const MachineInputs& inputs) {
         if (inputs.coin2) in0_ &= ~0x0002;
         if (inputs.player1.start) in0_ &= ~0x0010;
         if (inputs.player2.start) in0_ &= ~0x0020;
+        if (sdi_io_) {
+            // SDI: fire buttons also on service port.
+            if (inputs.player1.button1) in0_ &= ~0x0048;
+            if (inputs.player2.button1) in0_ &= ~0x0080;
+            analog_x_ = 0x80;
+            analog_y_ = 0x80;
+            if (inputs.player1.left) analog_x_ = 0x00;
+            if (inputs.player1.right) analog_x_ = 0xff;
+            if (inputs.player1.up) analog_y_ = 0x00;
+            if (inputs.player1.down) analog_y_ = 0xff;
+        }
     } else {
         apply_player(in1_, inputs.player1, false);
         apply_player(in2_, inputs.player2, false);
@@ -571,6 +879,7 @@ void System16::set_inputs(const MachineInputs& inputs) {
 void System16::set_dip_switch(int bank, uint8_t value) {
     if (bank == 0) dsw_a_ = value;
     if (bank == 1) dsw_b_ = value;
+    if (bank == 2) dsw_c_ = value;
 }
 
 void System16::drain_audio(std::vector<int16_t>& out) {
@@ -600,12 +909,13 @@ uint16_t System16::io_16a(uint16_t address) {
 }
 
 uint16_t System16::io_16b(uint16_t address) {
+    if (sdi_io_) return io_sdi(address);
     switch (address & 0x1800) {
         case 0x0800:
             switch (address & 3) {
                 case 0: return in0_;
                 case 1: return in1_;
-                case 2: return 0xffff;
+                case 2: return (game_ == Game::Timescan) ? dsw_c_ : 0xffff;
                 case 3: return in2_;
             }
             break;
@@ -617,6 +927,164 @@ uint16_t System16::io_16b(uint16_t address) {
     return 0xffff;
 }
 
+uint16_t System16::io_sdi(uint16_t address) {
+    switch (address & 0x1800) {
+        case 0x0800:
+            switch (address & 3) {
+                case 0: return in0_;
+                case 2: return uint16_t((in1_ >> 4) | (in2_ & 0xf0));
+                default: return 0xffff;
+            }
+        case 0x1000:
+            return (address & 1) ? dsw_a_ : dsw_b_;
+        case 0x1800:
+            switch ((address >> 1) & 3) {
+                case 0: return analog_x_;
+                case 1: return analog_y_;
+                default: return 0xffff;
+            }
+        default:
+            return 0xffff;
+    }
+}
+
+uint16_t System16::read_region0(uint32_t address) {
+    const size_t index = (address >> 1) % std::max<size_t>(rom_.size(), 1);
+    if (use_fd1094_ && main_cpu_.opcode()) {
+        const uint16_t* dec =
+            fd1094_.decrypted_opcodes(rom_.data(), uint32_t(rom_.size() * 2));
+        return dec[index];
+    }
+    if (use_fd1089_ && !rom_data_.empty()) {
+        return main_cpu_.opcode() ? rom_[index] : rom_data_[index];
+    }
+    return rom_[index];
+}
+
+uint16_t System16::read_region1(uint32_t address) {
+    switch (region1_mode_) {
+        case Region1Mode::Rom: {
+            const uint32_t word = ((address & region1_rom_mask_) >> 1) + region1_rom_pos_;
+            if (word >= rom_.size()) return 0xffff;
+            return rom_[word];
+        }
+        case Region1Mode::RomFd1089: {
+            const uint32_t word = ((address & region1_rom_mask_) >> 1) + region1_rom_pos_;
+            if (word >= rom_.size()) return 0xffff;
+            if (use_fd1089_ && !rom_data_.empty()) {
+                return main_cpu_.opcode() ? rom_[word] : rom_data_[word];
+            }
+            return rom_[word];
+        }
+        case Region1Mode::Chip5797: {
+            const uint32_t dir = (address >> 1) & 0x1fff;
+            switch (dir & 0x1800) {
+                case 0x0000:
+                    switch (dir & 3) {
+                        case 0: return s315_5248_regs_[0];
+                        case 1: return s315_5248_regs_[1];
+                        case 2:
+                            return uint16_t((int32_t(int16_t(s315_5248_regs_[0])) *
+                                             int16_t(s315_5248_regs_[1])) >>
+                                            16);
+                        case 3:
+                            return uint16_t(int32_t(int16_t(s315_5248_regs_[0])) *
+                                            int16_t(s315_5248_regs_[1]));
+                    }
+                    break;
+                case 0x0800:
+                    if ((dir & 0xf) <= 7) return s315_5250_regs_[dir & 0xf];
+                    return 0xffff;
+                default:
+                    break;
+            }
+            return 0xffff;
+        }
+        default:
+            return 0xffff;
+    }
+}
+
+uint16_t System16::read_region2(uint32_t address) {
+    switch (region2_mode_) {
+        case Region2Mode::Rom:
+        case Region2Mode::RomFd1089: {
+            const uint32_t word = ((address & region2_rom_mask_) >> 1) + region2_rom_pos_;
+            if (word >= rom_.size()) return 0xffff;
+            if (region2_mode_ == Region2Mode::RomFd1089 && use_fd1089_ && !rom_data_.empty()) {
+                return main_cpu_.opcode() ? rom_[word] : rom_data_[word];
+            }
+            return rom_[word];
+        }
+        default:
+            return 0xffff;
+    }
+}
+
+void System16::write_region1(uint32_t address, uint16_t value) {
+    if (region1_mode_ != Region1Mode::Chip5797) return;
+    const uint32_t dir = (address >> 1) & 0x1fff;
+    switch (dir & 0x1800) {
+        case 0x0000:
+            s315_5248_regs_[dir & 1] = value;
+            break;
+        case 0x0800:
+            switch (dir & 15) {
+                case 0:
+                case 1:
+                    s315_5250_regs_[dir & 0xf] = value;
+                    exec_5250(false);
+                    break;
+                case 2:
+                    s315_5250_regs_[2] = value;
+                    exec_5250(true);
+                    break;
+                case 4:
+                    s315_5250_regs_[4] = 0;
+                    s315_5250_bit_ = 0;
+                    break;
+                case 6:
+                    s315_5250_regs_[2] = value;
+                    exec_5250(false);
+                    break;
+                case 8:
+                case 0xc:
+                    s315_5250_regs_[8] = value;
+                    break;
+                case 0xa:
+                case 0xe:
+                    s315_5250_regs_[10] = value;
+                    break;
+                case 0xb:
+                case 0xf:
+                    s315_5250_regs_[11] = value;
+                    break;
+                default:
+                    break;
+            }
+            break;
+        case 0x1000: {
+            const int index = int(dir & 1);
+            const uint8_t bank = uint8_t((value & 7) & video_.tile_banks);
+            if (video_.tile_bank[size_t(index)] != bank) {
+                video_.tile_bank[size_t(index)] = bank;
+                for (auto& page : video_.tile_dirty) page.fill(true);
+            }
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+void System16::region2_write(uint32_t address, uint16_t value) {
+    const int index = int((address & 3) >> 1);
+    const uint8_t bank = uint8_t((value & 7) & video_.tile_banks);
+    if (video_.tile_bank[size_t(index)] != bank) {
+        video_.tile_bank[size_t(index)] = bank;
+        for (auto& page : video_.tile_dirty) page.fill(true);
+    }
+}
 uint16_t System16::read_16a(uint32_t address) {
     address &= 0xffffff;
     if (address <= 0x3fffff) {
@@ -722,22 +1190,20 @@ void System16::write_16a(uint32_t address, uint16_t value) {
     }
 }
 
-void System16::region2_write(uint32_t address, uint16_t value) {
-    const int index = int((address & 3) >> 1);
-    const uint8_t bank = uint8_t((value & 7) & video_.tile_banks);
-    if (video_.tile_bank[size_t(index)] != bank) {
-        video_.tile_bank[size_t(index)] = bank;
-        for (auto& page : video_.tile_dirty) page.fill(true);
-    }
-}
 
 uint16_t System16::read_16b(uint32_t address) {
     address &= 0xffffff;
-    if (mapper_.contains(0, address)) {
-        return rom_[(address >> 1) % std::max<size_t>(rom_.size(), 1)];
-    }
+    if (mapper_.contains(0, address)) return read_region0(address);
     bool mapped = false;
     uint16_t result = 0xffff;
+    if (mapper_.contains(1, address)) {
+        result = read_region1(address);
+        mapped = true;
+    }
+    if (mapper_.contains(2, address)) {
+        result = read_region2(address);
+        mapped = true;
+    }
     if (mapper_.contains(3, address)) {
         result = ram_[(address & 0xffff) >> 1];
         mapped = true;
@@ -767,8 +1233,12 @@ void System16::write_16b(uint32_t address, uint16_t value, bool allow_mapper) {
     address &= 0xffffff;
     bool mapped = false;
     if (mapper_.contains(0, address)) mapped = true;
+    if (mapper_.contains(1, address)) {
+        write_region1(address, value);
+        mapped = true;
+    }
     if (mapper_.contains(2, address)) {
-        region2_write(address, value);
+        if (region2_mode_ == Region2Mode::Write5704) region2_write(address, value);
         mapped = true;
     }
     if (mapper_.contains(3, address)) {
@@ -821,7 +1291,6 @@ void System16::main_write(uint32_t address, uint16_t value) {
     if (is_16b()) write_16b(address, value, !use_mcu_);
     else write_16a(address, value);
 }
-
 uint8_t System16::sound_read(uint16_t address) {
     if (is_16b()) {
         if (address <= 0x7fff) return sound_mem_[address];
@@ -877,7 +1346,7 @@ void System16::sound_out(uint16_t port, uint8_t value) {
             upd_->start_w(uint8_t((value >> 7) & 1));
             upd_->reset_w(uint8_t((value >> 6) & 1));
         }
-        sound_bank_num_ = uint8_t(value & 0xf);
+        sound_bank_num_ = calc_sound_bank(value);
         return;
     }
     if (is_16b() && p >= 0x80 && p <= 0xbf) {
@@ -922,16 +1391,32 @@ void System16::on_sound_cycles(int cycles) {
     }
 }
 
+
+void System16::rotate_framebuffer() {
+    // ROT270: dest[sy, height-1-sx] from native 320x224 -> 224x320.
+    for (int y = 0; y < kNativeHeight; y++) {
+        for (int x = 0; x < kNativeWidth; x++) {
+            const uint32_t pixel = framebuffer_[size_t(y * kNativeWidth + x)];
+            const int dx = y;
+            const int dy = kNativeWidth - 1 - x;
+            rotated_fb_[size_t(dy * kNativeHeight + dx)] = pixel;
+        }
+    }
+}
+
 void System16::update_video() {
     const uint32_t blank = is_16b() ? video_.palette[0x1000] : video_.palette[0x1fff];
     if (!video_.screen_enabled) {
         std::fill(framebuffer_.begin(), framebuffer_.end(), blank);
+        if (rotated_) rotate_framebuffer();
         return;
     }
     if (is_16b()) {
-        video_.render_tile_pages(bg_low_, bg_high_, 0, false, 6, 0x1fff, 0x8000, true, false);
-        video_.render_tile_pages(fg_low_, fg_high_, 4, true, 6, 0x1fff, 0x8000, true, false);
-        video_.render_text(text_low_, text_high_, 9, 0x1ff, 0x8000, true);
+        video_.render_tile_pages(bg_low_, bg_high_, 0, false, tile_color_shift_, 0x1fff, 0x8000,
+                                 true, false);
+        video_.render_tile_pages(fg_low_, fg_high_, 4, true, tile_color_shift_, 0x1fff, 0x8000,
+                                 true, false);
+        video_.render_text(text_low_, text_high_, text_color_shift_, text_code_mask_, 0x8000, true);
         int scroll_x1 = 0, scroll_y1 = video_.char_ram[0x749] & 0x1ff;
         int scroll_x2 = 0, scroll_y2 = video_.char_ram[0x748] & 0x1ff;
         bool row_back = (video_.char_ram[0x74d] & 0x8000) != 0;
@@ -944,13 +1429,13 @@ void System16::update_video() {
                 video_.blit_scrolled(framebuffer_.data(), src, sx, sy, 1024, 512);
                 return;
             }
-            for (int y = 0; y < kScreenHeight; y++) {
+            for (int y = 0; y < kNativeHeight; y++) {
                 const int line = (y + sy) & 0x1ff;
                 const int row_i = (line >> 3) & 0x3f;
                 const int rx = (704 - (video_.char_ram[table_base + row_i] & 0x3ff)) & 0x3ff;
-                for (int x = 0; x < kScreenWidth; x++) {
+                for (int x = 0; x < kNativeWidth; x++) {
                     const uint32_t pixel = src[size_t(line * 1024 + ((x + rx) & 0x3ff))];
-                    if (pixel) framebuffer_[size_t(y * kScreenWidth + x)] = pixel;
+                    if (pixel) framebuffer_[size_t(y * kNativeWidth + x)] = pixel;
                 }
             }
         };
@@ -964,6 +1449,7 @@ void System16::update_video() {
         video_.blit_text(framebuffer_.data(), text_low_);
         draw_sprites_16b(video_, framebuffer_.data(), sprite_rom_, sprite_banks_, 3, 0x800);
         video_.blit_text(framebuffer_.data(), text_high_);
+        if (rotated_) rotate_framebuffer();
         return;
     }
     video_.render_tile_pages(bg_low_, bg_high_, 0, false, 5, 0x1fff, 0x1000, false, true);
@@ -986,9 +1472,6 @@ void System16::update_video() {
 }
 
 void System16::run_frame() {
-    // Budgets carry over between slices so every CPU runs at its clock
-    // (run() finishes the instruction in progress and returns the cycles
-    // really spent).
     const double slices = double(kScanlines * kCpuSync);
     const double main_cycles = double(kMainClock) / fps_ / slices;
     const double sound_cycles = double(sound_clock_) / fps_ / slices;
@@ -1016,7 +1499,6 @@ void System16::run_frame() {
         }
     }
 }
-
 void System16::n7751_rom_offset_w(int port, uint8_t value) {
     const uint32_t mask = (0x0fu << (4 * port)) & 0x3fff;
     const uint32_t newdata = (uint32_t(value) << (4 * port)) & mask;

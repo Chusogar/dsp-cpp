@@ -11,6 +11,7 @@
 #include "cpu/mcs48.h"
 #include "cpu/mcs51.h"
 #include "cpu/z80.h"
+#include "machine/fd1094.h"
 #include "machine/i8255.h"
 #include "machine/sega_315_5195.h"
 #include "sound/dac.h"
@@ -23,10 +24,29 @@ namespace dsp {
 // Sega System 16A/16B, ported from system16a_hw.pas and system16b_hw.pas.
 class System16 : public Machine {
 public:
-    enum class Game { Fantzone, Shinobi, Tetris, Altbeast, Alexkidd, Aliensyn, Wb3 };
+    enum class Game {
+        Fantzone,
+        Shinobi,
+        Tetris,
+        Altbeast,
+        Alexkidd,
+        Aliensyn,
+        Wb3,
+        Goldnaxe,
+        Ddux,
+        Eswat,
+        Passsht,
+        Aurail,
+        Riotcity,
+        Sdi,
+        Cotton,
+        Bayroute,
+        Sonicbom,
+        Timescan,
+    };
 
-    static constexpr int kScreenWidth = 320;
-    static constexpr int kScreenHeight = 224;
+    static constexpr int kNativeWidth = 320;
+    static constexpr int kNativeHeight = 224;
     static constexpr int kScanlines = 262;
     static constexpr int kCpuSync = 4;
     static constexpr uint32_t kMainClock = 10000000;
@@ -42,9 +62,11 @@ public:
     void set_inputs(const MachineInputs& inputs) override;
     void set_dip_switch(int bank, uint8_t value) override;
 
-    const uint32_t* framebuffer() const override { return framebuffer_.data(); }
-    int screen_width() const override { return kScreenWidth; }
-    int screen_height() const override { return kScreenHeight; }
+    const uint32_t* framebuffer() const override {
+        return rotated_ ? rotated_fb_.data() : framebuffer_.data();
+    }
+    int screen_width() const override { return rotated_ ? kNativeHeight : kNativeWidth; }
+    int screen_height() const override { return rotated_ ? kNativeWidth : kNativeHeight; }
     double frames_per_second() const override { return fps_; }
 
     void drain_audio(std::vector<int16_t>& out) override;
@@ -58,11 +80,17 @@ public:
     uint16_t debug_port(int n) const { return n == 0 ? in0_ : n == 1 ? in1_ : in2_; }
 
 private:
-    bool is_16b() const { return game_ == Game::Altbeast; }
+    enum class SoundBankMode { None, Bank5704, Bank5797, Bank5358 };
+    enum class Region1Mode { None, Rom, Chip5797, RomFd1089 };
+    enum class Region2Mode { None, Write5704, Rom, RomFd1089 };
+
+    bool is_16b() const;
     bool uses_n7751() const {
         return game_ == Game::Shinobi || game_ == Game::Alexkidd || game_ == Game::Aliensyn;
     }
-    bool uses_fd1089() const { return game_ == Game::Aliensyn || game_ == Game::Wb3; }
+    bool uses_fd1089() const {
+        return game_ == Game::Aliensyn || game_ == Game::Wb3 || game_ == Game::Sdi;
+    }
 
     uint16_t main_read(uint32_t address);
     void main_write(uint32_t address, uint16_t value);
@@ -70,8 +98,13 @@ private:
     void write_16a(uint32_t address, uint16_t value);
     uint16_t read_16b(uint32_t address);
     void write_16b(uint32_t address, uint16_t value, bool allow_mapper);
+    uint16_t read_region0(uint32_t address);
+    uint16_t read_region1(uint32_t address);
+    uint16_t read_region2(uint32_t address);
+    void write_region1(uint32_t address, uint16_t value);
     uint16_t io_16a(uint16_t address);
     uint16_t io_16b(uint16_t address);
+    uint16_t io_sdi(uint16_t address);
     uint8_t sound_read(uint16_t address);
     void sound_write(uint16_t address, uint8_t value);
     uint8_t sound_in(uint16_t port);
@@ -79,11 +112,16 @@ private:
     void sound_out(uint16_t port, uint8_t value);
     void on_sound_cycles(int cycles);
     void update_video();
+    void rotate_framebuffer();
     bool load_roms(const std::string& rom_path, std::string* error);
     void region2_write(uint32_t address, uint16_t value);
     void n7751_rom_offset_w(int port, uint8_t value);
     uint8_t n7751_in(uint16_t port);
     void n7751_out(uint16_t port, uint8_t value);
+    void configure_16b_game();
+    void remap_sprites_5797(std::vector<uint16_t>& sprites);
+    uint8_t calc_sound_bank(uint8_t value) const;
+    void exec_5250(bool history);
 
     Game game_;
     double fps_ = 60.0;
@@ -99,6 +137,7 @@ private:
     std::unique_ptr<Upd7759> upd_;
     Dac dac_;
     Sega16Video video_;
+    Fd1094 fd1094_;
 
     std::vector<uint16_t> rom_;
     std::vector<uint16_t> rom_data_;
@@ -109,6 +148,7 @@ private:
     std::vector<uint8_t> n7751_data_;
 
     std::vector<uint32_t> framebuffer_;
+    std::vector<uint32_t> rotated_fb_;
     std::vector<uint32_t> bg_low_, bg_high_, fg_low_, fg_high_, text_low_, text_high_;
 
     uint16_t in0_ = 0xffff;
@@ -116,15 +156,40 @@ private:
     uint16_t in2_ = 0xffff;
     uint8_t dsw_a_ = 0xff;
     uint8_t dsw_b_ = 0xfc;
+    uint8_t dsw_c_ = 0xff;
     uint8_t sound_latch_ = 0;
     uint8_t sound_bank_num_ = 0;
     int sprite_banks_ = 4;
     int tile_n_ = 1;
+    int tile_color_shift_ = 6;
+    int text_color_shift_ = 9;
+    int text_code_mask_ = 0x1ff;
     bool use_mcu_ = false;
     bool use_fd1089_ = false;
+    bool use_fd1094_ = false;
+    bool rotated_ = false;
+    bool mb_type_ = false;  // 5358 sprite bank mapping
+    bool sdi_io_ = false;
+    SoundBankMode sound_bank_mode_ = SoundBankMode::None;
+    Region1Mode region1_mode_ = Region1Mode::None;
+    Region2Mode region2_mode_ = Region2Mode::None;
+    uint32_t region1_rom_pos_ = 0;   // word index
+    uint32_t region1_rom_mask_ = 0;  // byte mask
+    uint32_t region2_rom_pos_ = 0;
+    uint32_t region2_rom_mask_ = 0;
+    int sound_bank_count_ = 16;
+    int sound_bank_base_ = 0x8000;  // byte offset of first bank in sound ROM
     uint8_t n7751_numroms_ = 0;
     uint8_t n7751_command_ = 0;
     uint32_t n7751_rom_address_ = 0;
+
+    std::array<uint16_t, 2> s315_5248_regs_{};
+    std::array<uint16_t, 16> s315_5250_regs_{};
+    uint8_t s315_5250_bit_ = 0;
+
+    // SDI trackball / analog stick (simplified digital mapping).
+    uint8_t analog_x_ = 0x80;
+    uint8_t analog_y_ = 0x80;
 
     int64_t audio_acc_ = 0;
     double main_debt_ = 0, sound_debt_ = 0, mcu_debt_ = 0, n7751_debt_ = 0;

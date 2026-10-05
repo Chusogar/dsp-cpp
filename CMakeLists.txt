@@ -120,6 +120,7 @@ add_executable(dsp
   src/machine/namco54.cpp
   src/machine/sega_315_5195.cpp
   src/machine/fd1089.cpp
+  src/machine/fd1094.cpp
   src/machine/i8243.cpp
   src/machine/diskii.cpp
   src/machine/c1541.cpp
@@ -391,6 +392,7 @@ add_executable(dsp_tests
   src/machine/namco54.cpp
   src/machine/sega_315_5195.cpp
   src/machine/fd1089.cpp
+  src/machine/fd1094.cpp
   src/machine/i8243.cpp
   src/machine/diskii.cpp
   src/machine/c64_tape.cpp
