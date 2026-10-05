@@ -196,6 +196,8 @@ void Pcw::update_mem(int block, uint8_t data) {
         read_bank_[size_t(block)] = read_bank;
         write_bank_[size_t(block)] = data & 0x07;
     }
+    // Bank switches can reveal remaining CALL $32BC sites mid-frame.
+    maybe_patch_blit_setup();
 }
 
 uint8_t Pcw::read_byte(uint16_t address) {
@@ -537,11 +539,16 @@ void Pcw::maybe_patch_blit_setup() {
     // falling through from a sprite path that never runs after the game bank loads.
     // Without it, $3305 keeps CP $00 so every pixel mask comes from the idle
     // keyboard (CPL $FF → $00) and the screen is inverted to solid green.
-    // Retarget CALL $32BC → CALL $32B3 across the Z80 map once the blit signature
-    // is resident. Sites above $4000 (e.g. $436F, $672E) are live game code under
-    // the post-load bank map — bank0-only left those unpatched and the intro
-    // collapsed into a striped HUD.
+    //
+    // Wait until the post-load map has matching read/write banks (expanded $8x
+    // selects). A transient $15 mapping can make read_bank1==1 while write_bank1
+    // is 5 — scanning then "patches" the wrong physical RAM and latches done.
     if (blit_setup_patched_) return;
+    if (read_bank_[0] != 0 || read_bank_[1] != 1) return;
+    if (read_bank_[0] != write_bank_[0] || read_bank_[1] != write_bank_[1] ||
+        read_bank_[2] != write_bank_[2] || read_bank_[3] != write_bank_[3]) {
+        return;
+    }
     if (read_byte(0x32b3) != 0xfd || read_byte(0x32b4) != 0x21 ||
         read_byte(0x32b5) != 0xe7 || read_byte(0x32b6) != 0x33 ||
         read_byte(0x32b7) != 0x3e || read_byte(0x32b8) != 0x09 ||
@@ -553,7 +560,10 @@ void Pcw::maybe_patch_blit_setup() {
     for (int a = 0; a <= 0xfffd; ++a) {
         if (read_byte(uint16_t(a)) == 0xcd && read_byte(uint16_t(a + 1)) == 0xbc &&
             read_byte(uint16_t(a + 2)) == 0x32) {
-            write_byte(uint16_t(a + 1), 0xb3);
+            // Write through the read bank so CPC-style split maps cannot redirect
+            // the patch into a different physical page.
+            const int block = a >> 14;
+            bank_ptr(read_bank_[size_t(block)])[(a & 0x3fff) + 1] = 0xb3;
             ++patched;
         }
     }
