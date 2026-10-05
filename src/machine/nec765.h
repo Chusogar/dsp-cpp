@@ -44,6 +44,10 @@ public:
     uint8_t read_status();
     uint8_t read_data();
 
+    // True while the FDC wants attention (seek complete or result phase), matching
+    // the UPD765 INT line polled by the Amstrad PCW system-status port.
+    bool irq_pending() const { return seek_track_flag_ || result_phase_; }
+
 private:
     struct SectorInfo {
         uint8_t track = 0;
