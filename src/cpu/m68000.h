@@ -77,7 +77,15 @@ public:
     void set_aline_handler(AlineHandler h) { aline_handler_ = std::move(h); }
     using EmulOpHandler = std::function<bool(uint16_t opcode)>;
     void set_emul_op_handler(EmulOpHandler h) { emul_op_handler_ = std::move(h); }
-
+    // FD1094: CMPI.L #$xxxxFFFF, Dn is used to change encryption state.
+    using CmpildHandler = std::function<void(uint8_t reg, uint32_t data)>;
+    void set_cmpild_handler(CmpildHandler h) { cmpild_handler_ = std::move(h); }
+    // FD1094: RTE leaves interrupt encryption mode.
+    using RteHandler = std::function<void()>;
+    void set_rte_handler(RteHandler h) { rte_handler_ = std::move(h); }
+    // FD1094: fired when an IRQ is taken (before vector fetch).
+    using IrqTakenHandler = std::function<void(int level)>;
+    void set_irq_taken_handler(IrqTakenHandler h) { irq_taken_handler_ = std::move(h); }
 
     void reset();
     // Runs until at least `cycles` cycles have elapsed, returns the amount executed.
@@ -159,6 +167,9 @@ private:
     InstructionHook instruction_hook_;
     AlineHandler aline_handler_;
     EmulOpHandler emul_op_handler_;
+    CmpildHandler cmpild_handler_;
+    RteHandler rte_handler_;
+    IrqTakenHandler irq_taken_handler_;
 
     uint32_t clock_;
     Type type_;

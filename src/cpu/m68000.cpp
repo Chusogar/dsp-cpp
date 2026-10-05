@@ -943,6 +943,10 @@ void M68000::group_0(uint16_t instruction) {
             cc.z = result == 0;
             cc.v = ((((immediate ^ value) & (result ^ value)) >> 24) & 0x80) != 0;
             cc.c = ((((immediate & result) | (~value & (immediate | result))) >> 23) & 0x100) != 0;
+            // FD1094 watches CMPI.L #imm, Dn (register mode only).
+            if (cmpild_handler_ && (dir >> 3) == 0) {
+                cmpild_handler_(uint8_t(dir & 7), immediate);
+            }
             break;
         }
         case 0x38: case 0x39: case 0x3a: {
@@ -2619,6 +2623,7 @@ void M68000::group_4(uint16_t instruction) {
                                 a[7].l += 8;  // the 68010 also stacks a format word
                                 set_flags(flags);
                             }
+                            if (rte_handler_) rte_handler_();
                         }
                         break;
                     case 0x35:  // rts
@@ -2782,6 +2787,7 @@ bool M68000::take_irq() {
         putword(a[7].l, flags);
         putword(a[7].l + 2, pc_.wh());
         putword(a[7].l + 4, pc_.wl());
+        if (irq_taken_handler_) irq_taken_handler_(level);
         opcode_ = false;
         uint32_t vec_addr = 0x64 + uint32_t((level - 1) * 4);
         if (irq_ack_) {

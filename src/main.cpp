@@ -132,7 +132,9 @@ void print_supported_emulators() {
         "    rtype, hharry, rtype2,\n"
         "    polepos, polepos2\n"
         "    outrun, aburner2, hangon, enduro, sharrier, fantzone, shinobi,\n"
-		"    alexkidd, aliensyn, wb3, tetris, altbeast,\n"
+		"    alexkidd, aliensyn, wb3, tetris, altbeast, goldnaxe, ddux, eswat,\n"
+		"    passsht, aurail, riotcity, sdi, sdib, cotton, bayroute, sonicbom,\n"
+		"    timescan,\n"
         "    pitfall2, teddyboy, wboy, mrviking, seganinj, upndown,\n"
 		"    flicky, gardia,\n"
 		"    galaxian, mooncrst, scramble,\n"
@@ -362,6 +364,39 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "tetris") return std::make_unique<dsp::System16>(dsp::System16::Game::Tetris);
     if (game == "altbeast" || game == "alteredbeast") {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Altbeast);
+    }
+    if (game == "goldnaxe" || game == "goldenaxe") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Goldnaxe);
+    }
+    if (game == "ddux" || game == "dynamitedux") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Ddux);
+    }
+    if (game == "eswat" || game == "e-swat") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Eswat);
+    }
+    if (game == "passsht" || game == "passingshot") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Passsht);
+    }
+    if (game == "aurail") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Aurail);
+    }
+    if (game == "riotcity" || game == "riot") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Riotcity);
+    }
+    if (game == "sdi" || game == "sdib") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Sdi);
+    }
+    if (game == "cotton") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Cotton);
+    }
+    if (game == "bayroute") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Bayroute);
+    }
+    if (game == "sonicbom" || game == "sonicboom") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Sonicbom);
+    }
+    if (game == "timescan" || game == "timescanner") {
+        return std::make_unique<dsp::System16>(dsp::System16::Game::Timescan);
     }
 	
 	// Sega System 1

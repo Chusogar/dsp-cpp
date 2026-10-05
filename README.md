@@ -201,6 +201,17 @@ holding the individual files:
 ./build/dsp --game wb3 /path/to/wb3.zip
 ./build/dsp --game tetris /path/to/tetris.zip
 ./build/dsp --game altbeast /path/to/altbeast.zip
+./build/dsp --game goldnaxe /path/to/goldnaxe.zip
+./build/dsp --game ddux /path/to/ddux.zip
+./build/dsp --game eswat /path/to/eswat.zip
+./build/dsp --game passsht /path/to/passsht.zip
+./build/dsp --game aurail /path/to/aurail.zip
+./build/dsp --game riotcity /path/to/riotcity.zip
+./build/dsp --game sdi /path/to/sdib.zip
+./build/dsp --game cotton /path/to/cotton.zip
+./build/dsp --game bayroute /path/to/bayroute.zip
+./build/dsp --game sonicbom /path/to/sonicbom.zip
+./build/dsp --game timescan /path/to/timescan.zip
 ```
 
 `--game` is required (`dsp --help` lists every name). Gauntlet accepts both the
@@ -1474,6 +1485,17 @@ Ported from [dsp-emulator](https://github.com/leniad/dsp-emulator)
 ./build/dsp --game wb3 /path/to/wb3.zip
 ./build/dsp --game tetris /path/to/tetris.zip
 ./build/dsp --game altbeast /path/to/altbeast.zip
+./build/dsp --game goldnaxe /path/to/goldnaxe.zip
+./build/dsp --game ddux /path/to/ddux.zip
+./build/dsp --game eswat /path/to/eswat.zip
+./build/dsp --game passsht /path/to/passsht.zip
+./build/dsp --game aurail /path/to/aurail.zip
+./build/dsp --game riotcity /path/to/riotcity.zip
+./build/dsp --game sdi /path/to/sdib.zip
+./build/dsp --game cotton /path/to/cotton.zip
+./build/dsp --game bayroute /path/to/bayroute.zip
+./build/dsp --game sonicbom /path/to/sonicbom.zip
+./build/dsp --game timescan /path/to/timescan.zip
 ```
 
 OutRun uses an analog wheel / gas / brake (arrow keys plus button 1/2) and a
