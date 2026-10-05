@@ -118,7 +118,7 @@ private:
     int timer_line_counter_ = 0;
 
     // Habisoft Abadia (and similar) blit: CALL $32BC skips LD IY/$3309 setup at
-    // $32B3. Once the game bank is resident, retarget those CALLs to $32B3.
+    // $32B3. Once phys banks 0/1 are mapped at $0000/$4000, retarget those CALLs.
     bool blit_setup_patched_ = false;
 };
 
