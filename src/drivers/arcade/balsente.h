@@ -160,7 +160,7 @@ private:
     Game game_;
     M6809 main_{kMainClock};
     Z80 sound_{kSoundClock};
-    std::array<Cem3394, 6> cem_{};
+    std::array<Cem3394, 6> cem_;
 
     std::vector<uint8_t> main_rom_;
     std::vector<uint8_t> sprite_rom_;
