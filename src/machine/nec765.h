@@ -7,13 +7,13 @@
 
 namespace dsp {
 
-// uPD765/NEC765 floppy disk controller wired the Amstrad CPC way (motor and
-// data/status registers only, no DMA/terminal count), ported from upd765.pas.
-// Reads standard and Extended .dsk images, ported from disk_file_format.pas
-// (dsk_format), including its CRC based sector-size patches for a couple of
-// well known copy-protected titles. The Oric .dsk/.mfm formats and the
-// Lenslock code-wheel protection (which shows a UI dialog on the source
-// engine) are not ported.
+// uPD765/NEC765 floppy disk controller wired the Amstrad CPC / PCW way (motor
+// and data/status registers; optional terminal-count for the PCW), ported from
+// upd765.pas. Reads standard and Extended .dsk images, ported from
+// disk_file_format.pas (dsk_format), including its CRC based sector-size
+// patches for a couple of well known copy-protected titles. The Oric
+// .dsk/.mfm formats and the Lenslock code-wheel protection (which shows a UI
+// dialog on the source engine) are not ported.
 //
 // The ID search used by READ DATA/READ ID/READ DELETED DATA (find_sector, see
 // buscar_sector in upd765.pas) is ported exactly: it only advances its
@@ -43,6 +43,10 @@ public:
     void write_data(uint8_t value);
     uint8_t read_status();
     uint8_t read_data();
+
+    // Terminal count (PCW system-control 5/6). Rising edge ends an in-progress
+    // read/write with normal termination (ST0 IC=00), matching MAME upd765.
+    void tc_w(bool asserted);
 
     // True while the FDC wants attention (seek complete or result phase), matching
     // the UPD765 INT line polled by the Amstrad PCW system-status port.
@@ -124,6 +128,10 @@ private:
     uint32_t data_length_ = 0;
     uint32_t counter_ = 0;
     bool seek_track_flag_ = false;
+    bool tc_ = false;
+    bool tc_done_ = false;
+
+    void finish_transfer(bool abnormal);
 };
 
 }  // namespace dsp

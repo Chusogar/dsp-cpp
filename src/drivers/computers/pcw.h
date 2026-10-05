@@ -36,7 +36,7 @@ public:
 
     // Green phosphor (MAME pcw_8xxx_palette).
     static constexpr uint32_t kPenBlack = 0xff000000u;
-    static constexpr uint32_t kPenGreen = 0xff00ff4au;
+    static constexpr uint32_t kPenGreen = 0xff4aff00u;  // MAME pcw_8xxx_palette
 
     explicit Pcw(Model model = Model::PCW8256);
 
