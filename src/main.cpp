@@ -76,6 +76,7 @@
 #include "drivers/computers/c64.h"
 #include "drivers/computers/vic20.h"
 #include "drivers/computers/c128.h"
+#include "drivers/computers/plus4.h"
 #include "drivers/computers/apple2.h"
 #include "drivers/computers/apple2gs.h"
 #include "drivers/computers/exelv.h"
@@ -165,7 +166,7 @@ void print_supported_emulators() {
         "    spectrum48, spectrum128, plus3, pentagon, scorpion, specnext (tbblue),\n"
         "    zx80, zx81, ts1000,\n"
         "    cpc464, cpc664, cpc6128, msx, msx2, msx2-jp, msx2-eu, nms8250, c64, vic20, vic20p,\n"
-        "    c128, commodore128,\n"
+        "    c128, commodore128, plus4, c16,\n"
         "    apple2, apple2gs, apple2plus, apple2e, apple2ee, exl100, exeltel, ql,\n"
         "    st, atarist, atari-st, amiga, a500, amiga500,\n"
         "    macplus, mac, macintosh, plus, macii, samcoupe\n"
@@ -604,6 +605,22 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     }
 	if (game == "c128" || game == "commodore128") {
         return std::make_unique<dsp::C128>();
+    }
+    if (game == "plus4" || game == "plus-4" || game == "c264") {
+        return std::make_unique<dsp::Plus4>(dsp::Plus4::Model::Plus4_64K,
+                                            dsp::Plus4::Region::Pal);
+    }
+    if (game == "plus4n" || game == "plus4-ntsc") {
+        return std::make_unique<dsp::Plus4>(dsp::Plus4::Model::Plus4_64K,
+                                            dsp::Plus4::Region::Ntsc);
+    }
+    if (game == "c16" || game == "commodore16") {
+        return std::make_unique<dsp::Plus4>(dsp::Plus4::Model::C16_16K,
+                                            dsp::Plus4::Region::Pal);
+    }
+    if (game == "c16n" || game == "c16-ntsc") {
+        return std::make_unique<dsp::Plus4>(dsp::Plus4::Model::C16_16K,
+                                            dsp::Plus4::Region::Ntsc);
     }
     if (game == "apple2orig" || game == "apple2integer" || game == "appleii-integer") {
         return std::make_unique<dsp::Apple2>(dsp::Apple2::Model::II);

@@ -16,7 +16,7 @@ Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 **OutRun**, **After Burner II** (X-Board), **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
 **Altered Beast**).
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
-**MSX1** / **MSX2**, **Commodore 64**, **Commodore VIC-20**, **Commodore 128**, **Sinclair ZX80** / **ZX81**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
+**MSX1** / **MSX2**, **Commodore 64**, **Commodore VIC-20**, **Commodore 128**, **Commodore Plus/4** / **C16**, **Sinclair ZX80** / **ZX81**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
 **EXL-100** / **EXELTEL**, **Sinclair QL**, **Atari ST**, **Commodore Amiga 500**. Consoles: NES, Game Boy / Game Boy
 Color, **Game Boy Advance**, **Atari 2600**, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
 **Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
@@ -987,6 +987,23 @@ into BLK5 at `$A000`.
 
 The host keyboard maps onto the VIC-20 matrix; arrows also drive the joystick
 (VIA1 PA / VIA2 PB7). F12 is RESTORE (NMI).
+
+### Commodore Plus/4 / C16
+
+TED (MOS 7360) machines. Plus/4 boots with 64K RAM; `c16` is the same TED core
+with a 16K RAM model. Needs BASIC `318006-01.u23` and KERNAL (`318005-05.u24`
+NTSC or `318004-05.u24` PAL). Plus/4 also loads the 3-plus-1 function ROMs
+`317053-01.u25` / `317054-01.u26` when present. Point `--game plus4` at
+`plus4.zip` (or `c16` at `c16.zip`).
+
+```bash
+./build/dsp --game plus4 --mute --frames 500 --screenshot /tmp/plus4.bmp /path/to/plus4.zip
+./build/dsp --game c16 --mute --frames 500 --screenshot /tmp/c16.bmp /path/to/c16.zip
+./build/dsp --game plus4 --tape game.prg /path/to/plus4.zip
+```
+
+`.prg` files are injected into BASIC RAM (typically `$1001`) after cold start,
+then `RUN` is typed through the KERNAL keyboard buffer.
 
 ### Commodore 128
 

@@ -242,9 +242,11 @@ add_executable(dsp
   src/sound/sid.cpp
   src/sound/sid6581.cpp
   src/sound/mos6560.cpp
+  src/sound/mos7360.cpp
   src/drivers/computers/c64.cpp
   src/drivers/computers/vic20.cpp
   src/drivers/computers/c128.cpp
+  src/drivers/computers/plus4.cpp
   src/drivers/computers/apple2.cpp
   src/drivers/computers/apple2gs.cpp
   src/drivers/computers/exelv.cpp
@@ -334,6 +336,7 @@ add_executable(dsp_tests
   src/sound/sid.cpp
   src/sound/sid6581.cpp
   src/sound/mos6560.cpp
+  src/sound/mos7360.cpp
   src/sound/gb_apu.cpp
   src/sound/polepos_wsg.cpp
   src/sound/polepos_engine.cpp
@@ -439,6 +442,7 @@ add_executable(dsp_tests
   src/drivers/computers/c64.cpp
   src/drivers/computers/vic20.cpp
   src/drivers/computers/c128.cpp
+  src/drivers/computers/plus4.cpp
   src/drivers/computers/zx81.cpp
   src/drivers/computers/apple2.cpp
   src/drivers/computers/apple2gs.cpp
