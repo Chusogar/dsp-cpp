@@ -23,6 +23,96 @@ uint8_t joy_bits(const InputState& p) {
 
 }  // namespace
 
+void System18::configure_game() {
+    use_fd1094_ = false;
+    use_mcu_ = false;
+    rotated_ = false;
+    rot90_ = false;
+    rom_board_ = RomBoard::Board5874;
+    tile_n_ = 8;
+    sprite_banks_ = 16;
+    rom0_size_ = 0x80000;
+    rom1_offset_ = 0x80000;
+    dsw_ = 0xfd;
+
+    switch (game_) {
+        case Game::Astorm:
+            use_fd1094_ = true;
+            rom_board_ = RomBoard::Board5874;
+            break;
+        case Game::Bloxeed:
+            use_fd1094_ = true;
+            rom_board_ = RomBoard::Board5874;
+            tile_n_ = 2;
+            sprite_banks_ = 1;
+            break;
+        case Game::Cltchitr:
+            use_fd1094_ = true;
+            rom_board_ = RomBoard::Board5987;
+            tile_n_ = 16;
+            sprite_banks_ = 24;
+            rom0_size_ = 0x80000;
+            rom1_offset_ = 0x80000;
+            break;
+        case Game::Ddcrew:
+            use_fd1094_ = true;
+            rom_board_ = RomBoard::Board5987;
+            tile_n_ = 8;
+            sprite_banks_ = 32;
+            rom0_size_ = 0x80000;
+            rom1_offset_ = 0x80000;
+            break;
+        case Game::Desertbr:
+            use_fd1094_ = true;
+            rom_board_ = RomBoard::Board5987;
+            rotated_ = true;
+            rot90_ = false;  // ROT270
+            tile_n_ = 32;
+            sprite_banks_ = 32;
+            rom0_size_ = 0x100000;
+            rom1_offset_ = 0x100000;
+            break;
+        case Game::Hamaway:
+            rom_board_ = RomBoard::Board8377525;
+            rotated_ = true;
+            rot90_ = true;  // ROT90
+            tile_n_ = 16;
+            sprite_banks_ = 16;
+            rom0_size_ = 0x80000;
+            rom1_offset_ = 0x80000;
+            break;
+        case Game::Lghost:
+            use_fd1094_ = true;
+            rom_board_ = RomBoard::Board5987;
+            tile_n_ = 8;
+            sprite_banks_ = 32;
+            rom0_size_ = 0x80000;
+            rom1_offset_ = 0x80000;
+            break;
+        case Game::Mwalk:
+            use_fd1094_ = true;
+            use_mcu_ = true;
+            rom_board_ = RomBoard::Board5874;
+            break;
+        case Game::Pontoon:
+            use_fd1094_ = true;
+            rom_board_ = RomBoard::Board5874;
+            sprite_banks_ = 4;
+            break;
+        case Game::Shdancer:
+            rom_board_ = RomBoard::Shadow;
+            break;
+        case Game::Wwallyj:
+            use_fd1094_ = true;
+            rom_board_ = RomBoard::Board5987;
+            tile_n_ = 8;
+            sprite_banks_ = 20;
+            rom0_size_ = 0x80000;
+            rom1_offset_ = 0x80000;
+            break;
+    }
+}
+
 System18::System18(Game game)
     : game_(game),
       main_cpu_(kMainClock),
@@ -32,6 +122,7 @@ System18::System18(Game game)
       rf5c68_(10000000, 1.0f),
       vdp_(false),
       framebuffer_(kNativeWidth * kNativeHeight, 0),
+      rotated_fb_(kNativeWidth * kNativeHeight, 0),
       bg_low_(1024 * 512, 0),
       bg_high_(1024 * 512, 0),
       fg_low_(1024 * 512, 0),
@@ -40,13 +131,16 @@ System18::System18(Game game)
       text_high_(512 * 256, 0),
       vdp_fb_(kNativeWidth * kNativeHeight, 0),
       vdp_pri_(kNativeWidth * kNativeHeight, 0) {
-    mcu_ = std::make_unique<Mcs51>(kMcuClock);
+    configure_game();
+    if (use_mcu_) mcu_ = std::make_unique<Mcs51>(kMcuClock);
 
     main_cpu_.set_memory_handlers([this](uint32_t a) { return main_read(a); },
                                   [this](uint32_t a, uint16_t v) { main_write(a, v, true); });
-    main_cpu_.set_cmpild_handler([this](uint8_t reg, uint32_t data) { fd1094_.on_cmpild(reg, data); });
-    main_cpu_.set_rte_handler([this]() { fd1094_.on_rte(); });
-    main_cpu_.set_irq_taken_handler([this](int) { fd1094_.on_irq(); });
+    if (use_fd1094_) {
+        main_cpu_.set_cmpild_handler([this](uint8_t reg, uint32_t data) { fd1094_.on_cmpild(reg, data); });
+        main_cpu_.set_rte_handler([this]() { fd1094_.on_rte(); });
+        main_cpu_.set_irq_taken_handler([this](int) { fd1094_.on_irq(); });
+    }
 
     sound_cpu_.set_memory_handlers([this](uint16_t a) { return sound_read(a); },
                                    [this](uint16_t a, uint8_t v) { sound_write(a, v); });
@@ -61,27 +155,27 @@ System18::System18(Game game)
     mapper_.set_bus_handlers([this](uint32_t a) { return main_read(a); },
                              [this](uint32_t a, uint16_t v) { main_write(a, v, false); });
     mapper_.set_reset_handler([this](IrqLine state) {
-        if (state != IrqLine::Clear) fd1094_.reset();
+        if (state != IrqLine::Clear && use_fd1094_) fd1094_.reset();
         main_cpu_.set_reset_line(state);
     });
     mapper_.set_irq_handler(
         [this](int level, IrqLine state) { main_cpu_.set_irq(level, state); });
     mapper_.set_pbf_handler([this](IrqLine state) { sound_cpu_.set_nmi(state); });
-    mapper_.set_mcu_int_handler([this](IrqLine state) {
-        if (mcu_) mcu_->set_irq1_line(state);
-    });
-
-    mcu_->set_external_handlers(
-        [this](uint16_t address) { return mapper_.read_reg(uint8_t(address & 0x1f)); },
-        [this](uint16_t address, uint8_t value) {
-            const uint32_t old = mapper_.dirs_start(5);
-            mapper_.write_reg(uint8_t(address & 0x1f), value);
-            if (old != mapper_.dirs_start(5)) {
-                for (auto& page : video_.tile_dirty) page.fill(false);
-            }
+    if (use_mcu_) {
+        mapper_.set_mcu_int_handler([this](IrqLine state) {
+            if (mcu_) mcu_->set_irq1_line(state);
         });
+        mcu_->set_external_handlers(
+            [this](uint16_t address) { return mapper_.read_reg(uint8_t(address & 0x1f)); },
+            [this](uint16_t address, uint8_t value) {
+                const uint32_t old = mapper_.dirs_start(5);
+                mapper_.write_reg(uint8_t(address & 0x1f), value);
+                if (old != mapper_.dirs_start(5)) {
+                    for (auto& page : video_.tile_dirty) page.fill(false);
+                }
+            });
+    }
 
-    // 315-5296 port map for System 18 / Moonwalker.
     io_.set_port_read(0, [this]() { return in_p1_; });
     io_.set_port_read(1, [this]() { return in_p2_; });
     io_.set_port_read(2, [this]() { return in_p3_; });
@@ -90,9 +184,8 @@ System18::System18(Game game)
     io_.set_port_read(6, [this]() { return dsw_; });
     io_.set_port_write(3, [this](uint8_t data) {
         grayscale_ = (data & 0x40) == 0;
-        // bit 5: flip (ignored for now)
     });
-    io_.set_port_write(7, [this](uint8_t data) { apply_tile_bank(data); });
+    io_.set_port_write(7, [this](uint8_t data) { apply_tile_bank_5874(data); });
     io_.set_cnt_write([this](int bit, bool state) {
         if (bit == 1) video_.screen_enabled = state;
         if (bit == 2) vdp_enable_ = state;
@@ -106,7 +199,20 @@ System18::System18(Game game)
 }
 
 const char* System18::title() const {
-    return "Michael Jackson's Moonwalker";
+    switch (game_) {
+        case Game::Astorm: return "Alien Storm";
+        case Game::Bloxeed: return "Bloxeed";
+        case Game::Cltchitr: return "Clutch Hitter";
+        case Game::Ddcrew: return "D. D. Crew";
+        case Game::Desertbr: return "Desert Breaker";
+        case Game::Hamaway: return "Hammer Away";
+        case Game::Lghost: return "Laser Ghost";
+        case Game::Mwalk: return "Michael Jackson's Moonwalker";
+        case Game::Pontoon: return "Pontoon";
+        case Game::Shdancer: return "Shadow Dancer";
+        case Game::Wwallyj: return "Wally wo Sagase!";
+    }
+    return "System 18";
 }
 
 bool System18::init(const std::string& rom_path, std::string* error) {
@@ -117,7 +223,6 @@ bool System18::init(const std::string& rom_path, std::string* error) {
     video_.tile_bank[0] = 0;
     video_.tile_bank[1] = 1;
     for (int i = 0; i < 16; i++) video_.sprite_bank[size_t(i)] = uint8_t(i);
-    sprite_banks_ = 16;
     reset();
     return true;
 }
@@ -127,34 +232,87 @@ bool System18::load_roms(const std::string& rom_path, std::string* error) {
     RomLoader loader;
     if (!loader.open(rom_path, error)) return false;
 
-    std::vector<uint16_t> encrypted;
-    if (!load_roms16w(loader, kMwalkMain, encrypted, error)) return false;
-    std::vector<uint8_t> key_bytes;
-    if (!load_rom_bytes(loader, kMwalkKey, key_bytes, error)) return false;
-    key_bytes.resize(Fd1094::kKeySize, 0);
-    fd1094_.set_key(key_bytes.data(), key_bytes.size());
-    rom_ = std::move(encrypted);
+    const std::vector<RomEntry>* main = nullptr;
+    const std::vector<RomEntry>* key = nullptr;
+    const std::vector<RomEntry>* tiles = nullptr;
+    const std::vector<RomEntry>* sprites = nullptr;
+    const std::vector<RomEntry>* sound = nullptr;
+    const std::vector<RomEntry>* mcu_rom = nullptr;
 
-    if (!load_rom_bytes(loader, kMwalkSound, sound_rom_, error)) return false;
+    switch (game_) {
+        case Game::Astorm:
+            main = &kAstormMain; key = &kAstormKey; tiles = &kAstormTiles;
+            sprites = &kAstormSprites; sound = &kAstormSound; break;
+        case Game::Bloxeed:
+            main = &kBloxeedMain; key = &kBloxeedKey; tiles = &kBloxeedTiles;
+            sprites = &kBloxeedSprites; sound = &kBloxeedSound; break;
+        case Game::Cltchitr:
+            main = &kCltchitrMain; key = &kCltchitrKey; tiles = &kCltchitrTiles;
+            sprites = &kCltchitrSprites; sound = &kCltchitrSound; break;
+        case Game::Ddcrew:
+            main = &kDdcrewMain; key = &kDdcrewKey; tiles = &kDdcrewTiles;
+            sprites = &kDdcrewSprites; sound = &kDdcrewSound; break;
+        case Game::Desertbr:
+            main = &kDesertbrMain; key = &kDesertbrKey; tiles = &kDesertbrTiles;
+            sprites = &kDesertbrSprites; sound = &kDesertbrSound; break;
+        case Game::Hamaway:
+            main = &kHamawayMain; tiles = &kHamawayTiles;
+            sprites = &kHamawaySprites; sound = &kHamawaySound; break;
+        case Game::Lghost:
+            main = &kLghostMain; key = &kLghostKey; tiles = &kLghostTiles;
+            sprites = &kLghostSprites; sound = &kLghostSound; break;
+        case Game::Mwalk:
+            main = &kMwalkMain; key = &kMwalkKey; tiles = &kMwalkTiles;
+            sprites = &kMwalkSprites; sound = &kMwalkSound; mcu_rom = &kMwalkMcu; break;
+        case Game::Pontoon:
+            main = &kPontoonMain; key = &kPontoonKey; tiles = &kPontoonTiles;
+            sprites = &kPontoonSprites; sound = &kPontoonSound; break;
+        case Game::Shdancer:
+            main = &kShdancerMain; tiles = &kShdancerTiles;
+            sprites = &kShdancerSprites; sound = &kShdancerSound; break;
+        case Game::Wwallyj:
+            main = &kWwallyjMain; key = &kWwallyjKey; tiles = &kWwallyjTiles;
+            sprites = &kWwallyjSprites; sound = &kWwallyjSound; break;
+    }
+
+    if (use_fd1094_ && key) {
+        std::vector<uint16_t> encrypted;
+        if (!load_roms16w(loader, *main, encrypted, error)) return false;
+        std::vector<uint8_t> key_bytes;
+        if (!load_rom_bytes(loader, *key, key_bytes, error)) return false;
+        key_bytes.resize(Fd1094::kKeySize, 0);
+        fd1094_.set_key(key_bytes.data(), key_bytes.size());
+        rom_ = std::move(encrypted);
+    } else {
+        if (!load_roms16w(loader, *main, rom_, error)) return false;
+    }
+
+    if (!load_rom_bytes(loader, *sound, sound_rom_, error)) return false;
     sound_rom_.resize(0x200000, 0xff);
 
-    std::vector<uint8_t> mcu_bytes;
-    if (!load_rom_bytes(loader, kMwalkMcu, mcu_bytes, error)) return false;
-    std::fill(mcu_->rom(), mcu_->rom() + Mcs51::kRomSize, 0xff);
-    std::copy(mcu_bytes.begin(), mcu_bytes.end(), mcu_->rom());
+    if (use_mcu_ && mcu_rom && mcu_) {
+        std::vector<uint8_t> mcu_bytes;
+        if (!load_rom_bytes(loader, *mcu_rom, mcu_bytes, error)) return false;
+        std::fill(mcu_->rom(), mcu_->rom() + Mcs51::kRomSize, 0xff);
+        std::copy(mcu_bytes.begin(), mcu_bytes.end(), mcu_->rom());
+    }
 
-    if (!load_roms16w(loader, kMwalkSprites, sprite_rom_, error)) return false;
+    if (!load_roms16w(loader, *sprites, sprite_rom_, error)) return false;
 
     std::vector<uint8_t> tile_bytes;
-    if (!load_rom_bytes(loader, kMwalkTiles, tile_bytes, error)) return false;
-    // 3 planes, enough tiles for the 0xc0000 ROM (32768 tiles).
-    decode_s16_tiles(video_.tiles, tile_bytes, 8);
+    if (!load_rom_bytes(loader, *tiles, tile_bytes, error)) return false;
+    // Derive plane layout size from ROM length when possible.
+    if (tile_bytes.size() >= 0x18000) {
+        tile_n_ = int(tile_bytes.size() / 0x18000);
+        if (tile_n_ < 1) tile_n_ = 1;
+    }
+    decode_s16_tiles(video_.tiles, tile_bytes, tile_n_);
     return true;
 }
 
 void System18::reset() {
     mapper_.reset();
-    fd1094_.reset();
+    if (use_fd1094_) fd1094_.reset();
     main_cpu_.reset();
     sound_cpu_.reset();
     if (mcu_) mcu_->reset();
@@ -164,7 +322,6 @@ void System18::reset() {
     vdp_.reset();
     io_.reset();
     video_.reset();
-    // CNT1 starts low; the game enables the System 16 display through the I/O chip.
     video_.screen_enabled = false;
     work_ram_.fill(0);
     sound_ram_.fill(0);
@@ -182,7 +339,6 @@ void System18::reset() {
 void System18::set_inputs(const MachineInputs& inputs) {
     in_p1_ = joy_bits(inputs.player1);
     in_p2_ = joy_bits(inputs.player2);
-    // Player 3 is unused by the two-player front end; keep idle high.
     in_p3_ = 0xff;
 
     in_service_ = 0xff;
@@ -198,10 +354,9 @@ void System18::set_dip_switch(int bank, uint8_t value) {
     else if (bank == 1) dsw_ = value;
 }
 
-void System18::apply_tile_bank(uint8_t data) {
+void System18::apply_tile_bank_5874(uint8_t data) {
+    if (rom_board_ != RomBoard::Board5874 && rom_board_ != RomBoard::Shadow) return;
     tile_bank_latch_ = data;
-    // 171-5874 ROM board: low nibble banks pages 0-3, high nibble pages 4-7.
-    // Our Sega16Video collapses that to two bank slots of 0x1000 tiles.
     const uint8_t lo = uint8_t(data & 0x0f);
     const uint8_t hi = uint8_t((data >> 4) & 0x0f);
     if (video_.tile_bank[0] != lo || video_.tile_bank[1] != hi) {
@@ -212,14 +367,52 @@ void System18::apply_tile_bank(uint8_t data) {
     }
 }
 
+void System18::bank5987_w(uint16_t offset, uint16_t value) {
+    offset &= 0xf;
+    const uint8_t data = uint8_t(value);
+    if (offset < 8) {
+        // MAME banks are 0x400 tiles; our Sega16Video uses 0x1000-tile slots.
+        const uint8_t bank = uint8_t(data >> 2);
+        const int slot = offset < 4 ? 0 : 1;
+        if (video_.tile_bank[size_t(slot)] != bank) {
+            video_.tile_bank[size_t(slot)] = bank;
+            for (auto& page : video_.tile_dirty) page.fill(true);
+            video_.text_dirty.fill(true);
+        }
+    } else {
+        const int pair = int(offset - 8);
+        if (pair >= 0 && pair < 8) {
+            video_.sprite_bank[size_t(pair * 2 + 0)] = uint8_t(data * 2 + 0);
+            video_.sprite_bank[size_t(pair * 2 + 1)] = uint8_t(data * 2 + 1);
+        }
+    }
+}
+
+void System18::bank837_w(uint16_t offset, uint16_t value) {
+    offset &= 0xf;
+    uint8_t data = uint8_t(value);
+    if (offset < 8) {
+        data &= 0x9f;
+        if (data & 0x80) data = uint8_t(data + 0x20);
+        data &= 0x3f;
+        const uint8_t bank = uint8_t(data >> 2);
+        const int slot = offset < 4 ? 0 : 1;
+        if (video_.tile_bank[size_t(slot)] != bank) {
+            video_.tile_bank[size_t(slot)] = bank;
+            for (auto& page : video_.tile_dirty) page.fill(true);
+            video_.text_dirty.fill(true);
+        }
+    }
+}
+
 void System18::drain_audio(std::vector<int16_t>& out) {
     out.swap(audio_);
     audio_.clear();
 }
 
-uint16_t System18::read_region0(uint32_t address) {
-    const size_t index = (address >> 1) % std::max<size_t>(rom_.size(), 1);
-    if (main_cpu_.opcode()) {
+uint16_t System18::read_rom_word(uint32_t byte_offset) {
+    const size_t index = (byte_offset >> 1) % std::max<size_t>(rom_.size(), 1);
+    if (use_fd1094_ && main_cpu_.opcode()) {
         const uint16_t* dec = fd1094_.decrypted_opcodes(rom_.data(), uint32_t(rom_.size() * 2));
         return dec[index];
     }
@@ -237,6 +430,15 @@ uint16_t System18::misc_io_r(uint16_t word_offset) {
         default:
             break;
     }
+    // Wally wo Sagase! polls UPD4701 trackballs at 0x3000-0x3016.
+    // Stub a centered position so attract mode can progress without the chip.
+    if (game_ == Game::Wwallyj && offset >= 0x3000 / 2 && offset < 0x3018 / 2) {
+        return 0x8000;
+    }
+    // Laser Ghost gun ADC stub — always report "done" with mid-scale sample.
+    if (game_ == Game::Lghost && offset >= 0x3010 / 2 && offset <= 0x3016 / 2) {
+        return 0x00ff;
+    }
     return 0xffff;
 }
 
@@ -253,23 +455,36 @@ void System18::misc_io_w(uint16_t word_offset, uint16_t value) {
         default:
             break;
     }
+    // Trackball / gun latch writes are intentionally ignored (stubbed).
+    (void)value;
 }
 
 uint16_t System18::main_read(uint32_t address) {
     address &= 0xffffff;
-    if (mapper_.contains(0, address)) return read_region0(address);
+    if (mapper_.contains(0, address)) {
+        return read_rom_word(address & (rom0_size_ - 1));
+    }
 
     uint16_t result = 0xffff;
     bool mapped = false;
     if (mapper_.contains(1, address)) {
-        // 171-5874: region 1 is extra ROM window (mwalk has 512 KB only in region 0).
-        const size_t index = ((address & 0x7ffff) >> 1) % std::max<size_t>(rom_.size(), 1);
-        result = rom_[index];
+        if (rom_board_ == RomBoard::Shadow) {
+            result = vdp_.read(uint8_t((address >> 1) & 0x1f));
+        } else if (rom_board_ == RomBoard::Board5987 || rom_board_ == RomBoard::Board8377525) {
+            // Region 1 is a ROM window (bank writes go through write path).
+            const uint32_t mask = rom0_size_ - 1;
+            result = read_rom_word(rom1_offset_ + (address & mask));
+        } else {
+            // 171-5874 extra ROM window at +0x80000.
+            result = read_rom_word(0x80000 + (address & 0x7ffff));
+        }
         mapped = true;
     }
     if (mapper_.contains(2, address)) {
-        result = vdp_.read(uint8_t((address >> 1) & 0x1f));
-        mapped = true;
+        if (rom_board_ != RomBoard::Shadow) {
+            result = vdp_.read(uint8_t((address >> 1) & 0x1f));
+            mapped = true;
+        }
     }
     if (mapper_.contains(3, address)) {
         result = work_ram_[(address >> 1) & 0x1fff];
@@ -300,10 +515,21 @@ void System18::main_write(uint32_t address, uint16_t value, bool allow_mapper) {
     address &= 0xffffff;
     bool mapped = false;
     if (mapper_.contains(0, address)) mapped = true;
-    if (mapper_.contains(1, address)) mapped = true;
-    if (mapper_.contains(2, address)) {
-        vdp_.write(uint8_t((address >> 1) & 0x1f), value);
+    if (mapper_.contains(1, address)) {
+        if (rom_board_ == RomBoard::Shadow) {
+            vdp_.write(uint8_t((address >> 1) & 0x1f), value);
+        } else if (rom_board_ == RomBoard::Board5987) {
+            bank5987_w(uint16_t((address >> 1) & 0xf), value);
+        } else if (rom_board_ == RomBoard::Board8377525) {
+            bank837_w(uint16_t((address >> 1) & 0xf), value);
+        }
         mapped = true;
+    }
+    if (mapper_.contains(2, address)) {
+        if (rom_board_ != RomBoard::Shadow) {
+            vdp_.write(uint8_t((address >> 1) & 0x1f), value);
+            mapped = true;
+        }
     }
     if (mapper_.contains(3, address)) {
         work_ram_[(address >> 1) & 0x1fff] = value;
@@ -356,7 +582,6 @@ uint8_t System18::sound_read(uint16_t address) {
         return sound_rom_[(base + (address & 0x1fff)) & 0x1fffff];
     }
     if (address >= 0xc000 && address <= 0xcfff) {
-        // Register aliases — reads are unused on RF5C68.
         return 0xff;
     }
     if (address >= 0xd000 && address <= 0xdfff) {
@@ -407,7 +632,6 @@ void System18::sound_out(uint16_t port, uint8_t value) {
 }
 
 void System18::on_sound_cycles(int cycles) {
-    // YM2612 timers tick at the chip clock; approximate with the Z80 slice.
     (void)cycles;
 }
 
@@ -422,16 +646,38 @@ void System18::overlay_vdp(int /*priority_layer*/) {
     }
 }
 
+void System18::rotate_framebuffer() {
+    if (rot90_) {
+        // ROT90: dest[width-1-sy, sx] from native 320x224 -> 224x320.
+        for (int y = 0; y < kNativeHeight; y++) {
+            for (int x = 0; x < kNativeWidth; x++) {
+                const uint32_t pixel = framebuffer_[size_t(y * kNativeWidth + x)];
+                const int dx = kNativeHeight - 1 - y;
+                const int dy = x;
+                rotated_fb_[size_t(dy * kNativeHeight + dx)] = pixel;
+            }
+        }
+    } else {
+        // ROT270: dest[sy, width-1-sx] from native 320x224 -> 224x320.
+        for (int y = 0; y < kNativeHeight; y++) {
+            for (int x = 0; x < kNativeWidth; x++) {
+                const uint32_t pixel = framebuffer_[size_t(y * kNativeWidth + x)];
+                const int dx = y;
+                const int dy = kNativeWidth - 1 - x;
+                rotated_fb_[size_t(dy * kNativeHeight + dx)] = pixel;
+            }
+        }
+    }
+}
+
 void System18::update_video() {
     const uint32_t blank = video_.palette[0x1000];
     if (!video_.screen_enabled) {
         std::fill(framebuffer_.begin(), framebuffer_.end(), blank);
+        if (rotated_) rotate_framebuffer();
         return;
     }
 
-    // Capture the Genesis VDP picture for this frame (scanlines already run).
-    // Priority mixing is simplified: non-backdrop VDP pixels replace the
-    // current layer when the VDP is enabled (mwalk uses mixing 0x04 / 0x07).
     const int vdplayer = (vdp_mixing_ >> 1) & 3;
 
     video_.render_tile_pages(bg_low_, bg_high_, 0, false, 5, 0x1fff, 0x8000, true, false);
@@ -481,6 +727,8 @@ void System18::update_video() {
     maybe_vdp(3);
     draw_sprites_16b(video_, framebuffer_.data(), sprite_rom_, sprite_banks_, 3, 0x800);
     video_.blit_text(framebuffer_.data(), text_high_);
+
+    if (rotated_) rotate_framebuffer();
 }
 
 void System18::run_frame() {
@@ -521,7 +769,6 @@ void System18::run_frame() {
             }
         }
 
-        // Spread audio samples evenly across the frame.
         const int target = (line + 1) * samples_per_frame / kScanlines;
         while (samples_done < target) {
             double mix = double(ym1_.update()) + double(ym2_.update());
