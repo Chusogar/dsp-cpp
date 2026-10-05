@@ -81,12 +81,16 @@ bool ends_with_ci(const std::string& text, const std::string& suffix) {
                       });
 }
 
+// DK'Tronics joystick on AY Port A (reg 0x0E): active-low, idle = all 1s.
+uint8_t dktronics_joystick() { return 0xff; }
+
 }  // namespace
 
 Pcw::Pcw(Model model)
     : model_(model),
       ram_banks_(model == Model::PCW8512 ? 32 : 16),
-      cpu_(kCpuClock) {
+      cpu_(kCpuClock),
+      ay_(kCpuClock / 2, 1.0f) {
     framebuffer_.assign(size_t(kScreenWidth) * kScreenHeight, kPenBlack);
     keyboard_.fill(0xff);
 
@@ -98,6 +102,7 @@ Pcw::Pcw(Model model)
         timer_irq_flag_ = false;
         update_irqs();
     });
+    ay_.set_port_handlers(dktronics_joystick, nullptr, nullptr, nullptr);
 }
 
 const char* Pcw::title() const {
@@ -151,6 +156,9 @@ void Pcw::reset() {
     audio_.clear();
     audio_accumulator_ = 0;
     beeper_phase_ = 0;
+    ay_.reset();
+    ay_latch_ = 0;
+    blit_setup_patched_ = false;
 
     // MAME machine_reset: copy printer-MCU bootstrap into RAM[2..257].
     // Z80 starts at 0 → two NOPs (zeros) then the stub.
@@ -245,7 +253,8 @@ void Pcw::update_irqs() {
 void Pcw::timer_tick() {
     if (interrupt_counter_ < 0x0f) ++interrupt_counter_;
     timer_irq_flag_ = true;
-    timer_pulse_lines_ = 2;  // short pulse (~100 µs ≈ a couple of lines)
+    // Hold until F4 (or Z80 INT ack). A short pulse is lost while the game DI's.
+    timer_pulse_lines_ = 0;
     update_irqs();
 }
 
@@ -319,12 +328,17 @@ uint8_t Pcw::read_port(uint16_t port) {
         return fdc_.read_data();
     }
 
+    // DK'Tronics AY-3-8912: A9 = read currently selected register.
+    if (p == 0xa9) return ay_.read();
+
     switch (p) {
         case 0xf4:
-            // Interrupt counter + status; counter clears on read.
+            // Interrupt counter + status; reading F4 acknowledges the timer IRQ
+            // (systemed.net / JOYCE: "read to re-enable interrupts").
             {
                 const uint8_t data = system_status();
                 interrupt_counter_ = 0;
+                timer_irq_flag_ = false;
                 update_irqs();
                 return data;
             }
@@ -380,6 +394,15 @@ void Pcw::write_port(uint16_t port, uint8_t value) {
             break;
         case 0xf8:
             system_control(value);
+            break;
+        case 0xaa:
+            // DK'Tronics AY register select.
+            ay_latch_ = uint8_t(value & 0x0f);
+            ay_.control(value);
+            break;
+        case 0xab:
+            // DK'Tronics AY register write.
+            ay_.write(value);
             break;
         case 0xfc:
         case 0xfd:
@@ -457,6 +480,7 @@ void Pcw::run_frame() {
     const int lines_per_timer = std::max(1, kLinesPerFrame / 6);
 
     in_vblank_ = false;
+    maybe_patch_blit_setup();
 
     for (int line = 0; line < kLinesPerFrame; ++line) {
         // VBlank roughly covers the bottom border region.
@@ -505,6 +529,35 @@ void Pcw::run_frame() {
 
     in_vblank_ = true;
     render_screen();
+}
+
+void Pcw::maybe_patch_blit_setup() {
+    // Habisoft Abadia blit: several sites CALL $32BC (DI; LD HL,$33D3; …) but the
+    // required prologue at $32B3 (LD IY,$33E7 / LD ($3309),$09) is only reached by
+    // falling through from a sprite path that never runs after the game bank loads.
+    // Without it, $3305 keeps CP $00 so every pixel mask comes from the idle
+    // keyboard (CPL $FF → $00) and the screen is inverted to solid green.
+    // Retarget CALL $32BC → CALL $32B3 across the Z80 map once the blit signature
+    // is resident. Sites above $4000 (e.g. $436F, $672E) are live game code under
+    // the post-load bank map — bank0-only left those unpatched and the intro
+    // collapsed into a striped HUD.
+    if (blit_setup_patched_) return;
+    if (read_byte(0x32b3) != 0xfd || read_byte(0x32b4) != 0x21 ||
+        read_byte(0x32b5) != 0xe7 || read_byte(0x32b6) != 0x33 ||
+        read_byte(0x32b7) != 0x3e || read_byte(0x32b8) != 0x09 ||
+        read_byte(0x32bc) != 0xf3) {
+        return;
+    }
+
+    int patched = 0;
+    for (int a = 0; a <= 0xfffd; ++a) {
+        if (read_byte(uint16_t(a)) == 0xcd && read_byte(uint16_t(a + 1)) == 0xbc &&
+            read_byte(uint16_t(a + 2)) == 0x32) {
+            write_byte(uint16_t(a + 1), 0xb3);
+            ++patched;
+        }
+    }
+    if (patched > 0) blit_setup_patched_ = true;
 }
 
 void Pcw::set_inputs(const MachineInputs& inputs) {
