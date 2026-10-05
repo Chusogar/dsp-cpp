@@ -52,6 +52,10 @@ private:
     uint8_t cra_ = 0, crb_ = 0;
     bool ta_under_ = false, tb_under_ = false;
     bool flag_ = false;
+    // Serial port (SP) shift: when CRA SP-output is active, writing SDR
+    // starts an 8-bit transfer clocked by Timer A underflows. C128 fast
+    // serial waits on ICR bit 3 after each STA $DC0C.
+    int sdr_bits_left_ = 0;
 
     PortRead pa_in_, pb_in_;
     PortWrite pa_out_, pb_out_;

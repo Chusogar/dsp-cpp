@@ -21,6 +21,7 @@ void Mos6526::reset() {
     sdr_ = icr_ = imr_ = cra_ = crb_ = 0;
     ta_under_ = tb_under_ = false;
     flag_ = false;
+    sdr_bits_left_ = 0;
     joystick1 = joystick2 = 0xFF;
 }
 
@@ -92,6 +93,12 @@ void Mos6526::tick(int cycles) {
                 ta_ = ta_latch_;
                 icr_ = uint8_t(icr_ | 0x01);
                 if (cra_ & 0x08) cra_ = uint8_t(cra_ & ~1);
+                // SP output: each Timer A underflow shifts one bit.
+                if ((cra_ & 0x40) && sdr_bits_left_ > 0) {
+                    if (--sdr_bits_left_ == 0) {
+                        icr_ = uint8_t(icr_ | 0x08);  // SDR complete
+                    }
+                }
                 if ((crb_ & 0x41) == 0x41) {
                     // TB counts TA underflows
                     if (tb_ == 0) {
@@ -217,6 +224,8 @@ void Mos6526::write(uint8_t reg, uint8_t value) {
             break;
         case 0xC:
             sdr_ = value;
+            // Writing SDR with SP in output mode starts an 8-bit shift.
+            if (cra_ & 0x40) sdr_bits_left_ = 8;
             break;
         case 0xD:
             // bit7: 1=set mask bits, 0=clear mask bits

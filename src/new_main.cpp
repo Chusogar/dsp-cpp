@@ -68,6 +68,8 @@
 #include "drivers/computers/msx1.h"
 #include "drivers/computers/msx2.h"
 #include "drivers/computers/c64.h"
+#include "drivers/computers/c128.h"
+#include "drivers/computers/zx81.h"
 #include "drivers/computers/apple2.h"
 #include "drivers/computers/apple2gs.h"
 #include "drivers/computers/exelv.h"
@@ -148,7 +150,9 @@ void print_supported_emulators() {
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
+        "    zx80, zx81, ts1000,\n"
         "    cpc464, cpc664, cpc6128, msx, msx2, msx2-jp, msx2-eu, nms8250, c64,\n"
+        "    c128, commodore128,\n"
         "    apple2, apple2gs, apple2plus, apple2e, apple2ee, exl100, exeltel, ql,\n"
         "    st, atarist, atari-st, amiga, a500, amiga500,\n"
         "    macplus, mac, macintosh, plus, macii, samcoupe\n"
@@ -490,6 +494,8 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 
 	// computers
     if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48k>();
+    if (game == "zx80") return std::make_unique<dsp::Zx81>(dsp::Zx81::Model::Zx80);
+    if (game == "zx81" || game == "ts1000") return std::make_unique<dsp::Zx81>();
     if (game == "cpc464") return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC464);
     if (game == "cpc664") return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC664);
     if (game == "cpc6128" || game == "cpc") {
@@ -515,6 +521,9 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	}
 	if (game == "c64" || game == "commodore64" || game == "commodore") {
         return std::make_unique<dsp::C64>();
+    }
+	if (game == "c128" || game == "commodore128") {
+        return std::make_unique<dsp::C128>();
     }
     if (game == "apple2orig" || game == "apple2integer" || game == "appleii-integer") {
         return std::make_unique<dsp::Apple2>(dsp::Apple2::Model::II);

@@ -16,7 +16,7 @@ Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 **OutRun**, **After Burner II** (X-Board), **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
 **Altered Beast**).
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
-**MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
+**MSX1** / **MSX2**, **Commodore 64**, **Commodore VIC-20**, **Commodore 128**, **Commodore Plus/4** / **C16**, **Sinclair ZX80** / **ZX81**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
 **EXL-100** / **EXELTEL**, **Sinclair QL**, **Atari ST**, **Commodore Amiga 500**. Consoles: NES, Game Boy / Game Boy
 Color, **Game Boy Advance**, **Atari 2600**, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
 **Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
@@ -593,6 +593,27 @@ and TNK III.
 The Ikari set accepts both the old `1.rom` / `7.rom` / `7122er.prm` names and the
 MAME 0.221 `1.4p` / `p7.3b` / `a6002-1.1k` names.
 
+### Sinclair ZX80 / ZX81 / Timex TS1000
+
+PAL ZX80/ZX81 with Z80 @ 3.25 MHz and 16 KiB RAM. No sound. The ZX81 needs an 8 KiB
+ROM from a MAME-style zip (prefer `zx81b.rom`, CRC `522c37b8`; falls back to
+`zx81.rom` / `zx81a.rom`). The ZX80 needs 4 KiB `zx80.rom` (CRC `4c7fc597`); it has
+no NMI generator and uses the 4K charset at `$0E00`:
+
+```bash
+./build/dsp --game zx80 /path/to/zx80.zip
+./build/dsp --game zx81 /path/to/zx81.zip
+./build/dsp --game ts1000 /path/to/zx81.zip
+./build/dsp --game zx81 --tape game.p /path/to/zx81.zip
+```
+
+`.p` / `.P` snapshots (ZX81) are memory images starting at `$4009` (sysvars). After
+boot they are copied into RAM and the CPU restarts at `$0207` (DISPLAY-1),
+matching EightyOne / sz81.
+
+The host keyboard maps onto the ZX matrix (same layout as the Spectrum 48K). Both
+machines boot to the inverse-K BASIC cursor on a black-and-white screen.
+
 ### ZX Spectrum 48K
 
 The machine needs the 16 KiB Sinclair ROM, given as a plain `48.rom` image, a zip or a
@@ -945,6 +966,70 @@ structure, so its files are placed on a disk image built in memory and served
 through the drive as well. Without a drive ROM there is no device on the bus and
 `.d64`/`.t64` fall back to injecting their first program into RAM
 (`.g64` is rejected).
+
+### Commodore VIC-20
+
+Unexpanded VIC-20 with MOS 6561 (PAL) or 6560 (NTSC) VIC, dual 6522 VIAs and
+6502. Needs BASIC `901486-01.ue11`, KERNAL (`901486-07.ue12` PAL or
+`901486-06.ue12` NTSC) and character ROM `901460-03.ud7`. Prefer `vic20p.zip`
+for 50 Hz; `vic20` / `vic-20` / `vic20p` all default to PAL timing.
+
+```bash
+./build/dsp --game vic20 --mute --frames 400 --screenshot /tmp/vic20.bmp /path/to/vic20p.zip
+./build/dsp --game vic20 /path/to/vic20.zip
+./build/dsp --game vic20 --tape game.prg /path/to/vic20p.zip
+```
+
+`.prg` files (or raw PRG without an extension) are queued and injected into
+unexpanded BASIC RAM at `$1001` once the READY prompt is up, then `RUN` is
+typed through the KERNAL keyboard buffer. A raw 4K/8K `.crt` / `.bin` dump maps
+into BLK5 at `$A000`.
+
+The host keyboard maps onto the VIC-20 matrix; arrows also drive the joystick
+(VIA1 PA / VIA2 PB7). F12 is RESTORE (NMI).
+
+### Commodore Plus/4 / C16
+
+TED (MOS 7360) machines. Plus/4 boots with 64K RAM; `c16` is the same TED core
+with a 16K RAM model. Needs BASIC `318006-01.u23` and KERNAL (`318005-05.u24`
+NTSC or `318004-05.u24` PAL). Plus/4 also loads the 3-plus-1 function ROMs
+`317053-01.u25` / `317054-01.u26` when present. Point `--game plus4` at
+`plus4.zip` (or `c16` at `c16.zip`).
+
+```bash
+./build/dsp --game plus4 --mute --frames 500 --screenshot /tmp/plus4.bmp /path/to/plus4.zip
+./build/dsp --game c16 --mute --frames 500 --screenshot /tmp/c16.bmp /path/to/c16.zip
+./build/dsp --game plus4 --tape game.prg /path/to/plus4.zip
+```
+
+`.prg` files are injected into BASIC RAM (typically `$1001`) after cold start,
+then `RUN` is typed through the KERNAL keyboard buffer.
+
+### Commodore 128
+
+C128 mode with the 40-column VIC-II. Needs the MAME `c128.zip` / `c128p.zip` set
+(revision 4/5 preferred, revision 2/3 accepted):
+
+| File | Role |
+| --- | --- |
+| `318018-04.u33` (or `-02`) | BASIC LO 16K |
+| `318019-04.u34` (or `-02`) | BASIC HI 16K |
+| `318020-05.u35` (or `-03`) | KERNAL / Editor 16K |
+| `251913-01.u32` | C64 BASIC+KERNAL 16K |
+| `390059-01.u18` | Character ROM 8K |
+
+Z80 BIOS (middle of the KERNAL chip) is loaded but the Z80 stays halted — the
+8502 boots directly. VDC 80-column and disk drives are stubbed.
+
+```bash
+./build/dsp --game c128 /tmp/roms/computers/c128.zip
+./build/dsp --game commodore128 /path/to/c128-roms/
+./build/dsp --game c128 --tape game.prg /tmp/roms/computers/c128.zip
+```
+
+`.prg` files are injected into bank-0 RAM once BASIC 7.0 TXTTAB points at
+`$1C01`, then autostarted with `RUN` via the C128 editor keyboard buffer
+(`KEYD` `$034A` / `NDX` `$D0`).
 
 ### Apple II, II+, IIe and IIe Enhanced
 

@@ -130,6 +130,7 @@ add_executable(dsp
   src/machine/g64_image.cpp
   src/machine/gcr.cpp
   src/machine/c64_tape.cpp
+  src/machine/mos8722.cpp
   src/machine/z80pio.cpp
   src/machine/sega_decrypt.cpp
   src/machine/konami_decrypt.cpp
@@ -225,6 +226,7 @@ add_executable(dsp
   src/drivers/computers/spectrum_3.cpp
   src/drivers/computers/specnext.cpp
   src/drivers/computers/specnext_video.cpp
+  src/drivers/computers/zx81.cpp
   src/machine/sdcard_spi.cpp
   src/machine/zxn_dma.cpp
   src/drivers/arcade/model3.cpp
@@ -241,7 +243,12 @@ add_executable(dsp
   src/drivers/computers/msx2.cpp
   src/sound/sid.cpp
   src/sound/sid6581.cpp
+  src/sound/mos6560.cpp
+  src/sound/mos7360.cpp
   src/drivers/computers/c64.cpp
+  src/drivers/computers/vic20.cpp
+  src/drivers/computers/c128.cpp
+  src/drivers/computers/plus4.cpp
   src/drivers/computers/apple2.cpp
   src/drivers/computers/apple2gs.cpp
   src/drivers/computers/exelv.cpp
@@ -330,6 +337,8 @@ add_executable(dsp_tests
   src/sound/tms5220.cpp
   src/sound/sid.cpp
   src/sound/sid6581.cpp
+  src/sound/mos6560.cpp
+  src/sound/mos7360.cpp
   src/sound/gb_apu.cpp
   src/sound/polepos_wsg.cpp
   src/sound/polepos_engine.cpp
@@ -399,6 +408,7 @@ add_executable(dsp_tests
   src/machine/i8243.cpp
   src/machine/diskii.cpp
   src/machine/c64_tape.cpp
+  src/machine/mos8722.cpp
   src/machine/tc0140syt.cpp
   src/machine/opwolf_cchip.cpp
   src/machine/zx8302.cpp
@@ -433,6 +443,10 @@ add_executable(dsp_tests
   src/drivers/computers/msx2.cpp
   src/drivers/consoles/nes.cpp
   src/drivers/computers/c64.cpp
+  src/drivers/computers/vic20.cpp
+  src/drivers/computers/c128.cpp
+  src/drivers/computers/plus4.cpp
+  src/drivers/computers/zx81.cpp
   src/drivers/computers/apple2.cpp
   src/drivers/computers/apple2gs.cpp
   src/cpu/w65c816.cpp
