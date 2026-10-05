@@ -392,19 +392,9 @@ void Zx81::inject_p(const std::vector<uint8_t>& data) {
     cpu_.iff1 = false;
     cpu_.iff2 = false;
     cpu_.set_pc(0x0207);
-
-    // Prefer ERR_SP ($4002) if the image also covered low sysvars; otherwise
-    // leave SP alone — $0207 rebuilds the stack. Some dumps begin at $4000.
-    if (data.size() >= 0x4009 - 0x4000 + 2) {
-        // data[0] is $4009; ERR_SP is not in a standard $4009-start .p.
-        (void)0;
-    }
-    // If the image includes enough of the RAM to hold a plausible stack
-    // pointer via E_LINE / STKBOT regions, use a conservative top-of-RAM SP.
-    // Many games work with just PC=$0207 after the memcpy.
     if (cpu_.sp < 0x4000 || cpu_.sp > 0x7fff) cpu_.sp = 0x7ffe;
 
-    // Ensure the NMI generator can run so the display restarts.
+    // Let the ROM re-enable the NMI generator for the display file.
     nmi_generator_ = false;
     nmi_on_ = false;
     cpu_.set_nmi(IrqLine::Clear);

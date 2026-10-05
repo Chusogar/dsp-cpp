@@ -1009,8 +1009,8 @@ Z80 BIOS (middle of the KERNAL chip) is loaded but the Z80 stays halted — the
 ```
 
 `.prg` files are injected into bank-0 RAM once BASIC 7.0 TXTTAB points at
-`$1C01`, then autostarted with `RUN` via the KERNAL keyboard buffer (`$0277` /
-`$C6`).
+`$1C01`, then autostarted with `RUN` via the C128 editor keyboard buffer
+(`KEYD` `$034A` / `NDX` `$D0`).
 
 ### Apple II, II+, IIe and IIe Enhanced
 

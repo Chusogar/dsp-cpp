@@ -552,8 +552,9 @@ void C128::inject_prg(const std::vector<uint8_t>& data) {
     ram_[0xAE] = uint8_t(end & 0xFF); ram_[0xAF] = uint8_t(end >> 8);
 
     static constexpr uint8_t kRun[] = {'R', 'U', 'N', 0x0D};
-    for (size_t i = 0; i < sizeof(kRun); i++) ram_[0x0277 + i] = kRun[i];
-    ram_[0xC6] = uint8_t(sizeof(kRun));
+    // C128 mode editor: KEYD at $034A, NDX at $D0 (not the C64 $0277/$C6).
+    for (size_t i = 0; i < sizeof(kRun); i++) ram_[0x034A + i] = kRun[i];
+    ram_[0x00D0] = uint8_t(sizeof(kRun));
 }
 
 void C128::drain_audio(std::vector<int16_t>& out) {
