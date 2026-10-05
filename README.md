@@ -14,7 +14,7 @@ Computers: **ZX Spectrum 48K**, Amstrad CPC, **Commodore 64**, **EXL-100** /
 **Super Cassette Vision**.
 Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 **OutRun**, **After Burner II** (X-Board), **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
-**Altered Beast**).
+**Altered Beast**), System 18 (**Moonwalker**, **Alien Storm**, **Shadow Dancer**, and more).
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
 **MSX1** / **MSX2**, **Commodore 64**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
 **EXL-100** / **EXELTEL**, **Sinclair QL**, **Atari ST**, **Commodore Amiga 500**. Consoles: NES, Game Boy / Game Boy
@@ -1467,10 +1467,11 @@ CUS30 8-voice wave-RAM sound, dual scrolling tilemaps, text layer and sprites.
 ./build/dsp --game metrocrs /path/to/metrocrs.zip
 ```
 
-### Sega OutRun, Hang-On, and System 16
+### Sega OutRun, Hang-On, System 16, and System 18
 
 Ported from [dsp-emulator](https://github.com/leniad/dsp-emulator)
-(`outrun_hw.pas`, `hangon_hw.pas`, `system16a_hw.pas`, `system16b_hw.pas`).
+(`outrun_hw.pas`, `hangon_hw.pas`, `system16a_hw.pas`, `system16b_hw.pas`)
+and MAME `segas18.cpp` for System 18.
 `--game` names match the MAME parent sets. Screen is 320×224.
 
 ```bash
@@ -1496,6 +1497,17 @@ Ported from [dsp-emulator](https://github.com/leniad/dsp-emulator)
 ./build/dsp --game bayroute /path/to/bayroute.zip
 ./build/dsp --game sonicbom /path/to/sonicbom.zip
 ./build/dsp --game timescan /path/to/timescan.zip
+./build/dsp --game mwalk /path/to/mwalk.zip
+./build/dsp --game astorm /path/to/astorm.zip
+./build/dsp --game bloxeed /path/to/bloxeed.zip
+./build/dsp --game cltchitr /path/to/cltchitr.zip
+./build/dsp --game ddcrew /path/to/ddcrew.zip
+./build/dsp --game desertbr /path/to/desertbr.zip
+./build/dsp --game hamaway /path/to/hamaway.zip
+./build/dsp --game lghost /path/to/lghost.zip
+./build/dsp --game pontoon /path/to/pontoon.zip
+./build/dsp --game shdancer /path/to/shdancer.zip
+./build/dsp --game wwallyj /path/to/wwallyj.zip
 ```
 
 OutRun uses an analog wheel / gas / brake (arrow keys plus button 1/2) and a
@@ -1510,7 +1522,10 @@ ramped from the keys like MAME's key deltas:
 
 System 16 games use the three-button joystick of MAME's `system16a_generic`
 port (button 1 = D1, button 2 = D2, button 3 = D0). F1 is the test switch on
-all of these boards.
+all of these boards. System 18 adds a Genesis VDP layer, dual YM3438 and RF5C68
+PCM on top of the System 16B tilemaps/sprites. Supported System 18 parents:
+`mwalk`, `astorm`, `bloxeed`, `cltchitr`, `ddcrew`, `desertbr`, `hamaway`,
+`lghost`, `pontoon`, `shdancer`, `wwallyj`.
 
 Sound follows MAME: the main CPU's 8255 runs port A in mode 2, so a command
 write drops /OBF (the Z80 NMI) until the Z80 reads the latch. Hang-On and Space

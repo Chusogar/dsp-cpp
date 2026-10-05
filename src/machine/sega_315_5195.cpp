@@ -10,6 +10,9 @@ constexpr uint32_t kRegionSize[4] = {0x10000, 0x20000, 0x80000, 0x200000};
 void Sega3155195::reset() {
     regs_.fill(0);
     from_sound_ = 0;
+    to_sound_ = 0;
+    if (pbf_) pbf_(IrqLine::Clear);
+    if (mcu_int_) mcu_int_(IrqLine::Clear);
     rebuild_map();
 }
 
@@ -30,6 +33,7 @@ uint8_t Sega3155195::read_reg(uint8_t address) {
         case 2:
             return ((regs_[2] & 3) == 3) ? 0 : 0x0f;
         case 3:
+            if (mcu_int_) mcu_int_(IrqLine::Clear);
             return from_sound_;
         default:
             return open_bus_ ? open_bus_() : 0xff;
@@ -49,6 +53,8 @@ void Sega3155195::write_reg(uint8_t address, uint8_t value) {
             }
             break;
         case 3:
+            to_sound_ = value;
+            if (pbf_) pbf_(IrqLine::Assert);
             if (sound_latch_) sound_latch_(value);
             break;
         case 4:
@@ -76,6 +82,16 @@ void Sega3155195::write_reg(uint8_t address, uint8_t value) {
             }
             break;
     }
+}
+
+uint8_t Sega3155195::pread() {
+    if (pbf_) pbf_(IrqLine::Clear);
+    return to_sound_;
+}
+
+void Sega3155195::pwrite(uint8_t data) {
+    from_sound_ = data;
+    if (mcu_int_) mcu_int_(IrqLine::Assert);
 }
 
 }  // namespace dsp
