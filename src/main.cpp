@@ -60,6 +60,7 @@
 #include "drivers/arcade/renegade.h"
 #include "drivers/arcade/retofinv.h"
 #include "drivers/arcade/baraduke_hw.h"
+#include "drivers/arcade/bankpanic_hw.h"
 #include "drivers/arcade/slapfight.h"
 #include "drivers/arcade/williams.h"
 
@@ -152,7 +153,7 @@ void print_supported_emulators() {
 		"    ajax, typhoon, simpsons\n"
 		"    ambush, shaolins, tehkanwc, appoooh, robowres, arkanoid, renegade\n"
 		"    retofinv, slapfight, tigerheli,\n"
-		"    baraduke, metrocrs\n"
+		"    baraduke, metrocrs, bankp, combh\n"
 		"    defender, mayday, colony7, joust, robotron, stargate\n"
 		"\n"
         "  Computers:\n"
@@ -503,6 +504,12 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	}
 	if (game == "metrocrs" || game == "metrocross") {
 	    return std::make_unique<dsp::BaradukeHw>(dsp::BaradukeHw::Game::MetroCross);
+	}
+	if (game == "bankp" || game == "bankpanic") {
+	    return std::make_unique<dsp::BankPanicHw>(dsp::BankPanicHw::Game::BankPanic);
+	}
+	if (game == "combh" || game == "combathawk") {
+	    return std::make_unique<dsp::BankPanicHw>(dsp::BankPanicHw::Game::CombatHawk);
 	}
 
 	if (game == "defender") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Defender);
