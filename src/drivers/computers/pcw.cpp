@@ -16,7 +16,7 @@ const std::vector<RomEntry> kPrinterMcuRom = {
 
 // Keyboard MCU is present in the set but unused (matrix is fed directly).
 const std::vector<RomEntry> kKeyboardMcuRom = {
-    {"40027.ic801", 0x400, 0x0000, 0x25265098},
+    {"40027.ic801", 0x400, 0x0000, 0x25260958},
 };
 
 struct KeyBit {
