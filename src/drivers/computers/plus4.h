@@ -38,6 +38,10 @@ public:
     bool uses_keyboard() const override { return true; }
 
     bool load_media(const std::string& path, std::string* error) override;
+    uint16_t debug_pc() const { return cpu_.pc(); }
+    uint8_t debug_read(uint16_t a) { return read_byte(a); }
+    bool debug_rom() const { return ted_.rom_enabled(); }
+    uint8_t debug_addr_latch() const { return addr_latch_; }
 
 private:
     static constexpr int kPrgInjectFrames = 150;
