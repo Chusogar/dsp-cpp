@@ -45,40 +45,63 @@ bool load_file(const std::string& path, std::vector<uint8_t>& out) {
 
 }  // namespace
 
-Zx81::Zx81() : cpu_(kClock) {}
+Zx81::Zx81(Model model) : model_(model), cpu_(kClock) {}
+
+const char* Zx81::title() const {
+    return model_ == Model::Zx80 ? "Sinclair ZX80" : "Sinclair ZX81";
+}
 
 bool Zx81::load_roms(const std::string& path, std::string* error) {
     RomLoader loader;
     std::string load_err;
     std::vector<uint8_t> blob;
+    const size_t need = model_ == Model::Zx80 ? size_t(0x1000) : size_t(0x2000);
 
     auto try_named = [&](const char* name) -> bool {
-        if (loader.open(path, &load_err) && loader.try_read(name, blob) && blob.size() >= 0x2000) {
+        if (loader.open(path, &load_err) && loader.try_read(name, blob) && blob.size() >= need) {
             return true;
         }
         namespace fs = std::filesystem;
         std::error_code ec;
         if (fs::is_directory(path, ec)) {
-            if (load_file((fs::path(path) / name).string(), blob) && blob.size() >= 0x2000) {
+            if (load_file((fs::path(path) / name).string(), blob) && blob.size() >= need) {
                 return true;
             }
         }
         if (ends_ci(path, ".rom") || ends_ci(path, ".bin")) {
-            if (load_file(path, blob) && blob.size() >= 0x2000) return true;
+            if (load_file(path, blob) && blob.size() >= need) return true;
         }
         return false;
     };
 
+    bool ok = false;
+    if (model_ == Model::Zx80) {
+        const char* names[] = {"zx80.rom", "zx80.rom.bin"};
+        for (const char* n : names) {
+            if (try_named(n)) {
+                ok = true;
+                break;
+            }
+        }
+        if (!ok && load_file(path, blob) && blob.size() >= need) ok = true;
+        if (!ok) {
+            if (error) *error = "zx80 ROM (4 KiB: zx80.rom) not found in " + path;
+            return false;
+        }
+        rom_.fill(0);
+        std::memcpy(rom_.data(), blob.data(), 0x1000);
+        return true;
+    }
+
     // Prefer the modern ZX81 ROM (CRC 522c37b8), then older variants.
     const char* names[] = {"zx81b.rom", "zx81.rom", "zx81a.rom", "zx81.rom.bin"};
-    bool ok = false;
     for (const char* n : names) {
         if (try_named(n)) {
             ok = true;
             break;
         }
     }
-    if (!ok && load_file(path, blob) && blob.size() >= 0x2000) ok = true;
+    if (!ok && load_file(path, blob) && blob.size() >= need) ok = true;
     if (!ok) {
         if (error) *error = "zx81 ROM (8 KiB: zx81b.rom / zx81.rom) not found in " + path;
         return false;
@@ -153,7 +176,7 @@ void Zx81::apply_keyboard(const MachineInputs& in) {
 }
 
 uint8_t Zx81::mem_read(uint16_t addr) {
-    if (addr < 0x4000) return rom_[addr & 0x1fff];
+    if (addr < 0x4000) return rom_[addr & rom_mask()];
     if (addr < 0x8000) return ram_[addr & 0x3fff];
     if (addr >= 0xc000) return ram_[addr & 0x3fff];  // 16K mirror
     return 0xff;                                    // open bus 0x8000-0xBFFF
@@ -201,6 +224,7 @@ uint8_t Zx81::io_in(uint16_t port) {
     data |= 0xc0;
 
     // IN from an even port starts VSYNC when the NMI generator is off.
+    // ZX80 has no NMI generator, so any IN FE starts vsync.
     if (!vsync_active_ && !nmi_generator_) {
         vsync_active_ = true;
     }
@@ -208,17 +232,20 @@ uint8_t Zx81::io_in(uint16_t port) {
 }
 
 void Zx81::io_out(uint16_t port, uint8_t /*value*/) {
-    // A0=0 (FE): enable NMI generator. A1=0 (FD): disable it.
-    if ((port & 1) == 0 && !nmi_generator_) {
-        nmi_generator_ = true;
-        nmi_on_ = (line_t_ >= 192);
-        cpu_.set_nmi(nmi_on_ ? IrqLine::Assert : IrqLine::Clear);
-    }
-    if ((port & 2) == 0 && nmi_generator_) {
-        nmi_generator_ = false;
-        if (nmi_on_) {
-            cpu_.set_nmi(IrqLine::Clear);
-            nmi_on_ = false;
+    // ZX81 only: A0=0 (FE) enables the NMI generator; A1=0 (FD) disables it.
+    // ZX80 has no NMI hardware — OUT only ends vsync / drives the cassette mic.
+    if (model_ == Model::Zx81) {
+        if ((port & 1) == 0 && !nmi_generator_) {
+            nmi_generator_ = true;
+            nmi_on_ = (line_t_ >= 192);
+            cpu_.set_nmi(nmi_on_ ? IrqLine::Assert : IrqLine::Clear);
+        }
+        if ((port & 2) == 0 && nmi_generator_) {
+            nmi_generator_ = false;
+            if (nmi_on_) {
+                cpu_.set_nmi(IrqLine::Clear);
+                nmi_on_ = false;
+            }
         }
     }
 
@@ -242,17 +269,14 @@ void Zx81::on_cycles(int cycles) {
     prev_refresh_ = refresh;
 
     // Draw a latched ULA character row if the refresh just happened with a
-    // pending character (bitmap from I:R charset base, normally 0x1E00).
+    // pending character (bitmap from I:R charset base — 0x1E00 ZX81 / 0x0E00 ZX80).
     if (ula_char_ != 0xffff) {
         const int x = 2 * line_t_;
         const int y = scanline_;
         if (x >= 0 && x + 8 <= kScreenWidth && y >= 0 && y < kScreenHeight) {
-            const uint16_t base = uint16_t((uint16_t(cpu_.i) << 8) | (refresh & 0xfe00));
-            // Charset row: (char & 0x3f) * 8 + (scanline & 7). I is normally 0x1E.
             const uint16_t glyph_addr =
                 uint16_t(((uint16_t(cpu_.i) << 8) & 0xfe00) | ((ula_char_ & 0x3f) << 3) |
                          (scanline_ & 7));
-            (void)base;
             uint8_t pixels = mem_read(glyph_addr);
             if (ula_char_ & 0x80) pixels = uint8_t(~pixels);
             uint32_t* dest = &framebuffer_[size_t(y) * kScreenWidth + size_t(x)];
@@ -268,7 +292,7 @@ void Zx81::on_cycles(int cycles) {
         ++frame_t_;
         ++total_cycles_;
 
-        // HSYNC / NMI window: active for the last 15 T-states of each 207-T line.
+        // HSYNC / NMI window (ZX81): active for the last 15 T-states of each 207-T line.
         if (line_t_ == 192) {
             if (nmi_generator_) {
                 nmi_on_ = true;
@@ -289,8 +313,8 @@ void Zx81::on_cycles(int cycles) {
 
 void Zx81::plot_char_row(int x, int y, uint8_t ch, int row) {
     if (y < 0 || y >= kScreenHeight) return;
-    const uint16_t glyph_addr = uint16_t(0x1e00 | ((ch & 0x3f) << 3) | (row & 7));
-    uint8_t pixels = rom_[glyph_addr & 0x1fff];
+    const uint16_t glyph_addr = uint16_t(charset_base() | ((ch & 0x3f) << 3) | (row & 7));
+    uint8_t pixels = rom_[glyph_addr & rom_mask()];
     if (ch & 0x80) pixels = uint8_t(~pixels);
     for (int i = 0; i < 8; ++i) {
         const int px = x + i;
@@ -346,6 +370,10 @@ void Zx81::run_frame() {
 }
 
 bool Zx81::load_media(const std::string& path, std::string* error) {
+    if (model_ == Model::Zx80) {
+        if (error) *error = "ZX80 media: .o tape loading not implemented";
+        return false;
+    }
     if (!ends_ci(path, ".p")) {
         if (error) *error = "ZX81 media: expected a .p / .P snapshot";
         return false;

@@ -150,7 +150,7 @@ void print_supported_emulators() {
         "\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion,\n"
-        "    zx81, ts1000,\n"
+        "    zx80, zx81, ts1000,\n"
         "    cpc464, cpc664, cpc6128, msx, msx2, msx2-jp, msx2-eu, nms8250, c64,\n"
         "    c128, commodore128,\n"
         "    apple2, apple2gs, apple2plus, apple2e, apple2ee, exl100, exeltel, ql,\n"
@@ -494,6 +494,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 
 	// computers
     if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48k>();
+    if (game == "zx80") return std::make_unique<dsp::Zx81>(dsp::Zx81::Model::Zx80);
     if (game == "zx81" || game == "ts1000") return std::make_unique<dsp::Zx81>();
     if (game == "cpc464") return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC464);
     if (game == "cpc664") return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC664);

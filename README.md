@@ -16,7 +16,7 @@ Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 **OutRun**, **After Burner II** (X-Board), **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
 **Altered Beast**).
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
-**MSX1** / **MSX2**, **Commodore 64**, **Commodore VIC-20**, **Commodore 128**, **Sinclair ZX81**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
+**MSX1** / **MSX2**, **Commodore 64**, **Commodore VIC-20**, **Commodore 128**, **Sinclair ZX80** / **ZX81**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
 **EXL-100** / **EXELTEL**, **Sinclair QL**, **Atari ST**, **Commodore Amiga 500**. Consoles: NES, Game Boy / Game Boy
 Color, **Game Boy Advance**, **Atari 2600**, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
 **Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
@@ -593,24 +593,26 @@ and TNK III.
 The Ikari set accepts both the old `1.rom` / `7.rom` / `7122er.prm` names and the
 MAME 0.221 `1.4p` / `p7.3b` / `a6002-1.1k` names.
 
-### Sinclair ZX81 / Timex TS1000
+### Sinclair ZX80 / ZX81 / Timex TS1000
 
-PAL ZX81 with Z80 @ 3.25 MHz, 8 KiB ROM and 16 KiB RAM. No sound. Needs an 8 KiB ROM
-from a MAME-style zip (prefer `zx81b.rom`, CRC `522c37b8`; falls back to `zx81.rom` /
-`zx81a.rom`):
+PAL ZX80/ZX81 with Z80 @ 3.25 MHz and 16 KiB RAM. No sound. The ZX81 needs an 8 KiB
+ROM from a MAME-style zip (prefer `zx81b.rom`, CRC `522c37b8`; falls back to
+`zx81.rom` / `zx81a.rom`). The ZX80 needs 4 KiB `zx80.rom` (CRC `4c7fc597`); it has
+no NMI generator and uses the 4K charset at `$0E00`:
 
 ```bash
+./build/dsp --game zx80 /path/to/zx80.zip
 ./build/dsp --game zx81 /path/to/zx81.zip
 ./build/dsp --game ts1000 /path/to/zx81.zip
 ./build/dsp --game zx81 --tape game.p /path/to/zx81.zip
 ```
 
-`.p` / `.P` snapshots are memory images starting at `$4009` (sysvars). After
+`.p` / `.P` snapshots (ZX81) are memory images starting at `$4009` (sysvars). After
 boot they are copied into RAM and the CPU restarts at `$0207` (DISPLAY-1),
 matching EightyOne / sz81.
 
-The host keyboard maps onto the ZX81 matrix (same layout as the Spectrum 48K). The
-machine boots to the inverse-K BASIC cursor on a black-and-white screen.
+The host keyboard maps onto the ZX matrix (same layout as the Spectrum 48K). Both
+machines boot to the inverse-K BASIC cursor on a black-and-white screen.
 
 ### ZX Spectrum 48K
 

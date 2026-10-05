@@ -10,12 +10,15 @@
 
 namespace dsp {
 
-// Sinclair ZX81 / Timex TS1000 (PAL).
-// Z80 @ 3.25 MHz, 8 KiB ROM, 16 KiB RAM, no sound hardware.
-// Video is driven by the ROM display file via opcode fetches + NMI/INT timing;
+// Sinclair ZX81 / Timex TS1000 (PAL), and Sinclair ZX80.
+// Z80 @ 3.25 MHz. ZX81: 8 KiB ROM + NMI generator. ZX80: 4 KiB ROM, no NMI.
+// Both use 16 KiB RAM at $4000 for usability. No sound hardware.
+// Video is driven by the ROM display file via opcode fetches (+ NMI/INT on ZX81);
 // the framebuffer is also filled from D_FILE each frame as a reliable fallback.
 class Zx81 : public Machine {
 public:
+    enum class Model { Zx81, Zx80 };
+
     static constexpr uint32_t kClock = 3250000;
     static constexpr int kTstatesPerLine = 207;
     static constexpr int kLinesPerFrame = 311;
@@ -29,7 +32,7 @@ public:
     static constexpr int kPaperH = 192;
     static constexpr int kSampleRate = 44100;
 
-    Zx81();
+    explicit Zx81(Model model = Model::Zx81);
 
     bool init(const std::string& rom_path, std::string* error) override;
     void reset() override;
@@ -42,7 +45,7 @@ public:
     double frames_per_second() const override { return kFps; }
     void drain_audio(std::vector<int16_t>& out) override;
     int sample_rate() const override { return kSampleRate; }
-    const char* title() const override { return "Sinclair ZX81"; }
+    const char* title() const override;
     bool uses_keyboard() const override { return true; }
 
     bool load_media(const std::string& path, std::string* error) override;
@@ -50,6 +53,7 @@ public:
     uint16_t debug_pc() const { return cpu_.pc(); }
     uint8_t debug_read(uint16_t addr) { return mem_read(addr); }
     bool media_pending() const { return !pending_p_.empty(); }
+    Model model() const { return model_; }
 
 private:
     // Frames to wait after boot before injecting a .p snapshot.
@@ -68,7 +72,14 @@ private:
     bool queue_p(const std::vector<uint8_t>& data, std::string* error);
     void update_pending_p();
     void inject_p(const std::vector<uint8_t>& data);
+    uint16_t charset_base() const {
+        return model_ == Model::Zx80 ? uint16_t(0x0e00) : uint16_t(0x1e00);
+    }
+    uint16_t rom_mask() const {
+        return model_ == Model::Zx80 ? uint16_t(0x0fff) : uint16_t(0x1fff);
+    }
 
+    Model model_;
     Z80 cpu_;
 
     std::array<uint8_t, 0x2000> rom_{};
