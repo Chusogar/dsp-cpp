@@ -120,6 +120,8 @@ void Zx81::reset() {
     scanline_ = 0;
     frame_t_ = 0;
     total_cycles_ = 0;
+    pending_p_.clear();
+    boot_frames_ = 0;
     cpu_.set_irq(IrqLine::Clear);
     cpu_.set_nmi(IrqLine::Clear);
     std::fill(framebuffer_.begin(), framebuffer_.end(), kWhite);
@@ -330,6 +332,7 @@ void Zx81::render_dfile() {
 }
 
 void Zx81::run_frame() {
+    update_pending_p();
     frame_t_ = 0;
     const int target = kTstatesPerFrame;
     int ran = 0;
@@ -340,6 +343,72 @@ void Zx81::run_frame() {
     // Always paint from D_FILE so BASIC's K cursor is visible even when the
     // ULA bitmap path only covered part of the frame.
     render_dfile();
+}
+
+bool Zx81::load_media(const std::string& path, std::string* error) {
+    if (!ends_ci(path, ".p")) {
+        if (error) *error = "ZX81 media: expected a .p / .P snapshot";
+        return false;
+    }
+    std::vector<uint8_t> data;
+    if (!load_file(path, data)) {
+        if (error) *error = "cannot open: " + path;
+        return false;
+    }
+    return queue_p(data, error);
+}
+
+bool Zx81::queue_p(const std::vector<uint8_t>& data, std::string* error) {
+    if (data.empty()) {
+        if (error) *error = ".p file empty";
+        return false;
+    }
+    // Must fit from $4009 through the end of 16K RAM ($7FFF).
+    if (data.size() > size_t(0x4000 - 0x0009)) {
+        if (error) *error = ".p file too large for 16K RAM";
+        return false;
+    }
+    pending_p_ = data;
+    boot_frames_ = 0;
+    return true;
+}
+
+void Zx81::update_pending_p() {
+    if (pending_p_.empty()) return;
+    if (++boot_frames_ < kPInjectFrames) return;
+    const std::vector<uint8_t> data = std::move(pending_p_);
+    pending_p_.clear();
+    inject_p(data);
+}
+
+void Zx81::inject_p(const std::vector<uint8_t>& data) {
+    // Classic .p image: memory dump starting at $4009 (sysvars).
+    const size_t off = 0x0009;  // $4009 - $4000
+    const size_t n = std::min(data.size(), ram_.size() - off);
+    std::memcpy(ram_.data() + off, data.data(), n);
+
+    // EightyOne / sz81: restart at DISPLAY-1 / MAIN-EXEC ($0207).
+    cpu_.halted = false;
+    cpu_.iff1 = false;
+    cpu_.iff2 = false;
+    cpu_.set_pc(0x0207);
+
+    // Prefer ERR_SP ($4002) if the image also covered low sysvars; otherwise
+    // leave SP alone — $0207 rebuilds the stack. Some dumps begin at $4000.
+    if (data.size() >= 0x4009 - 0x4000 + 2) {
+        // data[0] is $4009; ERR_SP is not in a standard $4009-start .p.
+        (void)0;
+    }
+    // If the image includes enough of the RAM to hold a plausible stack
+    // pointer via E_LINE / STKBOT regions, use a conservative top-of-RAM SP.
+    // Many games work with just PC=$0207 after the memcpy.
+    if (cpu_.sp < 0x4000 || cpu_.sp > 0x7fff) cpu_.sp = 0x7ffe;
+
+    // Ensure the NMI generator can run so the display restarts.
+    nmi_generator_ = false;
+    nmi_on_ = false;
+    cpu_.set_nmi(IrqLine::Clear);
+    cpu_.set_irq(IrqLine::Clear);
 }
 
 void Zx81::drain_audio(std::vector<int16_t>& out) {

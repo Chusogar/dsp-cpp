@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <fstream>
 
 #include "core/rom_loader.h"
 
@@ -19,6 +20,18 @@ bool ends_ci(const std::string& s, const char* ext) {
         if (a != b) return false;
     }
     return true;
+}
+
+bool read_file(const std::string& path, std::vector<uint8_t>* out) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    f.seekg(0, std::ios::end);
+    const auto n = f.tellg();
+    if (n <= 0) return false;
+    f.seekg(0, std::ios::beg);
+    out->resize(size_t(n));
+    f.read(reinterpret_cast<char*>(out->data()), n);
+    return bool(f);
 }
 
 struct RomCandidate {
@@ -202,6 +215,8 @@ void C128::reset() {
     cpu_cycle_debt_ = 0;
     keyboard_.fill(0xFF);
     color_ram_.fill(0);
+    pending_prg_.clear();
+    boot_frames_ = 0;
     audio_.clear();
     audio_acc_ = 0;
     std::fill(framebuffer_.begin(), framebuffer_.end(), Mos6566::kPalette[0]);
@@ -373,6 +388,7 @@ void C128::on_cycles(int cycles) {
 }
 
 void C128::run_frame() {
+    update_pending_prg();
     for (int line = 0; line < kScanlines; ++line) {
         int cpu_cycles = kCyclesPerLine;
         const int vis_y = line - 16;
@@ -487,6 +503,58 @@ void C128::set_inputs(const MachineInputs& inputs) {
 }
 
 void C128::set_dip_switch(int /*bank*/, uint8_t /*value*/) {}
+
+bool C128::load_media(const std::string& path, std::string* error) {
+    std::vector<uint8_t> data;
+    if (!read_file(path, &data)) {
+        if (error) *error = "cannot open: " + path;
+        return false;
+    }
+    // .prg or raw PRG without extension (same fallback as C64).
+    return queue_prg(data, error);
+}
+
+bool C128::queue_prg(const std::vector<uint8_t>& data, std::string* error) {
+    if (data.size() < 3) {
+        if (error) *error = "PRG too small";
+        return false;
+    }
+    pending_prg_ = data;
+    boot_frames_ = 0;
+    return true;
+}
+
+void C128::update_pending_prg() {
+    if (pending_prg_.empty()) return;
+    if (++boot_frames_ < kPrgInjectFrames) return;
+    // BASIC 7.0 TXTTAB at $2D/$2E must point at $1C01 after cold start.
+    if (ram_[0x2D] != 0x01 || ram_[0x2E] != 0x1C) return;
+
+    const std::vector<uint8_t> data = std::move(pending_prg_);
+    pending_prg_.clear();
+    inject_prg(data);
+}
+
+void C128::inject_prg(const std::vector<uint8_t>& data) {
+    const uint16_t addr = uint16_t(data[0] | (data[1] << 8));
+    const size_t n = data.size() - 2;
+    for (size_t i = 0; i < n; i++) {
+        ram_[uint16_t(addr + i) & 0xffff] = data[i + 2];
+    }
+    const uint16_t end = uint16_t(addr + n);
+    if (addr != 0x1C01) return;
+
+    // C128 BASIC 7.0 pointers (C64 offsets + 2): TXTTAB $2D, VARTAB $2F,
+    // ARYTAB $31, STREND $33. EAL remains at $AE/$AF.
+    ram_[0x2F] = uint8_t(end & 0xFF); ram_[0x30] = uint8_t(end >> 8);
+    ram_[0x31] = uint8_t(end & 0xFF); ram_[0x32] = uint8_t(end >> 8);
+    ram_[0x33] = uint8_t(end & 0xFF); ram_[0x34] = uint8_t(end >> 8);
+    ram_[0xAE] = uint8_t(end & 0xFF); ram_[0xAF] = uint8_t(end >> 8);
+
+    static constexpr uint8_t kRun[] = {'R', 'U', 'N', 0x0D};
+    for (size_t i = 0; i < sizeof(kRun); i++) ram_[0x0277 + i] = kRun[i];
+    ram_[0xC6] = uint8_t(sizeof(kRun));
+}
 
 void C128::drain_audio(std::vector<int16_t>& out) {
     out.insert(out.end(), audio_.begin(), audio_.end());

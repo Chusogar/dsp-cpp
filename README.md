@@ -602,7 +602,12 @@ from a MAME-style zip (prefer `zx81b.rom`, CRC `522c37b8`; falls back to `zx81.r
 ```bash
 ./build/dsp --game zx81 /path/to/zx81.zip
 ./build/dsp --game ts1000 /path/to/zx81.zip
+./build/dsp --game zx81 --tape game.p /path/to/zx81.zip
 ```
+
+`.p` / `.P` snapshots are memory images starting at `$4009` (sysvars). After
+boot they are copied into RAM and the CPU restarts at `$0207` (DISPLAY-1),
+matching EightyOne / sz81.
 
 The host keyboard maps onto the ZX81 matrix (same layout as the Spectrum 48K). The
 machine boots to the inverse-K BASIC cursor on a black-and-white screen.
@@ -970,7 +975,13 @@ for 50 Hz; `vic20` / `vic-20` / `vic20p` all default to PAL timing.
 ```bash
 ./build/dsp --game vic20 --mute --frames 400 --screenshot /tmp/vic20.bmp /path/to/vic20p.zip
 ./build/dsp --game vic20 /path/to/vic20.zip
+./build/dsp --game vic20 --tape game.prg /path/to/vic20p.zip
 ```
+
+`.prg` files (or raw PRG without an extension) are queued and injected into
+unexpanded BASIC RAM at `$1001` once the READY prompt is up, then `RUN` is
+typed through the KERNAL keyboard buffer. A raw 4K/8K `.crt` / `.bin` dump maps
+into BLK5 at `$A000`.
 
 The host keyboard maps onto the VIC-20 matrix; arrows also drive the joystick
 (VIA1 PA / VIA2 PB7). F12 is RESTORE (NMI).
@@ -994,7 +1005,12 @@ Z80 BIOS (middle of the KERNAL chip) is loaded but the Z80 stays halted — the
 ```bash
 ./build/dsp --game c128 /tmp/roms/computers/c128.zip
 ./build/dsp --game commodore128 /path/to/c128-roms/
+./build/dsp --game c128 --tape game.prg /tmp/roms/computers/c128.zip
 ```
+
+`.prg` files are injected into bank-0 RAM once BASIC 7.0 TXTTAB points at
+`$1C01`, then autostarted with `RUN` via the KERNAL keyboard buffer (`$0277` /
+`$C6`).
 
 ### Apple II, II+, IIe and IIe Enhanced
 

@@ -48,6 +48,7 @@ public:
     bool uses_keyboard() const override { return true; }
 
     bool load_roms(const std::string& path, std::string* error);
+    bool load_media(const std::string& path, std::string* error) override;
 
     uint8_t debug_read_ram(uint32_t addr) const {
         return ram_[addr & 0x1ffff];
@@ -58,8 +59,12 @@ public:
     uint8_t debug_keyboard(int column) const {
         return keyboard_[size_t(column & 7)];
     }
+    bool prg_pending() const { return !pending_prg_.empty(); }
 
 private:
+    // Frames to wait before injecting a PRG once BASIC 7.0 has cold-started.
+    static constexpr int kPrgInjectFrames = 120;
+
     uint8_t read_byte(uint16_t addr);
     void write_byte(uint16_t addr, uint8_t value);
     void on_cycles(int cycles);
@@ -69,6 +74,9 @@ private:
     uint8_t read_io(uint16_t addr);
     void write_io(uint16_t addr, uint8_t value);
     uint8_t* color_bank();
+    bool queue_prg(const std::vector<uint8_t>& data, std::string* error);
+    void update_pending_prg();
+    void inject_prg(const std::vector<uint8_t>& data);
 
     M6502 cpu_;
     Mos6566 vic_;
@@ -94,6 +102,9 @@ private:
     bool cia_irq_ = false, vic_irq_ = false, cia_nmi_ = false;
 
     std::array<uint8_t, 8> keyboard_{};
+
+    std::vector<uint8_t> pending_prg_;
+    int boot_frames_ = 0;
 
     int cpu_cycle_debt_ = 0;
     int64_t audio_acc_ = 0;

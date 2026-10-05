@@ -39,7 +39,16 @@ public:
     }
     bool uses_keyboard() const override { return true; }
 
+    bool load_media(const std::string& path, std::string* error) override;
+
+    // Direct RAM poke helpers for tests / PRG injection diagnostics.
+    uint8_t debug_read(uint16_t addr) { return read_byte(addr); }
+    bool prg_pending() const { return !pending_prg_.empty(); }
+
 private:
+    // PAL frames to wait before dropping a PRG into RAM (BASIC cold start).
+    static constexpr int kPrgInjectFrames = 120;
+
     uint8_t read_byte(uint16_t addr);
     void write_byte(uint16_t addr, uint8_t value);
     uint8_t vic_videoram_r(uint16_t offset);
@@ -52,6 +61,10 @@ private:
     void update_irq();
     void update_nmi();
     bool load_roms(const std::string& path, std::string* error);
+    bool queue_prg(const std::vector<uint8_t>& data, std::string* error);
+    void update_pending_prg();
+    void inject_prg(const std::vector<uint8_t>& data);
+    bool load_cart(const std::vector<uint8_t>& data, std::string* error);
 
     Region region_;
     double frames_per_second_ = 50.0;
@@ -68,6 +81,8 @@ private:
     std::array<uint8_t, 0x2000> basic_rom_{};
     std::array<uint8_t, 0x2000> kernal_rom_{};
     std::array<uint8_t, 0x1000> char_rom_{};
+    std::array<uint8_t, 0x2000> cart_blk5_{};  // optional cartridge at $A000
+    size_t cart_size_ = 0;
 
     std::array<uint8_t, 8> keyboard_{};  // columns, active-low rows
     uint8_t key_row_ = 0xff;
@@ -76,6 +91,9 @@ private:
 
     bool via1_nmi_ = false;
     bool via2_irq_ = false;
+
+    std::vector<uint8_t> pending_prg_;
+    int boot_frames_ = 0;
 
     int cpu_cycle_debt_ = 0;
     int64_t audio_acc_ = 0;

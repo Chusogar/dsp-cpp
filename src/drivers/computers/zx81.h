@@ -45,10 +45,16 @@ public:
     const char* title() const override { return "Sinclair ZX81"; }
     bool uses_keyboard() const override { return true; }
 
+    bool load_media(const std::string& path, std::string* error) override;
+
     uint16_t debug_pc() const { return cpu_.pc(); }
     uint8_t debug_read(uint16_t addr) { return mem_read(addr); }
+    bool media_pending() const { return !pending_p_.empty(); }
 
 private:
+    // Frames to wait after boot before injecting a .p snapshot.
+    static constexpr int kPInjectFrames = 100;
+
     uint8_t mem_read(uint16_t addr);
     void mem_write(uint16_t addr, uint8_t value);
     uint8_t opcode_read(uint16_t addr);
@@ -59,6 +65,9 @@ private:
     void render_dfile();
     void plot_char_row(int x, int y, uint8_t ch, int row);
     bool load_roms(const std::string& path, std::string* error);
+    bool queue_p(const std::vector<uint8_t>& data, std::string* error);
+    void update_pending_p();
+    void inject_p(const std::vector<uint8_t>& data);
 
     Z80 cpu_;
 
@@ -77,6 +86,9 @@ private:
     int scanline_ = 0;
     int frame_t_ = 0;
     uint64_t total_cycles_ = 0;
+
+    std::vector<uint8_t> pending_p_;
+    int boot_frames_ = 0;
 
     static constexpr uint32_t kBlack = 0xff000000u;
     static constexpr uint32_t kWhite = 0xffffffffu;

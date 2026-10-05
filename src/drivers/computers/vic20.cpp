@@ -1,6 +1,7 @@
 #include "drivers/computers/vic20.h"
 
 #include <cstring>
+#include <fstream>
 
 #include "core/rom_loader.h"
 
@@ -10,6 +11,31 @@ namespace {
 // VIC-20 BLK / IO decode helpers (same as MAME).
 constexpr int kBlk0 = 0, kBlk4 = 4, kBlk5 = 5, kBlk6 = 6, kBlk7 = 7;
 constexpr int kRam0 = 0, kIo0 = 4, kColor = 5;
+
+bool ends_ci(const std::string& s, const char* ext) {
+    const size_t n = std::strlen(ext);
+    if (s.size() < n) return false;
+    for (size_t i = 0; i < n; i++) {
+        char a = s[s.size() - n + i];
+        char b = ext[i];
+        if (a >= 'A' && a <= 'Z') a = char(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = char(b - 'A' + 'a');
+        if (a != b) return false;
+    }
+    return true;
+}
+
+bool read_file(const std::string& path, std::vector<uint8_t>* out) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    f.seekg(0, std::ios::end);
+    const auto n = f.tellg();
+    if (n <= 0) return false;
+    f.seekg(0, std::ios::beg);
+    out->resize(size_t(n));
+    f.read(reinterpret_cast<char*>(out->data()), n);
+    return bool(f);
+}
 
 }  // namespace
 
@@ -114,10 +140,13 @@ void Vic20::reset() {
     ram0_.fill(0);
     ram_main_.fill(0);
     color_ram_.fill(0);
+    // Keep a previously attached BLK5 cart across soft reset.
     keyboard_.fill(0xff);
     key_row_ = key_col_ = 0xff;
     joy_ = 0xff;
     via1_nmi_ = via2_irq_ = false;
+    pending_prg_.clear();
+    boot_frames_ = 0;
     cpu_cycle_debt_ = 0;
     audio_acc_ = 0;
     audio_.clear();
@@ -194,7 +223,11 @@ uint8_t Vic20::read_byte(uint16_t addr) {
         }
         break;
     case kBlk5:
-        return vic_.bus_r();  // cartridge
+        if (cart_size_ != 0) {
+            const uint16_t off = uint16_t(addr & 0x1fff);
+            if (off < cart_size_) return cart_blk5_[off];
+        }
+        return vic_.bus_r();  // cartridge open
     case kBlk6:
         return basic_rom_[addr & 0x1fff];
     case kBlk7:
@@ -289,7 +322,83 @@ void Vic20::on_cycles(int cycles) {
     }
 }
 
+bool Vic20::load_media(const std::string& path, std::string* error) {
+    std::vector<uint8_t> data;
+    if (!read_file(path, &data)) {
+        if (error) *error = "cannot open: " + path;
+        return false;
+    }
+    if (ends_ci(path, ".crt") || ends_ci(path, ".bin") || ends_ci(path, ".rom")) {
+        // Prefer a raw BLK5 cart dump when the size matches 4K/8K; otherwise
+        // fall through so a misnamed PRG still injects.
+        if (data.size() == 0x1000 || data.size() == 0x2000) {
+            return load_cart(data, error);
+        }
+    }
+    if (ends_ci(path, ".prg") || data.size() >= 3) {
+        return queue_prg(data, error);
+    }
+    if (error) *error = "unsupported VIC-20 media: " + path;
+    return false;
+}
+
+bool Vic20::load_cart(const std::vector<uint8_t>& data, std::string* error) {
+    if (data.size() != 0x1000 && data.size() != 0x2000) {
+        if (error) *error = "VIC-20 cart must be 4K or 8K";
+        return false;
+    }
+    cart_blk5_.fill(0xff);
+    std::memcpy(cart_blk5_.data(), data.data(), data.size());
+    cart_size_ = data.size();
+    // Autostart carts live at $A000; a reset lets the KERNAL jump into them.
+    reset();
+    return true;
+}
+
+bool Vic20::queue_prg(const std::vector<uint8_t>& data, std::string* error) {
+    if (data.size() < 3) {
+        if (error) *error = "PRG too small";
+        return false;
+    }
+    pending_prg_ = data;
+    boot_frames_ = 0;
+    return true;
+}
+
+void Vic20::update_pending_prg() {
+    if (pending_prg_.empty()) return;
+    if (++boot_frames_ < kPrgInjectFrames) return;
+    // Unexpanded VIC-20: TXTTAB must point at $1001 after BASIC cold start.
+    if (ram0_[0x2B] != 0x01 || ram0_[0x2C] != 0x10) return;
+
+    const std::vector<uint8_t> data = std::move(pending_prg_);
+    pending_prg_.clear();
+    inject_prg(data);
+}
+
+void Vic20::inject_prg(const std::vector<uint8_t>& data) {
+    const uint16_t addr = uint16_t(data[0] | (data[1] << 8));
+    const size_t n = data.size() - 2;
+    for (size_t i = 0; i < n; i++) {
+        write_byte(uint16_t(addr + i), data[i + 2]);
+    }
+    const uint16_t end = uint16_t(addr + n);
+    if (addr != 0x1001) return;
+
+    // VARTAB / ARYTAB / STREND + EAL for a BASIC program.
+    ram0_[0x2D] = uint8_t(end & 0xFF); ram0_[0x2E] = uint8_t(end >> 8);
+    ram0_[0x2F] = uint8_t(end & 0xFF); ram0_[0x30] = uint8_t(end >> 8);
+    ram0_[0x31] = uint8_t(end & 0xFF); ram0_[0x32] = uint8_t(end >> 8);
+    ram0_[0xAE] = uint8_t(end & 0xFF); ram0_[0xAF] = uint8_t(end >> 8);
+
+    // Autostart via the KERNAL keyboard buffer ($0277 / count $C6), same as C64.
+    static constexpr uint8_t kRun[] = {'R', 'U', 'N', 0x0D};
+    for (size_t i = 0; i < sizeof(kRun); i++) ram0_[0x0277 + i] = kRun[i];
+    ram0_[0xC6] = uint8_t(sizeof(kRun));
+}
+
 void Vic20::run_frame() {
+    update_pending_prg();
     const int lines = vic_.lines();
     const int cpl = vic_.cycles_per_line();
     for (int line = 0; line < lines; ++line) {
