@@ -59,6 +59,7 @@
 #include "drivers/arcade/arkanoid.h"
 #include "drivers/arcade/renegade.h"
 #include "drivers/arcade/retofinv.h"
+#include "drivers/arcade/baraduke_hw.h"
 #include "drivers/arcade/slapfight.h"
 #include "drivers/arcade/williams.h"
 
@@ -150,7 +151,8 @@ void print_supported_emulators() {
 		"    actfancer, actfancr\n"
 		"    ajax, typhoon, simpsons\n"
 		"    ambush, shaolins, tehkanwc, appoooh, robowres, arkanoid, renegade\n"
-		"    retofinv, slapfight, tigerheli\n"
+		"    retofinv, slapfight, tigerheli,\n"
+		"    baraduke, metrocrs\n"
 		"    defender, mayday, colony7, joust, robotron, stargate\n"
 		"\n"
         "  Computers:\n"
@@ -496,6 +498,12 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	if (game == "retofinv") return std::make_unique<dsp::Retofinv>();
 	if (game == "slapfight") return std::make_unique<dsp::SlapFight>(dsp::SlapFight::Variant::SlapFight);
 	if (game == "tigerheli") return std::make_unique<dsp::SlapFight>(dsp::SlapFight::Variant::TigerHeli);
+	if (game == "baraduke" || game == "aliensec") {
+	    return std::make_unique<dsp::BaradukeHw>(dsp::BaradukeHw::Game::Baraduke);
+	}
+	if (game == "metrocrs" || game == "metrocross") {
+	    return std::make_unique<dsp::BaradukeHw>(dsp::BaradukeHw::Game::MetroCross);
+	}
 
 	if (game == "defender") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Defender);
 	if (game == "mayday") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Mayday);

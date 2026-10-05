@@ -22,7 +22,10 @@ public:
     using PortWriteHandler = std::function<void(uint8_t)>;
     using CycleHandler = std::function<void(int)>;
 
-    enum class Type { HD63701Y, M6803 };
+    // HD63701Y: 256B RAM, 16KB internal ROM at $c000.
+    // HD63701V: 192B RAM, 4KB internal ROM at $e000 (Namco CUS60 / Baraduke).
+    // M6803:    128B RAM at $40, no internal ROM.
+    enum class Type { HD63701Y, HD63701V, M6803 };
 
     struct Flags {
         bool h = false, i = true, n = false, z = false, v = false, c = false;

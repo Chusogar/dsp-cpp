@@ -212,6 +212,7 @@ add_executable(dsp
   src/drivers/arcade/arkanoid.cpp
   src/drivers/arcade/renegade.cpp
   src/drivers/arcade/retofinv.cpp
+  src/drivers/arcade/baraduke_hw.cpp
   src/drivers/arcade/slapfight.cpp
   src/drivers/arcade/williams.cpp
 
