@@ -216,6 +216,7 @@ add_executable(dsp
   src/drivers/arcade/retofinv.cpp
   src/drivers/arcade/baraduke_hw.cpp
   src/drivers/arcade/bankpanic_hw.cpp
+  src/drivers/arcade/balsente.cpp
   src/drivers/arcade/slapfight.cpp
   src/drivers/arcade/williams.cpp
 
@@ -438,6 +439,7 @@ add_executable(dsp_tests
   src/cpu/m6800.cpp
   src/machine/pia6821.cpp
   src/drivers/arcade/williams.cpp
+  src/drivers/arcade/balsente.cpp
   src/cpu/spc700.cpp
   src/video/snes_ppu.cpp
   src/drivers/consoles/snes.cpp
