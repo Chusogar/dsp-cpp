@@ -280,8 +280,13 @@ void Pcw::system_control(uint8_t data) {
             break;
         }
         case 5:
+            // Set FDC terminal count (MAME pcw_system_control_w).
+            fdc_.tc_w(true);
+            update_irqs();
+            break;
         case 6:
-            // Terminal count — Nec765 ends transfers by sector length; no-op.
+            // Clear FDC terminal count.
+            fdc_.tc_w(false);
             break;
         case 7:
         case 8:
@@ -423,9 +428,9 @@ void Pcw::render_screen() {
         const uint16_t line_data =
             uint16_t(ram_[addr]) | (uint16_t(ram_[(addr + 1) % ram_size()]) << 8);
 
-        // b16-14 bank, b13-3 address/16, b2-0 offset.
-        unsigned line_ptr = ((unsigned(line_data) & 0xe000u) << 1) |
-                            ((unsigned(line_data) & 0x1ff8u) << 1) |
+        // b16-14 bank, b13-3 address/16, b2-0 offset. Addition matches MAME pcw_v.cpp.
+        unsigned line_ptr = ((unsigned(line_data) & 0xe000u) << 1) +
+                            ((unsigned(line_data) & 0x1ff8u) << 1) +
                             (unsigned(line_data) & 0x07u);
         line_ptr %= ram_size();
 

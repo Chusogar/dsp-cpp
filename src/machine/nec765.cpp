@@ -298,6 +298,8 @@ void Nec765Fdc::reset() {
     counter_ = 0;
 
     seek_track_flag_ = false;
+    tc_ = false;
+    tc_done_ = false;
 
     command_.fill(0);
     result_.fill(0);
@@ -315,6 +317,35 @@ void Nec765Fdc::reset() {
 
 void Nec765Fdc::write_motor(uint8_t value) {
     floppy_motor_ = value != 0;
+}
+
+void Nec765Fdc::finish_transfer(bool abnormal) {
+    if (abnormal) {
+        st0_ |= 0x40;
+        st1_ |= 0x80;  // EN — end of cylinder / TC missing
+    } else {
+        // Normal TC end: clear any EN latched when R hit EOT during multi-sector.
+        st0_ = uint8_t(st0_ & ~0x40);
+        st1_ = uint8_t(st1_ & ~0x80);
+    }
+    get_result7();
+}
+
+void Nec765Fdc::tc_w(bool asserted) {
+    // Rising edge during an execution-phase transfer ends it cleanly.
+    // If the sector ended on R==EOT an instant earlier (no real gap/CRC timing),
+    // TC still arrives before the CPU reads the result — treat that as normal
+    // termination too (MAME upd765 + PCW system-control 5/6).
+    if (asserted && !tc_) {
+        tc_done_ = true;
+        if (exec_cmd_phase_ && !result_phase_) {
+            finish_transfer(false);
+        } else if (result_phase_ && result_pointer_ == 0 && (result_[0] & 0x40)) {
+            result_[0] = uint8_t(result_[0] & ~0x40);
+            result_[1] = uint8_t(result_[1] & ~0x80);
+        }
+    }
+    tc_ = asserted;
 }
 
 void Nec765Fdc::get_result7() {
@@ -567,6 +598,7 @@ void Nec765Fdc::exec_write_command() {
             st0_ = 0;
             st1_ = 0;
             st2_ = 0;
+            tc_done_ = false;
 
             select_drive();
 
@@ -633,6 +665,7 @@ void Nec765Fdc::exec_write_command() {
             st0_ = 0;
             st1_ = 0;
             st2_ = 0;
+            tc_done_ = false;
 
             select_drive();
 
@@ -856,14 +889,14 @@ uint8_t Nec765Fdc::exec_read_command() {
             counter_++;
 
             if (counter_ >= data_length_) {
-                if (command_[4] == command_[6] || read_data_should_stop()) {
-                    st0_ |= 0x40;
-
+                if (tc_done_ || command_[4] == command_[6] ||
+                    read_data_should_stop()) {
+                    // MAME: R==EOT without TC → abnormal + EN; with TC → normal.
+                    const bool abnormal = !tc_done_;
                     if (sector.sector_size > 5) {
                         st1_ |= 0x20;
                     }
-
-                    get_result7();
+                    finish_transfer(abnormal);
                 } else {
                     command_[4]++;
 
