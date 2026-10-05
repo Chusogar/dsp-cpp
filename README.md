@@ -16,7 +16,7 @@ Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 **OutRun**, **After Burner II** (X-Board), **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
 **Altered Beast**).
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
-**MSX1** / **MSX2**, **Commodore 64**, **Commodore 128**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
+**MSX1** / **MSX2**, **Commodore 64**, **Commodore VIC-20**, **Commodore 128**, **Sinclair ZX81**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
 **EXL-100** / **EXELTEL**, **Sinclair QL**, **Atari ST**, **Commodore Amiga 500**. Consoles: NES, Game Boy / Game Boy
 Color, **Game Boy Advance**, **Atari 2600**, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
 **Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
@@ -593,6 +593,20 @@ and TNK III.
 The Ikari set accepts both the old `1.rom` / `7.rom` / `7122er.prm` names and the
 MAME 0.221 `1.4p` / `p7.3b` / `a6002-1.1k` names.
 
+### Sinclair ZX81 / Timex TS1000
+
+PAL ZX81 with Z80 @ 3.25 MHz, 8 KiB ROM and 16 KiB RAM. No sound. Needs an 8 KiB ROM
+from a MAME-style zip (prefer `zx81b.rom`, CRC `522c37b8`; falls back to `zx81.rom` /
+`zx81a.rom`):
+
+```bash
+./build/dsp --game zx81 /path/to/zx81.zip
+./build/dsp --game ts1000 /path/to/zx81.zip
+```
+
+The host keyboard maps onto the ZX81 matrix (same layout as the Spectrum 48K). The
+machine boots to the inverse-K BASIC cursor on a black-and-white screen.
+
 ### ZX Spectrum 48K
 
 The machine needs the 16 KiB Sinclair ROM, given as a plain `48.rom` image, a zip or a
@@ -945,6 +959,21 @@ structure, so its files are placed on a disk image built in memory and served
 through the drive as well. Without a drive ROM there is no device on the bus and
 `.d64`/`.t64` fall back to injecting their first program into RAM
 (`.g64` is rejected).
+
+### Commodore VIC-20
+
+Unexpanded VIC-20 with MOS 6561 (PAL) or 6560 (NTSC) VIC, dual 6522 VIAs and
+6502. Needs BASIC `901486-01.ue11`, KERNAL (`901486-07.ue12` PAL or
+`901486-06.ue12` NTSC) and character ROM `901460-03.ud7`. Prefer `vic20p.zip`
+for 50 Hz; `vic20` / `vic-20` / `vic20p` all default to PAL timing.
+
+```bash
+./build/dsp --game vic20 --mute --frames 400 --screenshot /tmp/vic20.bmp /path/to/vic20p.zip
+./build/dsp --game vic20 /path/to/vic20.zip
+```
+
+The host keyboard maps onto the VIC-20 matrix; arrows also drive the joystick
+(VIA1 PA / VIA2 PB7). F12 is RESTORE (NMI).
 
 ### Commodore 128
 

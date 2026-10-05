@@ -69,6 +69,7 @@
 #include "drivers/computers/spectrum_128k.h"
 #include "drivers/computers/spectrum_3.h"
 #include "drivers/computers/specnext.h"
+#include "drivers/computers/zx81.h"
 #include "drivers/computers/amstrad_cpc.h"
 #include "drivers/computers/msx1.h"
 #include "drivers/computers/msx2.h"
@@ -162,6 +163,7 @@ void print_supported_emulators() {
 		"\n"
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion, specnext (tbblue),\n"
+        "    zx81, ts1000,\n"
         "    cpc464, cpc664, cpc6128, msx, msx2, msx2-jp, msx2-eu, nms8250, c64, vic20, vic20p,\n"
         "    c128, commodore128,\n"
         "    apple2, apple2gs, apple2plus, apple2e, apple2ee, exl100, exeltel, ql,\n"
@@ -560,6 +562,7 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 
 	// computers
     if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48k>();
+    if (game == "zx81" || game == "ts1000") return std::make_unique<dsp::Zx81>();
     if (game == "cpc464") return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC464);
     if (game == "cpc664") return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC664);
     if (game == "cpc6128" || game == "cpc") {
@@ -592,7 +595,10 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "vic20p" || game == "vic-20p" || game == "vic20-pal") {
         return std::make_unique<dsp::Vic20>(dsp::Vic20::Region::Pal);
     }
-    if (game == "vic20" || game == "vic-20" || game == "vic20n" || game == "vic20-ntsc") {
+    if (game == "vic20n" || game == "vic20-ntsc" || game == "vic-20n") {
+        return std::make_unique<dsp::Vic20>(dsp::Vic20::Region::Ntsc);
+    }
+    if (game == "vic20" || game == "vic-20") {
         return std::make_unique<dsp::Vic20>(dsp::Vic20::Region::Pal);
     }
 	if (game == "c128" || game == "commodore128") {
