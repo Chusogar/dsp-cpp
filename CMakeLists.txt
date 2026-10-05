@@ -235,6 +235,7 @@ add_executable(dsp
   src/sound/mpeg_audio.cpp
   src/drivers/computers/zx_clone.cpp
   src/drivers/computers/amstrad_cpc.cpp
+  src/drivers/computers/pcw.cpp
   src/drivers/computers/msx1.cpp
   src/drivers/computers/msx2.cpp
   src/sound/sid.cpp
@@ -427,6 +428,7 @@ add_executable(dsp_tests
   src/sound/scsp.cpp
   src/sound/mpeg_audio.cpp
   src/drivers/computers/amstrad_cpc.cpp
+  src/drivers/computers/pcw.cpp
   src/drivers/computers/msx2.cpp
   src/drivers/consoles/nes.cpp
   src/drivers/computers/c64.cpp
