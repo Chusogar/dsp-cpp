@@ -135,7 +135,8 @@ void print_supported_emulators() {
         "    outrun, aburner2, hangon, enduro, sharrier, fantzone, shinobi,\n"
 		"    alexkidd, aliensyn, wb3, tetris, altbeast, goldnaxe, ddux, eswat,\n"
 		"    passsht, aurail, riotcity, sdi, sdib, cotton, bayroute, sonicbom,\n"
-		"    timescan, mwalk,\n"
+		"    timescan, mwalk, astorm, bloxeed, cltchitr, ddcrew, desertbr,\n"
+		"    hamaway, lghost, pontoon, shdancer, wwallyj,\n"
         "    pitfall2, teddyboy, wboy, mrviking, seganinj, upndown,\n"
 		"    flicky, gardia,\n"
 		"    galaxian, mooncrst, scramble,\n"
@@ -402,7 +403,37 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "mwalk" || game == "moonwalker" || game == "moonwalk") {
         return std::make_unique<dsp::System18>(dsp::System18::Game::Mwalk);
     }
-	
+    if (game == "astorm" || game == "alienstorm") {
+        return std::make_unique<dsp::System18>(dsp::System18::Game::Astorm);
+    }
+    if (game == "bloxeed") {
+        return std::make_unique<dsp::System18>(dsp::System18::Game::Bloxeed);
+    }
+    if (game == "cltchitr" || game == "clutchhitter") {
+        return std::make_unique<dsp::System18>(dsp::System18::Game::Cltchitr);
+    }
+    if (game == "ddcrew") {
+        return std::make_unique<dsp::System18>(dsp::System18::Game::Ddcrew);
+    }
+    if (game == "desertbr" || game == "desertbreaker") {
+        return std::make_unique<dsp::System18>(dsp::System18::Game::Desertbr);
+    }
+    if (game == "hamaway" || game == "hammeraway") {
+        return std::make_unique<dsp::System18>(dsp::System18::Game::Hamaway);
+    }
+    if (game == "lghost" || game == "laserghost") {
+        return std::make_unique<dsp::System18>(dsp::System18::Game::Lghost);
+    }
+    if (game == "pontoon") {
+        return std::make_unique<dsp::System18>(dsp::System18::Game::Pontoon);
+    }
+    if (game == "shdancer" || game == "shadowdancer") {
+        return std::make_unique<dsp::System18>(dsp::System18::Game::Shdancer);
+    }
+    if (game == "wwallyj" || game == "wwally" || game == "wally") {
+        return std::make_unique<dsp::System18>(dsp::System18::Game::Wwallyj);
+    }
+
 	// Sega System 1
 	if (game == "pitfall2" || game == "pitfallii" || game == "pitfall") {
 		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::Pitfall2);

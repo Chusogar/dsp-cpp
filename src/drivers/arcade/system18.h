@@ -20,11 +20,30 @@
 
 namespace dsp {
 
-// Sega System 18 (Moonwalker). Hardware is a System 16B tilemap/sprite board
-// plus a Genesis VDP, dual YM3438 (YM2612), RF5C68 PCM and an I8751 MCU.
+// Sega System 18. Hardware is a System 16B tilemap/sprite board plus a Genesis
+// VDP, dual YM3438 (YM2612), RF5C68 PCM and (on Moonwalker) an I8751 MCU.
 class System18 : public Machine {
 public:
-    enum class Game { Mwalk };
+    enum class Game {
+        Astorm,
+        Bloxeed,
+        Cltchitr,
+        Ddcrew,
+        Desertbr,
+        Hamaway,
+        Lghost,
+        Mwalk,
+        Pontoon,
+        Shdancer,
+        Wwallyj,
+    };
+
+    enum class RomBoard {
+        Shadow,     // Shadow Dancer — VDP on mapper region 1
+        Board5874,  // 171-5874 — VDP on region 2, extra ROM window on region 1
+        Board5987,  // 171-5987 — VDP on region 2, bank writes on region 1
+        Board8377525,  // Hammer Away proto
+    };
 
     static constexpr int kNativeWidth = 320;
     static constexpr int kNativeHeight = 224;
@@ -44,9 +63,11 @@ public:
     void set_inputs(const MachineInputs& inputs) override;
     void set_dip_switch(int bank, uint8_t value) override;
 
-    const uint32_t* framebuffer() const override { return framebuffer_.data(); }
-    int screen_width() const override { return kNativeWidth; }
-    int screen_height() const override { return kNativeHeight; }
+    const uint32_t* framebuffer() const override {
+        return rotated_ ? rotated_fb_.data() : framebuffer_.data();
+    }
+    int screen_width() const override { return rotated_ ? kNativeHeight : kNativeWidth; }
+    int screen_height() const override { return rotated_ ? kNativeWidth : kNativeHeight; }
     double frames_per_second() const override { return fps_; }
 
     void drain_audio(std::vector<int16_t>& out) override;
@@ -60,14 +81,18 @@ public:
 
 private:
     bool load_roms(const std::string& rom_path, std::string* error);
+    void configure_game();
     void update_video();
     void overlay_vdp(int priority_layer);
+    void rotate_framebuffer();
 
     uint16_t main_read(uint32_t address);
     void main_write(uint32_t address, uint16_t value, bool allow_mapper);
-    uint16_t read_region0(uint32_t address);
+    uint16_t read_rom_word(uint32_t byte_offset);
     uint16_t misc_io_r(uint16_t word_offset);
     void misc_io_w(uint16_t word_offset, uint16_t value);
+    void bank5987_w(uint16_t offset, uint16_t value);
+    void bank837_w(uint16_t offset, uint16_t value);
 
     uint8_t sound_read(uint16_t address);
     void sound_write(uint16_t address, uint8_t value);
@@ -75,10 +100,19 @@ private:
     void sound_out(uint16_t port, uint8_t value);
     void on_sound_cycles(int cycles);
 
-    void apply_tile_bank(uint8_t data);
+    void apply_tile_bank_5874(uint8_t data);
 
     Game game_;
+    RomBoard rom_board_ = RomBoard::Board5874;
+    bool use_fd1094_ = false;
+    bool use_mcu_ = false;
+    bool rotated_ = false;  // true for ROT90/ROT270
+    bool rot90_ = false;    // false = ROT270, true = ROT90
     double fps_ = 57.23;
+    int tile_n_ = 8;
+    int sprite_banks_ = 16;
+    uint32_t rom0_size_ = 0x80000;
+    uint32_t rom1_offset_ = 0x80000;
 
     M68000 main_cpu_;
     Z80 sound_cpu_;
@@ -99,6 +133,7 @@ private:
     std::array<uint16_t, 0x2000> work_ram_{};
 
     std::vector<uint32_t> framebuffer_;
+    std::vector<uint32_t> rotated_fb_;
     std::vector<uint32_t> bg_low_, bg_high_, fg_low_, fg_high_, text_low_, text_high_;
     std::vector<uint32_t> vdp_fb_;
     std::vector<uint8_t> vdp_pri_;
@@ -114,7 +149,6 @@ private:
     uint8_t vdp_mixing_ = 0;
     bool vdp_enable_ = false;
     bool grayscale_ = false;
-    int sprite_banks_ = 16;
 
     uint8_t in_p1_ = 0xff;
     uint8_t in_p2_ = 0xff;
