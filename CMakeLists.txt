@@ -71,6 +71,7 @@ add_executable(dsp
   src/sound/es5503.cpp
   src/sound/asc.cpp
   src/sound/saa1099.cpp
+  src/sound/cem3394.cpp
     
   src/video/gfx.cpp
   src/video/atari_mo.cpp
@@ -340,6 +341,7 @@ add_executable(dsp_tests
   src/sound/upd7759.cpp
   src/sound/huc6280_psg.cpp
   src/sound/vlm5030.cpp
+  src/sound/cem3394.cpp
   src/video/huc6270.cpp
   src/video/huc6260.cpp
   src/video/gfx.cpp
