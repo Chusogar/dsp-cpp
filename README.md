@@ -16,7 +16,7 @@ Midway **MCR** (**Tapper** and family), Atari **Star Wars**, and Sega
 **OutRun**, **After Burner II** (X-Board), **Hang-On**, and System 16 (**Fantasy Zone**, **Shinobi**, **Tetris**,
 **Altered Beast**), System 18 (**Moonwalker**, **Alien Storm**, **Shadow Dancer**, and more).
 Computers: **ZX Spectrum 48K**, **Pentagon 1024**, **Scorpion 256**, Amstrad CPC,
-**MSX1** / **MSX2**, **Commodore 64**, **Commodore VIC-20**, **Commodore 128**, **Commodore Plus/4** / **C16**, **Sinclair ZX80** / **ZX81**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
+**Amstrad PCW8256 / PCW8512**, **MSX1** / **MSX2**, **Commodore 64**, **Commodore VIC-20**, **Commodore 128**, **Commodore Plus/4** / **C16**, **Sinclair ZX80** / **ZX81**, **Apple II / II+ / IIe / IIe Enhanced**, **Apple IIGS**, **Macintosh II**,
 **EXL-100** / **EXELTEL**, **Sinclair QL**, **Atari ST**, **Commodore Amiga 500**. Consoles: NES, Game Boy / Game Boy
 Color, **Game Boy Advance**, **Atari 2600**, **Atari Lynx**, **Super Cassette Vision**, Sega Master System / Game Gear,
 **Sega Genesis / Mega Drive**, Casio **PV-1000** / **PV-2000**, ColecoVision, SG-1000.
@@ -43,6 +43,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | ZX Spectrum Next | MAME `specnext` (TBBlue core 3.02) | Z80N, MMU/DivMMC/Multiface, ULA/LoRes/Layer 2/tilemap/sprites/copper, zxnDMA, CTC, IM2, 3×AY + DACs, SPI SD card; boots the firmware and NextZXOS from an SD image |
 | Sega Model 3 (Step 2.1) | MAME `model3` / Supermodel (behaviour), new code | PowerPC 603r interpreter, Real3D Pro-1000 software renderer (scene graph, LOD, textures with mipmaps, lighting, fog, translucency), tile generator, MPC106, JTAG, 315-5881 (MAME port), SCSP ×2 + 68000 sound board (MAME SCSP port), DSB2 MPEG-1 layer II music (MAME decoder); runs *Star Wars Trilogy Arcade* |
 | Amstrad CPC | `src/computer/amstrad_cpc.pas` | Gate Array wait-states (opcodes on a 4 T-state grid) |
+| Amstrad PCW8256 / PCW8512 | MAME `amstrad/pcw.cpp` | Z80 @ 3.4 MHz, banked RAM, UPD765, roller-RAM 720×256 green CRT; printer-MCU bootstrap hack |
 | Lynx Suzy / Mikey | new | Sprite blitter, math coprocessor, timers, LCD DMA, 4-channel sound |
 | Atari Lynx driver | new | 64 KiB DRAM, MAPCTL, LNX/LYX carts, 160×102 LCD |
 | TIA | new | NTSC 160×192 playfield/players/missiles/ball, collisions, two-channel audio |
@@ -237,9 +238,23 @@ Options:
 --frames N         frames to run in headless mode (default 300)
 --tape FILE        tape/cart: Spectrum/CPC/C64 (.tap/.tzx/.cdt/.prg/.t64),
                    EXL-100 / EXELTEL cartridge, or PV-2000 cart (.bin/.rom)
---disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, MSX2 .dsk, Apple II .dsk/.do/.po/.nib,
+--disk FILE        floppy: CPC/Spectrum +3/PCW .dsk/.edsk, MSX2 .dsk, Apple II .dsk/.do/.po/.nib,
                    Pentagon/Scorpion .trd/.scl, Sinclair QL .mdv/.qlpak, Atari ST .st/.msa/.stx,
                    Commodore Amiga .adf
+```
+
+### Amstrad PCW8256 / PCW8512
+
+`--game pcw8256` (aliases `pcw`, `pcw8512`) is the Amstrad PCW word processor:
+Z80 @ 3.4 MHz, 256 KiB (8256) or 512 KiB (8512) banked RAM, UPD765 FDC, and a
+720×256 green-phosphor bitmap driven by roller RAM. There is no boot ROM; on
+reset the driver copies 256 bytes from the printer MCU (`40026.ic701` at
+offset `$300`) into RAM at `$0002` (MAME's bootstrap hack) so the Z80 can load
+track 0 into `$F000` and jump to `$F010`. Point it at a MAME `pcw8256.zip` and
+pass a CPC-style Extended `.dsk` with `--disk`.
+
+```bash
+./build/dsp --game pcw8256 --disk boot.dsk /path/to/pcw8256.zip
 ```
 
 ### Commodore Amiga 500
