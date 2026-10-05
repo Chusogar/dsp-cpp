@@ -430,6 +430,15 @@ uint16_t System18::misc_io_r(uint16_t word_offset) {
         default:
             break;
     }
+    // Wally wo Sagase! polls UPD4701 trackballs at 0x3000-0x3016.
+    // Stub a centered position so attract mode can progress without the chip.
+    if (game_ == Game::Wwallyj && offset >= 0x3000 / 2 && offset < 0x3018 / 2) {
+        return 0x8000;
+    }
+    // Laser Ghost gun ADC stub — always report "done" with mid-scale sample.
+    if (game_ == Game::Lghost && offset >= 0x3010 / 2 && offset <= 0x3016 / 2) {
+        return 0x00ff;
+    }
     return 0xffff;
 }
 
@@ -446,6 +455,8 @@ void System18::misc_io_w(uint16_t word_offset, uint16_t value) {
         default:
             break;
     }
+    // Trackball / gun latch writes are intentionally ignored (stubbed).
+    (void)value;
 }
 
 uint16_t System18::main_read(uint32_t address) {
