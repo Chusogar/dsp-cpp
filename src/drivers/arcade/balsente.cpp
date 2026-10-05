@@ -201,8 +201,38 @@ bool Balsente::load_roms(const std::string& rom_path, std::string* error) {
     }
 
     const size_t rom_size = (game_ == Game::Nametune) ? 0x40000u : 0x20000u;
-    if (!loader.load(*main_entries, main_rom_, error)) return false;
-    if (main_rom_.size() < rom_size) main_rom_.resize(rom_size, 0xff);
+    if (game_ == Game::Nametune) {
+        // MAME ROM_LOAD + ROM_CONTINUE: each 32 KiB file splits into two 16 KiB
+        // halves at dest and dest+0x20000.
+        main_rom_.assign(rom_size, 0xff);
+        static const struct {
+            const char* name;
+            uint32_t dest;
+            uint32_t crc;
+        } kChunks[] = {
+            {"namethattune_ur_ab_01_3-31-86.u8a", 0x00000, 0xf99054f1},
+            {"namethattune_ur_ab_23_3-31-86.u7a", 0x04000, 0xf2b8f7fa},
+            {"namethattune_ur_ab_45_3-31-86.u6a", 0x08000, 0x89e1c769},
+            {"namethattune_ur_ab_67_3-31-86.u5a", 0x0c000, 0x7e5572a1},
+            {"namethattune_ur_cd_01_3-31-86.u4a", 0x10000, 0xdb9d6154},
+            {"namethattune_ur_cd_23_3-31-86.u3a", 0x14000, 0x9d2e458f},
+            {"namethattune_ur_cd_45_3-31-86.u2a", 0x18000, 0x9a4b87aa},
+            {"namethattune_ur_cd_6_ef_3-31-86.u1a", 0x1c000, 0x0459e6f8},
+        };
+        for (const auto& chunk : kChunks) {
+            std::vector<uint8_t> data;
+            if (!loader.try_read(chunk.name, data) || data.size() < 0x8000) {
+                if (error) *error = std::string("missing/short ROM: ") + chunk.name;
+                return false;
+            }
+            std::memcpy(main_rom_.data() + chunk.dest, data.data(), 0x4000);
+            std::memcpy(main_rom_.data() + chunk.dest + 0x20000, data.data() + 0x4000, 0x4000);
+            (void)chunk.crc;
+        }
+    } else {
+        if (!loader.load(*main_entries, main_rom_, error)) return false;
+        if (main_rom_.size() < rom_size) main_rom_.resize(rom_size, 0xff);
+    }
 
     if (!loader.load(*sprite_entries, sprite_rom_, error)) return false;
     if (sprite_rom_.empty()) {
