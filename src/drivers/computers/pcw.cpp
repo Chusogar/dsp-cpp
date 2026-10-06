@@ -9,7 +9,6 @@
 
 namespace dsp {
 namespace {
-
 const std::vector<RomEntry> kPrinterMcuRom = {
     {"40026.ic701", 0x400, 0x0000, 0xee8890ae},
 };
@@ -24,21 +23,28 @@ struct KeyBit {
     uint8_t mask;  // bit to clear when pressed (active low)
 };
 
-// PCW matrix LINE0..LINE10 at &3FF0..&3FFA (from MAME pcw.cpp comments).
+// PCW matrix LINE0..LINE10 at &3FF0..&3FFA (MAME pcw.cpp INPUT_PORTS).
+// Host digit keys (Key::Num0..9 ← SDL 0..9) light BOTH the main digit row
+// (LINE4–8) and the keypad bits (LINE0–2): Filmation titles such as Knight
+// Lore read the keypad 0 bit, while typing and Abadia use the main row.
 const std::vector<KeyBit> kLine0 = {
-    {Key::F3, 0x01}, {Key::F1, 0x04}, {Key::F9, 0x08}, {Key::Right, 0x40},
+    {Key::F3, 0x01}, {Key::Num0, 0x02}, {Key::F1, 0x04}, {Key::F9, 0x08},
+    {Key::Num9, 0x10}, {Key::Num6, 0x20}, {Key::Num3, 0x40}, {Key::Right, 0x40},
+    {Key::Num2, 0x80},
 };
 const std::vector<KeyBit> kLine1 = {
-    {Key::F10, 0x01}, {Key::F11, 0x04}, {Key::F12, 0x08},
-    {Key::Up, 0x40}, {Key::Left, 0x80},
+    {Key::F10, 0x01}, {Key::Backslash, 0x02}, {Key::F11, 0x04}, {Key::F12, 0x08},
+    {Key::Num8, 0x10}, {Key::Num4, 0x20}, {Key::Num5, 0x40}, {Key::Up, 0x40},
+    {Key::Num1, 0x80}, {Key::Left, 0x80},
 };
 const std::vector<KeyBit> kLine2 = {
-    {Key::Delete, 0x01}, {Key::Enter, 0x04}, {Key::LeftShift, 0x20},
-    {Key::RightShift, 0x20},
+    {Key::Delete, 0x01}, {Key::Enter, 0x04}, {Key::Num7, 0x10},
+    {Key::LeftShift, 0x20}, {Key::RightShift, 0x20}, {Key::F2, 0x80},
 };
 const std::vector<KeyBit> kLine3 = {
-    {Key::Equals, 0x01}, {Key::Minus, 0x02}, {Key::P, 0x08},
-    {Key::Semicolon, 0x20}, {Key::Slash, 0x40}, {Key::Period, 0x80},
+    {Key::Equals, 0x01}, {Key::Minus, 0x02}, {Key::At, 0x04}, {Key::P, 0x08},
+    {Key::Quote, 0x10}, {Key::Semicolon, 0x20}, {Key::Slash, 0x40},
+    {Key::Period, 0x80},
 };
 const std::vector<KeyBit> kLine4 = {
     {Key::Num0, 0x01}, {Key::Num9, 0x02}, {Key::O, 0x04}, {Key::I, 0x08},
@@ -62,10 +68,10 @@ const std::vector<KeyBit> kLine8 = {
 };
 const std::vector<KeyBit> kLine9 = {
     {Key::F5, 0x01}, {Key::LeftCtrl, 0x02}, {Key::RightCtrl, 0x02},
-    {Key::F7, 0x10}, {Key::Down, 0x40}, {Key::Backspace, 0x80},
+    {Key::F4, 0x08}, {Key::F7, 0x10}, {Key::Down, 0x40}, {Key::Backspace, 0x80},
 };
 const std::vector<KeyBit> kLine10 = {
-    {Key::RightAlt, 0x80},
+    {Key::Cbm, 0x80}, {Key::RightAlt, 0x80},
 };
 
 const std::vector<KeyBit>* kLines[11] = {
@@ -80,9 +86,6 @@ bool ends_with_ci(const std::string& text, const std::string& suffix) {
                           return std::tolower(uint8_t(a)) == std::tolower(uint8_t(b));
                       });
 }
-
-// DK'Tronics joystick on AY Port A (reg 0x0E): active-low, idle = all 1s.
-uint8_t dktronics_joystick() { return 0xff; }
 
 }  // namespace
 
@@ -102,7 +105,7 @@ Pcw::Pcw(Model model)
         timer_irq_flag_ = false;
         update_irqs();
     });
-    ay_.set_port_handlers(dktronics_joystick, nullptr, nullptr, nullptr);
+    ay_.set_port_handlers([this]() { return joystick_porta_; }, nullptr, nullptr, nullptr);
 }
 
 const char* Pcw::title() const {
@@ -638,6 +641,24 @@ void Pcw::set_inputs(const MachineInputs& inputs) {
         }
         keyboard_[size_t(row)] = value;
     }
+
+    // DK'Tronics stick on AY port A. Habisoft Filmation (Knight Lore) CPL's the
+    // read and maps: bit2→left, bit3→right, bit4→fire, bit5/6/7→remaining dirs.
+    // Also accept Q/A/O/P so the Spectrum layout works without a real stick.
+    uint8_t joy = 0xff;
+    const bool up = inputs.key(Key::Up) || inputs.key(Key::Q) || inputs.player1.up;
+    const bool down = inputs.key(Key::Down) || inputs.key(Key::A) || inputs.player1.down;
+    const bool left = inputs.key(Key::Left) || inputs.key(Key::O) || inputs.player1.left;
+    const bool right = inputs.key(Key::Right) || inputs.key(Key::P) || inputs.player1.right;
+    const bool fire = inputs.key(Key::Space) || inputs.player1.button1 || inputs.player1.button2;
+    // CPC/DK'Tronics low bits (active-low) plus the Filmation-checked high bits.
+    if (up) joy = uint8_t(joy & ~0x21);       // bit0 + bit5
+    if (down) joy = uint8_t(joy & ~0x42);     // bit1 + bit6
+    if (left) joy = uint8_t(joy & ~0x04);     // bit2
+    if (right) joy = uint8_t(joy & ~0x08);    // bit3
+    if (fire) joy = uint8_t(joy & ~0x90);     // bit4 + bit7
+    joystick_porta_ = joy;
+
     // Habisoft Abadia accepts keypad cursors; also mirror Q-A-O-P onto those
     // bits so the classic Opera Soft layout moves Guillermo without needing
     // the CPC-encoded letter tests that the IY key-buffer path breaks.
@@ -662,7 +683,14 @@ bool Pcw::load_media(const std::string& path, std::string* error) {
         if (error) *error = "PCW expects a .dsk/.edsk image: " + path;
         return false;
     }
-    return fdc_.load_disk(0, path, error);
+    // First image → drive A; further --disk args fill drive B (Cozumel side B,
+    // CP/M system + game, etc.).
+    const int drive = fdc_.disk_inserted(0) ? 1 : 0;
+    if (drive == 1 && fdc_.disk_inserted(1)) {
+        if (error) *error = "PCW already has disks in A: and B:";
+        return false;
+    }
+    return fdc_.load_disk(drive, path, error);
 }
 
 void Pcw::drain_audio(std::vector<int16_t>& out) {
