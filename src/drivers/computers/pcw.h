@@ -126,6 +126,8 @@ private:
     bool blit_setup_patched_ = false;
     // Habisoft Abadia: remap logical space ($2F) to the PCW matrix encoding.
     bool abadia_keyboard_patched_ = false;
+    // After parchment → game, drop CP $09 so key scans see the real matrix.
+    bool abadia_ingame_ = false;
 };
 
 }  // namespace dsp

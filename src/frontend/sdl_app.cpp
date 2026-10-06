@@ -6,6 +6,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -116,7 +118,33 @@ void collect_inputs(Machine& machine, int pointer_x, int pointer_y, uint32_t mou
 }  // namespace
 
 int SdlApp::run_headless(Machine& machine) {
-    for (int frame = 0; frame < std::max(options_.frames, 1); frame++) machine.run_frame();
+    const char* pulse = std::getenv("DSP_PULSE_SPACE");
+    const int pulse_start =
+        std::getenv("DSP_PULSE_START") ? std::atoi(std::getenv("DSP_PULSE_START")) : 1800;
+    const int until =
+        std::getenv("DSP_PULSE_UNTIL") ? std::atoi(std::getenv("DSP_PULSE_UNTIL")) : 6000;
+    for (int frame = 0; frame < std::max(options_.frames, 1); frame++) {
+        MachineInputs inputs;
+        if (pulse && frame >= pulse_start && frame < until) {
+            if (std::getenv("DSP_PULSE_SOLID") || ((frame - pulse_start) % 100) < 20)
+                inputs.keys[size_t(Key::Space)] = true;
+        }
+        const char* hold = std::getenv("DSP_HOLD_KEYS");
+        const int hold_after = std::getenv("DSP_HOLD_AFTER") ? std::atoi(std::getenv("DSP_HOLD_AFTER")) : 0;
+        if (hold && frame >= hold_after) {
+            for (const char* p = hold; *p; ++p) {
+                char c = *p;
+                if (c>='a'&&c<='z') inputs.keys[size_t(Key::A)+size_t(c-'a')] = true;
+                if (c==' ') inputs.keys[size_t(Key::Space)] = true;
+                if (c=='^') inputs.keys[size_t(Key::Up)] = true;
+                if (c=='_') inputs.keys[size_t(Key::Down)] = true;
+                if (c=='<') inputs.keys[size_t(Key::Left)] = true;
+                if (c=='>') inputs.keys[size_t(Key::Right)] = true;
+            }
+        }
+        machine.set_inputs(inputs);
+        machine.run_frame();
+    }
 
     SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormatFrom(
         const_cast<uint32_t*>(machine.framebuffer()), machine.screen_width(),

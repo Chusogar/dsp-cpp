@@ -251,7 +251,8 @@ Options:
 Z80 @ 3.4 MHz, 256 KiB (8256) or 512 KiB (8512) banked RAM, UPD765 FDC, and a
 720×256 green-phosphor bitmap driven by roller RAM (the window uses 2× vertical
 scale so the CRT looks ~4:3). Host keys feed the PCW matrix at `$3FF0`; Habisoft
-Abadia also gets a small key-table fix so Space advances the intro parchment.
+Abadia also gets a small key-table fix so Space advances the intro parchment,
+and Q-A-O-P are mirrored onto the keypad cursors so Guillermo walks in-game.
 There is no boot ROM; on reset the driver copies 256 bytes from the printer MCU
 (`40026.ic701` at offset `$300`) into RAM at `$0002` (MAME's bootstrap hack) so
 the Z80 can load track 0 into `$F000` and jump to `$F010`. Point it at a MAME
