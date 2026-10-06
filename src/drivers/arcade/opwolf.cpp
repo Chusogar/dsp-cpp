@@ -113,7 +113,11 @@ GfxLayout sprite_layout() {
     return layout;
 }
 
-inline uint8_t pal4bit(uint16_t value) { return uint8_t((value & 0x0f) * 0x11); }
+// TC0070RGB / MAME xRGBRRRRGGGGBBBB_bit0.
+inline uint8_t pal5bit(uint16_t value) {
+    value &= 0x1f;
+    return uint8_t((value << 3) | (value >> 2));
+}
 
 }  // namespace
 
@@ -440,9 +444,9 @@ void OpWolf::on_sound_cycles(int cycles) {
 }
 
 void OpWolf::set_palette(int index, uint16_t value) {
-    const uint8_t red = pal4bit(uint16_t(value >> 8));
-    const uint8_t green = pal4bit(uint16_t(value >> 4));
-    const uint8_t blue = pal4bit(value);
+    const uint8_t red = pal5bit(uint16_t(((value >> 7) & 0x1e) | ((value >> 14) & 0x01)));
+    const uint8_t green = pal5bit(uint16_t(((value >> 3) & 0x1e) | ((value >> 13) & 0x01)));
+    const uint8_t blue = pal5bit(uint16_t(((value << 1) & 0x1e) | ((value >> 12) & 0x01)));
     palette_[size_t(index)] =
         0xff000000u | (uint32_t(red) << 16) | (uint32_t(green) << 8) | blue;
 }
@@ -476,11 +480,17 @@ void OpWolf::draw_tilemap(bool foreground) {
 }
 
 void OpWolf::blit_layer(const std::vector<uint32_t>& layer, uint16_t scroll_x, uint16_t scroll_y,
-                        bool transparent) {
+                        bool transparent, int rowscroll_base) {
+    // PC080SN applies per-row X scroll from chip RAM (MAME pc080sn_device::tilemap_update):
+    // scrollx(row) = global_scrollx - rowscroll_ram[j], with row = (j + scrolly) & 0x1ff.
     for (int y = 0; y < kWorkHeight; y++) {
         const int source_y = (y + int(scroll_y)) & 0x1ff;
+        const int row_index = (source_y - int(scroll_y)) & 0x1ff;  // == y & 0x1ff
+        const int row_scroll =
+            (row_index < 256) ? int(ram2_[size_t(rowscroll_base + row_index)]) : 0;
+        const int line_scroll = (int(scroll_x) - row_scroll) & 0x1ff;
         for (int x = 0; x < kWorkWidth; x++) {
-            const int source_x = (x + int(scroll_x)) & 0x1ff;
+            const int source_x = (x + line_scroll) & 0x1ff;
             const uint32_t pixel = layer[size_t(source_y * kWorkWidth + source_x)];
             if (transparent && pixel == 0) continue;
             composite_[size_t(y * kWorkWidth + x)] = pixel;
@@ -489,6 +499,7 @@ void OpWolf::blit_layer(const std::vector<uint32_t>& layer, uint16_t scroll_x, u
 }
 
 void OpWolf::draw_sprites() {
+    // PC090OJ: first sprite has highest priority. 9-bit coords, signed above 0x140.
     for (int index = 255; index >= 0; index--) {
         const uint16_t* entry = &ram3_[size_t(index * 4)];
         const int code = entry[2] & 0xfff;
@@ -497,8 +508,11 @@ void OpWolf::draw_sprites() {
         const int color = ((attrib & 0x0f) | ((sprite_bank_ & 0x0f) << 4)) << 4;
         const bool flip_x = (attrib & 0x4000) != 0;
         const bool flip_y = (attrib & 0x8000) != 0;
-        const int pos_x = int(entry[3]) + 16;
-        const int pos_y = int(entry[1]);
+        int pos_x = int(entry[3] & 0x1ff);
+        int pos_y = int(entry[1] & 0x1ff);
+        if (pos_x > 0x140) pos_x -= 0x200;
+        if (pos_y > 0x140) pos_y -= 0x200;
+        pos_x += 16;
         const uint8_t* pixels = sprites_.element(code);
         for (int row = 0; row < 16; row++) {
             const int y = pos_y + row;
@@ -544,11 +558,13 @@ void OpWolf::draw_sight() {
 }
 
 void OpWolf::update_video() {
+    // Layer order matches MAME opwolf screen_update + pri_mask 0xfc:
+    // opaque BG, sprites under FG, then transparent FG on top.
     draw_tilemap(false);
     draw_tilemap(true);
-    blit_layer(background_, scroll_x1_, scroll_y1_, false);
+    blit_layer(background_, scroll_x1_, scroll_y1_, false, 0x2000);  // BG rowscroll @ 0x4000
     draw_sprites();
-    blit_layer(foreground_, scroll_x2_, scroll_y2_, true);
+    blit_layer(foreground_, scroll_x2_, scroll_y2_, true, 0x6000);  // FG rowscroll @ 0xc000
     for (int y = 0; y < kScreenHeight; y++) {
         const int source_y = y + 8;
         for (int x = 0; x < kScreenWidth; x++) {
