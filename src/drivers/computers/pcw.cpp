@@ -159,6 +159,7 @@ void Pcw::reset() {
     ay_.reset();
     ay_latch_ = 0;
     blit_setup_patched_ = false;
+    abadia_keyboard_patched_ = false;
 
     // MAME machine_reset: copy printer-MCU bootstrap into RAM[2..257].
     // Z80 starts at 0 → two NOPs (zeros) then the stub.
@@ -198,6 +199,7 @@ void Pcw::update_mem(int block, uint8_t data) {
     }
     // Bank switches can reveal remaining CALL $32BC sites mid-frame.
     maybe_patch_blit_setup();
+    maybe_patch_abadia_keyboard();
 }
 
 uint8_t Pcw::read_byte(uint16_t address) {
@@ -210,6 +212,17 @@ uint8_t Pcw::read_byte(uint16_t address) {
         const int row = off - 0x3ff0;
         if (row < 11) return keyboard_[size_t(row)];
         return 0xff;
+    }
+
+    // Habisoft Abadia keeps a CPC-style key buffer at $33D3. After the blit
+    // prologue patch, that buffer is filled from IY mask tables (CP $09), so
+    // key tests at $3482/$348D never see host keys. While those routines run,
+    // return the live PCW matrix instead.
+    if (bank == 0 && address >= 0x33d3 && address <= 0x33dc) {
+        const uint16_t pc = cpu_.pc();
+        if (pc >= 0x3482 && pc <= 0x34b0) {
+            return keyboard_[size_t(address - 0x33d3)];
+        }
     }
 
     return bank_ptr(bank)[off];
@@ -483,6 +496,7 @@ void Pcw::run_frame() {
 
     in_vblank_ = false;
     maybe_patch_blit_setup();
+    maybe_patch_abadia_keyboard();
 
     for (int line = 0; line < kLinesPerFrame; ++line) {
         // VBlank roughly covers the bottom border region.
@@ -568,6 +582,28 @@ void Pcw::maybe_patch_blit_setup() {
         }
     }
     if (patched > 0) blit_setup_patched_ = true;
+}
+
+void Pcw::maybe_patch_abadia_keyboard() {
+    // Habisoft Abadia maps logical space ($2F) to CPC encoding $1E (row3 bit6).
+    // On the PCW matrix Space is row5 bit7 ($2F). Retarget the table used by
+    // CALL $3482 so parchment "PULSA ESPACIO" and in-game Space match the host
+    // key, together with the live-matrix feed in read_byte().
+    if (abadia_keyboard_patched_) return;
+    if (read_bank_[0] != 0 || write_bank_[0] != 0) return;
+    if (read_byte(0x3427) != 0x1e || read_byte(0x3428) != 0x2f) return;
+    bool found_wait = false;
+    for (int a = 0; a <= 0xfffc; ++a) {
+        if (read_byte(uint16_t(a)) == 0x3e && read_byte(uint16_t(a + 1)) == 0x2f &&
+            read_byte(uint16_t(a + 2)) == 0xcd && read_byte(uint16_t(a + 3)) == 0x82 &&
+            read_byte(uint16_t(a + 4)) == 0x34) {
+            found_wait = true;
+            break;
+        }
+    }
+    if (!found_wait) return;
+    bank_ptr(0)[0x3427] = 0x2f;
+    abadia_keyboard_patched_ = true;
 }
 
 void Pcw::set_inputs(const MachineInputs& inputs) {
