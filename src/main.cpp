@@ -106,6 +106,7 @@
 #include "drivers/consoles/gba.h"
 #include "drivers/consoles/nes.h"
 #include "drivers/consoles/atari_lynx.h"
+#include "drivers/consoles/wonderswan.h"
 #include "drivers/consoles/a2600.h"
 #include "drivers/consoles/scv.h"
 #include "drivers/consoles/pcengine.h"
@@ -182,8 +183,8 @@ void print_supported_emulators() {
         "\n"
         "  Consoles:\n"
         "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp, 32x, 32x-pal, 32x-jp,\n"
-        "    pv1000, pv2000, coleco, sg1000, gb, gba, nes, lynx, scv, pcengine, sgx,\n"
-        "    a2600, atari2600, vcs, a7800, vectrex, snes\n"
+        "    pv1000, pv2000, coleco, sg1000, gb, gba, nes, lynx, wswan, wscolor, wsc,\n"
+        "    scv, pcengine, sgx, a2600, atari2600, vcs, a7800, vectrex, snes\n"
         "\n");
 }
 
@@ -765,6 +766,13 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "gba" || game == "agb" || game == "gameboyadvance") return std::make_unique<dsp::Gba>();
 	if (game == "nes") return std::make_unique<dsp::Nes>();
 	if (game == "lynx") return std::make_unique<dsp::AtariLynx>();
+	if (game == "wswan" || game == "wonderswan" || game == "ws") {
+	    return std::make_unique<dsp::WonderSwan>(dsp::WonderSwan::Model::WonderSwan);
+	}
+	if (game == "wscolor" || game == "wsc" || game == "wonderswancolor" ||
+	    game == "swancrystal" || game == "wonderswan-color") {
+	    return std::make_unique<dsp::WonderSwan>(dsp::WonderSwan::Model::WonderSwanColor);
+	}
 	if (game == "a2600" || game == "atari2600" || game == "vcs" || game == "2600") {
 	    return std::make_unique<dsp::A2600>();
 	}
