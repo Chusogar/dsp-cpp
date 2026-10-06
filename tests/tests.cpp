@@ -6222,6 +6222,15 @@ void test_genesis_boot() {
     const uint16_t th_low = machine.debug_read_word(0xa10002);
     check((th_high & 0x0800) == 0, "Genesis pad right is visible with TH high");
     check((th_low & 0x1000) == 0, "Genesis pad A is visible with TH low");
+
+    // Byteswapped dumps must be recognised (otherwise SMD deinterleave corrupts
+    // them into a black screen — e.g. some Lion King .bin mirrors).
+    std::vector<uint8_t> swapped = make_genesis_test_rom();
+    for (size_t i = 0; i + 1 < swapped.size(); i += 2) std::swap(swapped[i], swapped[i + 1]);
+    dsp::Genesis swapped_machine;
+    check(swapped_machine.load_rom(std::move(swapped), &error),
+          "Genesis loads a 16-bit byteswapped ROM");
+    check(swapped_machine.debug_pc() == 0x200, "Byteswapped Genesis ROM keeps reset vector");
 }
 
 void write_msx2_dummy_roms(const std::string& dir, bool with_disk) {

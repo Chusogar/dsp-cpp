@@ -48,6 +48,31 @@ void deinterleave_smd(std::vector<uint8_t>& data) {
     data.swap(out);
 }
 
+void byteswap_words(std::vector<uint8_t>& data) {
+    const size_t n = data.size() & ~size_t(1);
+    for (size_t i = 0; i < n; i += 2) std::swap(data[i], data[i + 1]);
+}
+
+// Recognise and normalise common dump formats (.bin/.md/.gen/.smd, byteswapped).
+bool normalize_cartridge(std::vector<uint8_t>& data) {
+    if (looks_like_genesis(data)) return true;
+
+    // 16-bit byteswapped .bin (pairs swapped) — common with some dump tools.
+    byteswap_words(data);
+    if (looks_like_genesis(data)) return true;
+    byteswap_words(data);  // undo
+
+    // Super Magic Drive interleaved blocks.
+    deinterleave_smd(data);
+    if (looks_like_genesis(data)) return true;
+
+    // SMD + byteswap (rare).
+    byteswap_words(data);
+    if (looks_like_genesis(data)) return true;
+
+    return false;
+}
+
 uint32_t be32(const uint8_t* p) {
     return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
 }
@@ -158,11 +183,28 @@ bool Genesis::load_cartridge(std::vector<uint8_t> data, std::string* error) {
     if ((data.size() % 16384) == 512) {
         data.erase(data.begin(), data.begin() + 512);
     }
-    if (!looks_like_genesis(data)) deinterleave_smd(data);
+    if (!normalize_cartridge(data)) {
+        if (error) {
+            *error =
+                "not a Sega Genesis / Mega Drive ROM (missing SEGA header after "
+                "bin/smd/byteswap decode)";
+        }
+        return false;
+    }
     if (data.size() > size_t(kMaxRom)) data.resize(size_t(kMaxRom));
+
+    // Pad to the next power of two by mirroring so 3 MiB carts (Lion King, …)
+    // still respond across the full 4 MiB cartridge window.
+    const size_t logical = data.size();
+    const size_t padded = size_t(next_pow2(uint32_t(std::max<size_t>(logical, 2))));
+    if (padded > logical && logical > 0) {
+        data.resize(padded);
+        for (size_t i = logical; i < padded; ++i) data[i] = data[i % logical];
+    }
+
     rom_ = std::move(data);
-    rom_mask_ = next_pow2(uint32_t(std::max<size_t>(rom_.size(), 2))) - 1;
-    ssf2_mapper_ = rom_.size() > 0x400000;
+    rom_mask_ = uint32_t(padded ? padded - 1 : 0);
+    ssf2_mapper_ = logical > 0x400000;
     for (int i = 0; i < 8; i++) rom_banks_[size_t(i)] = uint32_t(i) << 19;
     parse_header();
     reset();
@@ -521,13 +563,23 @@ void Genesis::run_frame() {
 
     for (int line = 0; line < lines; line++) {
         cycles_on_line_ = 0;
+        // Run a slice of the line before rendering so HINT/CRAM updates from the
+        // previous line's interrupt handler are visible (Lion King sky/HUD).
+        const int pre = std::max(1, m68k_per_line / 4);
+        const int post = std::max(0, m68k_per_line - pre);
+        m68k_.run(pre);
+        if (!z80_is_reset_ && z80_has_bus_) z80_.run(std::max(1, z80_per_line / 4));
+
         vdp_.handle_scanline(line);
         if (line < height) {
             std::memcpy(&framebuffer_[size_t(line) * kScreenWidth], vdp_.line_buffer(),
                         size_t(kScreenWidth) * sizeof(uint32_t));
         }
-        m68k_.run(m68k_per_line);
-        if (!z80_is_reset_ && z80_has_bus_) z80_.run(z80_per_line);
+        if (post > 0) m68k_.run(post);
+        if (!z80_is_reset_ && z80_has_bus_) {
+            const int z_post = std::max(0, z80_per_line - std::max(1, z80_per_line / 4));
+            if (z_post > 0) z80_.run(z_post);
+        }
     }
     vdp_.handle_eof();
 }
