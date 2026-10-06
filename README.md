@@ -905,7 +905,11 @@ holding one of those.
 `--game genesis` / `megadrive` is NTSC (USA, version register `$A1`).
 `genesis-jp` is NTSC domestic (`$80`). `genesis-pal` is PAL (`$C1`, 313
 lines). `--dip 0:0` / `1` / `2` also selects Japan / USA / Europe on the
-version register (games read it for the SEGA screen and lock-out).
+version register (games read it for the SEGA screen and lock-out). Cartridges
+are `.bin` / `.md` / `.gen` / `.smd` (plain or zipped); 16-bit byteswapped
+dumps and Super Magic Drive interleaved images are recognised from the `SEGA`
+header. Images that are not a power of two (e.g. 3 MiB *Lion King*) are
+mirrored up to the next power of two so the full 4 MiB cart window responds.
 
 A is Left Ctrl or Space, B is Left Alt or Z, C is X, Start is `1`. The D-pad
 is the arrow keys. Player 2 is R/F/D/G plus A/S/Q.
