@@ -7,6 +7,7 @@
 
 #include "core/machine.h"
 #include "cpu/nec_v30.h"
+#include "sound/wswan_apu.h"
 
 namespace dsp {
 
@@ -26,7 +27,6 @@ public:
     static constexpr int kScreenHeight = 144;
     static constexpr int kCyclesPerLine = 256;
     static constexpr int kDefaultVtotal = 158;  // scanlines = vtotal + 1
-    static constexpr int kSampleRate = 24000;
     static constexpr size_t kMaxCartridge = 16 * 1024 * 1024;
 
     enum class Model { WonderSwan, WonderSwanColor };
@@ -48,7 +48,7 @@ public:
     }
 
     void drain_audio(std::vector<int16_t>& out) override;
-    int sample_rate() const override { return kSampleRate; }
+    int sample_rate() const override { return WswanApu::kSampleRate; }
 
     const char* title() const override {
         return color_ ? "WonderSwan Color" : "WonderSwan";
@@ -204,8 +204,7 @@ private:
     bool eep_ready_[2]{true, true};
     bool eep_protect_ = false;
 
-    // Sound regs (stubbed; silence output)
-    std::array<uint8_t, 0x40> sound_io_{};
+    WswanApu apu_;
 
     std::array<uint32_t, kScreenWidth * kScreenHeight> framebuffer_{};
     std::vector<int16_t> audio_;
