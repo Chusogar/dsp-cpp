@@ -174,6 +174,8 @@ holding the individual files:
 ./build/dsp --game gba --cart /path/to/game.gba /path/to/gba.zip
 ./build/dsp --game nes /path/to/game.nes
 ./build/dsp --game lynx /path/to/game.lnx
+./build/dsp --game wscolor /path/to/wscolor.zip /path/to/game.wsc
+./build/dsp --game wswan /path/to/wswan.zip /path/to/game.ws
 ./build/dsp --game scv /path/to/scv.zip
 ./build/dsp --game pv2000 --tape game.bin /path/to/pv2000.zip
 ./build/dsp --game genesis /path/to/game.md

@@ -292,6 +292,7 @@ add_executable(dsp
   src/machine/mos6526.cpp
   src/machine/mos6566.cpp
   src/drivers/consoles/atari_lynx.cpp
+  src/drivers/consoles/wonderswan.cpp
   src/drivers/consoles/a2600.cpp
   src/drivers/consoles/pcengine.cpp
   src/drivers/consoles/a7800.cpp
@@ -472,6 +473,7 @@ add_executable(dsp_tests
   src/sound/gba_apu.cpp
   src/drivers/arcade/mcr.cpp
   src/drivers/consoles/atari_lynx.cpp
+  src/drivers/consoles/wonderswan.cpp
   src/drivers/consoles/a2600.cpp
   src/drivers/consoles/scv.cpp
   src/drivers/consoles/pv2000.cpp
