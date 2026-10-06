@@ -118,10 +118,11 @@ private:
     uint16_t palette_color(uint8_t palette, uint8_t color) const;
     uint16_t backdrop_color(uint8_t color) const;
     bool opaque(uint8_t palette, uint8_t color) const;
-    bool planar() const { return (disp_mode_ & 7) != 7; }
-    bool packed() const { return (disp_mode_ & 7) == 7; }
-    int depth() const { return ((disp_mode_ >> 1) & 3) != 3 ? 2 : 4; }
-    bool grayscale() const { return ((disp_mode_ >> 2) & 1) == 0; }
+    bool planar() const { return display_mode() != 7; }
+    bool packed() const { return display_mode() == 7; }
+    int depth() const { return ((display_mode() >> 1) & 3) != 3 ? 2 : 4; }
+    bool grayscale() const { return (display_mode() & 4) == 0; }
+    uint8_t display_mode() const { return uint8_t((disp_mode_ >> 5) & 7); }
     uint32_t rgb12_to_argb(uint16_t color) const;
 
     void apply_startio();

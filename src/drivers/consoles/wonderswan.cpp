@@ -356,8 +356,13 @@ void WonderSwan::reset() {
     audio_accumulator_ = 0;
     cpu_.set_irq(IrqLine::Clear);
 
-    if (boot_rom_.empty()) {
-        // No BIOS: apply post-boot I/O so the footer JMP at FFFF:0000 runs.
+    // Cartridge present: boot like Mednafen (post-boot I/O + footer at FFFF:0000).
+    // The real SPHINX/ASWAN boot ROM is still loaded for inspection, but the
+    // NecV30 core is not a full V30MZ, so the IPLROM path often stalls.
+    if (!cart_rom_.empty()) {
+        cartridge_enable_ = true;
+        apply_startio();
+    } else if (boot_rom_.empty()) {
         cartridge_enable_ = true;
         apply_startio();
     }
