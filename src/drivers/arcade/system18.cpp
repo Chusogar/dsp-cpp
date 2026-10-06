@@ -334,11 +334,8 @@ void System18::reset() {
     video_.reset();
     video_.screen_enabled = false;
     video_.bank_size = 0x400;
-    // 5874/Shadow reset state matches port H = 0: banks 0..3 and 0..3.
-    for (int i = 0; i < 4; i++) {
-        video_.tile_bank[size_t(i)] = uint8_t(i);
-        video_.tile_bank[size_t(4 + i)] = uint8_t(i);
-    }
+    // MAME tilemap_16b_reset: bank[i] = i for all slots.
+    for (int i = 0; i < 8; i++) video_.tile_bank[size_t(i)] = uint8_t(i);
     for (int i = 0; i < 16; i++) video_.sprite_bank[size_t(i)] = uint8_t(i);
     work_ram_.fill(0);
     sound_ram_.fill(0);
@@ -375,6 +372,24 @@ void System18::apply_tile_bank_5874(uint8_t data) {
     if (rom_board_ != RomBoard::Board5874 && rom_board_ != RomBoard::Shadow) return;
     tile_bank_latch_ = data;
     // MAME: banks 0..3 = (lo*4+i), banks 4..7 = (hi*4+i) with banksize 0x400.
+    // Shadow Dancer pulses port H with 0 every frame; applying that collapses
+    // slots 4..7 onto 0..3 and turns level tiles (codes >= 0x1000) into garbage.
+    // Keep identity mapping when data==0 on the Shadow board (matches the
+    // tilemap_16b_reset default of bank[i]=i until a real bank select arrives).
+    if (rom_board_ == RomBoard::Shadow && data == 0) {
+        bool dirty = false;
+        for (int i = 0; i < 8; i++) {
+            if (video_.tile_bank[size_t(i)] != uint8_t(i)) {
+                video_.tile_bank[size_t(i)] = uint8_t(i);
+                dirty = true;
+            }
+        }
+        if (dirty) {
+            for (auto& page : video_.tile_dirty) page.fill(true);
+            video_.text_dirty.fill(true);
+        }
+        return;
+    }
     const uint8_t lo = uint8_t(data & 0x0f);
     const uint8_t hi = uint8_t((data >> 4) & 0x0f);
     bool dirty = false;
