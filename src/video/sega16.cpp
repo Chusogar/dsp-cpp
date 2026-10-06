@@ -225,13 +225,21 @@ void Sega16Video::mark_tile(uint16_t word_offset) {
 
 void Sega16Video::apply_screen_select_16b(uint16_t char_offset) {
     // $740 = FG primary, $741 = BG primary, $742/$743 = alternate page sets.
+    // Nibble order matches MAME draw_virtual_tilemap:
+    //   bits 0-3 = TL, 4-7 = TR, 8-11 = BL, 12-15 = BR.
+    // Stored as screens[base+0..3] = {TL, TR, BL, BR}.
     auto apply = [&](uint16_t addr, int base) {
         if (char_offset != addr) return;
         const uint16_t value = char_ram[addr];
+        const uint8_t pages[4] = {
+            uint8_t((value >> 0) & 0xf),
+            uint8_t((value >> 4) & 0xf),
+            uint8_t((value >> 8) & 0xf),
+            uint8_t((value >> 12) & 0xf),
+        };
         for (int i = 0; i < 4; i++) {
-            const uint8_t page = uint8_t((value >> (12 - i * 4)) & 0xf);
-            if (screens[size_t(base + i)] != page) {
-                screens[size_t(base + i)] = page;
+            if (screens[size_t(base + i)] != pages[i]) {
+                screens[size_t(base + i)] = pages[i];
                 tile_dirty[size_t(base + i)].fill(true);
             }
         }
@@ -280,8 +288,9 @@ void Sega16Video::render_tile_pages(std::vector<uint32_t>& low, std::vector<uint
                                     bool extra_code_bit) {
     low.assign(size_t(kMapWidth * kMapHeight), kTransparent);
     high.assign(size_t(kMapWidth * kMapHeight), kTransparent);
+    // screens[base+0..3] = {TL, TR, BL, BR}
     const int page_x[4] = {0, 512, 0, 512};
-    const int page_y[4] = {256, 256, 0, 0};
+    const int page_y[4] = {0, 0, 256, 256};
     for (int p = 0; p < 4; p++) {
         const int num = first_page + p;
         const uint16_t pos = uint16_t(screens[size_t(num)] * 0x800);
@@ -370,7 +379,7 @@ void Sega16Video::draw_tilemap_16b(uint32_t* dest, uint8_t* priority, int which,
                 effy = char_ram[size_t(0x748 + which + 2)];
                 pages = pages_from(alt_base);
             }
-            // MAME: (0xc0 - xscroll) & 0x3ff; our page layout needs +512.
+            // MAME: (0xc0 - xscroll) & 0x3ff with xoffs=0 for System 16B/18.
             const int scroll_x = (704 - (effx & 0x3ff)) & 0x3ff;
             const int scroll_y = effy & 0x1ff;
             const int xs = std::max(x0, 0);
@@ -378,11 +387,9 @@ void Sega16Video::draw_tilemap_16b(uint32_t* dest, uint8_t* priority, int which,
             for (int x = xs; x < xe; x++) {
                 const int vx = (x + scroll_x) & 0x3ff;
                 const int vy = (y + scroll_y) & 0x1ff;
-                // Page quadrants: y>=256 -> pages 0/1, else 2/3; x>=512 picks +1.
-                const int quad = ((vy >> 8) << 1) | (vx >> 9);
-                // screens layout: [0]=BL, [1]=BR, [2]=TL, [3]=TR within each set.
-                static const int kQuadToScreen[4] = {2, 3, 0, 1};
-                const int page = screens[size_t(pages + kQuadToScreen[quad])];
+                // screens[base+0..3] = {TL, TR, BL, BR}
+                const int quad = ((vy >> 8) << 1) | (vx >> 9);  // TL=0,TR=1,BL=2,BR=3
+                const int page = screens[size_t(pages + quad)];
                 const uint16_t data =
                     tile_ram[size_t(((page * 0x800) + ((vy & 0xff) >> 3) * 64 + ((vx & 0x1ff) >> 3)) &
                                     0x7fff)];
