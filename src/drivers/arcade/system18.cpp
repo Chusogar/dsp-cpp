@@ -130,7 +130,8 @@ System18::System18(Game game)
       text_low_(512 * 256, 0),
       text_high_(512 * 256, 0),
       vdp_fb_(kNativeWidth * kNativeHeight, 0),
-      vdp_pri_(kNativeWidth * kNativeHeight, 0) {
+      vdp_pri_(kNativeWidth * kNativeHeight, 0),
+      layer_pri_(kNativeWidth * kNativeHeight, 0) {
     configure_game();
     if (use_mcu_) mcu_ = std::make_unique<Mcs51>(kMcuClock);
 
@@ -220,9 +221,7 @@ bool System18::init(const std::string& rom_path, std::string* error) {
     video_.init_palette_luts();
     video_.cram_words = 0x800;
     video_.tile_banks = 0x0f;
-    video_.tile_bank[0] = 0;
-    video_.tile_bank[1] = 1;
-    for (int i = 0; i < 16; i++) video_.sprite_bank[size_t(i)] = uint8_t(i);
+    video_.bank_size = 0x400;  // System 18: 8 banks of 0x400 tiles (MAME TILEMAP_16B, 8)
     reset();
     return true;
 }
@@ -323,6 +322,9 @@ void System18::reset() {
     io_.reset();
     video_.reset();
     video_.screen_enabled = false;
+    video_.bank_size = 0x400;
+    for (int i = 0; i < 8; i++) video_.tile_bank[size_t(i)] = uint8_t(i);
+    for (int i = 0; i < 16; i++) video_.sprite_bank[size_t(i)] = uint8_t(i);
     work_ram_.fill(0);
     sound_ram_.fill(0);
     sound_bank_ = 0;
@@ -357,11 +359,20 @@ void System18::set_dip_switch(int bank, uint8_t value) {
 void System18::apply_tile_bank_5874(uint8_t data) {
     if (rom_board_ != RomBoard::Board5874 && rom_board_ != RomBoard::Shadow) return;
     tile_bank_latch_ = data;
+    // MAME: banks 0..3 = (lo*4+i), banks 4..7 = (hi*4+i) with banksize 0x400.
     const uint8_t lo = uint8_t(data & 0x0f);
     const uint8_t hi = uint8_t((data >> 4) & 0x0f);
-    if (video_.tile_bank[0] != lo || video_.tile_bank[1] != hi) {
-        video_.tile_bank[0] = lo;
-        video_.tile_bank[1] = hi;
+    bool dirty = false;
+    for (int i = 0; i < 4; i++) {
+        const uint8_t b0 = uint8_t(lo * 4 + i);
+        const uint8_t b1 = uint8_t(hi * 4 + i);
+        if (video_.tile_bank[size_t(i)] != b0 || video_.tile_bank[size_t(4 + i)] != b1) {
+            video_.tile_bank[size_t(i)] = b0;
+            video_.tile_bank[size_t(4 + i)] = b1;
+            dirty = true;
+        }
+    }
+    if (dirty) {
         for (auto& page : video_.tile_dirty) page.fill(true);
         video_.text_dirty.fill(true);
     }
@@ -369,21 +380,25 @@ void System18::apply_tile_bank_5874(uint8_t data) {
 
 void System18::bank5987_w(uint16_t offset, uint16_t value) {
     offset &= 0xf;
-    const uint8_t data = uint8_t(value);
+    uint8_t data = uint8_t(value);
     if (offset < 8) {
-        // MAME banks are 0x400 tiles; our Sega16Video uses 0x1000-tile slots.
-        const uint8_t bank = uint8_t(data >> 2);
-        const int slot = offset < 4 ? 0 : 1;
-        if (video_.tile_bank[size_t(slot)] != bank) {
-            video_.tile_bank[size_t(slot)] = bank;
+        const int maxbanks = std::max(1, video_.tiles.total() >> 10);
+        if (data >= maxbanks) data = uint8_t(data % maxbanks);
+        if (video_.tile_bank[size_t(offset)] != data) {
+            video_.tile_bank[size_t(offset)] = data;
             for (auto& page : video_.tile_dirty) page.fill(true);
             video_.text_dirty.fill(true);
         }
     } else {
         const int pair = int(offset - 8);
         if (pair >= 0 && pair < 8) {
-            video_.sprite_bank[size_t(pair * 2 + 0)] = uint8_t(data * 2 + 0);
-            video_.sprite_bank[size_t(pair * 2 + 1)] = uint8_t(data * 2 + 1);
+            const int maxbanks = std::max(1, int(sprite_rom_.size() >> 17));
+            uint8_t bank = data;
+            if (bank >= maxbanks) bank = 255;
+            video_.sprite_bank[size_t(pair * 2 + 0)] =
+                (bank == 255) ? 255 : uint8_t(bank * 2 + 0);
+            video_.sprite_bank[size_t(pair * 2 + 1)] =
+                (bank == 255) ? 255 : uint8_t(bank * 2 + 1);
         }
     }
 }
@@ -395,10 +410,8 @@ void System18::bank837_w(uint16_t offset, uint16_t value) {
         data &= 0x9f;
         if (data & 0x80) data = uint8_t(data + 0x20);
         data &= 0x3f;
-        const uint8_t bank = uint8_t(data >> 2);
-        const int slot = offset < 4 ? 0 : 1;
-        if (video_.tile_bank[size_t(slot)] != bank) {
-            video_.tile_bank[size_t(slot)] = bank;
+        if (video_.tile_bank[size_t(offset)] != data) {
+            video_.tile_bank[size_t(offset)] = data;
             for (auto& page : video_.tile_dirty) page.fill(true);
             video_.text_dirty.fill(true);
         }
@@ -637,11 +650,24 @@ void System18::on_sound_cycles(int cycles) {
 
 void System18::overlay_vdp(int /*priority_layer*/) {
     if (!vdp_enable_) return;
+    // MAME draw_vdp: write non-backdrop VDP pixels and OR vdppri into the
+    // priority bitmap. vdppri is (mixing & 1) ? (1 << vdplayer) : 0.
+    const int vdplayer = (vdp_mixing_ >> 1) & 3;
+    const uint8_t vdppri = (vdp_mixing_ & 1) ? uint8_t(1 << vdplayer) : 0;
     for (int y = 0; y < kNativeHeight; y++) {
         for (int x = 0; x < kNativeWidth; x++) {
             const size_t i = size_t(y * kNativeWidth + x);
             if (vdp_pri_[i] == 0) continue;
-            framebuffer_[i] = vdp_fb_[i];
+            uint32_t pixel = vdp_fb_[i];
+            if (grayscale_) {
+                const uint8_t r = uint8_t((pixel >> 16) & 0xff);
+                const uint8_t g = uint8_t((pixel >> 8) & 0xff);
+                const uint8_t b = uint8_t(pixel & 0xff);
+                const uint8_t grey = uint8_t((uint16_t(r) + g + b) / 3);
+                pixel = 0xff000000u | (uint32_t(grey) << 16) | (uint32_t(grey) << 8) | grey;
+            }
+            framebuffer_[i] = pixel;
+            if (vdppri) layer_pri_[i] |= vdppri;
         }
     }
 }
@@ -671,62 +697,49 @@ void System18::rotate_framebuffer() {
 }
 
 void System18::update_video() {
-    const uint32_t blank = video_.palette[0x1000];
+    // Blank from a real palette pen; split-shadow mode never fills 0x1000.
+    const uint32_t blank = video_.palette[0];
     if (!video_.screen_enabled) {
         std::fill(framebuffer_.begin(), framebuffer_.end(), blank);
         if (rotated_) rotate_framebuffer();
         return;
     }
 
+    // MAME segas18_v.cpp screen_update compositing.
     const int vdplayer = (vdp_mixing_ >> 1) & 3;
 
-    video_.render_tile_pages(bg_low_, bg_high_, 0, false, 5, 0x1fff, 0x8000, true, false);
-    video_.render_tile_pages(fg_low_, fg_high_, 4, true, 5, 0x1fff, 0x8000, true, false);
-    video_.render_text(text_low_, text_high_, 8, 0xff, 0x8000, true);
-
-    int scroll_x1 = 0, scroll_y1 = video_.char_ram[0x749] & 0x1ff;
-    int scroll_x2 = 0, scroll_y2 = video_.char_ram[0x748] & 0x1ff;
-    bool row_back = (video_.char_ram[0x74d] & 0x8000) != 0;
-    bool row_fore = (video_.char_ram[0x74c] & 0x8000) != 0;
-    if (!row_back) scroll_x1 = (704 - (video_.char_ram[0x74d] & 0x3ff)) & 0x3ff;
-    if (!row_fore) scroll_x2 = (704 - (video_.char_ram[0x74c] & 0x3ff)) & 0x3ff;
-
-    auto blit_rows = [&](const std::vector<uint32_t>& src, bool row, int sx, int sy,
-                         uint16_t table_base) {
-        if (!row) {
-            video_.blit_scrolled(framebuffer_.data(), src, sx, sy, 1024, 512);
-            return;
-        }
-        for (int y = 0; y < kNativeHeight; y++) {
-            const int line = (y + sy) & 0x1ff;
-            const int row_i = (line >> 3) & 0x3f;
-            const int rx = (704 - (video_.char_ram[table_base + row_i] & 0x3ff)) & 0x3ff;
-            for (int x = 0; x < kNativeWidth; x++) {
-                const uint32_t pixel = src[size_t(line * 1024 + ((x + rx) & 0x3ff))];
-                if (pixel) framebuffer_[size_t(y * kNativeWidth + x)] = pixel;
-            }
-        }
-    };
+    std::fill(framebuffer_.begin(), framebuffer_.end(), blank);
+    std::fill(layer_pri_.begin(), layer_pri_.end(), 0);
 
     auto maybe_vdp = [&](int layer) {
         if (vdp_enable_ && vdplayer == layer) overlay_vdp(layer);
     };
 
-    std::fill(framebuffer_.begin(), framebuffer_.end(), blank);
-    blit_rows(bg_low_, row_back, scroll_x1, scroll_y1, 0x7e0);
+    // Background opaque (both categories), then optional VDP at layer 0.
+    video_.draw_tilemap_16b(framebuffer_.data(), nullptr, 1, -1, 0, true, 6, 0x1fff, true);
     maybe_vdp(0);
-    draw_sprites_16b(video_, framebuffer_.data(), sprite_rom_, sprite_banks_, 0, 0x800);
-    blit_rows(bg_high_, row_back, scroll_x1, scroll_y1, 0x7e0);
+
+    // Background again with transparency + priority marks, then VDP layer 1.
+    video_.draw_tilemap_16b(framebuffer_.data(), layer_pri_.data(), 1, 0, 0x01, false, 6, 0x1fff,
+                            true);
+    video_.draw_tilemap_16b(framebuffer_.data(), layer_pri_.data(), 1, 1, 0x02, false, 6, 0x1fff,
+                            true);
     maybe_vdp(1);
-    draw_sprites_16b(video_, framebuffer_.data(), sprite_rom_, sprite_banks_, 1, 0x800);
-    blit_rows(fg_low_, row_fore, scroll_x2, scroll_y2, 0x7c0);
+
+    // Foreground, then VDP layer 2.
+    video_.draw_tilemap_16b(framebuffer_.data(), layer_pri_.data(), 0, 0, 0x02, false, 6, 0x1fff,
+                            true);
+    video_.draw_tilemap_16b(framebuffer_.data(), layer_pri_.data(), 0, 1, 0x04, false, 6, 0x1fff,
+                            true);
     maybe_vdp(2);
-    draw_sprites_16b(video_, framebuffer_.data(), sprite_rom_, sprite_banks_, 2, 0x800);
-    blit_rows(fg_high_, row_fore, scroll_x2, scroll_y2, 0x7c0);
-    video_.blit_text(framebuffer_.data(), text_low_);
+
+    // Text, then VDP layer 3.
+    video_.draw_text_16b(framebuffer_.data(), layer_pri_.data(), 0, 0x04, 9, 0x1ff, true);
+    video_.draw_text_16b(framebuffer_.data(), layer_pri_.data(), 1, 0x08, 9, 0x1ff, true);
     maybe_vdp(3);
-    draw_sprites_16b(video_, framebuffer_.data(), sprite_rom_, sprite_banks_, 3, 0x800);
-    video_.blit_text(framebuffer_.data(), text_high_);
+
+    mix_sprites_16b(video_, framebuffer_.data(), layer_pri_.data(), sprite_rom_, sprite_banks_,
+                    0x800);
 
     if (rotated_) rotate_framebuffer();
 }
