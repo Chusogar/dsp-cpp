@@ -23,7 +23,7 @@ constexpr uint8_t kStartIo[0xc8] = {
     0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00,
     0x85, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4f, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0xdb, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x42, 0x00, 0x83, 0x00,
     0x2f, 0x3f, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00,
@@ -117,6 +117,7 @@ WonderSwan::WonderSwan(Model model)
                              [this](uint32_t a, uint8_t v) { write_mem(a, v); });
     cpu_.set_io_handlers([this](uint16_t p) { return read_io(p); },
                          [this](uint16_t p, uint8_t v) { write_io(p, v); });
+    apu_.set_memory_reader([this](uint32_t a) { return read_mem(a); });
     internal_eeprom_.assign(color_ ? 2048 : 128, 0);
 }
 
@@ -349,7 +350,7 @@ void WonderSwan::reset() {
     eep_ctrl_[0] = eep_ctrl_[1] = 0;
     eep_ready_[0] = eep_ready_[1] = true;
     eep_protect_ = false;
-    sound_io_.fill(0);
+    apu_.reset(color_);
     io_shadow_.fill(0);
     framebuffer_.fill(0);
     audio_.clear();
@@ -688,7 +689,11 @@ uint8_t WonderSwan::read_io(uint16_t port) {
         }
     }
 
-    if (port >= 0x80 && port <= 0x9f) return sound_io_[port - 0x80];
+    if (port >= 0x80 && port <= 0x9f) return apu_.read(port);
+    if (port == 0x4a || port == 0x4b || port == 0x4c || port == 0x4e || port == 0x4f ||
+        port == 0x50 || port == 0x52 || port == 0x6a || port == 0x6b) {
+        return apu_.read(port);
+    }
 
     switch (port) {
         case 0xb0: return irq_base_;
@@ -838,7 +843,12 @@ void WonderSwan::write_io(uint16_t port, uint8_t value) {
     }
 
     if (port >= 0x80 && port <= 0x9f) {
-        sound_io_[port - 0x80] = value;
+        apu_.write(port, value);
+        return;
+    }
+    if (port == 0x4a || port == 0x4b || port == 0x4c || port == 0x4e || port == 0x4f ||
+        port == 0x50 || port == 0x52 || port == 0x6a || port == 0x6b) {
+        apu_.write(port, value);
         return;
     }
 
@@ -1071,18 +1081,17 @@ void WonderSwan::run_frame() {
             cpu_.run(kCyclesPerLine);
         }
 
-        // Rough audio clocking: generate silence samples paced to the frame.
-        audio_accumulator_ += uint64_t(kSampleRate) * kCyclesPerLine;
+        // Rough audio clocking paced to the frame.
+        audio_accumulator_ += uint64_t(WswanApu::kSampleRate) * kCyclesPerLine;
         while (audio_accumulator_ >= kClock) {
             audio_accumulator_ -= kClock;
-            audio_.push_back(0);
-            audio_.push_back(0);
+            audio_.push_back(apu_.update());
         }
     }
 }
 
 void WonderSwan::drain_audio(std::vector<int16_t>& out) {
-    out.swap(audio_);
+    out.insert(out.end(), audio_.begin(), audio_.end());
     audio_.clear();
 }
 
