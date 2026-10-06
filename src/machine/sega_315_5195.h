@@ -17,6 +17,7 @@ public:
     using BusWrite = std::function<void(uint32_t, uint16_t)>;
     using ResetLine = std::function<void(IrqLine)>;
     using IrqLineFn = std::function<void(int level, IrqLine state)>;
+    using LineHandler = std::function<void(IrqLine)>;
 
     void set_sound_latch(SoundLatch handler) { sound_latch_ = std::move(handler); }
     void set_open_bus(OpenBus handler) { open_bus_ = std::move(handler); }
@@ -26,12 +27,19 @@ public:
     }
     void set_reset_handler(ResetLine handler) { reset_line_ = std::move(handler); }
     void set_irq_handler(IrqLineFn handler) { irq_line_ = std::move(handler); }
+    // System 18: PBF pulses the sound CPU NMI; MCU_INT raises 8751 IRQ1.
+    void set_pbf_handler(LineHandler handler) { pbf_ = std::move(handler); }
+    void set_mcu_int_handler(LineHandler handler) { mcu_int_ = std::move(handler); }
 
     void reset();
     void rebuild_map();
 
     uint8_t read_reg(uint8_t address);
     void write_reg(uint8_t address, uint8_t value);
+
+    // Sound-CPU port interface (System 18 / later boards).
+    uint8_t pread();
+    void pwrite(uint8_t data);
 
     uint32_t dirs_start(int region) const { return dirs_start_[size_t(region)]; }
     uint32_t dirs_end(int region) const { return dirs_end_[size_t(region)]; }
@@ -41,12 +49,14 @@ public:
 
     void set_from_sound(uint8_t value) { from_sound_ = value; }
     uint8_t from_sound() const { return from_sound_; }
+    uint8_t to_sound() const { return to_sound_; }
 
 private:
     std::array<uint8_t, 0x20> regs_{};
     std::array<uint32_t, 8> dirs_start_{};
     std::array<uint32_t, 8> dirs_end_{};
     uint8_t from_sound_ = 0;
+    uint8_t to_sound_ = 0;
 
     SoundLatch sound_latch_;
     OpenBus open_bus_;
@@ -54,6 +64,8 @@ private:
     BusWrite bus_write_;
     ResetLine reset_line_;
     IrqLineFn irq_line_;
+    LineHandler pbf_;
+    LineHandler mcu_int_;
 };
 
 }  // namespace dsp
