@@ -51,6 +51,9 @@ public:
     const uint32_t* framebuffer() const override { return framebuffer_.data(); }
     int screen_width() const override { return kScreenWidth; }
     int screen_height() const override { return kScreenHeight; }
+    // PCW CRT pixels are roughly 2:1 tall (720×256 → ~4:3), same as MSX2/SAM.
+    int display_width() const override { return kScreenWidth; }
+    int display_height() const override { return kScreenHeight * 2; }
     double frames_per_second() const override { return kFramesPerSecond; }
 
     void drain_audio(std::vector<int16_t>& out) override;
@@ -73,6 +76,7 @@ private:
     uint8_t system_status() const;
     void system_control(uint8_t data);
     void maybe_patch_blit_setup();
+    void maybe_patch_abadia_keyboard();
 
     size_t ram_size() const { return size_t(ram_banks_) * 0x4000; }
     uint8_t* bank_ptr(int bank);
@@ -120,6 +124,10 @@ private:
     // Habisoft Abadia (and similar) blit: CALL $32BC skips LD IY/$3309 setup at
     // $32B3. Once phys banks 0/1 are mapped at $0000/$4000, retarget those CALLs.
     bool blit_setup_patched_ = false;
+    // Habisoft Abadia: remap logical space ($2F) to the PCW matrix encoding.
+    bool abadia_keyboard_patched_ = false;
+    // After parchment → game, drop CP $09 so key scans see the real matrix.
+    bool abadia_ingame_ = false;
 };
 
 }  // namespace dsp

@@ -26,7 +26,7 @@ struct KeyBit {
 
 // PCW matrix LINE0..LINE10 at &3FF0..&3FFA (from MAME pcw.cpp comments).
 const std::vector<KeyBit> kLine0 = {
-    {Key::F3, 0x01}, {Key::F1, 0x04}, {Key::F9, 0x08},
+    {Key::F3, 0x01}, {Key::F1, 0x04}, {Key::F9, 0x08}, {Key::Right, 0x40},
 };
 const std::vector<KeyBit> kLine1 = {
     {Key::F10, 0x01}, {Key::F11, 0x04}, {Key::F12, 0x08},
@@ -62,7 +62,7 @@ const std::vector<KeyBit> kLine8 = {
 };
 const std::vector<KeyBit> kLine9 = {
     {Key::F5, 0x01}, {Key::LeftCtrl, 0x02}, {Key::RightCtrl, 0x02},
-    {Key::F7, 0x10}, {Key::Down, 0x40}, {Key::Backspace, 0x80}, {Key::Right, 0x40},
+    {Key::F7, 0x10}, {Key::Down, 0x40}, {Key::Backspace, 0x80},
 };
 const std::vector<KeyBit> kLine10 = {
     {Key::RightAlt, 0x80},
@@ -159,6 +159,8 @@ void Pcw::reset() {
     ay_.reset();
     ay_latch_ = 0;
     blit_setup_patched_ = false;
+    abadia_keyboard_patched_ = false;
+    abadia_ingame_ = false;
 
     // MAME machine_reset: copy printer-MCU bootstrap into RAM[2..257].
     // Z80 starts at 0 → two NOPs (zeros) then the stub.
@@ -198,6 +200,7 @@ void Pcw::update_mem(int block, uint8_t data) {
     }
     // Bank switches can reveal remaining CALL $32BC sites mid-frame.
     maybe_patch_blit_setup();
+    maybe_patch_abadia_keyboard();
 }
 
 uint8_t Pcw::read_byte(uint16_t address) {
@@ -210,6 +213,19 @@ uint8_t Pcw::read_byte(uint16_t address) {
         const int row = off - 0x3ff0;
         if (row < 11) return keyboard_[size_t(row)];
         return 0xff;
+    }
+
+    // Habisoft Abadia keeps a CPC-style key buffer at $33D3/$33DD. After the
+    // blit prologue patch sets CP $09, that buffer is filled from IY mask tables
+    // so $3482/$348D never see host keys. While those helpers run, return the
+    // live PCW matrix (both buffers; $3472 uses $33DD).
+    if (bank == 0 && address >= 0x33d3 && address <= 0x33e6) {
+        const uint16_t pc = cpu_.pc();
+        if (pc >= 0x3430 && pc <= 0x34c0) {
+            int idx = int(address - 0x33d3);
+            if (idx >= 10) idx -= 10;
+            return keyboard_[size_t(idx)];
+        }
     }
 
     return bank_ptr(bank)[off];
@@ -483,6 +499,18 @@ void Pcw::run_frame() {
 
     in_vblank_ = false;
     maybe_patch_blit_setup();
+    maybe_patch_abadia_keyboard();
+    // Once Abadia leaves the parchment Space-wait ($2517), switch the $32B3
+    // prologue to CP $00 so IY masks no longer replace the key matrix or
+    // corrupt Habisoft's first in-game redraw. Live feed covers the wait itself.
+    if (blit_setup_patched_ && !abadia_ingame_) {
+        const uint16_t pc = cpu_.pc();
+        if (pc == 0x2517 || (pc >= 0x2518 && pc < 0x2560) || pc == 0x381e) {
+            if (bank_ptr(0)[0x32b8] == 0x09) bank_ptr(0)[0x32b8] = 0x00;
+            if (bank_ptr(0)[0x3309] == 0x09) bank_ptr(0)[0x3309] = 0x00;
+            abadia_ingame_ = true;
+        }
+    }
 
     for (int line = 0; line < kLinesPerFrame; ++line) {
         // VBlank roughly covers the bottom border region.
@@ -558,6 +586,10 @@ void Pcw::maybe_patch_blit_setup() {
 
     int patched = 0;
     for (int a = 0; a <= 0xfffd; ++a) {
+        // Internal blit tail at $3311 must stay CALL $32BC: retargeting it to
+        // $32B3 re-enters DI without the matching EI at $3319 and freezes after
+        // the parchment on a cleared (0x55) playfield.
+        if (a == 0x3311) continue;
         if (read_byte(uint16_t(a)) == 0xcd && read_byte(uint16_t(a + 1)) == 0xbc &&
             read_byte(uint16_t(a + 2)) == 0x32) {
             // Write through the read bank so CPC-style split maps cannot redirect
@@ -567,7 +599,34 @@ void Pcw::maybe_patch_blit_setup() {
             ++patched;
         }
     }
-    if (patched > 0) blit_setup_patched_ = true;
+    if (patched > 0) {
+        // Space-wait at $2509 DI's without EI; NOP it so IRQs survive. Keep DI
+        // at $32BC so the blit itself stays IRQ-safe (Abadia uses SP as data).
+        if (read_byte(0x2509) == 0xf3) bank_ptr(0)[0x2509] = 0x00;
+        blit_setup_patched_ = true;
+    }
+}
+
+void Pcw::maybe_patch_abadia_keyboard() {
+    // Habisoft Abadia maps logical space ($2F) to CPC encoding $1E (row3 bit6).
+    // On the PCW matrix Space is row5 bit7 ($2F). Retarget the table used by
+    // CALL $3482 so parchment "PULSA ESPACIO" and in-game Space match the host
+    // key, together with the live-matrix feed in read_byte().
+    if (abadia_keyboard_patched_) return;
+    if (read_bank_[0] != 0 || write_bank_[0] != 0) return;
+    if (read_byte(0x3427) != 0x1e || read_byte(0x3428) != 0x2f) return;
+    bool found_wait = false;
+    for (int a = 0; a <= 0xfffc; ++a) {
+        if (read_byte(uint16_t(a)) == 0x3e && read_byte(uint16_t(a + 1)) == 0x2f &&
+            read_byte(uint16_t(a + 2)) == 0xcd && read_byte(uint16_t(a + 3)) == 0x82 &&
+            read_byte(uint16_t(a + 4)) == 0x34) {
+            found_wait = true;
+            break;
+        }
+    }
+    if (!found_wait) return;
+    bank_ptr(0)[0x3427] = 0x2f;
+    abadia_keyboard_patched_ = true;
 }
 
 void Pcw::set_inputs(const MachineInputs& inputs) {
@@ -578,6 +637,19 @@ void Pcw::set_inputs(const MachineInputs& inputs) {
             if (inputs.key(bit.key)) value = uint8_t(value & ~bit.mask);
         }
         keyboard_[size_t(row)] = value;
+    }
+    // Habisoft Abadia accepts keypad cursors; also mirror Q-A-O-P onto those
+    // bits so the classic Opera Soft layout moves Guillermo without needing
+    // the CPC-encoded letter tests that the IY key-buffer path breaks.
+    if (abadia_keyboard_patched_) {
+        if (inputs.key(Key::Q) || inputs.key(Key::Up))
+            keyboard_[1] = uint8_t(keyboard_[1] & ~0x40);  // Up
+        if (inputs.key(Key::A) || inputs.key(Key::Down))
+            keyboard_[9] = uint8_t(keyboard_[9] & ~0x40);  // Down
+        if (inputs.key(Key::O) || inputs.key(Key::Left))
+            keyboard_[1] = uint8_t(keyboard_[1] & ~0x80);  // Left
+        if (inputs.key(Key::P) || inputs.key(Key::Right))
+            keyboard_[0] = uint8_t(keyboard_[0] & ~0x40);  // Right
     }
 }
 

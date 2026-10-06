@@ -43,7 +43,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | ZX Spectrum Next | MAME `specnext` (TBBlue core 3.02) | Z80N, MMU/DivMMC/Multiface, ULA/LoRes/Layer 2/tilemap/sprites/copper, zxnDMA, CTC, IM2, 3×AY + DACs, SPI SD card; boots the firmware and NextZXOS from an SD image |
 | Sega Model 3 (Step 2.1) | MAME `model3` / Supermodel (behaviour), new code | PowerPC 603r interpreter, Real3D Pro-1000 software renderer (scene graph, LOD, textures with mipmaps, lighting, fog, translucency), tile generator, MPC106, JTAG, 315-5881 (MAME port), SCSP ×2 + 68000 sound board (MAME SCSP port), DSB2 MPEG-1 layer II music (MAME decoder); runs *Star Wars Trilogy Arcade* |
 | Amstrad CPC | `src/computer/amstrad_cpc.pas` | Gate Array wait-states (opcodes on a 4 T-state grid) |
-| Amstrad PCW8256 / PCW8512 | MAME `amstrad/pcw.cpp` | Z80 @ 3.4 MHz, banked RAM, UPD765, roller-RAM 720×256 green CRT; printer-MCU bootstrap hack |
+| Amstrad PCW8256 / PCW8512 | MAME `amstrad/pcw.cpp` | Z80 @ 3.4 MHz, banked RAM, UPD765, roller-RAM 720×256 green CRT (shown at 2× height); printer-MCU bootstrap hack |
 | Lynx Suzy / Mikey | new | Sprite blitter, math coprocessor, timers, LCD DMA, 4-channel sound |
 | Atari Lynx driver | new | 64 KiB DRAM, MAPCTL, LNX/LYX carts, 160×102 LCD |
 | TIA | new | NTSC 160×192 playfield/players/missiles/ball, collisions, two-channel audio |
@@ -249,11 +249,14 @@ Options:
 
 `--game pcw8256` (aliases `pcw`, `pcw8512`) is the Amstrad PCW word processor:
 Z80 @ 3.4 MHz, 256 KiB (8256) or 512 KiB (8512) banked RAM, UPD765 FDC, and a
-720×256 green-phosphor bitmap driven by roller RAM. There is no boot ROM; on
-reset the driver copies 256 bytes from the printer MCU (`40026.ic701` at
-offset `$300`) into RAM at `$0002` (MAME's bootstrap hack) so the Z80 can load
-track 0 into `$F000` and jump to `$F010`. Point it at a MAME `pcw8256.zip` and
-pass a CPC-style Extended `.dsk` with `--disk`.
+720×256 green-phosphor bitmap driven by roller RAM (the window uses 2× vertical
+scale so the CRT looks ~4:3). Host keys feed the PCW matrix at `$3FF0`; Habisoft
+Abadia also gets a small key-table fix so Space advances the intro parchment,
+and Q-A-O-P are mirrored onto the keypad cursors so Guillermo walks in-game.
+There is no boot ROM; on reset the driver copies 256 bytes from the printer MCU
+(`40026.ic701` at offset `$300`) into RAM at `$0002` (MAME's bootstrap hack) so
+the Z80 can load track 0 into `$F000` and jump to `$F010`. Point it at a MAME
+`pcw8256.zip` and pass a CPC-style Extended `.dsk` with `--disk`.
 
 ```bash
 ./build/dsp --game pcw8256 --disk boot.dsk /path/to/pcw8256.zip
