@@ -50,6 +50,16 @@ struct Sega16Video {
                        int scroll_y, int src_width, int src_height) const;
     void blit_text(uint32_t* dest, const std::vector<uint32_t>& source) const;
 
+    // Live System 16B/18 tilemap draw (row/column scroll + alternate pages).
+    // which: 0 = foreground, 1 = background. category: -1 = both, else 0/1.
+    void draw_tilemap_16b(uint32_t* dest, uint8_t* priority, int which, int category,
+                          uint8_t pri_mark, bool opaque, int color_shift, int code_mask,
+                          bool use_tile_bank) const;
+    void draw_text_16b(uint32_t* dest, uint8_t* priority, int category, uint8_t pri_mark,
+                       int color_shift, int code_mask, bool use_tile_bank) const;
+
+    int resolve_tile_code(int code) const;
+
     GfxSet tiles;
     std::array<uint8_t, 32> normal{};
     std::array<uint8_t, 32> shadow{};
@@ -59,13 +69,17 @@ struct Sega16Video {
     std::array<uint16_t, 0x8000> tile_ram{};
     std::array<uint16_t, 0x800> char_ram{};
     std::array<uint16_t, 0x800> sprite_ram{};
-    std::array<std::array<bool, 0x800>, 8> tile_dirty{};
+    std::array<std::array<bool, 0x800>, 16> tile_dirty{};
     std::array<bool, 0x800> text_dirty{};
-    std::array<uint8_t, 8> screens{};
-    std::array<uint8_t, 2> tile_bank{};
+    // Primary pages in [0..7], alternate page sets (char $742/$743) in [8..15].
+    std::array<uint8_t, 16> screens{};
+    // Up to 8 tile banks. bank_size is 0x1000 for classic 16B (2 banks) or
+    // 0x400 for System 18 (8 banks), matching MAME segaic16.
+    std::array<uint8_t, 8> tile_bank{};
     std::array<uint8_t, 16> sprite_bank{};
     bool screen_enabled = true;
     uint8_t tile_banks = 0;
+    int bank_size = 0x1000;
     // Colour RAM words of the machine; the shadow/highlight bank starts there.
     int cram_words = 0x800;
 };
@@ -78,6 +92,9 @@ void draw_sprites_sharrier(Sega16Video& video, uint32_t* dest, const std::vector
                            const std::vector<uint8_t>& zoom, int banks, int pri);
 void draw_sprites_16b(Sega16Video& video, uint32_t* dest, const std::vector<uint16_t>& sprite_rom,
                       int banks, int pri, uint32_t shadow_index);
+// Mix 16B sprites against a priority bitmap (System 18 / MAME sprite path).
+void mix_sprites_16b(Sega16Video& video, uint32_t* dest, uint8_t* priority,
+                     const std::vector<uint16_t>& sprite_rom, int banks, uint32_t shadow_index);
 void draw_sprites_outrun(Sega16Video& video, uint32_t* dest, const std::vector<uint32_t>& sprite_rom,
                          int banks, int pri, uint32_t shadow_index);
 

@@ -780,8 +780,10 @@ void System16::reset() {
     dac_.reset();
     video_.reset();
     video_.screen_enabled = !is_16b();
+    video_.bank_size = 0x1000;
     video_.tile_bank[0] = 0;
     video_.tile_bank[1] = 1;
+    for (int i = 2; i < 8; i++) video_.tile_bank[size_t(i)] = uint8_t(i);
     if (mb_type_) {
         video_.sprite_bank.fill(0xff);
         video_.sprite_bank[0] = 0;
@@ -1405,50 +1407,32 @@ void System16::rotate_framebuffer() {
 }
 
 void System16::update_video() {
-    const uint32_t blank = is_16b() ? video_.palette[0x1000] : video_.palette[0x1fff];
+    const uint32_t blank = is_16b() ? video_.palette[0] : video_.palette[0x1fff];
     if (!video_.screen_enabled) {
         std::fill(framebuffer_.begin(), framebuffer_.end(), blank);
         if (rotated_) rotate_framebuffer();
         return;
     }
     if (is_16b()) {
-        video_.render_tile_pages(bg_low_, bg_high_, 0, false, tile_color_shift_, 0x1fff, 0x8000,
-                                 true, false);
-        video_.render_tile_pages(fg_low_, fg_high_, 4, true, tile_color_shift_, 0x1fff, 0x8000,
-                                 true, false);
-        video_.render_text(text_low_, text_high_, text_color_shift_, text_code_mask_, 0x8000, true);
-        int scroll_x1 = 0, scroll_y1 = video_.char_ram[0x749] & 0x1ff;
-        int scroll_x2 = 0, scroll_y2 = video_.char_ram[0x748] & 0x1ff;
-        bool row_back = (video_.char_ram[0x74d] & 0x8000) != 0;
-        bool row_fore = (video_.char_ram[0x74c] & 0x8000) != 0;
-        if (!row_back) scroll_x1 = (704 - (video_.char_ram[0x74d] & 0x3ff)) & 0x3ff;
-        if (!row_fore) scroll_x2 = (704 - (video_.char_ram[0x74c] & 0x3ff)) & 0x3ff;
-        auto blit_rows = [&](const std::vector<uint32_t>& src, bool row, int sx, int sy,
-                             uint16_t table_base) {
-            if (!row) {
-                video_.blit_scrolled(framebuffer_.data(), src, sx, sy, 1024, 512);
-                return;
-            }
-            for (int y = 0; y < kNativeHeight; y++) {
-                const int line = (y + sy) & 0x1ff;
-                const int row_i = (line >> 3) & 0x3f;
-                const int rx = (704 - (video_.char_ram[table_base + row_i] & 0x3ff)) & 0x3ff;
-                for (int x = 0; x < kNativeWidth; x++) {
-                    const uint32_t pixel = src[size_t(line * 1024 + ((x + rx) & 0x3ff))];
-                    if (pixel) framebuffer_[size_t(y * kNativeWidth + x)] = pixel;
-                }
-            }
-        };
-        blit_rows(bg_low_, row_back, scroll_x1, scroll_y1, 0x7e0);
+        // Live 16B tilemap path: row/column scroll + alternate pages.
+        const uint32_t blank16 = video_.palette[0];
+        std::fill(framebuffer_.begin(), framebuffer_.end(), blank16);
+        video_.draw_tilemap_16b(framebuffer_.data(), nullptr, 1, -1, 0, true, tile_color_shift_,
+                                0x1fff, true);
         draw_sprites_16b(video_, framebuffer_.data(), sprite_rom_, sprite_banks_, 0, 0x800);
-        blit_rows(bg_high_, row_back, scroll_x1, scroll_y1, 0x7e0);
+        video_.draw_tilemap_16b(framebuffer_.data(), nullptr, 1, 1, 0, false, tile_color_shift_,
+                                0x1fff, true);
         draw_sprites_16b(video_, framebuffer_.data(), sprite_rom_, sprite_banks_, 1, 0x800);
-        blit_rows(fg_low_, row_fore, scroll_x2, scroll_y2, 0x7c0);
+        video_.draw_tilemap_16b(framebuffer_.data(), nullptr, 0, 0, 0, false, tile_color_shift_,
+                                0x1fff, true);
         draw_sprites_16b(video_, framebuffer_.data(), sprite_rom_, sprite_banks_, 2, 0x800);
-        blit_rows(fg_high_, row_fore, scroll_x2, scroll_y2, 0x7c0);
-        video_.blit_text(framebuffer_.data(), text_low_);
+        video_.draw_tilemap_16b(framebuffer_.data(), nullptr, 0, 1, 0, false, tile_color_shift_,
+                                0x1fff, true);
+        video_.draw_text_16b(framebuffer_.data(), nullptr, 0, 0, text_color_shift_, text_code_mask_,
+                             true);
         draw_sprites_16b(video_, framebuffer_.data(), sprite_rom_, sprite_banks_, 3, 0x800);
-        video_.blit_text(framebuffer_.data(), text_high_);
+        video_.draw_text_16b(framebuffer_.data(), nullptr, 1, 0, text_color_shift_, text_code_mask_,
+                             true);
         if (rotated_) rotate_framebuffer();
         return;
     }

@@ -137,6 +137,7 @@ private:
     std::vector<uint32_t> bg_low_, bg_high_, fg_low_, fg_high_, text_low_, text_high_;
     std::vector<uint32_t> vdp_fb_;
     std::vector<uint8_t> vdp_pri_;
+    std::vector<uint8_t> layer_pri_;
 
     std::vector<int16_t> audio_;
     int64_t audio_acc_ = 0;

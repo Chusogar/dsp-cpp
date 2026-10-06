@@ -174,11 +174,18 @@ void Sega16Video::reset() {
     sprite_ram.fill(0);
     palette.fill(0);
     screens.fill(0);
-    tile_bank = {0, 0};
+    tile_bank.fill(0);
+    for (int i = 0; i < 8; i++) tile_bank[size_t(i)] = uint8_t(i);
     for (int i = 0; i < 16; i++) sprite_bank[size_t(i)] = uint8_t(i);
     for (auto& page : tile_dirty) page.fill(true);
     text_dirty.fill(true);
     screen_enabled = true;
+}
+
+int Sega16Video::resolve_tile_code(int code) const {
+    const int size = std::max(bank_size, 1);
+    const int slot = (code / size) & 7;
+    return int(tile_bank[size_t(slot)]) * size + (code % size);
 }
 
 void Sega16Video::init_palette_luts() {
@@ -211,25 +218,36 @@ void Sega16Video::set_palette_entry(int index, uint16_t value, bool split_shadow
 void Sega16Video::mark_tile(uint16_t word_offset) {
     const int page = word_offset >> 11;
     const int pos = word_offset & 0x7ff;
-    for (int s = 0; s < 8; s++) {
+    for (int s = 0; s < 16; s++) {
         if (screens[size_t(s)] == page) tile_dirty[size_t(s)][size_t(pos)] = true;
     }
 }
 
 void Sega16Video::apply_screen_select_16b(uint16_t char_offset) {
+    // $740 = FG primary, $741 = BG primary, $742/$743 = alternate page sets.
+    // Nibble order matches MAME draw_virtual_tilemap:
+    //   bits 0-3 = TL, 4-7 = TR, 8-11 = BL, 12-15 = BR.
+    // Stored as screens[base+0..3] = {TL, TR, BL, BR}.
     auto apply = [&](uint16_t addr, int base) {
         if (char_offset != addr) return;
         const uint16_t value = char_ram[addr];
+        const uint8_t pages[4] = {
+            uint8_t((value >> 0) & 0xf),
+            uint8_t((value >> 4) & 0xf),
+            uint8_t((value >> 8) & 0xf),
+            uint8_t((value >> 12) & 0xf),
+        };
         for (int i = 0; i < 4; i++) {
-            const uint8_t page = uint8_t((value >> (12 - i * 4)) & 0xf);
-            if (screens[size_t(base + i)] != page) {
-                screens[size_t(base + i)] = page;
+            if (screens[size_t(base + i)] != pages[i]) {
+                screens[size_t(base + i)] = pages[i];
                 tile_dirty[size_t(base + i)].fill(true);
             }
         }
     };
     apply(0x740, 4);
     apply(0x741, 0);
+    apply(0x742, 12);
+    apply(0x743, 8);
 }
 
 void Sega16Video::apply_screen_select_16a(uint16_t char_offset) {
@@ -270,17 +288,16 @@ void Sega16Video::render_tile_pages(std::vector<uint32_t>& low, std::vector<uint
                                     bool extra_code_bit) {
     low.assign(size_t(kMapWidth * kMapHeight), kTransparent);
     high.assign(size_t(kMapWidth * kMapHeight), kTransparent);
+    // screens[base+0..3] = {TL, TR, BL, BR}
     const int page_x[4] = {0, 512, 0, 512};
-    const int page_y[4] = {256, 256, 0, 0};
+    const int page_y[4] = {0, 0, 256, 256};
     for (int p = 0; p < 4; p++) {
         const int num = first_page + p;
         const uint16_t pos = uint16_t(screens[size_t(num)] * 0x800);
         for (int f = 0; f < 0x800; f++) {
             const uint16_t data = tile_ram[size_t((pos + f) & 0x7fff)];
             int nchar = extra_code_bit ? tile_code_16a(data) : int(data & uint16_t(code_mask));
-            if (use_tile_bank) {
-                nchar = int(tile_bank[size_t(nchar / 0x1000)] * 0x1000 + (nchar % 0x1000));
-            }
+            if (use_tile_bank) nchar = resolve_tile_code(nchar);
             const int color = (data >> color_shift) & 0x7f;
             const bool pri = (data & uint16_t(pri_mask)) != 0;
             const int x = ((f & 0x3f) << 3) + page_x[p];
@@ -313,7 +330,7 @@ void Sega16Video::render_text(std::vector<uint32_t>& low, std::vector<uint32_t>&
         const uint16_t atrib = char_ram[size_t(f)];
         const int color = (atrib >> color_shift) & 7;
         int nchar = atrib & code_mask;
-        if (use_tile_bank) nchar = int(tile_bank[0]) * 0x1000 + nchar;
+        if (use_tile_bank) nchar = int(tile_bank[0]) * bank_size + nchar;
         const int x = (f & 0x3f) << 3;
         const int y = (f >> 6) << 3;
         const uint8_t* pixels = tiles.element(nchar);
@@ -328,6 +345,83 @@ void Sega16Video::render_text(std::vector<uint32_t>& low, std::vector<uint32_t>&
                 low[index] = pixel;
                 if (pri) high[index] = pixel;
             }
+        }
+    }
+}
+
+void Sega16Video::draw_tilemap_16b(uint32_t* dest, uint8_t* priority, int which, int category,
+                                   uint8_t pri_mark, bool opaque, int color_shift, int code_mask,
+                                   bool use_tile_bank) const {
+    // MAME tilemap_16b_draw_layer: which 0 = FG (char $74c/$748/$740),
+    // which 1 = BG (char $74d/$749/$741). Alternate set uses which+2 registers.
+    const uint16_t xscroll = char_ram[size_t(0x74c + which)];
+    const uint16_t yscroll = char_ram[size_t(0x748 + which)];
+    const int page_base = (which == 0) ? 4 : 0;
+    const int alt_base = page_base + 8;
+    const bool colscroll = (yscroll & 0x8000) != 0;
+    const int row_table = (which == 0) ? 0x7c0 : 0x7e0;
+    const int col_table = (which == 0) ? 0x78b : 0x7ab;
+
+    auto pages_from = [&](int base) {
+        // screens[base..base+3] already decoded from the page-select word.
+        return base;
+    };
+
+    for (int y = 0; y < kHeight; y++) {
+        const int row_i = (y >> 3) & 0x3f;
+        const uint16_t rowscroll = char_ram[size_t(row_table + row_i)];
+        for (int x0 = colscroll ? -8 : 0; x0 < kWidth; x0 += colscroll ? 16 : kWidth) {
+            uint16_t effx = (xscroll & 0x8000) ? rowscroll : xscroll;
+            uint16_t effy = colscroll ? char_ram[size_t(col_table + ((x0 + 8) / 16))] : yscroll;
+            int pages = pages_from(page_base);
+            if (rowscroll & 0x8000) {
+                effx = char_ram[size_t(0x74c + which + 2)];
+                effy = char_ram[size_t(0x748 + which + 2)];
+                pages = pages_from(alt_base);
+            }
+            // MAME tilemap_16b_draw_layer: (0xc0 - xscroll + xoffs) & 0x3ff.
+            const int scroll_x = (0xc0 - (effx & 0x3ff)) & 0x3ff;
+            const int scroll_y = effy & 0x1ff;
+            const int xs = std::max(x0, 0);
+            const int xe = std::min(colscroll ? x0 + 16 : kWidth, kWidth);
+            for (int x = xs; x < xe; x++) {
+                const int vx = (x + scroll_x) & 0x3ff;
+                const int vy = (y + scroll_y) & 0x1ff;
+                // screens[base+0..3] = {TL, TR, BL, BR}
+                const int quad = ((vy >> 8) << 1) | (vx >> 9);  // TL=0,TR=1,BL=2,BR=3
+                const int page = screens[size_t(pages + quad)];
+                const uint16_t data =
+                    tile_ram[size_t(((page * 0x800) + ((vy & 0xff) >> 3) * 64 + ((vx & 0x1ff) >> 3)) &
+                                    0x7fff)];
+                const int tile_cat = (data >> 15) & 1;
+                if (category >= 0 && tile_cat != category) continue;
+                int nchar = int(data & uint16_t(code_mask));
+                if (use_tile_bank) nchar = resolve_tile_code(nchar);
+                const int color = (data >> color_shift) & 0x7f;
+                const uint8_t pen = tiles.element(nchar)[(vy & 7) * 8 + (vx & 7)];
+                if (pen == 0 && !opaque) continue;
+                dest[size_t(y * kWidth + x)] = palette[size_t((color << 3) + pen)];
+                if (priority && pri_mark) priority[size_t(y * kWidth + x)] |= pri_mark;
+            }
+        }
+    }
+}
+
+void Sega16Video::draw_text_16b(uint32_t* dest, uint8_t* priority, int category, uint8_t pri_mark,
+                                int color_shift, int code_mask, bool use_tile_bank) const {
+    for (int y = 0; y < kHeight; y++) {
+        for (int x = 0; x < kWidth; x++) {
+            const int tx = x + 192;
+            const uint16_t data = char_ram[size_t((y >> 3) * 64 + (tx >> 3))];
+            const int tile_cat = (data >> 15) & 1;
+            if (category >= 0 && tile_cat != category) continue;
+            int nchar = data & code_mask;
+            if (use_tile_bank) nchar = int(tile_bank[0]) * bank_size + nchar;
+            const uint8_t pen = tiles.element(nchar)[(y & 7) * 8 + (tx & 7)];
+            if (pen == 0) continue;
+            const int color = (data >> color_shift) & 7;
+            dest[size_t(y * kWidth + x)] = palette[size_t((color << 3) + pen)];
+            if (priority && pri_mark) priority[size_t(y * kWidth + x)] |= pri_mark;
         }
     }
 }
@@ -667,6 +761,89 @@ void draw_sprites_16b(Sega16Video& video, uint32_t* dest, const std::vector<uint
                                 put_sprite_pixel(dest, x, y, video.palette[size_t((pix & 0x3ff) + 0x400)],
                                                  shadow, is_shadow);
                             }
+                            x++;
+                        }
+                    }
+                    if (((pixels >> 12) & 0xf) == 15) {
+                        ram[7] = data_7;
+                        break;
+                    }
+                    data_7--;
+                }
+            }
+        }
+    }
+}
+
+void mix_sprites_16b(Sega16Video& video, uint32_t* dest, uint8_t* priority,
+                     const std::vector<uint16_t>& sprite_rom, int banks, uint32_t shadow_index) {
+    // MAME System 18 path: sprite shows when (1 << sprpri) > tilemap priority.
+    const uint32_t shadow = video.palette[shadow_index];
+    for (int f = 0; f < 0x80; f++) {
+        uint16_t* ram = &video.sprite_ram[size_t(f * 8)];
+        if (ram[2] & 0x8000) return;
+        const int sprpri = (ram[4] & 0xff) >> 6;
+        uint16_t addr = ram[3];
+        ram[7] = addr;
+        const int bottom = ram[0] >> 8;
+        const int top = ram[0] & 0xff;
+        const bool hide = (ram[2] & 0x4000) != 0;
+        const int bank = video.sprite_bank[(ram[4] >> 8) & 0xf];
+        if (hide || top >= bottom || bank == 255) continue;
+        const int xpos = int(ram[1] & 0x1ff) - 0xb7;
+        const int pitch = int8_t(ram[2] & 0xff);
+        const int color = (ram[4] & 0x3f) << 4;
+        const bool flip = (ram[2] & 0x100) != 0;
+        const uint8_t vzoom = uint8_t((ram[5] >> 5) & 0x1f);
+        const uint8_t hzoom = uint8_t(ram[5] & 0x1f);
+        const uint32_t spritedata = uint32_t(0x10000 * (bank % std::max(banks, 1)));
+        const int pri_mask = 1 << sprpri;
+        ram[5] &= 0x3ff;
+        for (int y = top; y < bottom; y++) {
+            addr = uint16_t(addr + pitch);
+            ram[5] = uint16_t(ram[5] + (uint16_t(vzoom) << 10));
+            if (ram[5] & 0x8000) {
+                addr = uint16_t(addr + pitch);
+                ram[5] &= 0x7fff;
+            }
+            if (y < 0 || y >= 224) continue;
+            uint16_t xacc = uint16_t(4 * hzoom);
+            uint16_t data_7 = addr;
+            int x = xpos;
+            auto plot = [&](int px, uint16_t pix) {
+                if (px < 0 || px >= 320) return;
+                const int pen = pix & 0xf;
+                if (pen == 0 || pen == 15) return;
+                if (pri_mask <= int(priority[size_t(y * 320 + px)])) return;
+                const bool is_shadow = (pix & 0x3f0) == 0x3f0;
+                put_sprite_pixel(dest, px, y, video.palette[size_t((pix & 0x3ff) + 0x400)], shadow,
+                                 is_shadow);
+            };
+            if (!flip) {
+                while (x < 512) {
+                    const uint16_t pixels =
+                        sprite_rom[(spritedata + data_7) % sprite_rom.size()];
+                    for (int g = 3; g >= 0; g--) {
+                        xacc = uint16_t((xacc & 0x3f) + hzoom);
+                        if (xacc < 0x40) {
+                            plot(x, uint16_t(((pixels >> (g * 4)) & 0xf) | color));
+                            x++;
+                        }
+                    }
+                    if ((pixels & 0xf) == 15) {
+                        ram[7] = data_7;
+                        break;
+                    }
+                    data_7++;
+                }
+            } else {
+                while (x < 512) {
+                    const uint16_t pixels =
+                        sprite_rom[(spritedata + data_7) % sprite_rom.size()];
+                    for (int g = 0; g < 4; g++) {
+                        xacc = uint16_t((xacc & 0x3f) + hzoom);
+                        if (xacc < 0x40) {
+                            plot(x, uint16_t(((pixels >> (g * 4)) & 0xf) | color));
                             x++;
                         }
                     }

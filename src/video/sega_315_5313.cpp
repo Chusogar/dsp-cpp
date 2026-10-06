@@ -95,8 +95,10 @@ void Sega3155313::poke_vram_word(uint16_t addr, uint16_t value) {
 }
 
 void Sega3155313::poke_cram(int index, uint16_t value) {
-    cram_[size_t(index) & 0x3f] = value & 0x0eee;
-    palette_[size_t(index) & 0x3f] = cram_to_rgb(cram_[size_t(index) & 0x3f]);
+    const int idx = index & 0x3f;
+    cram_[size_t(idx)] = value & 0x0eee;
+    palette_[size_t(idx)] = cram_to_rgb(cram_[size_t(idx)]);
+    if (cram_write_) cram_write_(idx, cram_[size_t(idx)]);
 }
 
 void Sega3155313::poke_reg(int index, uint8_t value) { set_register(index, value); }
@@ -126,6 +128,7 @@ void Sega3155313::write_cram_word(uint16_t value) {
     const int index = (vdp_address_ >> 1) & 0x3f;
     cram_[size_t(index)] = value & 0x0eee;
     palette_[size_t(index)] = cram_to_rgb(cram_[size_t(index)]);
+    if (cram_write_) cram_write_(index, cram_[size_t(index)]);
     increment_address();
 }
 
@@ -597,6 +600,7 @@ void Sega3155313::render_line(int line) {
     const int left = h40_ ? 0 : 32;
     line_buf_.fill(palette_[size_t(backdrop)]);
     line_backdrop_.fill(1);
+    line_raw_.fill(0);
     for (int x = 0; x < width; x++) {
         uint8_t color = backdrop;
         uint8_t layer_pri = 0;
@@ -642,13 +646,24 @@ void Sega3155313::render_line(int line) {
                 if (a_col[size_t(x)]) color = a_col[size_t(x)];
             }
         }
-        line_buf_[size_t(left + x)] = palette_rgb(color, shadow, highlight);
-        line_backdrop_[size_t(left + x)] = drawn ? 0 : 1;
+        const int dest = left + x;
+        line_buf_[size_t(dest)] = palette_rgb(color, shadow, highlight);
+        line_backdrop_[size_t(dest)] = drawn ? 0 : 1;
+        // MAME render_line_raw: bit8 = non-backdrop, bits0-5 = colour index.
+        line_raw_[size_t(dest)] = drawn ? uint16_t(0x100 | (color & 0x3f)) : 0;
     }
     if (!h40_) {
         const uint32_t border = palette_[size_t(backdrop)];
-        for (int x = 0; x < 32; x++) line_buf_[size_t(x)] = border;
-        for (int x = 288; x < 320; x++) line_buf_[size_t(x)] = border;
+        for (int x = 0; x < 32; x++) {
+            line_buf_[size_t(x)] = border;
+            line_raw_[size_t(x)] = 0;
+            line_backdrop_[size_t(x)] = 1;
+        }
+        for (int x = 288; x < 320; x++) {
+            line_buf_[size_t(x)] = border;
+            line_raw_[size_t(x)] = 0;
+            line_backdrop_[size_t(x)] = 1;
+        }
     }
 }
 
