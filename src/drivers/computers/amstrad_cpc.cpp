@@ -17,7 +17,10 @@ namespace {
 const std::vector<RomEntry> kCpc464Rom = {{"cpc464.rom", 0x8000, 0x0000, 0x40852f25}};
 const std::vector<RomEntry> kCpc664Rom = {{"cpc664.rom", 0x8000, 0x0000, 0x9ab5a036}};
 const std::vector<RomEntry> kCpc6128Rom = {{"cpc6128.rom", 0x8000, 0x0000, 0x9e827fe1}};
-const std::vector<RomEntry> kAmsdosRom = {{"amsdos.rom", 0x4000, 0x0000, 0x1fe22ecd}};
+// MAME sets use "amsdos.rom"; many TOSEC/No-Intro zips ship the same CRC as
+// "cpcados.rom". RomLoader accepts '|' alternatives.
+const std::vector<RomEntry> kAmsdosRom = {
+    {"amsdos.rom|cpcados.rom", 0x4000, 0x0000, 0x1fe22ecd}};
 
 // CRTC register write masks, amstrad_cpc.pas write_crtc(). Registers 16/17
 // (light pen, read only on this board) are never written through this path.
