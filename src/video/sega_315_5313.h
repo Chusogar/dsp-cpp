@@ -54,11 +54,17 @@ public:
     // 1 where the last rendered line shows the backdrop colour (no plane or
     // sprite pixel), which the 32X lets its own picture through.
     const uint8_t* line_backdrop() const { return line_backdrop_.data(); }
+    // Raw 9-bit pixel for System 18: bit 8 set = non-backdrop, bits 0-5 = colour.
+    const uint16_t* line_raw() const { return line_raw_.data(); }
     int screen_width() const { return h40_ ? 320 : 256; }
     int screen_height() const { return visible_scanlines_; }
     int total_scanlines() const { return total_scanlines_; }
     bool is_pal() const { return pal_; }
     bool display_enabled() const { return (regs_[0x01] & 0x40) != 0; }
+
+    // Optional hook: System 18 mirrors CRAM into the shared palette at 0x1000.
+    using CramWrite = std::function<void(int index, uint16_t value)>;
+    void set_cram_write_handler(CramWrite handler) { cram_write_ = std::move(handler); }
 
     SN76496& psg() { return psg_; }
     const SN76496& psg() const { return psg_; }
@@ -111,6 +117,7 @@ private:
     IrqHandler vint_;
     Z80IrqHandler z80_irq_;
     DmaRead dma_read_;
+    CramWrite cram_write_;
     SN76496 psg_;
 
     bool pal_ = false;
@@ -146,6 +153,7 @@ private:
     std::array<uint32_t, 64> palette_{};
     std::array<uint32_t, kMaxWidth> line_buf_{};
     std::array<uint8_t, kMaxWidth> line_backdrop_{};
+    std::array<uint16_t, kMaxWidth> line_raw_{};
 };
 
 }  // namespace dsp

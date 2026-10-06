@@ -197,6 +197,17 @@ System18::System18(Game game)
     });
 
     vdp_.set_dma_reader([this](uint32_t addr) { return main_read(addr); });
+    // System 18 mirrors VDP CRAM into the shared palette at 0x1000 (MAME
+    // set_use_cram + set_pal_write_base(0x1000)).
+    vdp_.set_cram_write_handler([this](int index, uint16_t value) {
+        static constexpr uint8_t kExpand3to8[8] = {0, 36, 73, 109, 146, 182, 219, 255};
+        const int r = (value >> 1) & 7;
+        const int g = (value >> 5) & 7;
+        const int b = (value >> 9) & 7;
+        video_.palette[size_t(0x1000 + (index & 0x3f))] =
+            0xff000000u | (uint32_t(kExpand3to8[r]) << 16) | (uint32_t(kExpand3to8[g]) << 8) |
+            kExpand3to8[b];
+    });
 }
 
 const char* System18::title() const {
@@ -323,7 +334,11 @@ void System18::reset() {
     video_.reset();
     video_.screen_enabled = false;
     video_.bank_size = 0x400;
-    for (int i = 0; i < 8; i++) video_.tile_bank[size_t(i)] = uint8_t(i);
+    // 5874/Shadow reset state matches port H = 0: banks 0..3 and 0..3.
+    for (int i = 0; i < 4; i++) {
+        video_.tile_bank[size_t(i)] = uint8_t(i);
+        video_.tile_bank[size_t(4 + i)] = uint8_t(i);
+    }
     for (int i = 0; i < 16; i++) video_.sprite_bank[size_t(i)] = uint8_t(i);
     work_ram_.fill(0);
     sound_ram_.fill(0);
@@ -474,6 +489,11 @@ void System18::misc_io_w(uint16_t word_offset, uint16_t value) {
 
 uint16_t System18::main_read(uint32_t address) {
     address &= 0xffffff;
+    // VDP is hardwired at $C00000-$DFFFFF regardless of mapper regions
+    // (Charles MacDonald System 18 notes).
+    if (address >= 0xc00000 && address <= 0xdfffff) {
+        return vdp_.read(uint8_t((address >> 1) & 0x1f));
+    }
     if (mapper_.contains(0, address)) {
         return read_rom_word(address & (rom0_size_ - 1));
     }
@@ -526,6 +546,11 @@ uint16_t System18::main_read(uint32_t address) {
 
 void System18::main_write(uint32_t address, uint16_t value, bool allow_mapper) {
     address &= 0xffffff;
+    // Hardwired VDP window (see main_read).
+    if (address >= 0xc00000 && address <= 0xdfffff) {
+        vdp_.write(uint8_t((address >> 1) & 0x1f), value);
+        return;
+    }
     bool mapped = false;
     if (mapper_.contains(0, address)) mapped = true;
     if (mapper_.contains(1, address)) {
@@ -650,8 +675,8 @@ void System18::on_sound_cycles(int cycles) {
 
 void System18::overlay_vdp(int /*priority_layer*/) {
     if (!vdp_enable_) return;
-    // MAME draw_vdp: write non-backdrop VDP pixels and OR vdppri into the
-    // priority bitmap. vdppri is (mixing & 1) ? (1 << vdplayer) : 0.
+    // MAME draw_vdp: write non-backdrop VDP pixels (pen != 0) from the shared
+    // palette at 0x1000+pix, and OR vdppri into the priority bitmap.
     const int vdplayer = (vdp_mixing_ >> 1) & 3;
     const uint8_t vdppri = (vdp_mixing_ & 1) ? uint8_t(1 << vdplayer) : 0;
     for (int y = 0; y < kNativeHeight; y++) {
@@ -755,13 +780,22 @@ void System18::run_frame() {
     for (int line = 0; line < kScanlines; line++) {
         vdp_.handle_scanline(line);
         if (line < kNativeHeight) {
-            const uint32_t* src = vdp_.line_buffer();
-            const uint8_t* bd = vdp_.line_backdrop();
+            // Resolve VDP pixels through System 18 palette[0x1000+] like MAME
+            // draw_vdp (raw index & 0x3f, skip backdrop and pen 0).
+            const uint16_t* raw = vdp_.line_raw();
             const int w = std::min(vdp_.screen_width(), kNativeWidth);
             for (int x = 0; x < w; x++) {
                 const size_t i = size_t(line * kNativeWidth + x);
-                vdp_fb_[i] = src[x];
-                vdp_pri_[i] = bd[x] ? 0 : 1;
+                const uint16_t pix = raw[x];
+                if ((pix & 0x100) == 0 || (pix & 0xf) == 0) {
+                    vdp_pri_[i] = 0;
+                    continue;
+                }
+                vdp_fb_[i] = video_.palette[size_t(0x1000 + (pix & 0x3f))];
+                vdp_pri_[i] = 1;
+            }
+            for (int x = w; x < kNativeWidth; x++) {
+                vdp_pri_[size_t(line * kNativeWidth + x)] = 0;
             }
         }
 

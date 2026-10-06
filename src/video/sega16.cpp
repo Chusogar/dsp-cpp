@@ -379,8 +379,8 @@ void Sega16Video::draw_tilemap_16b(uint32_t* dest, uint8_t* priority, int which,
                 effy = char_ram[size_t(0x748 + which + 2)];
                 pages = pages_from(alt_base);
             }
-            // MAME: (0xc0 - xscroll) & 0x3ff with xoffs=0 for System 16B/18.
-            const int scroll_x = (704 - (effx & 0x3ff)) & 0x3ff;
+            // MAME tilemap_16b_draw_layer: (0xc0 - xscroll + xoffs) & 0x3ff.
+            const int scroll_x = (0xc0 - (effx & 0x3ff)) & 0x3ff;
             const int scroll_y = effy & 0x1ff;
             const int xs = std::max(x0, 0);
             const int xe = std::min(colscroll ? x0 + 16 : kWidth, kWidth);
