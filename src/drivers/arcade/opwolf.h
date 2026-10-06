@@ -71,7 +71,7 @@ private:
     void update_video();
     void draw_tilemap(bool foreground);
     void blit_layer(const std::vector<uint32_t>& layer, uint16_t scroll_x, uint16_t scroll_y,
-                    bool transparent);
+                    bool transparent, int rowscroll_base);
     void draw_sprites();
     void draw_sight();
 
