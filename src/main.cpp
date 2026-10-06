@@ -73,6 +73,7 @@
 #include "drivers/computers/specnext.h"
 #include "drivers/computers/zx81.h"
 #include "drivers/computers/amstrad_cpc.h"
+#include "drivers/computers/pcw.h"
 #include "drivers/computers/msx1.h"
 #include "drivers/computers/msx2.h"
 #include "drivers/computers/c64.h"
@@ -172,7 +173,7 @@ void print_supported_emulators() {
         "  Computers:\n"
         "    spectrum48, spectrum128, plus3, pentagon, scorpion, specnext (tbblue),\n"
         "    zx80, zx81, ts1000,\n"
-        "    cpc464, cpc664, cpc6128, msx, msx2, msx2-jp, msx2-eu, nms8250, c64, vic20, vic20p,\n"
+        "    cpc464, cpc664, cpc6128, pcw8256, pcw, pcw8512, msx, msx2, msx2-jp, msx2-eu, nms8250, c64, vic20, vic20p,\n"
         "    c128, commodore128, plus4, c16,\n"
         "    apple2, apple2gs, apple2plus, apple2e, apple2ee, exl100, exeltel, ql,\n"
         "    st, atarist, atari-st, amiga, a500, amiga500,\n"
@@ -200,7 +201,7 @@ void print_usage(const char* program) {
         "                     PV-2000 cart (.bin/.rom),\n"
         "                     or QL microdrive .mdv/.qlpak or QXL.WIN\n"
         "  --cart FILE        cartridge image (Game Boy Advance .gba, plain or zipped)\n"
-        "  --disk FILE        floppy: CPC/Spectrum +3 .dsk/.edsk, MSX2 .dsk, Apple II .dsk/.do/.po/.nib,\n"
+        "  --disk FILE        floppy: CPC/Spectrum +3/PCW .dsk/.edsk, MSX2 .dsk, Apple II .dsk/.do/.po/.nib,\n"
         "                     Pentagon/Scorpion .trd/.scl, QL microdrive .mdv/.qlpak or QXL.WIN,\n"
         "                     Atari ST .st/.msa/.stx, Amiga .adf, Macintosh 400K/800K/1.44MB SuperDrive .dsk/.img/.dc42,\n"
         "                     or a Macintosh SCSI hard disk .img/.dsk (DDM+APM like MAME,\n"
@@ -634,6 +635,12 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
     if (game == "cpc664") return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC664);
     if (game == "cpc6128" || game == "cpc") {
         return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC6128);
+    }
+    if (game == "pcw8256" || game == "pcw") {
+        return std::make_unique<dsp::Pcw>(dsp::Pcw::Model::PCW8256);
+    }
+    if (game == "pcw8512") {
+        return std::make_unique<dsp::Pcw>(dsp::Pcw::Model::PCW8512);
     }
 	if (game == "spectrum128") return std::make_unique<dsp::Spectrum128k>(dsp::Spectrum128k::Model::Spec128k);
 	if (game == "plus3") return std::make_unique<dsp::Spectrum3>();
