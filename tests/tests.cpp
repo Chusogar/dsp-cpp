@@ -375,9 +375,24 @@ bool write_cpc_dummy_rom(const std::string& dir) {
     rom[pc++] = 0x78;  // ld a,b
     rom[pc++] = 0xb1;  // or c
     rom[pc++] = 0x20;  // jr nz,fill_loop
-    rom[pc++] = uint8_t(int(fill_loop) - int(pc + 1));
-    rom[pc++] = 0x18;
-    rom[pc++] = 0xfe;  // jr $
+    {
+        const size_t offset_at = pc;
+        rom[pc++] = 0;  // placeholder
+        rom[offset_at] = uint8_t(int(fill_loop) - int(pc));
+    }
+    // Busy-loop with LD A,n (7 T bare Z80 / 8 T with CPC wait-states). A plain
+    // `jr $` is always 12 T so it cannot catch a wait-state regression; this
+    // mix drifts the CRTC unless Gate Array timings are installed.
+    const size_t spin = pc;
+    rom[pc++] = 0x3e;  // ld a,0
+    rom[pc++] = 0x00;
+    rom[pc++] = 0x3c;  // inc a
+    rom[pc++] = 0x18;  // jr spin
+    {
+        const size_t offset_at = pc;
+        rom[pc++] = 0;
+        rom[offset_at] = uint8_t(int(spin) - int(pc));
+    }
 
     std::ofstream out(dir + "/cpc464.rom", std::ios::binary);
     if (!out) return false;
@@ -412,24 +427,38 @@ void test_amstrad_crtc_does_not_tear() {
     bool stable = std::equal(snapshot.begin(), snapshot.end(), second);
     check(stable, "consecutive CPC frames stay identical once the CRTC is locked");
 
+    // Two frames later must still match: a drifting CRTC (missing wait-states +
+    // dropped T-state remainders) eventually shears the pinstripe.
+    for (int frame = 0; frame < 60; frame++) cpc.run_frame();
+    const uint32_t* later = cpc.framebuffer();
+    check(std::equal(snapshot.begin(), snapshot.end(), later),
+          "CPC picture stays locked after another 60 frames of mixed opcodes");
+
     std::set<uint32_t> colours;
     for (int i = 0; i < width * height; i++) colours.insert(second[i]);
     check(colours.size() >= 2 && colours.size() <= 6,
           "a locked CPC picture uses a handful of palette colours, not random noise");
 
-    // Mode 1 0xF0 paints three ink pixels and one paper pixel per byte, so a
-    // visible scanline must contain that 4-pixel cadence rather than speckle.
+    // Mode 1 fill byte 0xE0 paints three ink pixels and one paper pixel per
+    // byte, so a visible scanline must contain that 4-pixel cadence rather than
+    // speckle.
     bool found_pattern = false;
-    for (int y = 0; y < height && !found_pattern; y++) {
+    int patterned_rows = 0;
+    for (int y = 0; y < height; y++) {
         const uint32_t* row = second + y * width;
+        bool row_ok = false;
         for (int x = 0; x + 3 < width; x++) {
             if (row[x] == row[x + 1] && row[x] == row[x + 2] && row[x] != row[x + 3]) {
                 found_pattern = true;
+                row_ok = true;
                 break;
             }
         }
+        if (row_ok) patterned_rows++;
     }
     check(found_pattern, "mode 1 video RAM is scanned as a stable 4-pixel pattern");
+    check(patterned_rows >= 100,
+          "enough visible scanlines carry the mode 1 pinstripe (no random blank lines)");
 }
 
 void test_bagman_pal() {
