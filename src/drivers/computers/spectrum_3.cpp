@@ -293,6 +293,10 @@ void Spectrum3::apply_keyboard(const MachineInputs& in) {
 
 
 
+void Spectrum3::contend(int extra) {
+    if (extra > 0) on_cycles(extra);
+}
+
 uint8_t Spectrum3::mem_read(uint16_t addr) {
     const int slot = addr >> 14;
     // Interface 2 cartridge: maps over $0000-$3FFF (lower then upper 16K after delay)
@@ -302,14 +306,12 @@ uint8_t Spectrum3::mem_read(uint16_t addr) {
         return if2_rom_[off];
     }
     const uint8_t bank = marco_[slot];
-    // Contention: $4000 always (bank 5), $C000 if odd bank
+    // Contention: $4000 always (bank 5), $C000 if odd bank — advance ULA beam
+    // (and paint border_buf_) for the wait states, not just bump counters.
     if (slot == 1 || (slot == 3 && (bank & 1))) {
         if (frame_t_ >= 0 && frame_t_ < int(contention_.size())) {
             const uint8_t extra = contention_[size_t(frame_t_)];
-            if (extra) {
-                frame_t_ += extra;
-                t_in_line_ += extra;
-            }
+            if (extra) contend(extra);
         }
     }
     return banks_[bank][addr & 0x3fff];
@@ -324,10 +326,7 @@ void Spectrum3::mem_write(uint16_t addr, uint8_t value) {
     if (slot == 1 || (slot == 3 && (bank & 1))) {
         if (frame_t_ >= 0 && frame_t_ < int(contention_.size())) {
             const uint8_t extra = contention_[size_t(frame_t_)];
-            if (extra) {
-                frame_t_ += extra;
-                t_in_line_ += extra;
-            }
+            if (extra) contend(extra);
         }
     }
     banks_[bank][addr & 0x3fff] = value;
@@ -463,6 +462,10 @@ void Spectrum3::io_out(uint16_t port, uint8_t value) {
 
 void Spectrum3::on_cycles(int cycles) {
     for (int n = 0; n < cycles; ++n) {
+        if (frame_t_ >= kTstatesPerFrame) {
+            ++frame_t_;
+            continue;
+        }
         if (line_ >= 0 && line_ < kLinesPerFrame &&
             t_in_line_ >= 0 && t_in_line_ < kTstatesPerLine) {
             border_buf_[size_t(line_)][size_t(t_in_line_)] = border_index();
@@ -473,7 +476,6 @@ void Spectrum3::on_cycles(int cycles) {
             t_in_line_ -= kTstatesPerLine;
             render_line(line_);
             ++line_;
-            if (line_ >= kLinesPerFrame) line_ = 0;
         }
     }
 
@@ -590,16 +592,17 @@ void Spectrum3::run_frame() {
     }
     border_pos_ = 0;
 
+    // Drive by ULA time — contended waits advance the beam via on_cycles.
     cpu_.set_irq(IrqLine::Hold);
-    int remaining = kTstatesPerFrame;
-    while (remaining > 0) {
-        const int ran = cpu_.run(std::min(remaining, kTstatesPerLine));
+    while (frame_t_ < kTstatesPerFrame) {
+        const int left = kTstatesPerFrame - frame_t_;
+        const int ask = (left > 64) ? std::min(kTstatesPerLine, left - 32) : 1;
+        const int ran = cpu_.run(std::max(1, ask));
         if (ran <= 0) break;
-        remaining -= ran;
-        if (remaining < kTstatesPerFrame - 32) cpu_.set_irq(IrqLine::Clear);
+        if (frame_t_ >= 32) cpu_.set_irq(IrqLine::Clear);
     }
     // Finish incomplete lines only — do not re-render (preserves per-T border).
-    if (line_ != 0 || t_in_line_ != 0) {
+    if (line_ < kLinesPerFrame) {
         while (line_ < kLinesPerFrame) {
             render_line(line_);
             ++line_;
