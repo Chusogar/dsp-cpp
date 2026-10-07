@@ -81,7 +81,18 @@ public final class GfxSet {
     }
 
     public int elementOffset(int index) {
-        return (index % total) * width * height;
+        if (total <= 0) {
+            return 0;
+        }
+        return Math.floorMod(index, total) * width * height;
+    }
+
+    /** Colour index of {@code pixel} inside decoded element {@code index}. */
+    public int pen(int index, int pixel) {
+        if (pixels.length == 0) {
+            return 0;
+        }
+        return pixels[elementOffset(index) + pixel] & 0xff;
     }
 
     private static int getBit(byte[] rom, int bitIndex) {

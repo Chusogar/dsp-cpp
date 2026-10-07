@@ -7,7 +7,7 @@
   <artifactId>jdsp</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <name>jDSP</name>
-  <description>Java port of dsp-cpp. First machine: Bagman (Valadon Automation, 1982).</description>
+  <description>Java port of dsp-cpp. Machines: Bagman, Pirates / Genix Family.</description>
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.release>17</maven.compiler.release>

@@ -23,5 +23,8 @@ test: classes
 screenshot: jar
 	$(JAVA) -jar $(JARFILE) --game bagman --screenshot bagman.bmp --frames 300 --mute $(ROM)
 
+screenshot-pirates: jar
+	$(JAVA) -jar $(JARFILE) --game pirates --screenshot pirates.bmp --frames 300 --mute $(ROM)
+
 clean:
-	rm -rf target bagman.bmp
+	rm -rf target bagman.bmp pirates.bmp

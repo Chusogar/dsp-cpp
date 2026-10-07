@@ -8,10 +8,10 @@ Package layout mirrors dsp-cpp:
 ```
 src/main/java/dsp/
   core/          Machine, RomLoader
-  cpu/           Z80, IrqLine
-  sound/         AY8910
+  cpu/           Z80, M68000, IrqLine
+  sound/         AY8910, OKIM6295
   video/         GfxSet, Palette
-  machine/       protection / support chips (BagmanPal, …)
+  machine/       protection / support chips (BagmanPal, Eeprom93C46, …)
   drivers/arcade/
   frontend/      SwingApp
 ```
@@ -46,6 +46,7 @@ In `dsp.Main.createMachine`:
 
 ```java
 if (game.equals("galaxian")) return new Galaxian();
+if (game.equals("pirates")) return new Pirates(Pirates.Game.PIRATES);
 ```
 
 Add the name to the usage text and to the tables in `README.md`.

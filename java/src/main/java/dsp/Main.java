@@ -2,6 +2,7 @@ package dsp;
 
 import dsp.core.Machine;
 import dsp.drivers.arcade.Bagman;
+import dsp.drivers.arcade.Pirates;
 import dsp.frontend.AppOptions;
 import dsp.frontend.SwingApp;
 
@@ -71,7 +72,7 @@ public final class Main {
             System.out.println("jdsp: specify an emulator with --game NAME");
             System.out.println();
             printSupportedEmulators();
-            System.out.println("Example: java -jar jdsp.jar --game bagman bagman.zip");
+            System.out.println("Example: java -jar jdsp.jar --game pirates pirates.zip");
             System.out.println("Use --help for all options.");
             System.exit(1);
         }
@@ -111,6 +112,12 @@ public final class Main {
         if (game.equals("bagman")) {
             return new Bagman();
         }
+        if (game.equals("pirates")) {
+            return new Pirates(Pirates.Game.PIRATES);
+        }
+        if (game.equals("genix")) {
+            return new Pirates(Pirates.Game.GENIX);
+        }
         return null;
     }
 
@@ -131,6 +138,8 @@ public final class Main {
         System.out.println();
         System.out.println("  Arcade:");
         System.out.println("    bagman");
+        System.out.println("    pirates");
+        System.out.println("    genix");
         System.out.println();
     }
 
@@ -141,7 +150,8 @@ public final class Main {
         System.out.println("Options:");
         System.out.println("  --game NAME        emulator / game to run (required)");
         System.out.println("  --scale N          window scale factor (default 3)");
-        System.out.println("  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one bank");
+        System.out.println("  --dip [BANK:]VALUE DIP switch byte, decimal or 0x hex; bagman has one bank,");
+        System.out.println("                     pirates/genix store settings in EEPROM instead");
         System.out.println("  --mute             disable audio");
         System.out.println("  --fullscreen       start maximized");
         System.out.println("  --screenshot FILE  headless mode: render frames and write FILE (BMP)");
