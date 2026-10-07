@@ -97,6 +97,8 @@ private:
     std::array<uint32_t, kScreenWidth * kScreenHeight> framebuffer_{};
     std::array<uint32_t, 16> palette_{};
     uint8_t border_ = 7;
+    // Per-T-state border colour (0..7) for rainbow / loading / Aquaplane-style splits.
+    std::array<std::array<uint8_t, kTstatesPerLine>, kLinesPerFrame> border_buf_{};
     uint8_t speaker_ = 0;
     uint8_t ear_ = 0;
     std::array<uint8_t, 8> keys_{};

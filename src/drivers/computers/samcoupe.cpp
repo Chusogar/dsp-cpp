@@ -463,17 +463,25 @@ void SamCoupe::render_mode4(uint32_t* dst, int base_page, int y) const {
 void SamCoupe::render_line(int line) {
     if (line < 0 || line >= kLinesPerFrame) return;
     uint32_t* dst = framebuffer_.data() + size_t(line) * kScreenWidth;
-    // BORDER register: bits 0-2 are CLUT address bits 0/1/2 (BCD1/2/4),
-    // bit 5 is CLUT address bit 3 (BCD8) -- not a contiguous 4-bit field.
-    const uint32_t border_colour = clut_rgb_[size_t(((border_ & 0x20) >> 2) | (border_ & 0x07))];
+    const auto& brow = border_buf_[size_t(line)];
+    // 384 T/line → 768 px (2 pixels per T-state). Side borders are 64 T
+    // (128 px) each; paper occupies T 64..319.
+    auto paint_border_span = [&](int t0, int t1, int px0) {
+        for (int t = t0; t <= t1; ++t) {
+            const uint32_t c = clut_rgb_[size_t(brow[size_t(t)] & 0x0f)];
+            const int px = px0 + (t - t0) * 2;
+            dst[px] = c;
+            dst[px + 1] = c;
+        }
+    };
 
     if (line < kTopBorderLines || line >= kTopBorderLines + kScreenLines) {
-        std::fill(dst, dst + kScreenWidth, border_colour);
+        paint_border_span(0, kTstatesPerLine - 1, 0);
         return;
     }
 
-    std::fill(dst, dst + kSideBorderCells * 16, border_colour);
-    std::fill(dst + (kSideBorderCells + kScreenCells) * 16, dst + kScreenWidth, border_colour);
+    paint_border_span(0, 63, 0);                              // left
+    paint_border_span(320, kTstatesPerLine - 1, 640);         // right (T320 → px 640)
 
     const int y = line - kTopBorderLines;
     const int base_page = visible_screen_page() & (kNumPages - 1);
@@ -499,6 +507,10 @@ void SamCoupe::on_cycles(int cycles) {
         }
     }
     for (int n = 0; n < cycles; ++n) {
+        if (line_ >= 0 && line_ < kLinesPerFrame && t_in_line_ >= 0 &&
+            t_in_line_ < kTstatesPerLine) {
+            border_buf_[size_t(line_)][size_t(t_in_line_)] = border_clut_index();
+        }
         ++t_in_line_;
         ++frame_t_;
         if (t_in_line_ >= kTstatesPerLine) {
@@ -536,6 +548,10 @@ void SamCoupe::run_frame() {
     line_ = 0;
     t_in_line_ = 0;
     frame_t_ = 0;
+    {
+        const uint8_t col = border_clut_index();
+        for (auto& row : border_buf_) row.fill(col);
+    }
     fdc_.tick_frame();
 
     status_ |= 0x01;  // clear LINE int from the previous frame
