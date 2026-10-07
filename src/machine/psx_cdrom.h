@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,10 @@ public:
 
     // DMA channel 3: copy `words` 32-bit words from data FIFO to caller buffer.
     void dma_read(uint32_t* dest, int words);
+
+    // XA / CD-DA decoded samples → SPU CD input (interleaved stereo S16 @ 44100).
+    using CdAudioCallback = std::function<void(const int16_t* samples, int count)>;
+    void set_cd_audio_callback(CdAudioCallback cb) { cd_audio_cb_ = std::move(cb); }
 
     bool disc_loaded() const { return !tracks_.empty(); }
     const std::vector<PsxCdTrack>& tracks() const { return tracks_; }
@@ -156,6 +161,7 @@ private:
     int counter_ = 0;
     std::deque<DelayedIrq> irq_queue_;
     bool track_change_ = false;
+    CdAudioCallback cd_audio_cb_;
 };
 
 }  // namespace dsp

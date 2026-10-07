@@ -309,6 +309,7 @@ add_executable(dsp
   src/machine/psx_cdrom.cpp
   src/machine/psx_joypad.cpp
   src/machine/psx_spu.cpp
+  src/machine/psx_xa_adpcm.cpp
   src/machine/psx_mdec.cpp
 
       

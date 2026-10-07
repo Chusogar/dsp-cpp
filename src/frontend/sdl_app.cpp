@@ -124,6 +124,9 @@ int SdlApp::run_headless(Machine& machine) {
         std::getenv("DSP_PULSE_START") ? std::atoi(std::getenv("DSP_PULSE_START")) : 1800;
     const int until =
         std::getenv("DSP_PULSE_UNTIL") ? std::atoi(std::getenv("DSP_PULSE_UNTIL")) : 6000;
+    std::vector<int16_t> samples;
+    std::vector<int16_t> wav_pcm;
+    const char* dump_wav = std::getenv("DSP_DUMP_WAV");
     for (int frame = 0; frame < std::max(options_.frames, 1); frame++) {
         MachineInputs inputs;
         if (pulse && frame >= pulse_start && frame < until) {
@@ -149,6 +152,41 @@ int SdlApp::run_headless(Machine& machine) {
         }
         machine.set_inputs(inputs);
         machine.run_frame();
+        // Keep SPU output from growing unbounded in headless runs.
+        samples.clear();
+        machine.drain_audio(samples);
+        if (dump_wav) wav_pcm.insert(wav_pcm.end(), samples.begin(), samples.end());
+    }
+    if (dump_wav && !wav_pcm.empty()) {
+        FILE* f = std::fopen(dump_wav, "wb");
+        if (f) {
+            const uint32_t rate = uint32_t(machine.sample_rate());
+            const uint32_t data_bytes = uint32_t(wav_pcm.size() * sizeof(int16_t));
+            const uint32_t riff_size = 36 + data_bytes;
+            auto w32 = [&](uint32_t v) {
+                uint8_t b[4] = {uint8_t(v), uint8_t(v >> 8), uint8_t(v >> 16), uint8_t(v >> 24)};
+                std::fwrite(b, 1, 4, f);
+            };
+            auto w16 = [&](uint16_t v) {
+                uint8_t b[2] = {uint8_t(v), uint8_t(v >> 8)};
+                std::fwrite(b, 1, 2, f);
+            };
+            std::fwrite("RIFF", 1, 4, f);
+            w32(riff_size);
+            std::fwrite("WAVEfmt ", 1, 8, f);
+            w32(16);
+            w16(1);
+            w16(1);
+            w32(rate);
+            w32(rate * 2);
+            w16(2);
+            w16(16);
+            std::fwrite("data", 1, 4, f);
+            w32(data_bytes);
+            std::fwrite(wav_pcm.data(), sizeof(int16_t), wav_pcm.size(), f);
+            std::fclose(f);
+            std::fprintf(stderr, "wrote %s (%zu samples)\n", dump_wav, wav_pcm.size());
+        }
     }
 
     SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormatFrom(

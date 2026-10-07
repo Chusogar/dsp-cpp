@@ -108,6 +108,8 @@ void Psx::wire_dma() {
             ram_[a + 3] = uint8_t(w >> 24);
         }
     });
+    cdrom_.set_cd_audio_callback(
+        [this](const int16_t* samples, int count) { spu_.push_cd_samples(samples, count); });
     dma_.set_spu_from_ram([this](const uint32_t* data, int words) { spu_.dma_write(data, words); });
     dma_.set_spu_to_ram([this](uint32_t addr, int words) {
         std::vector<uint32_t> buf;
