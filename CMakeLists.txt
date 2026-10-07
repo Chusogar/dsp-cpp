@@ -46,7 +46,9 @@ add_executable(dsp
   src/cpu/mb88xx.cpp
   src/cpu/w65c816.cpp
   src/cpu/spc700.cpp
- 
+  src/cpu/r3000a.cpp
+  src/cpu/psx_gte.cpp
+
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
