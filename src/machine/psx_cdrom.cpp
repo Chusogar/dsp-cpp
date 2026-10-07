@@ -3,6 +3,8 @@
 //   https://github.com/BluestormDNA/ProjectPSX
 #include "machine/psx_cdrom.h"
 
+#include "machine/psx_xa_adpcm.h"
+
 #include <algorithm>
 #include <cstring>
 #include <cctype>
@@ -249,13 +251,18 @@ bool PsxCdrom::tick(int cycles) {
             sub_channel_ = sector[17];
             sub_mode_ = sector[18];
             sub_coding_ = sector[19];
-            // Skip XA realtime audio delivery (SPU stub).
+            // XA realtime audio → SPU CD input (do not deliver sector to CPU).
             const bool form2 = (sub_mode_ & 0x20) != 0;
             const bool is_audio = (sub_mode_ & 0x4) != 0;
             const bool realtime = (sub_mode_ & 0x40) != 0;
             if (xa_adpcm_ && form2 && realtime && is_audio) {
                 if (xa_filter_ && (filter_file_ != sub_file_ || filter_channel_ != sub_channel_)) {
                     return false;
+                }
+                if (!muted_ && cd_audio_cb_) {
+                    const std::vector<int16_t> pcm =
+                        decode_xa_adpcm_sector(sector, sub_coding_);
+                    if (!pcm.empty()) cd_audio_cb_(pcm.data(), int(pcm.size()));
                 }
                 return false;
             }
