@@ -16,8 +16,9 @@ namespace dsp {
 enum class ZxCloneModel { Pentagon1024, Scorpion256 };
 
 // Shared Pentagon-timing Spectrum clone: 3.5 MHz, 224 T/line, 320 lines,
-// uncontended RAM, AY, Beta 128 (TRD/SCL). Pentagon 1024 and Scorpion 256
-// only differ in paging.
+// uncontended RAM, AY, Beta 128 (TRD/SCL), per-T-state border (loading
+// stripes / mid-frame splits). Pentagon 1024 and Scorpion 256 only differ
+// in paging.
 class ZxClone : public Machine {
 public:
     static constexpr int kScreenWidth = 352;
@@ -97,6 +98,8 @@ private:
     std::array<uint32_t, kScreenWidth * kScreenHeight> framebuffer_{};
     std::array<uint32_t, 16> palette_{};
     uint8_t border_ = 7;
+    // Per-T-state border colour (0..7) for rainbow / loading / Aquaplane-style splits.
+    std::array<std::array<uint8_t, kTstatesPerLine>, kLinesPerFrame> border_buf_{};
     uint8_t speaker_ = 0;
     uint8_t ear_ = 0;
     std::array<uint8_t, 8> keys_{};

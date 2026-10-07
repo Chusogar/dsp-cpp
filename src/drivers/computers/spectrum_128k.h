@@ -67,6 +67,7 @@ private:
     void apply_7ffd(uint8_t value);
     uint8_t floating_bus() const;
     void apply_port_contention(uint16_t port);
+    void contend(int extra);
     void build_contention();
     void render_line(int line);
     void border_fill_to(int abs_t);  // absolute T in frame

@@ -124,6 +124,11 @@ private:
 
     uint8_t lmpr_ = 0, hmpr_ = 0, vmpr_ = 0;
     uint8_t border_ = 0;
+    // Per-T-state CLUT index for the border (bits from BORDER register).
+    std::array<std::array<uint8_t, kTstatesPerLine>, kLinesPerFrame> border_buf_{};
+    uint8_t border_clut_index() const {
+        return uint8_t(((border_ & 0x20) >> 2) | (border_ & 0x07));
+    }
     uint8_t lepr_ = 0, hepr_ = 0;  // external memory page registers (ports 128/129)
     uint8_t status_ = 0xff;   // active-low interrupt flags, read via port 249
     uint8_t line_int_ = 0xff; // port 249 write: target line for the line interrupt

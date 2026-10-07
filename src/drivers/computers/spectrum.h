@@ -63,10 +63,11 @@ public:
     void io_out(uint16_t port, uint8_t value);
     void on_cycles(int cycles);
 
-
 private:
-    
     void build_contention();
+    // Apply ULA wait states as real elapsed T-states (paint border / advance beam).
+    void contend(int extra);
+    void apply_port_contention(uint16_t port);
     void render_line(int line);
     void border_fill_to(int abs_t);  // absolute T in frame
     void border_on_out();

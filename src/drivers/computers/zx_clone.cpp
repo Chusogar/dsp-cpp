@@ -487,13 +487,22 @@ void ZxClone::io_out(uint16_t port, uint8_t value) {
 }
 
 void ZxClone::on_cycles(int cycles) {
-    t_in_line_ += cycles;
-    frame_t_ += cycles;
-    while (t_in_line_ >= kTstatesPerLine) {
-        t_in_line_ -= kTstatesPerLine;
-        render_line(line_);
-        ++line_;
-        if (line_ >= kLinesPerFrame) line_ = 0;
+    // Paint border into the per-T buffer every elapsed T-state (same model as
+    // Spectrum 48K). OUT ($FE) only updates border_; stripes appear because
+    // consecutive T-states keep the colour that was current when they executed.
+    for (int n = 0; n < cycles; ++n) {
+        if (line_ >= 0 && line_ < kLinesPerFrame && t_in_line_ >= 0 &&
+            t_in_line_ < kTstatesPerLine) {
+            border_buf_[size_t(line_)][size_t(t_in_line_)] = uint8_t(border_ & 7);
+        }
+        ++t_in_line_;
+        ++frame_t_;
+        if (t_in_line_ >= kTstatesPerLine) {
+            t_in_line_ -= kTstatesPerLine;
+            render_line(line_);
+            ++line_;
+            if (line_ >= kLinesPerFrame) line_ = 0;
+        }
     }
     if (tape_.is_playing()) ear_ = tape_.advance(cycles) ? 0x40 : 0x00;
     else if (tape_.is_loaded()) {
@@ -509,34 +518,72 @@ void ZxClone::on_cycles(int cycles) {
 }
 
 void ZxClone::render_line(int line) {
+    // Pentagon/Scorpion: 224 T/line like the 48K ULA. Visible frame is lines
+    // 32..311 (280 rows). Paper is lines 80..271. Horizontal mapping matches
+    // Spectrum 48K borde_48_full: left T200..223 of previous line, right
+    // T128..151, top/bottom centre T0..127 (2 px per T-state).
     if (line < 32 || line > 311) return;
     const int sy = line - 32;
     if (sy < 0 || sy >= kScreenHeight) return;
-    uint32_t* dst = framebuffer_.data() + size_t(sy) * kScreenWidth;
-    const uint32_t border = palette_[border_ & 7];
-    for (int x = 0; x < kScreenWidth; x++) dst[x] = border;
 
-    if (line < 80 || line > 271) return;
-    const int y = line - 80;
-    const auto& vram = ram_[pantalla_];
-    const uint16_t pix_base = kScrTable[y];
-    const int attr_row = (y >> 3) << 5;
-    for (int col = 0; col < 32; ++col) {
-        const uint8_t attrib = vram[0x1800 + attr_row + col];
-        const uint8_t pixels = vram[pix_base + col];
-        int ink = attrib & 7;
-        int paper = (attrib >> 3) & 7;
-        if (attrib & 0x40) {
-            ink += 8;
-            paper += 8;
+    uint32_t* dst = framebuffer_.data() + size_t(sy) * kScreenWidth;
+    const auto& brow = border_buf_[size_t(line % kLinesPerFrame)];
+    auto col_at = [&](uint8_t idx) -> uint32_t { return palette_[idx & 7]; };
+
+    // Left border from previous line (T 200..223) → 48 px
+    if (line > 32) {
+        const auto& prev = border_buf_[size_t((line - 1) % kLinesPerFrame)];
+        for (int f = 200; f <= 223; ++f) {
+            const uint32_t c = col_at(prev[size_t(f)]);
+            const int px = (f - 200) * 2;
+            dst[px] = c;
+            dst[px + 1] = c;
         }
-        if ((attrib & 0x80) && flash_) std::swap(ink, paper);
-        const uint32_t c_ink = palette_[ink];
-        const uint32_t c_paper = palette_[paper];
-        uint8_t pix = pixels;
-        for (int b = 0; b < 8; ++b) {
-            dst[48 + col * 8 + b] = (pix & 0x80) ? c_ink : c_paper;
-            pix = uint8_t(pix << 1);
+    } else {
+        const uint32_t c = col_at(border_);
+        for (int x = 0; x < 48; ++x) dst[x] = c;
+    }
+
+    if (line >= 311) return;
+
+    // Right border T 128..151 → 48 px at X=304
+    for (int f = 128; f <= 151; ++f) {
+        const uint32_t c = col_at(brow[size_t(f)]);
+        const int px = 304 + (f - 128) * 2;
+        dst[px] = c;
+        dst[px + 1] = c;
+    }
+
+    if (line >= 80 && line <= 271) {
+        const int y = line - 80;
+        const auto& vram = ram_[pantalla_];
+        const uint16_t pix_base = kScrTable[y];
+        const int attr_row = (y >> 3) << 5;
+        for (int col = 0; col < 32; ++col) {
+            const uint8_t attrib = vram[0x1800 + attr_row + col];
+            const uint8_t pixels = vram[pix_base + col];
+            int ink = attrib & 7;
+            int paper = (attrib >> 3) & 7;
+            if (attrib & 0x40) {
+                ink += 8;
+                paper += 8;
+            }
+            if ((attrib & 0x80) && flash_) std::swap(ink, paper);
+            const uint32_t c_ink = palette_[ink];
+            const uint32_t c_paper = palette_[paper];
+            uint8_t pix = pixels;
+            for (int b = 0; b < 8; ++b) {
+                dst[48 + col * 8 + b] = (pix & 0x80) ? c_ink : c_paper;
+                pix = uint8_t(pix << 1);
+            }
+        }
+    } else {
+        // Top/bottom border centre T 0..127 → 256 px at X=48
+        for (int f = 0; f <= 127; ++f) {
+            const uint32_t c = col_at(brow[size_t(f)]);
+            const int px = 48 + f * 2;
+            dst[px] = c;
+            dst[px + 1] = c;
         }
     }
 }
@@ -545,6 +592,10 @@ void ZxClone::run_frame() {
     line_ = 0;
     t_in_line_ = 0;
     frame_t_ = 0;
+    {
+        const uint8_t col = uint8_t(border_ & 7);
+        for (auto& row : border_buf_) row.fill(col);
+    }
     cpu_.set_irq(IrqLine::Hold);
     int remaining = kTstatesPerFrame;
     while (remaining > 0) {
@@ -553,6 +604,7 @@ void ZxClone::run_frame() {
         remaining -= ran;
         if (remaining < kTstatesPerFrame - 32) cpu_.set_irq(IrqLine::Clear);
     }
+    // Finish undrawn lines only — do not re-render (would wipe per-T stripes).
     if (line_ != 0 || t_in_line_ != 0) {
         while (line_ < kLinesPerFrame) {
             render_line(line_);

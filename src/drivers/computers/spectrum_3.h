@@ -61,6 +61,7 @@ private:
     uint8_t io_in(uint16_t port);
     void io_out(uint16_t port, uint8_t value);
     void on_cycles(int cycles);
+    void contend(int extra);
 
     void apply_7ffd(uint8_t value);
     void apply_1ffd(uint8_t value);

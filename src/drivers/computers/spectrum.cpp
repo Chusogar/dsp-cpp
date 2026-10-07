@@ -250,16 +250,17 @@ void Spectrum48k::apply_keyboard(const MachineInputs& in) {
     if (in.player1.button1) joy_ |= 0x10;
 }
 
+void Spectrum48k::contend(int extra) {
+    if (extra > 0) on_cycles(extra);
+}
+
 uint8_t Spectrum48k::mem_read(uint16_t addr) {
     if (model_ == Model::Spec16k) addr = uint16_t(addr & 0x7fff);
-    // Contention on $4000-$7FFF during pixel display
+    // Contention on $4000-$7FFF during pixel display — must advance the ULA
+    // beam (and paint border_buf_) for the wait states, not just bump counters.
     if ((addr & 0xc000) == 0x4000 && frame_t_ >= 0 && frame_t_ < int(contention_.size())) {
         const uint8_t extra = contention_[size_t(frame_t_)];
-        if (extra) {
-            // Accounted loosely via cycle handler path; extra T added by bumping frame_t_
-            frame_t_ += extra;
-            t_in_line_ += extra;
-        }
+        if (extra) contend(extra);
     }
     return mem_[addr];
 }
@@ -269,15 +270,40 @@ void Spectrum48k::mem_write(uint16_t addr, uint8_t value) {
     if (addr < 0x4000) return;  // ROM
     if ((addr & 0xc000) == 0x4000 && frame_t_ >= 0 && frame_t_ < int(contention_.size())) {
         const uint8_t extra = contention_[size_t(frame_t_)];
-        if (extra) {
-            frame_t_ += extra;
-            t_in_line_ += extra;
-        }
+        if (extra) contend(extra);
     }
     mem_[addr] = value;
 }
 
+void Spectrum48k::apply_port_contention(uint16_t port) {
+    // Wait states only — Z80 already charges the base I/O T-states.
+    const int pos = frame_t_;
+    auto delay_at = [&](int p) -> int {
+        if (p >= 0 && p < int(contention_.size())) return contention_[size_t(p)];
+        return 0;
+    };
+    int extra = 0;
+    if ((port & 0xc000) == 0x4000) {
+        if (port & 1) {
+            int t = pos;
+            for (int i = 0; i < 4; ++i) {
+                const int d = delay_at(t);
+                extra += d;
+                t += d + 1;
+            }
+        } else {
+            const int d0 = delay_at(pos);
+            extra += d0;
+            extra += delay_at(pos + d0 + 1);
+        }
+    } else if ((port & 1) == 0) {
+        extra = delay_at(pos + 1);
+    }
+    if (extra > 0) contend(extra);
+}
+
 uint8_t Spectrum48k::io_in(uint16_t port) {
+    apply_port_contention(port);
     uint8_t result = 0xff;
 
     // ULA keyboard + EAR + speaker mirror (port $xxFE with A0=0)
@@ -327,6 +353,7 @@ uint8_t Spectrum48k::io_in(uint16_t port) {
 }
 
 void Spectrum48k::io_out(uint16_t port, uint8_t value) {
+    apply_port_contention(port);
     if ((port & 1) == 0) {
         border_ = value & 7;
         // The speaker bit is mirrored back on bit 6 of port $FE, next to EAR.
@@ -360,7 +387,13 @@ void Spectrum48k::on_cycles(int cycles) {
     // Paint border colour into the per-T buffer for every elapsed T-state, then
     // advance the raster.  OUT ($FE) only updates border_; stripes appear because
     // consecutive T-states keep the colour that was current when they executed.
+    // Contended wait states also call here, so the beam can reach kTstatesPerFrame
+    // before the Z80 base-cycle budget — do not wrap into the next frame.
     for (int n = 0; n < cycles; ++n) {
+        if (frame_t_ >= kTstatesPerFrame) {
+            ++frame_t_;
+            continue;
+        }
         if (line_ >= 0 && line_ < kLinesPerFrame &&
             t_in_line_ >= 0 && t_in_line_ < kTstatesPerLine) {
             border_buf_[size_t(line_)][size_t(t_in_line_)] = border_index();
@@ -371,7 +404,6 @@ void Spectrum48k::on_cycles(int cycles) {
             t_in_line_ -= kTstatesPerLine;
             render_line(line_);
             ++line_;
-            if (line_ >= kLinesPerFrame) line_ = 0;
         }
     }
 
@@ -487,21 +519,21 @@ void Spectrum48k::run_frame() {
         for (auto& row : border_buf_) row.fill(col);
     }
 
-    // IRQ at start of frame (after a few T-states of line 0)
+    // IRQ at start of frame.  Drive the frame by ULA time (frame_t_), not by
+    // Z80 base cycles — contended waits advance the beam via on_cycles.
     cpu_.set_irq(IrqLine::Hold);
-    int remaining = kTstatesPerFrame;
-    while (remaining > 0) {
-        const int ran = cpu_.run(std::min(remaining, kTstatesPerLine));
+    while (frame_t_ < kTstatesPerFrame) {
+        const int left = kTstatesPerFrame - frame_t_;
+        const int ask = (left > 64) ? std::min(kTstatesPerLine, left - 32) : 1;
+        const int ran = cpu_.run(std::max(1, ask));
         if (ran <= 0) break;
-        remaining -= ran;
-        // Clear IRQ after first slice
-        if (remaining < kTstatesPerFrame - 32) cpu_.set_irq(IrqLine::Clear);
+        if (frame_t_ >= 32) cpu_.set_irq(IrqLine::Clear);
     }
 
     // Finish any lines not yet rendered (if frame ended mid-line).
     // Do NOT re-render lines already drawn — that would paint solid border and
     // wipe per-T-state rainbow / loading effects.
-    if (line_ != 0 || t_in_line_ != 0) {
+    if (line_ < kLinesPerFrame) {
         while (line_ < kLinesPerFrame) {
             render_line(line_);
             ++line_;
