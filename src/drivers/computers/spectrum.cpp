@@ -383,6 +383,17 @@ void Spectrum48k::io_out(uint16_t port, uint8_t value) {
     }
 }
 
+void Spectrum48k::ula_latch_column(int col) {
+    if (col < 0 || col >= 32) return;
+    if (line_ < 64 || line_ > 255) return;
+    const int y = line_ - 64;
+    const uint16_t pix_base = kScrTable[y];
+    const int attr_row = (y >> 3) << 5;
+    latch_pix_[size_t(col)] = mem_[0x4000 + pix_base + col];
+    latch_attr_[size_t(col)] = mem_[0x5800 + attr_row + col];
+    latch_mask_ |= (1u << col);
+}
+
 void Spectrum48k::on_cycles(int cycles) {
     // Paint border colour into the per-T buffer for every elapsed T-state, then
     // advance the raster.  OUT ($FE) only updates border_; stripes appear because
@@ -394,6 +405,11 @@ void Spectrum48k::on_cycles(int cycles) {
             ++frame_t_;
             continue;
         }
+        // ULA fetches one bitmap + attribute pair every 4 T-states of paper.
+        if (line_ >= 64 && line_ <= 255 && t_in_line_ >= 0 && t_in_line_ < 128 &&
+            (t_in_line_ & 3) == 0) {
+            ula_latch_column(t_in_line_ >> 2);
+        }
         if (line_ >= 0 && line_ < kLinesPerFrame &&
             t_in_line_ >= 0 && t_in_line_ < kTstatesPerLine) {
             border_buf_[size_t(line_)][size_t(t_in_line_)] = border_index();
@@ -403,6 +419,7 @@ void Spectrum48k::on_cycles(int cycles) {
         if (t_in_line_ >= kTstatesPerLine) {
             t_in_line_ -= kTstatesPerLine;
             render_line(line_);
+            latch_mask_ = 0;
             ++line_;
         }
     }
@@ -468,15 +485,19 @@ void Spectrum48k::render_line(int line) {
         dst[px + 1] = c;
     }
 
-    // Paper / centre
+    // Paper / centre — prefer ULA latches (fetch-time attrs) for multicolour.
     if (line >= 64 && line <= 255) {
         const int y = line - 64;
         const uint16_t pix_base = kScrTable[y];
         const int attr_row = (y >> 3) << 5;
         const bool uplus = ulaplus_.active && ulaplus_.enabled;
         for (int col = 0; col < 32; ++col) {
-            const uint8_t attrib = mem_[0x5800 + attr_row + col];
-            const uint8_t pixels = mem_[0x4000 + pix_base + col];
+            const uint8_t attrib = (latch_mask_ & (1u << col))
+                                       ? latch_attr_[size_t(col)]
+                                       : mem_[0x5800 + attr_row + col];
+            const uint8_t pixels = (latch_mask_ & (1u << col))
+                                       ? latch_pix_[size_t(col)]
+                                       : mem_[0x4000 + pix_base + col];
             uint32_t c_ink, c_paper;
             if (uplus) {
                 const int bank = ((((attrib & 0x80) >> 6) + ((attrib & 0x40) >> 6)) << 4) + 16;
@@ -519,6 +540,7 @@ void Spectrum48k::run_frame() {
         for (auto& row : border_buf_) row.fill(col);
     }
 
+    latch_mask_ = 0;
     // IRQ at start of frame.  Drive the frame by ULA time (frame_t_), not by
     // Z80 base cycles — contended waits advance the beam via on_cycles.
     cpu_.set_irq(IrqLine::Hold);

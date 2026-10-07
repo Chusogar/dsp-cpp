@@ -69,6 +69,8 @@ private:
     void contend(int extra);
     void apply_port_contention(uint16_t port);
     void render_line(int line);
+    // Latch pixel+attribute at ULA fetch time (multicolor / 8×1 colour).
+    void ula_latch_column(int col);
     void border_fill_to(int abs_t);  // absolute T in frame
     void border_on_out();
     uint8_t border_index() const;
@@ -115,6 +117,13 @@ private:
     int t_in_line_ = 0;
     int frame_t_ = 0;
     std::array<uint8_t, 71000> contention_{};
+
+    // ULA paper latches for the current scanline (one byte pair per 8-pixel cell).
+    // Sampled every 4 T-states during the 128 T paper window so multicolour
+    // games (Uridium, Black Lamp, …) that rewrite $5800 mid-frame keep 8×1 colour.
+    std::array<uint8_t, 32> latch_pix_{};
+    std::array<uint8_t, 32> latch_attr_{};
+    uint32_t latch_mask_ = 0;
 
     // Audio (beeper)
     std::vector<int16_t> audio_;

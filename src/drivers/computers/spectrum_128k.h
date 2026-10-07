@@ -70,6 +70,7 @@ private:
     void contend(int extra);
     void build_contention();
     void render_line(int line);
+    void ula_latch_column(int col);
     void border_fill_to(int abs_t);  // absolute T in frame
     void border_on_out();
     void apply_keyboard(const MachineInputs& in);
@@ -132,6 +133,11 @@ private:
     int t_in_line_ = 0;
     int frame_t_ = 0;
     std::array<uint8_t, 72000> contention_{};
+
+    // ULA paper latches — fetch-time pixel+attr for multicolour (8×1).
+    std::array<uint8_t, 32> latch_pix_{};
+    std::array<uint8_t, 32> latch_attr_{};
+    uint32_t latch_mask_ = 0;
 
     std::vector<int16_t> audio_;
     int64_t audio_acc_ = 0;

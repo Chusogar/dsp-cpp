@@ -486,11 +486,28 @@ void ZxClone::io_out(uint16_t port, uint8_t value) {
     }
 }
 
+void ZxClone::ula_latch_column(int col) {
+    if (col < 0 || col >= 32) return;
+    if (line_ < 80 || line_ > 271) return;
+    const int y = line_ - 80;
+    if (y < 0 || y >= 192) return;
+    const auto& vram = ram_[pantalla_];
+    const uint16_t pix_base = kScrTable[y];
+    const int attr_row = (y >> 3) << 5;
+    latch_pix_[size_t(col)] = vram[pix_base + col];
+    latch_attr_[size_t(col)] = vram[0x1800 + attr_row + col];
+    latch_mask_ |= (1u << col);
+}
+
 void ZxClone::on_cycles(int cycles) {
     // Paint border into the per-T buffer every elapsed T-state (same model as
     // Spectrum 48K). OUT ($FE) only updates border_; stripes appear because
     // consecutive T-states keep the colour that was current when they executed.
     for (int n = 0; n < cycles; ++n) {
+        if (line_ >= 80 && line_ <= 271 && t_in_line_ >= 0 && t_in_line_ < 128 &&
+            (t_in_line_ & 3) == 0) {
+            ula_latch_column(t_in_line_ >> 2);
+        }
         if (line_ >= 0 && line_ < kLinesPerFrame && t_in_line_ >= 0 &&
             t_in_line_ < kTstatesPerLine) {
             border_buf_[size_t(line_)][size_t(t_in_line_)] = uint8_t(border_ & 7);
@@ -500,6 +517,7 @@ void ZxClone::on_cycles(int cycles) {
         if (t_in_line_ >= kTstatesPerLine) {
             t_in_line_ -= kTstatesPerLine;
             render_line(line_);
+            latch_mask_ = 0;
             ++line_;
             if (line_ >= kLinesPerFrame) line_ = 0;
         }
@@ -554,14 +572,19 @@ void ZxClone::render_line(int line) {
         dst[px + 1] = c;
     }
 
+    // Prefer ULA latches so multicolour (8×1) attrs survive mid-frame rewrites.
     if (line >= 80 && line <= 271) {
         const int y = line - 80;
         const auto& vram = ram_[pantalla_];
         const uint16_t pix_base = kScrTable[y];
         const int attr_row = (y >> 3) << 5;
         for (int col = 0; col < 32; ++col) {
-            const uint8_t attrib = vram[0x1800 + attr_row + col];
-            const uint8_t pixels = vram[pix_base + col];
+            const uint8_t attrib = (latch_mask_ & (1u << col))
+                                       ? latch_attr_[size_t(col)]
+                                       : vram[0x1800 + attr_row + col];
+            const uint8_t pixels = (latch_mask_ & (1u << col))
+                                       ? latch_pix_[size_t(col)]
+                                       : vram[pix_base + col];
             int ink = attrib & 7;
             int paper = (attrib >> 3) & 7;
             if (attrib & 0x40) {
@@ -592,6 +615,7 @@ void ZxClone::run_frame() {
     line_ = 0;
     t_in_line_ = 0;
     frame_t_ = 0;
+    latch_mask_ = 0;
     {
         const uint8_t col = uint8_t(border_ & 7);
         for (auto& row : border_buf_) row.fill(col);
