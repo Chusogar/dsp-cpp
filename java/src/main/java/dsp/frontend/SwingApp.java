@@ -10,12 +10,14 @@ import javax.sound.sampled.DataLine;
 import javax.sound.sampled.SourceDataLine;
 import javax.swing.JFrame;
 import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.WindowConstants;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.KeyboardFocusManager;
 import java.awt.RenderingHints;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
@@ -94,27 +96,47 @@ public final class SwingApp {
             frame.setExtendedState(JFrame.MAXIMIZED_BOTH);
             frame.setUndecorated(true);
         }
-        frame.addKeyListener(new KeyAdapter() {
+        KeyAdapter keys = new KeyAdapter() {
             @Override
             public void keyPressed(KeyEvent e) {
-                keysDown.add(e.getKeyCode());
-                if (e.getKeyCode() == KeyEvent.VK_ESCAPE) {
-                    running = false;
-                    frame.dispose();
-                } else if (e.getKeyCode() == KeyEvent.VK_F3) {
-                    machine.reset();
-                } else if (e.getKeyCode() == KeyEvent.VK_P || e.getKeyCode() == KeyEvent.VK_F2) {
-                    paused = !paused;
-                    updateTitle(frame, machine);
-                }
+                onKeyPressed(e.getKeyCode(), machine, frame);
             }
 
             @Override
             public void keyReleased(KeyEvent e) {
                 keysDown.remove(e.getKeyCode());
             }
+        };
+        // Clicking the framebuffer focuses the panel, not the frame. Listen on
+        // both, and also dispatch globally so keys work whenever this window
+        // is active.
+        frame.addKeyListener(keys);
+        panel.addKeyListener(keys);
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(event -> {
+            if (!running || !frame.isDisplayable() || !(event instanceof KeyEvent)) {
+                return false;
+            }
+            KeyEvent keyEvent = (KeyEvent) event;
+            java.awt.Component source = keyEvent.getComponent();
+            if (source != null && source != frame
+                    && SwingUtilities.getWindowAncestor(source) != frame) {
+                return false;
+            }
+            if (source == null && !frame.isActive()) {
+                return false;
+            }
+            // Consume here so the panel/frame listeners do not toggle pause twice.
+            if (keyEvent.getID() == KeyEvent.KEY_PRESSED) {
+                onKeyPressed(keyEvent.getKeyCode(), machine, frame);
+            } else if (keyEvent.getID() == KeyEvent.KEY_RELEASED) {
+                keysDown.remove(keyEvent.getKeyCode());
+            }
+            return true;
         });
+        frame.setFocusable(true);
+        frame.setAutoRequestFocus(true);
         frame.setVisible(true);
+        SwingUtilities.invokeLater(panel::requestFocusInWindow);
 
         SourceDataLine line = null;
         if (!options.mute) {
@@ -180,6 +202,19 @@ public final class SwingApp {
             return fallback;
         }
         return Integer.parseInt(value);
+    }
+
+    private void onKeyPressed(int keyCode, Machine machine, JFrame frame) {
+        keysDown.add(keyCode);
+        if (keyCode == KeyEvent.VK_ESCAPE) {
+            running = false;
+            frame.dispose();
+        } else if (keyCode == KeyEvent.VK_F3) {
+            machine.reset();
+        } else if (keyCode == KeyEvent.VK_P || keyCode == KeyEvent.VK_F2) {
+            paused = !paused;
+            updateTitle(frame, machine);
+        }
     }
 
     private void updateTitle(JFrame frame, Machine machine) {
@@ -324,6 +359,12 @@ public final class SwingApp {
             setPreferredSize(new Dimension(width, height));
             setBackground(Color.BLACK);
             setFocusable(true);
+            addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mousePressed(java.awt.event.MouseEvent e) {
+                    requestFocusInWindow();
+                }
+            });
         }
 
         @Override
