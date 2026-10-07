@@ -462,13 +462,13 @@ int SdlApp::run(Machine& machine) {
                 tex_w = width;
                 tex_h = height;
             }
+            // Keep the host window size fixed; only retarget the logical
+            // render size so the new framebuffer aspect letterboxes/scales
+            // inside the existing window (PSX 320x240 <-> 640x480 logos).
             if (new_dw != display_w || new_dh != display_h) {
                 display_w = new_dw;
                 display_h = new_dh;
                 SDL_RenderSetLogicalSize(renderer, display_w, display_h);
-                if (!options_.fullscreen) {
-                    SDL_SetWindowSize(window, display_w * scale, display_h * scale);
-                }
             }
             SDL_UpdateTexture(texture, nullptr, machine.framebuffer(), width * 4);
             SDL_RenderClear(renderer);
