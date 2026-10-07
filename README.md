@@ -24,6 +24,10 @@ Color, **Game Boy Advance**, **Atari 2600**, **Atari Lynx**, **Super Cassette Vi
 To add another machine follow [docs/adding-a-driver.md](docs/adding-a-driver.md), which
 explains the port workflow and comes with a driver skeleton (`tools/new_driver.py`).
 
+A Java port of the complete **Bagman** driver (Z80, AY-3-8910, PAL16R6, Swing
+front end) lives under [`java/`](java/). Build with `make -C java jar` (JDK 17+)
+and run `java -jar java/target/jdsp.jar --game bagman /path/to/bagman.zip`.
+
 ## What is ported
 
 | Component | Origin | Notes |
