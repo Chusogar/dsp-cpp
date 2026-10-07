@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <climits>
 #include <cstring>
 #include <cstdlib>
 #include <string>
@@ -131,11 +132,15 @@ int SdlApp::run_headless(Machine& machine) {
         }
         const char* hold = std::getenv("DSP_HOLD_KEYS");
         const int hold_after = std::getenv("DSP_HOLD_AFTER") ? std::atoi(std::getenv("DSP_HOLD_AFTER")) : 0;
-        if (hold && frame >= hold_after) {
+        const int hold_until = std::getenv("DSP_HOLD_UNTIL") ? std::atoi(std::getenv("DSP_HOLD_UNTIL")) : INT_MAX;
+        if (hold && frame >= hold_after && frame < hold_until) {
             for (const char* p = hold; *p; ++p) {
                 char c = *p;
                 if (c>='a'&&c<='z') inputs.keys[size_t(Key::A)+size_t(c-'a')] = true;
+                if (c>='0'&&c<='9') inputs.keys[size_t(Key::Num0)+size_t(c-'0')] = true;
                 if (c==' ') inputs.keys[size_t(Key::Space)] = true;
+                if (c=='\n'||c=='\r') inputs.keys[size_t(Key::Enter)] = true;
+                if (c=='!') inputs.keys[size_t(Key::LeftShift)] = true;
                 if (c=='^') inputs.keys[size_t(Key::Up)] = true;
                 if (c=='_') inputs.keys[size_t(Key::Down)] = true;
                 if (c=='<') inputs.keys[size_t(Key::Left)] = true;

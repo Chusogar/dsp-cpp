@@ -114,6 +114,9 @@ private:
     bool in_vblank_ = false;
 
     std::array<uint8_t, 16> keyboard_{};
+    // DK'Tronics AY port A (reg 0x0E), active-low. Filmation titles (Knight Lore)
+    // read this via OUT ($AA),$0E / IN A,($A9) when joystick mode is selected.
+    uint8_t joystick_porta_ = 0xff;
     std::vector<uint32_t> framebuffer_;
     std::vector<int16_t> audio_;
     int64_t audio_accumulator_ = 0;
