@@ -186,8 +186,8 @@ int SdlApp::run(Machine& machine) {
         return 1;
     }
 
-    const int width = machine.screen_width();
-    const int height = machine.screen_height();
+    int width = machine.screen_width();
+    int height = machine.screen_height();
     // Spectrum full-border (352x280): default scale 2 → ~704x560 window unless user set --scale
     int scale = options_.scale;
     if (scale == 3 && width == 352 && (height == 280 || height == 296 || height == 288))
@@ -195,8 +195,8 @@ int SdlApp::run(Machine& machine) {
     // Window and logical size follow the display size, which corrects the
     // aspect ratio of non-square framebuffer pixels (the texture stays at the
     // framebuffer size and SDL stretches it).
-    const int display_w = machine.display_width();
-    const int display_h = machine.display_height();
+    int display_w = machine.display_width();
+    int display_h = machine.display_height();
     if (display_w != width || display_h != height || machine.fit_window()) {
         // Keep the default window on a 1080p desktop.
         while (scale > 1 && display_h * scale > 960) scale--;
@@ -225,8 +225,13 @@ int SdlApp::run(Machine& machine) {
     SDL_RenderSetLogicalSize(renderer, display_w, display_h);
     if (machine.uses_pointer()) SDL_ShowCursor(SDL_ENABLE);
 
+    // Texture size must track the machine framebuffer. Consoles like PSX switch
+    // between 256x240 / 320x240 / 640x480; a fixed texture + pitch wraps the
+    // BIOS logos into the garbled "scanline" look.
     SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
                                              SDL_TEXTUREACCESS_STREAMING, width, height);
+    int tex_w = width;
+    int tex_h = height;
 
     SDL_AudioDeviceID audio_device = 0;
     const int sample_rate = machine.sample_rate();
@@ -446,6 +451,25 @@ int SdlApp::run(Machine& machine) {
         // Turbo: present only every 4th frame to spend CPU on emulation, not GPU.
         const bool do_present = !turbo || ((++turbo_present_counter & 3) == 0);
         if (do_present) {
+            width = machine.screen_width();
+            height = machine.screen_height();
+            const int new_dw = machine.display_width();
+            const int new_dh = machine.display_height();
+            if (width != tex_w || height != tex_h) {
+                if (texture != nullptr) SDL_DestroyTexture(texture);
+                texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                            SDL_TEXTUREACCESS_STREAMING, width, height);
+                tex_w = width;
+                tex_h = height;
+            }
+            if (new_dw != display_w || new_dh != display_h) {
+                display_w = new_dw;
+                display_h = new_dh;
+                SDL_RenderSetLogicalSize(renderer, display_w, display_h);
+                if (!options_.fullscreen) {
+                    SDL_SetWindowSize(window, display_w * scale, display_h * scale);
+                }
+            }
             SDL_UpdateTexture(texture, nullptr, machine.framebuffer(), width * 4);
             SDL_RenderClear(renderer);
             SDL_RenderCopy(renderer, texture, nullptr, nullptr);
