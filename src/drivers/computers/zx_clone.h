@@ -8,6 +8,7 @@
 #include "core/machine.h"
 #include "cpu/z80.h"
 #include "machine/beta128.h"
+#include "machine/spectrum_rzx.h"
 #include "machine/tape_tzx.h"
 #include "sound/ay8910.h"
 
@@ -48,6 +49,8 @@ public:
     const char* title() const override;
     bool uses_keyboard() const override { return true; }
     bool load_media(const std::string& path, std::string* error) override;
+    bool load_rzx(const std::string& path, std::string* error);
+    bool rzx_playing() const { return rzx_.playing(); }
     void tape_toggle_play() override;
     bool tape_loaded() const override { return tape_.is_loaded(); }
 
@@ -72,12 +75,15 @@ private:
     void apply_keyboard(const MachineInputs& in);
     void render_line(int line);
     void ula_latch_column(int col);
+    void apply_snap(const SpectrumSnap& snap);
+    void run_rzx_frame();
     bool load_roms(const std::string& path, std::string* error);
 
     ZxCloneModel model_;
     Z80 cpu_;
     AY8910 ay_;
     TapeTzx tape_;
+    SpectrumRzx rzx_;
     Beta128 beta_;
 
     std::array<std::array<uint8_t, 0x4000>, kMaxRamPages> ram_{};

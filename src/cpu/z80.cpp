@@ -565,7 +565,7 @@ int Z80::run(int cycles) {
 
         if (halted) {
             cycles_ += 4;
-            r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
+            bump_r_m1();
             executed_ += cycles_;
             if (cycle_handler_) cycle_handler_(cycles_);
             continue;
@@ -574,7 +574,7 @@ int Z80::run(int cycles) {
         if (instruction_hook_) instruction_hook_(pc_);
         fetching_opcode_ = true;
         uint8_t opcode = fetch();
-        r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
+        bump_r_m1();
         cycles_ += t_main_[opcode];
 
         switch (opcode) {
@@ -925,7 +925,7 @@ int Z80::run(int cycles) {
 void Z80::exec_cb() {
     fetching_opcode_ = true;
     uint8_t opcode = fetch();
-    r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
+    bump_r_m1();
     cycles_ += t_cb_[opcode];
 
     static uint8_t Z80::*const regs[8] = {&Z80::b, &Z80::c, &Z80::d, &Z80::e,
@@ -968,7 +968,7 @@ void Z80::exec_cb() {
 void Z80::exec_ed() {
     fetching_opcode_ = true;
     uint8_t opcode = fetch();
-    r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
+    bump_r_m1();
     cycles_ += t_ed_[opcode];
 
     static uint8_t Z80::*const regs[8] = {&Z80::b, &Z80::c, &Z80::d, &Z80::e,
@@ -1249,7 +1249,7 @@ bool Z80::exec_z80n(uint8_t opcode) {
 void Z80::exec_index(uint16_t* index_reg) {
     fetching_opcode_ = true;
     uint8_t opcode = fetch();
-    r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
+    bump_r_m1();
     cycles_ += t_index_[opcode];
 
     uint8_t index_high = uint8_t(*index_reg >> 8);

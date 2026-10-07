@@ -16,6 +16,9 @@ public:
     using OutHandler = std::function<void(uint16_t, uint8_t)>;
     using CycleHandler = std::function<void(int)>;
     using InstructionHook = std::function<void(uint16_t pc)>;
+    // Called on every opcode-fetch M1 that advances R (main + CB/ED/DD/FD;
+    // also HALT refreshes). Not called for INTACK/NMIACK (RZX-compatible).
+    using M1Handler = std::function<void()>;
     using IrqAckHandler = std::function<void()>;
 
     explicit Z80(uint32_t clock);
@@ -29,6 +32,7 @@ public:
     void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
     // Called immediately before the next opcode fetch (PC still points at the opcode).
     void set_instruction_hook(InstructionHook handler) { instruction_hook_ = std::move(handler); }
+    void set_m1_handler(M1Handler handler) { m1_handler_ = std::move(handler); }
 
     // Replace the built-in T-state tables. Null entries keep the current table.
     // The Amstrad CPC Gate Array stretches almost every opcode to a multiple of
@@ -153,7 +157,12 @@ private:
     OutHandler out_;
     CycleHandler cycle_handler_;
     InstructionHook instruction_hook_;
+    M1Handler m1_handler_;
     IrqAckHandler irq_ack_;
+    void bump_r_m1() {
+        r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
+        if (m1_handler_) m1_handler_();
+    }
     NextregHandler nextreg_;
     NextregReadHandler nextreg_read_;
     ReturnHandler return_cb_;

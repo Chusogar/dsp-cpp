@@ -1,5 +1,7 @@
 #include "drivers/computers/spectrum.h"
 
+#include "machine/spectrum_snap.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -148,6 +150,9 @@ bool Spectrum48k::init(const std::string& rom_path, std::string* error) {
         [this](uint16_t p) { return io_in(p); },
         [this](uint16_t p, uint8_t v) { io_out(p, v); });
     cpu_.set_cycle_handler([this](int c) { on_cycles(c); });
+    cpu_.set_m1_handler([this]() {
+        if (rzx_.playing()) rzx_.on_m1();
+    });
 
     build_contention();
     reset();
@@ -304,6 +309,8 @@ void Spectrum48k::apply_port_contention(uint16_t port) {
 
 uint8_t Spectrum48k::io_in(uint16_t port) {
     apply_port_contention(port);
+    // RZX playback supplies every IN result from the recording log.
+    if (rzx_.playing()) return rzx_.next_in();
     uint8_t result = 0xff;
 
     // ULA keyboard + EAR + speaker mirror (port $xxFE with A0=0)
@@ -528,7 +535,76 @@ void Spectrum48k::render_line(int line) {
     }
 }
 
+void Spectrum48k::apply_snap(const SpectrumSnap& snap) {
+    cpu_.a = snap.a;
+    cpu_.f = snap.f;
+    cpu_.b = snap.b;
+    cpu_.c = snap.c;
+    cpu_.d = snap.d;
+    cpu_.e = snap.e;
+    cpu_.h = snap.h;
+    cpu_.l = snap.l;
+    cpu_.a2 = snap.a2;
+    cpu_.f2 = snap.f2;
+    cpu_.b2 = snap.b2;
+    cpu_.c2 = snap.c2;
+    cpu_.d2 = snap.d2;
+    cpu_.e2 = snap.e2;
+    cpu_.h2 = snap.h2;
+    cpu_.l2 = snap.l2;
+    cpu_.ix = snap.ix;
+    cpu_.iy = snap.iy;
+    cpu_.sp = snap.sp;
+    cpu_.i = snap.i;
+    cpu_.r = snap.r;
+    cpu_.im = snap.im;
+    cpu_.iff1 = snap.iff1;
+    cpu_.iff2 = snap.iff2;
+    cpu_.set_pc(snap.pc);
+    border_ = snap.border & 7;
+    std::memcpy(mem_.data() + 0x4000, snap.ram48.data(), 0xc000);
+    cpu_.set_irq(IrqLine::Clear);
+    cpu_.halted = false;
+}
+
+void Spectrum48k::run_rzx_frame() {
+    if (!rzx_.begin_frame()) return;
+    line_ = 0;
+    t_in_line_ = 0;
+    border_pos_ = 0;
+    frame_t_ = 0;
+    latch_mask_ = 0;
+    {
+        const uint8_t col = border_index();
+        for (auto& row : border_buf_) row.fill(col);
+    }
+    cpu_.set_irq(IrqLine::Hold);
+    // Run until the RZX fetch budget is exhausted (one interrupt per RZX frame).
+    int safety = kTstatesPerFrame * 4;
+    while (rzx_.fetches_left() > 0 && safety-- > 0) {
+        const int ran = cpu_.run(1);
+        if (ran <= 0) break;
+        if (frame_t_ >= 32) cpu_.set_irq(IrqLine::Clear);
+    }
+    if (line_ < kLinesPerFrame) {
+        while (line_ < kLinesPerFrame) {
+            render_line(line_);
+            ++line_;
+        }
+    }
+    line_ = 0;
+    t_in_line_ = 0;
+    border_pos_ = 0;
+    frame_t_ = 0;
+    flash_count_ = (flash_count_ + 1) & 0x0f;
+    if (flash_count_ == 0) flash_ = !flash_;
+}
+
 void Spectrum48k::run_frame() {
+    if (rzx_.playing()) {
+        run_rzx_frame();
+        return;
+    }
     line_ = 0;
     t_in_line_ = 0;
     border_pos_ = 0;  // absolute T within frame
@@ -588,7 +664,10 @@ bool Spectrum48k::load_media(const std::string& path, std::string* error) {
     if (ends(".sna")) {
         return load_sna(path, error);
     }
-    if (error) *error = "unsupported media (use .tzx / .tap / .csw / .pzx / .sna): " + path;
+    if (ends(".rzx")) {
+        return load_rzx(path, error);
+    }
+    if (error) *error = "unsupported media (use .tzx / .tap / .csw / .pzx / .sna / .rzx): " + path;
     return false;
 }
 
@@ -617,45 +696,18 @@ bool Spectrum48k::load_sna(const std::string& path, std::string* error) {
         if (error) *error = "cannot open SNA: " + path;
         return false;
     }
-    // Classic 48K SNA: 27-byte header + 48 KB memory from $4000
-    if (buf.size() < 27 + 0xc000) {
-        if (error) *error = "SNA too small for 48K";
-        return false;
-    }
-    const uint8_t* h = buf.data();
-    cpu_.i = h[0];
-    cpu_.l2 = h[1];
-    cpu_.h2 = h[2];
-    cpu_.e2 = h[3];
-    cpu_.d2 = h[4];
-    cpu_.c2 = h[5];
-    cpu_.b2 = h[6];
-    cpu_.f2 = h[7];
-    cpu_.a2 = h[8];
-    cpu_.l = h[9];
-    cpu_.h = h[10];
-    cpu_.e = h[11];
-    cpu_.d = h[12];
-    cpu_.c = h[13];
-    cpu_.b = h[14];
-    cpu_.iy = uint16_t(h[15] | (h[16] << 8));
-    cpu_.ix = uint16_t(h[17] | (h[18] << 8));
-    cpu_.iff1 = (h[19] & 4) != 0;
-    cpu_.iff2 = cpu_.iff1;
-    cpu_.r = h[20];
-    cpu_.f = h[21];
-    cpu_.a = h[22];
-    cpu_.sp = uint16_t(h[23] | (h[24] << 8));
-    cpu_.im = h[25] & 3;
-    border_ = h[26] & 7;
+    SpectrumSnap snap;
+    if (!spectrum_snap_from_sna(buf.data(), buf.size(), snap, error)) return false;
+    apply_snap(snap);
+    return true;
+}
 
-    std::memcpy(mem_.data() + 0x4000, buf.data() + 27, 0xc000);
-    // PC is on the stack in 48K SNA
-    const uint16_t sp = cpu_.sp;
-    const uint16_t pc = uint16_t(mem_[sp] | (mem_[(sp + 1) & 0xffff] << 8));
-    cpu_.sp = uint16_t(sp + 2);
-    cpu_.set_pc(pc);
-    cpu_.set_irq(IrqLine::Clear);
+bool Spectrum48k::load_rzx(const std::string& path, std::string* error) {
+    rzx_.stop();
+    if (!rzx_.load(path, error)) return false;
+    apply_snap(rzx_.snap());
+    rzx_.start();
+    // Discard the first begin_frame until run_frame — start() alone is enough.
     return true;
 }
 

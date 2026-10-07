@@ -7,6 +7,7 @@
 
 #include "core/machine.h"
 #include "cpu/z80.h"
+#include "machine/spectrum_rzx.h"
 #include "machine/tape_tzx.h"
 #include "sound/ay8910.h"
 
@@ -51,6 +52,8 @@ public:
     void maybe_start_tape_from_rom();
     void tape_stop();
     bool load_sna(const std::string& path, std::string* error);
+    bool load_rzx(const std::string& path, std::string* error);
+    bool rzx_playing() const { return rzx_.playing(); }
     bool load_if2(const std::string& path, std::string* error);
     void unload_if2();
     void set_kempston(bool enabled) { kempston_enabled_ = enabled; }
@@ -74,6 +77,8 @@ private:
     void border_fill_to(int abs_t);  // absolute T in frame
     void border_on_out();
     void apply_keyboard(const MachineInputs& in);
+    void apply_snap(const SpectrumSnap& snap);
+    void run_rzx_frame();
 
     uint8_t border_index() const;
     uint32_t border_colour() const;
@@ -85,6 +90,7 @@ private:
     AY8910 ay0_;
     AY8910 ay1_;
     TapeTzx tape_;
+    SpectrumRzx rzx_;
 
     // Banks 0-7 RAM, 8-9 ROM
     std::array<std::array<uint8_t, 0x4000>, 10> banks_{};
