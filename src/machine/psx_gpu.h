@@ -32,6 +32,12 @@ public:
 
     int display_width() const;
     int display_height() const;
+    bool depth24() const { return depth24_; }
+    bool display_disabled() const { return display_disabled_; }
+    uint16_t disp_vram_x() const { return disp_vram_x_; }
+    uint16_t disp_vram_y() const { return disp_vram_y_; }
+    uint16_t disp_y1() const { return disp_y1_; }
+    uint16_t disp_y2() const { return disp_y2_; }
 
     // Blit visible display area to ARGB8888 (host framebuffer).
     void blit_display(uint32_t* dst, int dst_w, int dst_h) const;

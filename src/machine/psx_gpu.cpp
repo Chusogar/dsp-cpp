@@ -113,14 +113,18 @@ bool PsxGpu::tick(int cycles) {
 
 PsxGpuSync PsxGpu::blanks_and_dot() const {
     PsxGpuSync s;
-    s.dot_div = kDotDiv[hres2_ << 2 | hres1_];
+    // When Hres2 is set, hardware forces 368px (dot clock /7); ignore Hres1.
+    const int idx = hres2_ ? 4 : int(hres1_ & 3);
+    s.dot_div = kDotDiv[idx];
     s.hblank = video_cycles_ < disp_x1_ || video_cycles_ > disp_x2_;
     s.vblank = scan_line_ < disp_y1_ || scan_line_ > disp_y2_;
     return s;
 }
 
 int PsxGpu::display_width() const {
-    return kResolutions[hres2_ << 2 | hres1_];
+    // GP1.08: bit6 selects 368px; otherwise bits1-0 pick 256/320/512/640.
+    if (hres2_) return 368;
+    return kResolutions[hres1_ & 3];
 }
 
 int PsxGpu::display_height() const {
@@ -128,24 +132,55 @@ int PsxGpu::display_height() const {
 }
 
 void PsxGpu::blit_display(uint32_t* dst, int dst_w, int dst_h) const {
-    const int w = std::min(dst_w, display_width());
-    const int h = std::min(dst_h, display_height());
-    const int src_x = disp_vram_x_;
-    const int src_y = disp_vram_y_;
-    for (int y = 0; y < h; y++) {
+    const int horizontal_res = display_width();
+    const int vertical_res = display_height();
+    const int w = std::min(dst_w, horizontal_res);
+    const int h = std::min(dst_h, vertical_res);
+
+    // Clear full destination first (letterbox / disabled display).
+    for (int i = 0; i < dst_w * dst_h; i++) dst[i] = 0xFF000000u;
+    if (display_disabled_ || w <= 0 || h <= 0) return;
+
+    // ProjectPSX Window.blit*: center when the vertical display range is
+    // shorter than a full 240-line field (common on BIOS logos).
+    int y_range_offset = (240 - int(disp_y2_ - disp_y1_)) >> (vertical_res == 480 ? 0 : 1);
+    if (y_range_offset < 0) y_range_offset = 0;
+    if (y_range_offset * 2 >= h) y_range_offset = 0;
+
+    if (depth24_) {
+        // 24bpp: three consecutive VRAM halfwords pack two RGB888 pixels.
+        // Bytes in little-endian halfword order: R0 G0 B0 R1 G1 B1.
+        for (int y = y_range_offset; y < h - y_range_offset; y++) {
+            const int src_y = (y - y_range_offset + int(disp_vram_y_)) & 0x1FF;
+            int offset = 0;
+            for (int x = 0; x + 1 < w; x += 2) {
+                const uint16_t w0 = get_pixel555(int(disp_vram_x_) + offset, src_y);
+                const uint16_t w1 = get_pixel555(int(disp_vram_x_) + offset + 1, src_y);
+                const uint16_t w2 = get_pixel555(int(disp_vram_x_) + offset + 2, src_y);
+                offset += 3;
+                const uint8_t r0 = uint8_t(w0 & 0xFF);
+                const uint8_t g0 = uint8_t(w0 >> 8);
+                const uint8_t b0 = uint8_t(w1 & 0xFF);
+                const uint8_t r1 = uint8_t(w1 >> 8);
+                const uint8_t g1 = uint8_t(w2 & 0xFF);
+                const uint8_t b1 = uint8_t(w2 >> 8);
+                dst[y * dst_w + x] =
+                    0xFF000000u | (uint32_t(r0) << 16) | (uint32_t(g0) << 8) | b0;
+                dst[y * dst_w + x + 1] =
+                    0xFF000000u | (uint32_t(r1) << 16) | (uint32_t(g1) << 8) | b1;
+            }
+        }
+        return;
+    }
+
+    for (int y = y_range_offset; y < h - y_range_offset; y++) {
+        const int src_y = (y - y_range_offset + int(disp_vram_y_)) & 0x1FF;
         for (int x = 0; x < w; x++) {
-            const int color = get_pixel888(src_x + x, src_y + y);
-            // VRAM stored as M|R|G|B in bytes of the int as ProjectPSX (R in high)
+            const int color = get_pixel888(int(disp_vram_x_) + x, src_y);
             const uint8_t r = uint8_t((color >> 16) & 0xFF);
             const uint8_t g = uint8_t((color >> 8) & 0xFF);
             const uint8_t b = uint8_t(color & 0xFF);
             dst[y * dst_w + x] = 0xFF000000u | (uint32_t(r) << 16) | (uint32_t(g) << 8) | b;
-        }
-    }
-    // Clear unused area if any
-    for (int y = 0; y < dst_h; y++) {
-        for (int x = (y < h ? w : 0); x < dst_w; x++) {
-            if (y >= h || x >= w) dst[y * dst_w + x] = 0xFF000000u;
         }
     }
 }

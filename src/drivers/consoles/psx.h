@@ -16,6 +16,7 @@
 #include "machine/psx_gpu.h"
 #include "machine/psx_irq.h"
 #include "machine/psx_joypad.h"
+#include "machine/psx_mdec.h"
 #include "machine/psx_spu.h"
 #include "machine/psx_timers.h"
 
@@ -114,6 +115,7 @@ private:
     PsxCdrom cdrom_;
     PsxJoypad joypad_;
     PsxSpu spu_;
+    PsxMdec mdec_;
 
     std::vector<uint8_t> ram_;          // 2 MiB
     std::array<uint8_t, 1024> scratch_{};
