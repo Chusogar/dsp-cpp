@@ -123,14 +123,17 @@ void Psx::wire_dma() {
         }
     });
     // MDEC stubs: ignore / return zeros so games using MDEC do not crash the DMA path.
-    // MDEC stub: ignore bitstream, return zeros. Keeps DMA/IRQ paths alive so
-    // games that poll the decoder can finish intro movies (shown as black)
-    // and reach gameplay. A correct decoder lives in psx_mdec.* for later use.
-    dma_.set_mdec_from_ram([](const uint32_t*, int) {});
+    dma_.set_mdec_from_ram([this](const uint32_t* data, int words) { mdec_.dma_write(data, words); });
     dma_.set_mdec_to_ram([this](uint32_t addr, int words) {
+        std::vector<uint32_t> buf(static_cast<size_t>(std::max(words, 0)));
+        mdec_.dma_read(buf.data(), words);
         for (int i = 0; i < words; i++) {
+            const uint32_t w = buf[size_t(i)];
             const uint32_t a = (addr + uint32_t(i) * 4) & 0x1FFFFCu;
-            ram_[a] = ram_[a + 1] = ram_[a + 2] = ram_[a + 3] = 0;
+            ram_[a] = uint8_t(w);
+            ram_[a + 1] = uint8_t(w >> 8);
+            ram_[a + 2] = uint8_t(w >> 16);
+            ram_[a + 3] = uint8_t(w >> 24);
         }
     });
 }
@@ -337,11 +340,14 @@ void Psx::run_frame() {
             }
             std::fprintf(stderr,
                          "PSX f=%d pc=%08x sr=%08x irq=%04x/%04x cd_mode=%d loc=%d "
-                         "stat=%02x busy=%d irqQ=%zu exe=%d nz=%d %dx%d d24=%d dis=%d\n",
+                         "stat=%02x busy=%d irqQ=%zu exe=%d nz=%d %dx%d d24=%d dis=%d "
+                         "vram=%d,%d y12=%d,%d\n",
                          f, cpu_.pc(), cpu_.cop0_sr(), irq_.istat(), irq_.imask(),
                          cdrom_.debug_mode(), cdrom_.debug_read_loc(), cdrom_.debug_stat(),
                          int(cdrom_.debug_busy()), cdrom_.debug_irq_queue(), int(exe), nz,
-                         screen_w_, screen_h_, int(gpu_.depth24()), int(gpu_.display_disabled()));
+                         screen_w_, screen_h_, int(gpu_.depth24()), int(gpu_.display_disabled()),
+                         int(gpu_.disp_vram_x()), int(gpu_.disp_vram_y()),
+                         int(gpu_.disp_y1()), int(gpu_.disp_y2()));
         }
     }
 }
@@ -507,8 +513,8 @@ uint32_t Psx::io_read32(uint32_t addr) {
     if (addr <= 0x1F801803u) return cdrom_.load(addr);
     if (addr == 0x1F801810u) return gpu_.load_gpuread();
     if (addr == 0x1F801814u) return gpu_.load_gpustat();
-    if (addr == 0x1F801820u) return 0;
-    if (addr == 0x1F801824u) return 0x80000000u;  // MDEC status: fifo empty, idle
+    if (addr == 0x1F801820u) return mdec_.read_data();
+    if (addr == 0x1F801824u) return mdec_.read_status();
     if (addr >= 0x1F801C00u && addr < 0x1F802000u) return spu_.load32(addr);
     return 0xFFFFFFFFu;
 }
