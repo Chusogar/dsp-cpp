@@ -123,6 +123,9 @@ void Psx::wire_dma() {
         }
     });
     // MDEC stubs: ignore / return zeros so games using MDEC do not crash the DMA path.
+    // MDEC stub: ignore bitstream, return zeros. Keeps DMA/IRQ paths alive so
+    // games that poll the decoder can finish intro movies (shown as black)
+    // and reach gameplay. A correct decoder lives in psx_mdec.* for later use.
     dma_.set_mdec_from_ram([](const uint32_t*, int) {});
     dma_.set_mdec_to_ram([this](uint32_t addr, int words) {
         for (int i = 0; i < words; i++) {
@@ -239,6 +242,7 @@ void Psx::reset() {
     cdrom_.reset();
     joypad_.reset();
     spu_.reset();
+    mdec_.reset();
     wire_dma();
     cpu_.reset();
     screen_w_ = 320;
@@ -333,11 +337,11 @@ void Psx::run_frame() {
             }
             std::fprintf(stderr,
                          "PSX f=%d pc=%08x sr=%08x irq=%04x/%04x cd_mode=%d loc=%d "
-                         "stat=%02x busy=%d irqQ=%zu exe=%d nz=%d %dx%d\n",
+                         "stat=%02x busy=%d irqQ=%zu exe=%d nz=%d %dx%d d24=%d dis=%d\n",
                          f, cpu_.pc(), cpu_.cop0_sr(), irq_.istat(), irq_.imask(),
                          cdrom_.debug_mode(), cdrom_.debug_read_loc(), cdrom_.debug_stat(),
                          int(cdrom_.debug_busy()), cdrom_.debug_irq_queue(), int(exe), nz,
-                         screen_w_, screen_h_);
+                         screen_w_, screen_h_, int(gpu_.depth24()), int(gpu_.display_disabled()));
         }
     }
 }
@@ -503,8 +507,8 @@ uint32_t Psx::io_read32(uint32_t addr) {
     if (addr <= 0x1F801803u) return cdrom_.load(addr);
     if (addr == 0x1F801810u) return gpu_.load_gpuread();
     if (addr == 0x1F801814u) return gpu_.load_gpustat();
-    if (addr == 0x1F801820u) return 0;  // MDEC data
-    if (addr == 0x1F801824u) return 0x80000000u;  // MDEC status (not busy)
+    if (addr == 0x1F801820u) return 0;
+    if (addr == 0x1F801824u) return 0x80000000u;  // MDEC status: fifo empty, idle
     if (addr >= 0x1F801C00u && addr < 0x1F802000u) return spu_.load32(addr);
     return 0xFFFFFFFFu;
 }
@@ -559,7 +563,8 @@ void Psx::io_write32(uint32_t addr, uint32_t value) {
         return;
     }
     if (addr < 0x1F801830u) {
-        // MDEC stub
+        // MDEC stub (accept writes so games do not trap on missing regs).
+        mdec_.write(addr, value);
         return;
     }
     if (addr >= 0x1F801C00u && addr < 0x1F802000u) {
