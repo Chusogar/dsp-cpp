@@ -308,7 +308,7 @@ void Psx::run_frame() {
     gpu_.blit_display(framebuffer_.data(), screen_w_, screen_h_);
 
     const int samples = PsxSpu::kSampleRate / 60;
-    spu_.drain_silence(audio_pending_, samples);
+    spu_.drain_samples(audio_pending_, samples);
 
     // Optional boot diagnostics: DSP_PSX_TRACE=1
     static int frame_n = 0;
@@ -338,16 +338,22 @@ void Psx::run_frame() {
                     }
                 }
             }
+            int16_t peak = 0;
+            for (int16_t s : audio_pending_) {
+                const int16_t a = s < 0 ? int16_t(-s) : s;
+                if (a > peak) peak = a;
+            }
             std::fprintf(stderr,
                          "PSX f=%d pc=%08x sr=%08x irq=%04x/%04x cd_mode=%d loc=%d "
                          "stat=%02x busy=%d irqQ=%zu exe=%d nz=%d %dx%d d24=%d dis=%d "
-                         "vram=%d,%d y12=%d,%d\n",
+                         "vram=%d,%d y12=%d,%d audio_peak=%d n=%zu\n",
                          f, cpu_.pc(), cpu_.cop0_sr(), irq_.istat(), irq_.imask(),
                          cdrom_.debug_mode(), cdrom_.debug_read_loc(), cdrom_.debug_stat(),
                          int(cdrom_.debug_busy()), cdrom_.debug_irq_queue(), int(exe), nz,
                          screen_w_, screen_h_, int(gpu_.depth24()), int(gpu_.display_disabled()),
                          int(gpu_.disp_vram_x()), int(gpu_.disp_vram_y()),
-                         int(gpu_.disp_y1()), int(gpu_.disp_y2()));
+                         int(gpu_.disp_y1()), int(gpu_.disp_y2()), int(peak),
+                         audio_pending_.size());
         }
     }
 }
