@@ -35,6 +35,9 @@ const Key kMatrix[8][5] = {
 };
 
 bool load_file(const std::string& path, std::vector<uint8_t>& out) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::is_regular_file(path, ec)) return false;
     std::ifstream f(path, std::ios::binary);
     if (!f) return false;
     f.seekg(0, std::ios::end);
