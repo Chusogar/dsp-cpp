@@ -100,6 +100,7 @@
 #include "drivers/consoles/scv.h"
 #include "drivers/consoles/pcengine.h"
 #include "drivers/consoles/a7800.h"
+#include "drivers/consoles/psx.h"
 
 
 #include "frontend/sdl_app.h"
@@ -162,7 +163,8 @@ void print_supported_emulators() {
         "  Consoles:\n"
         "    sms, gamegear, genesis, megadrive, genesis-pal, genesis-jp, 32x, 32x-pal, 32x-jp,\n"
         "    pv1000, pv2000, coleco, sg1000, gb, nes, lynx, scv, pcengine, sgx,\n"
-        "    a2600, atari2600, vcs, a7800\n"
+        "    a2600, atari2600, vcs, a7800,\n"
+        "    psx, playstation, ps1\n"
         "\n");
 }
 
@@ -611,9 +613,10 @@ std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
 	
 	if (game == "pce" || game == "pcengine" || game == "tg16")
 	    return std::make_unique<dsp::PcEngine>();
+	if (game == "psx" || game == "playstation" || game == "ps1") {
+	    return std::make_unique<dsp::Psx>();
+	}
 
-	
-	
     return nullptr;
 }
 

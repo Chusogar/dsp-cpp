@@ -301,6 +301,14 @@ add_executable(dsp
   src/drivers/consoles/a7800.cpp
   src/drivers/consoles/vectrex.cpp
   src/drivers/consoles/snes.cpp
+  src/drivers/consoles/psx.cpp
+  src/machine/psx_irq.cpp
+  src/machine/psx_dma.cpp
+  src/machine/psx_timers.cpp
+  src/machine/psx_gpu.cpp
+  src/machine/psx_cdrom.cpp
+  src/machine/psx_joypad.cpp
+  src/machine/psx_spu.cpp
 
       
   src/core/rom_loader.cpp
