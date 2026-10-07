@@ -1,5 +1,7 @@
 #include "drivers/computers/zx_clone.h"
 
+#include "machine/spectrum_snap.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -265,6 +267,9 @@ bool ZxClone::init(const std::string& rom_path, std::string* error) {
                          [this](uint16_t p, uint8_t v) { io_out(p, v); });
     cpu_.set_cycle_handler([this](int c) { on_cycles(c); });
     cpu_.set_instruction_hook([this](uint16_t pc) { on_m1(pc); });
+    cpu_.set_m1_handler([this]() {
+        if (rzx_.playing()) rzx_.on_m1();
+    });
 
     reset();
 
@@ -382,6 +387,7 @@ void ZxClone::mem_write(uint16_t addr, uint8_t value) {
 }
 
 uint8_t ZxClone::io_in(uint16_t port) {
+    if (rzx_.playing()) return rzx_.next_in();
     if ((port & 1) == 0) {
         uint8_t keys = 0x1f;
         if ((port & 0x8000) == 0) keys &= keys_[7];
@@ -611,7 +617,53 @@ void ZxClone::render_line(int line) {
     }
 }
 
+void ZxClone::apply_snap(const SpectrumSnap& snap) {
+    cpu_.a = snap.a; cpu_.f = snap.f; cpu_.b = snap.b; cpu_.c = snap.c;
+    cpu_.d = snap.d; cpu_.e = snap.e; cpu_.h = snap.h; cpu_.l = snap.l;
+    cpu_.a2 = snap.a2; cpu_.f2 = snap.f2; cpu_.b2 = snap.b2; cpu_.c2 = snap.c2;
+    cpu_.d2 = snap.d2; cpu_.e2 = snap.e2; cpu_.h2 = snap.h2; cpu_.l2 = snap.l2;
+    cpu_.ix = snap.ix; cpu_.iy = snap.iy; cpu_.sp = snap.sp;
+    cpu_.i = snap.i; cpu_.r = snap.r; cpu_.im = snap.im;
+    cpu_.iff1 = snap.iff1; cpu_.iff2 = snap.iff2; cpu_.set_pc(snap.pc);
+    border_ = snap.border & 7;
+    for (int b = 0; b < 8; ++b) {
+        if (b < ram_pages_) ram_[size_t(b)] = snap.banks[size_t(b)];
+    }
+    port_7ffd_ = snap.is_128 ? snap.port_7ffd : uint8_t(0x10);
+    paging_locked_ = false;
+    update_memory();
+    if (!snap.is_128) {
+        pantalla_ = 5;
+        ram3_ = 0;
+    }
+    cpu_.set_irq(IrqLine::Clear);
+    cpu_.halted = false;
+}
+
+void ZxClone::run_rzx_frame() {
+    if (!rzx_.begin_frame()) return;
+    line_ = 0; t_in_line_ = 0; frame_t_ = 0; latch_mask_ = 0;
+    { const uint8_t col = uint8_t(border_ & 7); for (auto& row : border_buf_) row.fill(col); }
+    cpu_.set_irq(IrqLine::Hold);
+    int safety = kTstatesPerFrame * 4;
+    while (rzx_.fetches_left() > 0 && safety-- > 0) {
+        const int ran = cpu_.run(1);
+        if (ran <= 0) break;
+        if (frame_t_ >= 32) cpu_.set_irq(IrqLine::Clear);
+    }
+    if (line_ != 0 || t_in_line_ != 0) {
+        while (line_ < kLinesPerFrame) { render_line(line_); ++line_; }
+    }
+    line_ = 0; t_in_line_ = 0; frame_t_ = 0;
+    flash_count_ = (flash_count_ + 1) & 0x0f;
+    if (flash_count_ == 0) flash_ = !flash_;
+}
+
 void ZxClone::run_frame() {
+    if (rzx_.playing()) {
+        run_rzx_frame();
+        return;
+    }
     line_ = 0;
     t_in_line_ = 0;
     frame_t_ = 0;
@@ -757,8 +809,17 @@ bool ZxClone::load_media(const std::string& path, std::string* error) {
         tape_.stop();
         return true;
     }
-    if (error) *error = "unsupported media (use .trd/.scl disk or .tap/.tzx tape): " + path;
+    if (ends_ci(path, ".rzx")) return load_rzx(path, error);
+    if (error) *error = "unsupported media (use .trd/.scl disk, .tap/.tzx tape, or .rzx): " + path;
     return false;
+}
+
+bool ZxClone::load_rzx(const std::string& path, std::string* error) {
+    rzx_.stop();
+    if (!rzx_.load(path, error)) return false;
+    apply_snap(rzx_.snap());
+    rzx_.start();
+    return true;
 }
 
 void ZxClone::tape_toggle_play() {

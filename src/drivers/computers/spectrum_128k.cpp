@@ -1,5 +1,7 @@
 #include "drivers/computers/spectrum_128k.h"
 
+#include "machine/spectrum_snap.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -160,6 +162,9 @@ bool Spectrum128k::init(const std::string& rom_path, std::string* error) {
         [this](uint16_t p) { return io_in(p); },
         [this](uint16_t p, uint8_t v) { io_out(p, v); });
     cpu_.set_cycle_handler([this](int c) { on_cycles(c); });
+    cpu_.set_m1_handler([this]() {
+        if (rzx_.playing()) rzx_.on_m1();
+    });
 
     build_contention();
     for (int f = 0; f < 192; ++f) atrib_scr_[f] = uint16_t(0x1800 + 32 * (f / 8));
@@ -399,6 +404,7 @@ uint8_t Spectrum128k::kempston_read() const {
 
 uint8_t Spectrum128k::io_in(uint16_t port) {
     apply_port_contention(port);
+    if (rzx_.playing()) return rzx_.next_in();
     uint8_t result = 0xff;
     if ((port & 1) == 0) {
         // ULA: keyboard + EAR + speaker bit
@@ -627,7 +633,81 @@ void Spectrum128k::render_line(int line) {
     }
 }
 
+void Spectrum128k::apply_snap(const SpectrumSnap& snap) {
+    cpu_.a = snap.a;
+    cpu_.f = snap.f;
+    cpu_.b = snap.b;
+    cpu_.c = snap.c;
+    cpu_.d = snap.d;
+    cpu_.e = snap.e;
+    cpu_.h = snap.h;
+    cpu_.l = snap.l;
+    cpu_.a2 = snap.a2;
+    cpu_.f2 = snap.f2;
+    cpu_.b2 = snap.b2;
+    cpu_.c2 = snap.c2;
+    cpu_.d2 = snap.d2;
+    cpu_.e2 = snap.e2;
+    cpu_.h2 = snap.h2;
+    cpu_.l2 = snap.l2;
+    cpu_.ix = snap.ix;
+    cpu_.iy = snap.iy;
+    cpu_.sp = snap.sp;
+    cpu_.i = snap.i;
+    cpu_.r = snap.r;
+    cpu_.im = snap.im;
+    cpu_.iff1 = snap.iff1;
+    cpu_.iff2 = snap.iff2;
+    cpu_.set_pc(snap.pc);
+    border_ = snap.border & 7;
+    for (int b = 0; b < 8; ++b) banks_[size_t(b)] = snap.banks[size_t(b)];
+    apply_7ffd(snap.is_128 ? snap.port_7ffd : uint8_t(0x10));  // bit4 ROM0 for 48K mode on 128K
+    if (!snap.is_128) {
+        // Force 48K paging: ROM0, banks 5/2/0
+        marco_ = {8, 5, 2, 0};
+        pantalla_ = 5;
+    }
+    cpu_.set_irq(IrqLine::Clear);
+    cpu_.halted = false;
+}
+
+void Spectrum128k::run_rzx_frame() {
+    if (!rzx_.begin_frame()) return;
+    line_ = 0;
+    t_in_line_ = 0;
+    border_pos_ = 0;
+    frame_t_ = 0;
+    latch_mask_ = 0;
+    {
+        const uint8_t col = border_index();
+        for (auto& row : border_buf_) row.fill(col);
+    }
+    cpu_.set_irq(IrqLine::Hold);
+    int safety = kTstatesPerFrame * 4;
+    while (rzx_.fetches_left() > 0 && safety-- > 0) {
+        const int ran = cpu_.run(1);
+        if (ran <= 0) break;
+        if (frame_t_ >= 32) cpu_.set_irq(IrqLine::Clear);
+    }
+    if (line_ < kLinesPerFrame) {
+        while (line_ < kLinesPerFrame) {
+            render_line(line_);
+            ++line_;
+        }
+    }
+    line_ = 0;
+    t_in_line_ = 0;
+    border_pos_ = 0;
+    frame_t_ = 0;
+    flash_count_ = (flash_count_ + 1) & 0x0f;
+    if (flash_count_ == 0) flash_ = !flash_;
+}
+
 void Spectrum128k::run_frame() {
+    if (rzx_.playing()) {
+        run_rzx_frame();
+        return;
+    }
     line_ = 0;
     t_in_line_ = 0;
     border_pos_ = 0;
@@ -680,6 +760,7 @@ bool Spectrum128k::load_media(const std::string& path, std::string* error) {
     if (ends(".tzx") || ends(".tap") || ends(".csw") || ends(".pzx") || ends(".cdt"))
         return load_tape(path, error);
     if (ends(".sna")) return load_sna(path, error);
+    if (ends(".rzx")) return load_rzx(path, error);
     if (ends(".rom") || ends(".bin") || ends(".if2")) return load_if2(path, error);
     if (error) *error = "unsupported media: " + path;
     return false;
@@ -714,69 +795,17 @@ bool Spectrum128k::load_sna(const std::string& path, std::string* error) {
         if (error) *error = "cannot open SNA";
         return false;
     }
-    // 128K SNA: 27-byte header + 16K bank5 + 16K bank2 + 16K bank0 + 4-byte tail + remaining banks
-    // Simplified: if size >= 49179 treat as 128K snapshot
-    if (buf.size() < 27 + 0xc000) {
-        if (error) *error = "SNA too small";
-        return false;
-    }
-    const uint8_t* h = buf.data();
-    cpu_.i = h[0];
-    cpu_.l2 = h[1];
-    cpu_.h2 = h[2];
-    cpu_.e2 = h[3];
-    cpu_.d2 = h[4];
-    cpu_.c2 = h[5];
-    cpu_.b2 = h[6];
-    cpu_.f2 = h[7];
-    cpu_.a2 = h[8];
-    cpu_.l = h[9];
-    cpu_.h = h[10];
-    cpu_.e = h[11];
-    cpu_.d = h[12];
-    cpu_.c = h[13];
-    cpu_.b = h[14];
-    cpu_.iy = uint16_t(h[15] | (h[16] << 8));
-    cpu_.ix = uint16_t(h[17] | (h[18] << 8));
-    cpu_.iff1 = (h[19] & 4) != 0;
-    cpu_.iff2 = cpu_.iff1;
-    cpu_.r = h[20];
-    cpu_.f = h[21];
-    cpu_.a = h[22];
-    cpu_.sp = uint16_t(h[23] | (h[24] << 8));
-    cpu_.im = h[25] & 3;
-    border_ = h[26] & 7;
+    SpectrumSnap snap;
+    if (!spectrum_snap_from_sna(buf.data(), buf.size(), snap, error)) return false;
+    apply_snap(snap);
+    return true;
+}
 
-    if (buf.size() >= 49179) {
-        // 128K format
-        std::memcpy(banks_[5].data(), buf.data() + 27, 0x4000);
-        std::memcpy(banks_[2].data(), buf.data() + 27 + 0x4000, 0x4000);
-        std::memcpy(banks_[0].data(), buf.data() + 27 + 0x8000, 0x4000);
-        const uint8_t* tail = buf.data() + 27 + 0xc000;
-        const uint16_t pc = uint16_t(tail[0] | (tail[1] << 8));
-        apply_7ffd(tail[2]);
-        cpu_.set_pc(pc);
-        // remaining 6 banks of 16K
-        size_t off = 27 + 0xc000 + 4;
-        for (int b = 0; b < 8; ++b) {
-            if (b == 0 || b == 2 || b == 5) continue;
-            if (off + 0x4000 <= buf.size()) {
-                std::memcpy(banks_[b].data(), buf.data() + off, 0x4000);
-                off += 0x4000;
-            }
-        }
-    } else {
-        // 48K-style into bank 5/2/0 mapped at 4000/8000/C000
-        std::memcpy(banks_[5].data(), buf.data() + 27, 0x4000);
-        std::memcpy(banks_[2].data(), buf.data() + 27 + 0x4000, 0x4000);
-        std::memcpy(banks_[0].data(), buf.data() + 27 + 0x8000, 0x4000);
-        const uint16_t sp = cpu_.sp;
-        const uint16_t pc = uint16_t(banks_[0][sp & 0x3fff] | (banks_[0][(sp + 1) & 0x3fff] << 8));
-        cpu_.sp = uint16_t(sp + 2);
-        cpu_.set_pc(pc);
-        marco_ = {8, 5, 2, 0};
-    }
-    cpu_.set_irq(IrqLine::Clear);
+bool Spectrum128k::load_rzx(const std::string& path, std::string* error) {
+    rzx_.stop();
+    if (!rzx_.load(path, error)) return false;
+    apply_snap(rzx_.snap());
+    rzx_.start();
     return true;
 }
 
