@@ -4,6 +4,7 @@
 #include "machine/psx_cdrom.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cctype>
 #include <fstream>
 #include <filesystem>
@@ -650,8 +651,18 @@ void PsxCdrom::cmd_getid() {
         enqueue_irq(5);
         return;
     }
-    // Licensed Mode2: SCEA
-    const uint8_t r[] = {0x02, 0x00, 0x20, 0x00, 0x53, 0x43, 0x45, 0x41};
+    // Region from license sector (LBA 4): Amer/Euro/Japa → SCEA/SCEE/SCEI.
+    // Falls back to SCEA when the sector cannot be read.
+    uint8_t region = 'A';
+    uint8_t sector[kBytesPerSector];
+    if (read_sector(4 + 150, sector)) {
+        // Mode2 Form1 user data at offset 24.
+        const char* text = reinterpret_cast<const char*>(sector + 24);
+        if (std::strstr(text, "Europe") != nullptr) region = 'E';
+        else if (std::strstr(text, "Japan") != nullptr) region = 'I';
+        else if (std::strstr(text, "Amer") != nullptr) region = 'A';
+    }
+    const uint8_t r[] = {0x02, 0x00, 0x20, 0x00, 0x53, 0x43, 0x45, region};
     for (uint8_t b : r) response_.push_back(b);
     enqueue_irq(2);
 }

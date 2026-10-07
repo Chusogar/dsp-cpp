@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -251,16 +253,17 @@ void Psx::set_inputs(const MachineInputs& inputs) {
     auto press = [&](PsxPadButton bit, bool down) {
         if (down) buttons = uint16_t(buttons & ~uint16_t(bit));
     };
-    press(kPsxPadUp, p.up);
-    press(kPsxPadDown, p.down);
-    press(kPsxPadLeft, p.left);
-    press(kPsxPadRight, p.right);
-    press(kPsxPadCross, p.button1);     // X
-    press(kPsxPadCircle, p.button2);    // O
-    press(kPsxPadSquare, p.button3);
-    press(kPsxPadTriangle, p.button4);
-    press(kPsxPadStart, p.start);
-    press(kPsxPadSelect, p.select);
+    press(kPsxPadUp, p.up || inputs.key(Key::Up));
+    press(kPsxPadDown, p.down || inputs.key(Key::Down));
+    press(kPsxPadLeft, p.left || inputs.key(Key::Left));
+    press(kPsxPadRight, p.right || inputs.key(Key::Right));
+    // Cross (X): button1 or Space (headless DSP_PULSE_SPACE / DSP_HOLD_KEYS)
+    press(kPsxPadCross, p.button1 || inputs.key(Key::Space));
+    press(kPsxPadCircle, p.button2 || inputs.key(Key::Z));
+    press(kPsxPadSquare, p.button3 || inputs.key(Key::X));
+    press(kPsxPadTriangle, p.button4 || inputs.key(Key::C));
+    press(kPsxPadStart, p.start || inputs.key(Key::Num1) || inputs.key(Key::Enter));
+    press(kPsxPadSelect, p.select || inputs.key(Key::Num3));
     joypad_.set_buttons(buttons);
 }
 
@@ -299,6 +302,44 @@ void Psx::run_frame() {
 
     const int samples = PsxSpu::kSampleRate / 60;
     spu_.drain_silence(audio_pending_, samples);
+
+    // Optional boot diagnostics: DSP_PSX_TRACE=1
+    static int frame_n = 0;
+    static const char* trace = std::getenv("DSP_PSX_TRACE");
+    if (trace && trace[0] == '1') {
+        const int f = frame_n++;
+        if (f % 60 == 0 || f == 900 || f == 1200 || f == 1800 || f == 2400) {
+            int nz = 0;
+            const int pixels = screen_w_ * screen_h_;
+            for (int i = 0; i < pixels; i++) {
+                if ((framebuffer_[size_t(i)] & 0x00FFFFFFu) != 0) nz++;
+            }
+            bool exe = false;
+            static const char kMagic[] = "PS-X EXE";
+            for (size_t i = 0; i + 8 <= ram_.size(); i += 0x800) {
+                if (std::memcmp(ram_.data() + i, kMagic, 8) == 0) {
+                    exe = true;
+                    break;
+                }
+            }
+            // Also check kernel EXE load buffer area ~0x8000..0x10000
+            if (!exe) {
+                for (uint32_t a = 0x8000; a < 0x20000; a += 4) {
+                    if (std::memcmp(ram_.data() + a, kMagic, 8) == 0) {
+                        exe = true;
+                        break;
+                    }
+                }
+            }
+            std::fprintf(stderr,
+                         "PSX f=%d pc=%08x sr=%08x irq=%04x/%04x cd_mode=%d loc=%d "
+                         "stat=%02x busy=%d irqQ=%zu exe=%d nz=%d %dx%d\n",
+                         f, cpu_.pc(), cpu_.cop0_sr(), irq_.istat(), irq_.imask(),
+                         cdrom_.debug_mode(), cdrom_.debug_read_loc(), cdrom_.debug_stat(),
+                         int(cdrom_.debug_busy()), cdrom_.debug_irq_queue(), int(exe), nz,
+                         screen_w_, screen_h_);
+        }
+    }
 }
 
 void Psx::drain_audio(std::vector<int16_t>& out) {

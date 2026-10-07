@@ -42,6 +42,14 @@ public:
     bool disc_loaded() const { return !tracks_.empty(); }
     const std::vector<PsxCdTrack>& tracks() const { return tracks_; }
 
+    int debug_mode() const { return int(mode_); }
+    int debug_read_loc() const { return read_loc_; }
+    uint8_t debug_stat() const { return stat_; }
+    uint8_t debug_if() const { return if_; }
+    uint8_t debug_ie() const { return ie_; }
+    bool debug_busy() const { return busy_; }
+    size_t debug_irq_queue() const { return irq_queue_.size(); }
+
 private:
     struct SectorBuf {
         std::vector<uint8_t> data;

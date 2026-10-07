@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -49,6 +50,40 @@ public:
 
     uint32_t debug_pc() const { return cpu_.pc(); }
     uint32_t debug_gpr(int n) const { return cpu_.gpr(n); }
+    uint32_t debug_cop0_sr() const { return cpu_.cop0_sr(); }
+    uint8_t debug_ram8(uint32_t addr) const {
+        return ram_[addr & 0x1FFFFFu];
+    }
+    uint32_t debug_ram32(uint32_t addr) const {
+        const uint32_t a = addr & 0x1FFFFCu;
+        return uint32_t(ram_[a]) | (uint32_t(ram_[a + 1]) << 8) |
+               (uint32_t(ram_[a + 2]) << 16) | (uint32_t(ram_[a + 3]) << 24);
+    }
+    // Returns true if "PS-X EXE" magic is present in RAM (EXE loaded).
+    bool debug_exe_loaded() const {
+        static const char kMagic[] = "PS-X EXE";
+        for (size_t i = 0; i + 8 <= ram_.size(); i++) {
+            if (std::memcmp(ram_.data() + i, kMagic, 8) == 0) return true;
+        }
+        // Also check common load addresses without full scan of header leftovers.
+        const uint32_t addrs[] = {0x80010000u, 0x8000F800u, 0x80030000u, 0x00010000u, 0x0000F800u};
+        for (uint32_t a : addrs) {
+            bool ok = true;
+            for (int i = 0; i < 8; i++) {
+                if (ram_[(a + uint32_t(i)) & 0x1FFFFFu] != uint8_t(kMagic[i])) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok) return true;
+        }
+        return false;
+    }
+    int debug_cd_mode() const { return cdrom_.debug_mode(); }
+    int debug_cd_read_loc() const { return cdrom_.debug_read_loc(); }
+    uint8_t debug_cd_stat() const { return cdrom_.debug_stat(); }
+    uint32_t debug_irq_status() const { return irq_.istat(); }
+    uint32_t debug_irq_mask() const { return irq_.imask(); }
 
 private:
     static uint32_t physical_addr(uint32_t address);
