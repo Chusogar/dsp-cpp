@@ -71,6 +71,7 @@ private:
     void update_memory();
     void apply_keyboard(const MachineInputs& in);
     void render_line(int line);
+    void ula_latch_column(int col);
     bool load_roms(const std::string& path, std::string* error);
 
     ZxCloneModel model_;
@@ -109,6 +110,10 @@ private:
     int line_ = 0;
     int t_in_line_ = 0;
     int frame_t_ = 0;
+    // ULA paper latches — fetch-time pixel+attr for multicolour (8×1).
+    std::array<uint8_t, 32> latch_pix_{};
+    std::array<uint8_t, 32> latch_attr_{};
+    uint32_t latch_mask_ = 0;
     std::vector<int16_t> audio_;
     int64_t audio_acc_ = 0;
     int16_t beeper_level_ = 0;

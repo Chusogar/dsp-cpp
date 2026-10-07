@@ -485,11 +485,28 @@ void Spectrum128k::io_out(uint16_t port, uint8_t value) {
     }
 }
 
+void Spectrum128k::ula_latch_column(int col) {
+    if (col < 0 || col >= 32) return;
+    if (line_ < 63 || line_ > 254) return;
+    const int y = line_ - 63;
+    if (y < 0 || y >= 192) return;
+    const auto& vram = banks_[pantalla_];
+    const uint16_t pix_base = kScrTable[y];
+    const int attr_row = (y >> 3) << 5;
+    latch_pix_[size_t(col)] = vram[pix_base + col];
+    latch_attr_[size_t(col)] = vram[0x1800 + attr_row + col];
+    latch_mask_ |= (1u << col);
+}
+
 void Spectrum128k::on_cycles(int cycles) {
     for (int n = 0; n < cycles; ++n) {
         if (frame_t_ >= kTstatesPerFrame) {
             ++frame_t_;
             continue;
+        }
+        if (line_ >= 63 && line_ <= 254 && t_in_line_ >= 0 && t_in_line_ < 128 &&
+            (t_in_line_ & 3) == 0) {
+            ula_latch_column(t_in_line_ >> 2);
         }
         if (line_ >= 0 && line_ < kLinesPerFrame &&
             t_in_line_ >= 0 && t_in_line_ < kTstatesPerLine) {
@@ -500,6 +517,7 @@ void Spectrum128k::on_cycles(int cycles) {
         if (t_in_line_ >= kTstatesPerLine) {
             t_in_line_ -= kTstatesPerLine;
             render_line(line_);
+            latch_mask_ = 0;
             ++line_;
         }
     }
@@ -559,7 +577,7 @@ void Spectrum128k::render_line(int line) {
         dst[304 + f * 2 + 1] = c;
     }
 
-    // Paper from display bank
+    // Paper from display bank — prefer ULA latches for multicolour.
     if (line >= 63 && line <= 254)  /* Pascal: skip centre border when linea>62 && linea<255 */ {
         const int y = line - 63;
         if (y >= 0 && y < 192) {
@@ -568,8 +586,12 @@ void Spectrum128k::render_line(int line) {
             const int attr_row = (y >> 3) << 5;
             const bool uplus = ulaplus_.active && ulaplus_.enabled;
             for (int col = 0; col < 32; ++col) {
-                const uint8_t attrib = vram[0x1800 + attr_row + col];
-                const uint8_t pixels = vram[pix_base + col];
+                const uint8_t attrib = (latch_mask_ & (1u << col))
+                                           ? latch_attr_[size_t(col)]
+                                           : vram[0x1800 + attr_row + col];
+                const uint8_t pixels = (latch_mask_ & (1u << col))
+                                           ? latch_pix_[size_t(col)]
+                                           : vram[pix_base + col];
                 uint32_t c_ink, c_paper;
                 if (uplus) {
                     const int bank =
@@ -618,6 +640,7 @@ void Spectrum128k::run_frame() {
     }
     border_pos_ = 0;
 
+    latch_mask_ = 0;
     // Drive by ULA time — contended waits advance the beam via on_cycles.
     cpu_.set_irq(IrqLine::Hold);
     while (frame_t_ < kTstatesPerFrame) {
