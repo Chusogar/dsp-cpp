@@ -16,8 +16,9 @@ namespace dsp {
 enum class ZxCloneModel { Pentagon1024, Scorpion256 };
 
 // Shared Pentagon-timing Spectrum clone: 3.5 MHz, 224 T/line, 320 lines,
-// uncontended RAM, AY, Beta 128 (TRD/SCL). Pentagon 1024 and Scorpion 256
-// only differ in paging.
+// uncontended RAM, AY, Beta 128 (TRD/SCL), per-T-state border (loading
+// stripes / mid-frame splits). Pentagon 1024 and Scorpion 256 only differ
+// in paging.
 class ZxClone : public Machine {
 public:
     static constexpr int kScreenWidth = 352;
