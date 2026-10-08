@@ -323,7 +323,8 @@ bool spectrum_snap_from_szx(const uint8_t* data, size_t size, SpectrumSnap& out,
 
     bool got_z80 = false;
     bool got_ram = false;
-    size_t off = 10;
+    // ZXSTHEADER is 8 bytes (magic + major/minor/machine/flags), not 10.
+    size_t off = 8;
     while (off + 8 <= size) {
         const uint8_t* hdr = data + off;
         const uint32_t blk_size = rd32(hdr + 4);
