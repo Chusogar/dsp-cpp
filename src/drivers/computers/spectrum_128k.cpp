@@ -161,7 +161,7 @@ bool Spectrum128k::init(const std::string& rom_path, std::string* error) {
     cpu_.set_io_handlers(
         [this](uint16_t p) { return io_in(p); },
         [this](uint16_t p, uint8_t v) { io_out(p, v); });
-    cpu_.set_cycle_handler([this](int c) { on_cycles(c); });
+    cpu_.set_cycle_handler([this](int c) { on_insn_cycles(c); });
     cpu_.set_m1_handler([this]() {
         if (rzx_.playing()) rzx_.on_m1();
     });
@@ -284,7 +284,24 @@ void Spectrum128k::apply_keyboard(const MachineInputs& in) {
 
 
 void Spectrum128k::contend(int extra) {
-    if (extra > 0) on_cycles(extra);
+    // See Spectrum48k::contend — wait+2 for mid-instruction bus settle.
+    if (extra > 0) on_cycles(extra + 2);
+}
+
+int Spectrum128k::ula_time() {
+    const int tin = cpu_.t_in_instruction();
+    const int delta = tin - instr_t_flushed_;
+    if (delta > 0) {
+        on_cycles(delta);
+        instr_t_flushed_ += delta;
+    }
+    return frame_t_;
+}
+
+void Spectrum128k::on_insn_cycles(int cycles) {
+    int rem = cycles - instr_t_flushed_;
+    instr_t_flushed_ = 0;
+    if (rem > 0) on_cycles(rem);
 }
 
 uint8_t Spectrum128k::mem_read(uint16_t addr) {
@@ -297,9 +314,10 @@ uint8_t Spectrum128k::mem_read(uint16_t addr) {
     }
     const uint8_t bank = marco_[slot];
     // Contention: $4000 always (bank 5), $C000 if odd bank
+    const int t = ula_time();
     if (slot == 1 || (slot == 3 && (bank & 1))) {
-        if (frame_t_ >= 0 && frame_t_ < int(contention_.size())) {
-            const uint8_t extra = contention_[size_t(frame_t_)];
+        if (t >= 0 && t < int(contention_.size())) {
+            const uint8_t extra = contention_[size_t(t)];
             if (extra) contend(extra);
         }
     }
@@ -310,9 +328,10 @@ void Spectrum128k::mem_write(uint16_t addr, uint8_t value) {
     const int slot = addr >> 14;
     const uint8_t bank = marco_[slot];
     if (bank >= 8) return;  // ROM
+    const int t = ula_time();
     if (slot == 1 || (slot == 3 && (bank & 1))) {
-        if (frame_t_ >= 0 && frame_t_ < int(contention_.size())) {
-            const uint8_t extra = contention_[size_t(frame_t_)];
+        if (t >= 0 && t < int(contention_.size())) {
+            const uint8_t extra = contention_[size_t(t)];
             if (extra) contend(extra);
         }
     }
@@ -366,7 +385,7 @@ uint8_t Spectrum128k::floating_bus() const {
 void Spectrum128k::apply_port_contention(uint16_t port) {
     // ULA I/O wait states only — the Z80 core already charges the base I/O
     // T-states via cycle_handler.  Adding the full 4 T here would double-count.
-    const int pos = frame_t_;
+    const int pos = ula_time();
     auto delay_at = [&](int p) -> int {
         if (p >= 0 && p < int(contention_.size())) return contention_[size_t(p)];
         return 0;
@@ -677,6 +696,7 @@ void Spectrum128k::run_rzx_frame() {
     t_in_line_ = 0;
     border_pos_ = 0;
     frame_t_ = 0;
+    instr_t_flushed_ = 0;
     latch_mask_ = 0;
     {
         const uint8_t col = border_index();
@@ -699,6 +719,7 @@ void Spectrum128k::run_rzx_frame() {
     t_in_line_ = 0;
     border_pos_ = 0;
     frame_t_ = 0;
+    instr_t_flushed_ = 0;
     flash_count_ = (flash_count_ + 1) & 0x0f;
     if (flash_count_ == 0) flash_ = !flash_;
 }
@@ -712,6 +733,7 @@ void Spectrum128k::run_frame() {
     t_in_line_ = 0;
     border_pos_ = 0;
     frame_t_ = 0;
+    instr_t_flushed_ = 0;
     // Seed this frame's border buffer with the current border colour so any
     // line without an OUT still has a valid per-T colour.
     {
@@ -741,6 +763,7 @@ void Spectrum128k::run_frame() {
     t_in_line_ = 0;
     border_pos_ = 0;
     frame_t_ = 0;
+    instr_t_flushed_ = 0;
     flash_count_ = (flash_count_ + 1) & 0x0f;
     if (flash_count_ == 0) flash_ = !flash_;
 }

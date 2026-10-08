@@ -68,6 +68,9 @@ public:
 
 private:
     void build_contention();
+    // Sync ULA beam to mid-instruction T-state, then return absolute ULA time.
+    int ula_time();
+    void on_insn_cycles(int cycles);
     // Apply ULA wait states as real elapsed T-states (paint border / advance beam).
     void contend(int extra);
     void apply_port_contention(uint16_t port);
@@ -122,6 +125,9 @@ private:
     int line_ = 0;
     int t_in_line_ = 0;
     int frame_t_ = 0;
+    // Base T-states of the current insn already advanced on the ULA beam
+    // (via ula_time mid-access flushes). on_insn_cycles charges the remainder.
+    int instr_t_flushed_ = 0;
     std::array<uint8_t, 71000> contention_{};
 
     // ULA paper latches for the current scanline (one byte pair per 8-pixel cell).

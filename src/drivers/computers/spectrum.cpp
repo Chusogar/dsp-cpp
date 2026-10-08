@@ -149,7 +149,7 @@ bool Spectrum48k::init(const std::string& rom_path, std::string* error) {
     cpu_.set_io_handlers(
         [this](uint16_t p) { return io_in(p); },
         [this](uint16_t p, uint8_t v) { io_out(p, v); });
-    cpu_.set_cycle_handler([this](int c) { on_cycles(c); });
+    cpu_.set_cycle_handler([this](int c) { on_insn_cycles(c); });
     cpu_.set_m1_handler([this]() {
         if (rzx_.playing()) rzx_.on_m1();
     });
@@ -187,6 +187,7 @@ void Spectrum48k::reset() {
     line_ = 0;
     t_in_line_ = 0;
     frame_t_ = 0;
+    instr_t_flushed_ = 0;
     audio_.clear();
     audio_acc_ = 0;
     beeper_level_ = 0;
@@ -256,15 +257,38 @@ void Spectrum48k::apply_keyboard(const MachineInputs& in) {
 }
 
 void Spectrum48k::contend(int extra) {
-    if (extra > 0) on_cycles(extra);
+    // Contended accesses retire wait+2 T beyond the ULA slot table.  The extra
+    // covers IR/bus settle between mid-instruction accesses that our Z80 still
+    // retires in bulk; Aquaplane's cyan/blue border then meets the sea within
+    // ~1 scanline (left lags right by one line — real ULA geometry).
+    if (extra > 0) on_cycles(extra + 2);
+}
+
+int Spectrum48k::ula_time() {
+    // Retire base T-states up to the current mid-instruction offset so contention
+    // is evaluated at the real beam position (Fuse-style interleaved timing).
+    const int tin = cpu_.t_in_instruction();
+    const int delta = tin - instr_t_flushed_;
+    if (delta > 0) {
+        on_cycles(delta);
+        instr_t_flushed_ += delta;
+    }
+    return frame_t_;
+}
+
+void Spectrum48k::on_insn_cycles(int cycles) {
+    int rem = cycles - instr_t_flushed_;
+    instr_t_flushed_ = 0;
+    if (rem > 0) on_cycles(rem);
 }
 
 uint8_t Spectrum48k::mem_read(uint16_t addr) {
     if (model_ == Model::Spec16k) addr = uint16_t(addr & 0x7fff);
     // Contention on $4000-$7FFF during pixel display — must advance the ULA
     // beam (and paint border_buf_) for the wait states, not just bump counters.
-    if ((addr & 0xc000) == 0x4000 && frame_t_ >= 0 && frame_t_ < int(contention_.size())) {
-        const uint8_t extra = contention_[size_t(frame_t_)];
+    const int t = ula_time();
+    if ((addr & 0xc000) == 0x4000 && t >= 0 && t < int(contention_.size())) {
+        const uint8_t extra = contention_[size_t(t)];
         if (extra) contend(extra);
     }
     return mem_[addr];
@@ -273,8 +297,9 @@ uint8_t Spectrum48k::mem_read(uint16_t addr) {
 void Spectrum48k::mem_write(uint16_t addr, uint8_t value) {
     if (model_ == Model::Spec16k) addr = uint16_t(addr & 0x7fff);
     if (addr < 0x4000) return;  // ROM
-    if ((addr & 0xc000) == 0x4000 && frame_t_ >= 0 && frame_t_ < int(contention_.size())) {
-        const uint8_t extra = contention_[size_t(frame_t_)];
+    const int t = ula_time();
+    if ((addr & 0xc000) == 0x4000 && t >= 0 && t < int(contention_.size())) {
+        const uint8_t extra = contention_[size_t(t)];
         if (extra) contend(extra);
     }
     mem_[addr] = value;
@@ -282,7 +307,7 @@ void Spectrum48k::mem_write(uint16_t addr, uint8_t value) {
 
 void Spectrum48k::apply_port_contention(uint16_t port) {
     // Wait states only — Z80 already charges the base I/O T-states.
-    const int pos = frame_t_;
+    const int pos = ula_time();
     auto delay_at = [&](int p) -> int {
         if (p >= 0 && p < int(contention_.size())) return contention_[size_t(p)];
         return 0;
@@ -573,6 +598,7 @@ void Spectrum48k::run_rzx_frame() {
     t_in_line_ = 0;
     border_pos_ = 0;
     frame_t_ = 0;
+    instr_t_flushed_ = 0;
     latch_mask_ = 0;
     {
         const uint8_t col = border_index();
@@ -596,6 +622,7 @@ void Spectrum48k::run_rzx_frame() {
     t_in_line_ = 0;
     border_pos_ = 0;
     frame_t_ = 0;
+    instr_t_flushed_ = 0;
     flash_count_ = (flash_count_ + 1) & 0x0f;
     if (flash_count_ == 0) flash_ = !flash_;
 }
@@ -609,6 +636,7 @@ void Spectrum48k::run_frame() {
     t_in_line_ = 0;
     border_pos_ = 0;  // absolute T within frame
     frame_t_ = 0;
+    instr_t_flushed_ = 0;
     // Seed buffer with current colour (Pascal leaves previous frame data; we
     // start clean so every T-state has a defined colour until the next OUT).
     {
@@ -641,6 +669,7 @@ void Spectrum48k::run_frame() {
     t_in_line_ = 0;
     border_pos_ = 0;
     frame_t_ = 0;
+    instr_t_flushed_ = 0;
 
     flash_count_ = (flash_count_ + 1) & 0x0f;
     if (flash_count_ == 0) flash_ = !flash_;

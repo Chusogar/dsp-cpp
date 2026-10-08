@@ -33,6 +33,10 @@ public:
     // Called immediately before the next opcode fetch (PC still points at the opcode).
     void set_instruction_hook(InstructionHook handler) { instruction_hook_ = std::move(handler); }
     void set_m1_handler(M1Handler handler) { m1_handler_ = std::move(handler); }
+    // Base T-states elapsed inside the current instruction (before cycle_handler
+    // flushes them). Spectrum ULA contention looks up at frame_t + this value so
+    // mid-instruction memory/IO sees the correct beam position.
+    int t_in_instruction() const { return t_in_instr_; }
 
     // Replace the built-in T-state tables. Null entries keep the current table.
     // The Amstrad CPC Gate Array stretches almost every opcode to a multiple of
@@ -91,8 +95,15 @@ public:
     static constexpr uint8_t SF = 0x80;
 
 private:
-    uint8_t rd(uint16_t addr) const { return read_(addr); }
-    void wr(uint16_t addr, uint8_t value) { write_(addr, value); }
+    uint8_t rd(uint16_t addr) const {
+        uint8_t v = read_(addr);
+        t_in_instr_ += 3;
+        return v;
+    }
+    void wr(uint16_t addr, uint8_t value) {
+        write_(addr, value);
+        t_in_instr_ += 3;
+    }
     uint8_t fetch();
     uint16_t fetch16();
     void push(uint16_t value);
@@ -159,6 +170,7 @@ private:
     InstructionHook instruction_hook_;
     M1Handler m1_handler_;
     IrqAckHandler irq_ack_;
+    mutable int t_in_instr_ = 0;
     void bump_r_m1() {
         r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
         if (m1_handler_) m1_handler_();
