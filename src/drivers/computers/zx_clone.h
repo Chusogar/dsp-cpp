@@ -49,6 +49,7 @@ public:
     const char* title() const override;
     bool uses_keyboard() const override { return true; }
     bool load_media(const std::string& path, std::string* error) override;
+    bool load_sna(const std::string& path, std::string* error);
     bool load_rzx(const std::string& path, std::string* error);
     bool rzx_playing() const { return rzx_.playing(); }
     void tape_toggle_play() override;
