@@ -525,7 +525,11 @@ void Spectrum3::on_cycles(int cycles) {
         }
     }
 
-    if (tape_.is_playing()) ear_ = tape_.advance(cycles) ? 0x40 : 0x00;
+    if (tape_.is_playing()) {
+        ear_ = tape_.advance(cycles) ? 0x40 : 0x00;
+    } else if (tape_.is_loaded()) {
+        maybe_start_tape_from_rom();
+    }
 
     if (if2_present_ && !if2_switched_) {
         if2_delay_ += cycles;
@@ -745,8 +749,16 @@ bool Spectrum3::load_media(const std::string& path, std::string* error) {
 
 bool Spectrum3::load_tape(const std::string& path, std::string* error) {
     if (!tape_.load_file(path, error)) return false;
-    tape_.play(true);
+    // Stopped until 48K ROM tape service is entered (+3 Loader pages it in).
+    tape_.stop();
     return true;
+}
+
+void Spectrum3::maybe_start_tape_from_rom() {
+    if (!tape_.is_loaded() || tape_.is_playing()) return;
+    const uint16_t pc = cpu_.pc();
+    if ((pc >= 0x04c2 && pc < 0x0800) || (pc >= 0x056c && pc < 0x0600))
+        tape_.play(true);
 }
 
 void Spectrum3::tape_play() {

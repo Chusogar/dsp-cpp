@@ -458,6 +458,10 @@ void Spectrum48k::on_cycles(int cycles) {
 
     if (tape_.is_playing()) {
         ear_ = tape_.advance(cycles) ? 0x40 : 0x00;
+    } else if (tape_.is_loaded()) {
+        // Start the tape when the 48K ROM enters LD-BYTES / SA-BYTES range so
+        // auto-play cannot burn through the file before LOAD "" runs.
+        maybe_start_tape_from_rom();
     }
 
     audio_acc_ += int64_t(cycles) * kSampleRate;
@@ -702,9 +706,18 @@ bool Spectrum48k::load_media(const std::string& path, std::string* error) {
 
 bool Spectrum48k::load_tape(const std::string& path, std::string* error) {
     if (!tape_.load_file(path, error)) return false;
-    // Spectrum has no motor bit: auto-start like classic emulators / play_tape.
-    tape_.play(true);
+    // Keep the tape stopped until the ROM loader is entered (see on_cycles).
+    // Auto-playing from boot consumes the pilot before LOAD "" can run.
+    tape_.stop();
     return true;
+}
+
+void Spectrum48k::maybe_start_tape_from_rom() {
+    if (!tape_.is_loaded() || tape_.is_playing()) return;
+    const uint16_t pc = cpu_.pc();
+    // 48K ROM: SA/LD-BYTES and the surrounding tape service routines.
+    if ((pc >= 0x04c2 && pc < 0x0800) || (pc >= 0x056c && pc < 0x0600))
+        tape_.play(true);
 }
 
 void Spectrum48k::tape_play() {

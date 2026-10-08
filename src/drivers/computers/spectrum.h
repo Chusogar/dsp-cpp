@@ -55,6 +55,7 @@ public:
     void tape_play();
     void tape_stop();
     bool tape_playing() const { return tape_.is_playing(); }
+    bool tape_loaded() const { return tape_.is_loaded(); }
 
     bool load_sna(const std::string& path, std::string* error);
     bool load_rzx(const std::string& path, std::string* error);
@@ -80,6 +81,7 @@ private:
     void border_fill_to(int abs_t);  // absolute T in frame
     void border_on_out();
     uint8_t border_index() const;
+    void maybe_start_tape_from_rom();
     void apply_keyboard(const MachineInputs& in);
     void apply_snap(const SpectrumSnap& snap);
     void run_rzx_frame();
