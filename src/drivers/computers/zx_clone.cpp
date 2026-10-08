@@ -79,8 +79,8 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
     for (auto& page : rom_) page.fill(0);
     std::string dir = path;
     if (ends_ci(path, ".trd") || ends_ci(path, ".scl") || ends_ci(path, ".tap") ||
-        ends_ci(path, ".tzx") || ends_ci(path, ".cdt") || ends_ci(path, ".sna") ||
-        ends_ci(path, ".rzx")) {
+        ends_ci(path, ".tzx") || ends_ci(path, ".cdt") || ends_ci(path, ".csw") ||
+        ends_ci(path, ".pzx") || ends_ci(path, ".sna") || ends_ci(path, ".rzx")) {
         dir = fs::path(path).parent_path().string();
         if (dir.empty()) dir = ".";
     }
@@ -280,7 +280,8 @@ bool ZxClone::init(const std::string& rom_path, std::string* error) {
         std::string disk_error;
         if (!beta_.load_disk(rom_path, &disk_error)) warnings_.push_back(disk_error);
     } else if (ends_ci(rom_path, ".sna") || ends_ci(rom_path, ".rzx") || ends_ci(rom_path, ".tzx") ||
-               ends_ci(rom_path, ".tap") || ends_ci(rom_path, ".cdt")) {
+               ends_ci(rom_path, ".tap") || ends_ci(rom_path, ".cdt") || ends_ci(rom_path, ".csw") ||
+               ends_ci(rom_path, ".pzx")) {
         std::string media_error;
         if (!load_media(rom_path, &media_error)) warnings_.push_back(media_error);
     }
@@ -833,14 +834,15 @@ void ZxClone::apply_keyboard(const MachineInputs& in) {
 
 bool ZxClone::load_media(const std::string& path, std::string* error) {
     if (ends_ci(path, ".trd") || ends_ci(path, ".scl")) return beta_.load_disk(path, error);
-    if (ends_ci(path, ".tzx") || ends_ci(path, ".tap") || ends_ci(path, ".cdt")) {
+    if (ends_ci(path, ".tzx") || ends_ci(path, ".tap") || ends_ci(path, ".cdt") ||
+        ends_ci(path, ".csw") || ends_ci(path, ".pzx")) {
         if (!tape_.load_file(path, error)) return false;
         tape_.stop();
         return true;
     }
     if (ends_ci(path, ".sna")) return load_sna(path, error);
     if (ends_ci(path, ".rzx")) return load_rzx(path, error);
-    if (error) *error = "unsupported media (use .trd/.scl disk, .tap/.tzx tape, .sna, or .rzx): " + path;
+    if (error) *error = "unsupported media (use .trd/.scl disk, .tap/.tzx/.csw/.pzx tape, .sna, or .rzx): " + path;
     return false;
 }
 

@@ -64,6 +64,7 @@ private:
     uint8_t io_in(uint16_t port);
     void io_out(uint16_t port, uint8_t value);
     void on_cycles(int cycles);
+    void maybe_start_tape_from_rom();
     void contend(int extra);
     int ula_time();
     void on_insn_cycles(int cycles);
