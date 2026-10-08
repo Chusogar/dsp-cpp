@@ -7,7 +7,7 @@
 
 namespace dsp {
 
-// Decoded ZX Spectrum snapshot (SNA or Z80), ready to apply to a machine.
+// Decoded ZX Spectrum snapshot (SNA / Z80 / SZX), ready to apply to a machine.
 struct SpectrumSnap {
     uint8_t a = 0, f = 0, b = 0, c = 0, d = 0, e = 0, h = 0, l = 0;
     uint8_t a2 = 0, f2 = 0, b2 = 0, c2 = 0, d2 = 0, e2 = 0, h2 = 0, l2 = 0;
@@ -30,6 +30,7 @@ struct SpectrumSnap {
 
 bool spectrum_snap_from_sna(const uint8_t* data, size_t size, SpectrumSnap& out, std::string* error);
 bool spectrum_snap_from_z80(const uint8_t* data, size_t size, SpectrumSnap& out, std::string* error);
+bool spectrum_snap_from_szx(const uint8_t* data, size_t size, SpectrumSnap& out, std::string* error);
 bool spectrum_snap_from_bytes(const uint8_t* data, size_t size, const char* ext_hint, SpectrumSnap& out,
                               std::string* error);
 

@@ -782,7 +782,7 @@ bool Spectrum128k::load_media(const std::string& path, std::string* error) {
     };
     if (ends(".tzx") || ends(".tap") || ends(".csw") || ends(".pzx") || ends(".cdt"))
         return load_tape(path, error);
-    if (ends(".sna")) return load_sna(path, error);
+    if (ends(".sna") || ends(".szx") || ends(".zx-state")) return load_sna(path, error);
     if (ends(".rzx")) return load_rzx(path, error);
     if (ends(".rom") || ends(".bin") || ends(".if2")) return load_if2(path, error);
     if (error) *error = "unsupported media: " + path;
@@ -815,11 +815,11 @@ void Spectrum128k::tape_stop() {
 bool Spectrum128k::load_sna(const std::string& path, std::string* error) {
     std::vector<uint8_t> buf;
     if (!load_file(path, buf)) {
-        if (error) *error = "cannot open SNA";
+        if (error) *error = "cannot open snapshot";
         return false;
     }
     SpectrumSnap snap;
-    if (!spectrum_snap_from_sna(buf.data(), buf.size(), snap, error)) return false;
+    if (!spectrum_snap_from_bytes(buf.data(), buf.size(), path.c_str(), snap, error)) return false;
     apply_snap(snap);
     return true;
 }
