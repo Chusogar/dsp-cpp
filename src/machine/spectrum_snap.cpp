@@ -272,17 +272,27 @@ bool spectrum_snap_from_z80(const uint8_t* data, size_t size, SpectrumSnap& out,
 
 bool spectrum_snap_from_bytes(const uint8_t* data, size_t size, const char* ext_hint, SpectrumSnap& out,
                               std::string* error) {
-    std::string ext;
+    // ext_hint may be a full path, a bare extension ("sna"/"z80" from RZX), or ".z80".
+    // Only the final suffix decides the decoder — a path like .../sna/game.z80 must not
+    // match the directory name.
+    std::string hint;
     if (ext_hint) {
         for (const char* p = ext_hint; *p; ++p) {
             char ch = *p;
             if (ch >= 'A' && ch <= 'Z') ch = char(ch - 'A' + 'a');
-            if (ch == 0) break;
-            ext.push_back(ch);
+            hint.push_back(ch);
         }
     }
-    if (ext.find("sna") != std::string::npos) return spectrum_snap_from_sna(data, size, out, error);
-    if (ext.find("z80") != std::string::npos) return spectrum_snap_from_z80(data, size, out, error);
+    std::string ext = hint;
+    const auto slash = ext.find_last_of("/\\");
+    if (slash != std::string::npos) ext = ext.substr(slash + 1);
+    const auto dot = ext.find_last_of('.');
+    if (dot != std::string::npos) ext = ext.substr(dot + 1);
+    // Trim trailing NULs / spaces from RZX 4-byte extension fields.
+    while (!ext.empty() && (ext.back() == '\0' || ext.back() == ' ')) ext.pop_back();
+
+    if (ext == "sna") return spectrum_snap_from_sna(data, size, out, error);
+    if (ext == "z80") return spectrum_snap_from_z80(data, size, out, error);
     // Autodetect classic SNA sizes (48K = 49179, 128K = 131103 / 147487).
     if (size == 49179 || size == 131103 || size == 147487) {
         if (spectrum_snap_from_sna(data, size, out, error)) return true;
