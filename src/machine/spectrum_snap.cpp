@@ -1,11 +1,50 @@
 #include "machine/spectrum_snap.h"
 
 #include <cstring>
+#include <zlib.h>
 
 namespace dsp {
 namespace {
 
 uint16_t rd16(const uint8_t* p) { return uint16_t(p[0] | (uint16_t(p[1]) << 8)); }
+uint32_t rd32(const uint8_t* p) {
+    return uint32_t(p[0] | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24));
+}
+
+bool id_eq(const uint8_t* p, char a, char b, char c, char d) {
+    return p[0] == uint8_t(a) && p[1] == uint8_t(b) && p[2] == uint8_t(c) && p[3] == uint8_t(d);
+}
+
+bool zlib_inflate_exact(const uint8_t* src, size_t src_len, uint8_t* dst, size_t dst_len, std::string* error) {
+    uLongf out_len = uLongf(dst_len);
+    const int z = ::uncompress(dst, &out_len, src, uLongf(src_len));
+    if (z != Z_OK || out_len != dst_len) {
+        if (error) *error = "SZX zlib decompress failed";
+        return false;
+    }
+    return true;
+}
+
+std::string snap_extension(const char* ext_hint) {
+    // ext_hint may be a full path, a bare extension ("sna"/"z80"/"szx" from RZX), or ".szx".
+    // Only the final suffix decides the decoder — a path like .../sna/game.szx must not
+    // match the directory name.
+    std::string hint;
+    if (ext_hint) {
+        for (const char* p = ext_hint; *p; ++p) {
+            char ch = *p;
+            if (ch >= 'A' && ch <= 'Z') ch = char(ch - 'A' + 'a');
+            hint.push_back(ch);
+        }
+    }
+    std::string ext = hint;
+    const auto slash = ext.find_last_of("/\\");
+    if (slash != std::string::npos) ext = ext.substr(slash + 1);
+    const auto dot = ext.find_last_of('.');
+    if (dot != std::string::npos) ext = ext.substr(dot + 1);
+    while (!ext.empty() && (ext.back() == '\0' || ext.back() == ' ')) ext.pop_back();
+    return ext;
+}
 
 void apply_regs_from_z80_header(SpectrumSnap& out, const uint8_t* h) {
     out.a = h[0];
@@ -270,20 +309,135 @@ bool spectrum_snap_from_z80(const uint8_t* data, size_t size, SpectrumSnap& out,
     return true;
 }
 
+bool spectrum_snap_from_szx(const uint8_t* data, size_t size, SpectrumSnap& out, std::string* error) {
+    // Spectaculator zx-state (.szx): ZXST header + Z80R/SPCR/RAMP[/AY] blocks.
+    if (!data || size < 10 || std::memcmp(data, "ZXST", 4) != 0) {
+        if (error) *error = "not an SZX snapshot";
+        return false;
+    }
+    out = SpectrumSnap{};
+    const uint8_t machine = data[6];
+    // 48K-class: 16K/48K/Timex/NTSC48. Everything else is treated as 128K paging.
+    out.is_128 = !(machine == 0 || machine == 1 || machine == 8 || machine == 9 || machine == 11 ||
+                   machine == 12 || machine == 15);
+
+    bool got_z80 = false;
+    bool got_ram = false;
+    // ZXSTHEADER is 8 bytes (magic + major/minor/machine/flags), not 10.
+    size_t off = 8;
+    while (off + 8 <= size) {
+        const uint8_t* hdr = data + off;
+        const uint32_t blk_size = rd32(hdr + 4);
+        off += 8;
+        if (off + blk_size > size) {
+            if (error) *error = "SZX block truncated";
+            return false;
+        }
+        const uint8_t* payload = data + off;
+        const size_t plen = blk_size;
+
+        if (id_eq(hdr, 'Z', '8', '0', 'R')) {
+            // ZXSTZ80REGS — AF/BC/... are little-endian WORDs (F then A, etc.).
+            if (plen < 37) {
+                if (error) *error = "SZX Z80R block too small";
+                return false;
+            }
+            out.f = payload[0];
+            out.a = payload[1];
+            out.c = payload[2];
+            out.b = payload[3];
+            out.e = payload[4];
+            out.d = payload[5];
+            out.l = payload[6];
+            out.h = payload[7];
+            out.f2 = payload[8];
+            out.a2 = payload[9];
+            out.c2 = payload[10];
+            out.b2 = payload[11];
+            out.e2 = payload[12];
+            out.d2 = payload[13];
+            out.l2 = payload[14];
+            out.h2 = payload[15];
+            out.ix = rd16(payload + 16);
+            out.iy = rd16(payload + 18);
+            out.sp = rd16(payload + 20);
+            out.pc = rd16(payload + 22);
+            out.i = payload[24];
+            out.r = payload[25];
+            out.iff1 = payload[26] != 0;
+            out.iff2 = payload[27] != 0;
+            out.im = uint8_t(payload[28] & 3);
+            got_z80 = true;
+        } else if (id_eq(hdr, 'S', 'P', 'C', 'R')) {
+            if (plen < 3) {
+                if (error) *error = "SZX SPCR block too small";
+                return false;
+            }
+            out.border = uint8_t(payload[0] & 7);
+            out.port_7ffd = payload[1];
+            out.port_1ffd = payload[2];
+        } else if (id_eq(hdr, 'R', 'A', 'M', 'P')) {
+            // ZXSTRAMPAGE: wFlags, chPageNo, then 16K (optionally zlib).
+            if (plen < 3) {
+                if (error) *error = "SZX RAMP block too small";
+                return false;
+            }
+            const uint16_t flags = rd16(payload);
+            const uint8_t page = payload[2];
+            const uint8_t* src = payload + 3;
+            const size_t src_len = plen - 3;
+            std::array<uint8_t, 0x4000> block{};
+            if (flags & 1) {
+                if (!zlib_inflate_exact(src, src_len, block.data(), block.size(), error)) return false;
+            } else {
+                if (src_len < 0x4000) {
+                    if (error) *error = "SZX uncompressed RAMP short";
+                    return false;
+                }
+                std::memcpy(block.data(), src, 0x4000);
+            }
+            if (page < 8) {
+                std::memcpy(out.banks[size_t(page)].data(), block.data(), 0x4000);
+                got_ram = true;
+            }
+        } else if (id_eq(hdr, 'A', 'Y', '\0', '\0') || id_eq(hdr, 'A', 'Y', 0, 0)) {
+            if (plen >= 18) {
+                out.ay_used = true;
+                out.ay_latch = payload[1];
+                std::memcpy(out.ay_regs.data(), payload + 2, 16);
+            }
+        }
+        // Unknown blocks (CRTR, JOY, …) are skipped by design.
+        off += blk_size;
+    }
+
+    if (!got_z80) {
+        if (error) *error = "SZX missing Z80R block";
+        return false;
+    }
+    if (!got_ram) {
+        if (error) *error = "SZX missing RAMP pages";
+        return false;
+    }
+
+    // 48K view: pages 5 / 2 / 0. 128K view uses the currently paged bank at $C000.
+    std::memcpy(out.ram48.data(), out.banks[5].data(), 0x4000);
+    std::memcpy(out.ram48.data() + 0x4000, out.banks[2].data(), 0x4000);
+    const int paged = out.is_128 ? int(out.port_7ffd & 7) : 0;
+    std::memcpy(out.ram48.data() + 0x8000, out.banks[size_t(paged)].data(), 0x4000);
+    return true;
+}
+
 bool spectrum_snap_from_bytes(const uint8_t* data, size_t size, const char* ext_hint, SpectrumSnap& out,
                               std::string* error) {
-    std::string ext;
-    if (ext_hint) {
-        for (const char* p = ext_hint; *p; ++p) {
-            char ch = *p;
-            if (ch >= 'A' && ch <= 'Z') ch = char(ch - 'A' + 'a');
-            if (ch == 0) break;
-            ext.push_back(ch);
-        }
+    const std::string ext = snap_extension(ext_hint);
+    if (ext == "sna") return spectrum_snap_from_sna(data, size, out, error);
+    if (ext == "z80") return spectrum_snap_from_z80(data, size, out, error);
+    if (ext == "szx" || ext == "zx-state") return spectrum_snap_from_szx(data, size, out, error);
+    // Magic / size autodetection when the hint is missing or unknown.
+    if (data && size >= 4 && std::memcmp(data, "ZXST", 4) == 0) {
+        return spectrum_snap_from_szx(data, size, out, error);
     }
-    if (ext.find("sna") != std::string::npos) return spectrum_snap_from_sna(data, size, out, error);
-    if (ext.find("z80") != std::string::npos) return spectrum_snap_from_z80(data, size, out, error);
-    // Autodetect classic SNA sizes (48K = 49179, 128K = 131103 / 147487).
     if (size == 49179 || size == 131103 || size == 147487) {
         if (spectrum_snap_from_sna(data, size, out, error)) return true;
     }
