@@ -80,7 +80,7 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
     std::string dir = path;
     if (ends_ci(path, ".trd") || ends_ci(path, ".scl") || ends_ci(path, ".tap") ||
         ends_ci(path, ".tzx") || ends_ci(path, ".cdt") || ends_ci(path, ".sna") ||
-        ends_ci(path, ".rzx")) {
+        ends_ci(path, ".z80") || ends_ci(path, ".rzx")) {
         dir = fs::path(path).parent_path().string();
         if (dir.empty()) dir = ".";
     }
@@ -279,8 +279,8 @@ bool ZxClone::init(const std::string& rom_path, std::string* error) {
     if (ends_ci(rom_path, ".trd") || ends_ci(rom_path, ".scl")) {
         std::string disk_error;
         if (!beta_.load_disk(rom_path, &disk_error)) warnings_.push_back(disk_error);
-    } else if (ends_ci(rom_path, ".sna") || ends_ci(rom_path, ".rzx") || ends_ci(rom_path, ".tzx") ||
-               ends_ci(rom_path, ".tap") || ends_ci(rom_path, ".cdt")) {
+    } else if (ends_ci(rom_path, ".sna") || ends_ci(rom_path, ".z80") || ends_ci(rom_path, ".rzx") ||
+               ends_ci(rom_path, ".tzx") || ends_ci(rom_path, ".tap") || ends_ci(rom_path, ".cdt")) {
         std::string media_error;
         if (!load_media(rom_path, &media_error)) warnings_.push_back(media_error);
     }
@@ -838,20 +838,21 @@ bool ZxClone::load_media(const std::string& path, std::string* error) {
         tape_.stop();
         return true;
     }
-    if (ends_ci(path, ".sna")) return load_sna(path, error);
+    if (ends_ci(path, ".sna") || ends_ci(path, ".z80")) return load_sna(path, error);
     if (ends_ci(path, ".rzx")) return load_rzx(path, error);
-    if (error) *error = "unsupported media (use .trd/.scl disk, .tap/.tzx tape, .sna, or .rzx): " + path;
+    if (error) *error = "unsupported media (use .trd/.scl disk, .tap/.tzx tape, .sna/.z80, or .rzx): " + path;
     return false;
 }
 
 bool ZxClone::load_sna(const std::string& path, std::string* error) {
     std::vector<uint8_t> buf;
     if (!load_file(path, buf)) {
-        if (error) *error = "cannot open SNA: " + path;
+        if (error) *error = "cannot open snapshot: " + path;
         return false;
     }
     SpectrumSnap snap;
-    if (!spectrum_snap_from_sna(buf.data(), buf.size(), snap, error)) return false;
+    // Accepts .sna and .z80 (extension selects the decoder).
+    if (!spectrum_snap_from_bytes(buf.data(), buf.size(), path.c_str(), snap, error)) return false;
     apply_snap(snap);
     return true;
 }
