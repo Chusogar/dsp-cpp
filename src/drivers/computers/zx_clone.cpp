@@ -809,9 +809,22 @@ bool ZxClone::load_media(const std::string& path, std::string* error) {
         tape_.stop();
         return true;
     }
+    if (ends_ci(path, ".sna")) return load_sna(path, error);
     if (ends_ci(path, ".rzx")) return load_rzx(path, error);
-    if (error) *error = "unsupported media (use .trd/.scl disk, .tap/.tzx tape, or .rzx): " + path;
+    if (error) *error = "unsupported media (use .trd/.scl disk, .tap/.tzx tape, .sna, or .rzx): " + path;
     return false;
+}
+
+bool ZxClone::load_sna(const std::string& path, std::string* error) {
+    std::vector<uint8_t> buf;
+    if (!load_file(path, buf)) {
+        if (error) *error = "cannot open SNA: " + path;
+        return false;
+    }
+    SpectrumSnap snap;
+    if (!spectrum_snap_from_sna(buf.data(), buf.size(), snap, error)) return false;
+    apply_snap(snap);
+    return true;
 }
 
 bool ZxClone::load_rzx(const std::string& path, std::string* error) {
