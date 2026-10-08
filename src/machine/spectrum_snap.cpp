@@ -126,6 +126,7 @@ bool spectrum_snap_from_sna(const uint8_t* data, size_t size, SpectrumSnap& out,
         const uint8_t* tail = data + kSna48;
         out.pc = rd16(tail);
         out.port_7ffd = tail[2];
+        out.trdos_paged = tail[3] != 0;
         const int paged = int(out.port_7ffd & 7);
 
         std::memcpy(out.banks[5].data(), data + 27, 0x4000);
