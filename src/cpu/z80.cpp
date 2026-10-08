@@ -198,9 +198,12 @@ void Z80::set_nmi(IrqLine state) {
 }
 
 uint8_t Z80::fetch() {
+    const bool m1 = fetching_opcode_;
     uint8_t value = (fetching_opcode_ && opcode_read_) ? opcode_read_(pc_) : read_(pc_);
     fetching_opcode_ = false;
     pc_ = uint16_t(pc_ + 1);
+    // M1 opcode fetch is 4 T; immediate/operand bytes are 3 T.
+    t_in_instr_ += m1 ? 4 : 3;
     return value;
 }
 
@@ -568,11 +571,13 @@ int Z80::run(int cycles) {
             bump_r_m1();
             executed_ += cycles_;
             if (cycle_handler_) cycle_handler_(cycles_);
+            t_in_instr_ = 0;
             continue;
         }
 
         if (instruction_hook_) instruction_hook_(pc_);
         fetching_opcode_ = true;
+        t_in_instr_ = 0;
         uint8_t opcode = fetch();
         bump_r_m1();
         cycles_ += t_main_[opcode];
@@ -918,6 +923,7 @@ int Z80::run(int cycles) {
 
         executed_ += cycles_;
         if (cycle_handler_) cycle_handler_(cycles_);
+        t_in_instr_ = 0;
     }
     return executed_;
 }

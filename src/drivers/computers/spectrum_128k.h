@@ -71,6 +71,8 @@ private:
     uint8_t floating_bus() const;
     void apply_port_contention(uint16_t port);
     void contend(int extra);
+    int ula_time();
+    void on_insn_cycles(int cycles);
     void build_contention();
     void render_line(int line);
     void ula_latch_column(int col);
@@ -138,6 +140,7 @@ private:
     int line_ = 0;
     int t_in_line_ = 0;
     int frame_t_ = 0;
+    int instr_t_flushed_ = 0;
     std::array<uint8_t, 72000> contention_{};
 
     // ULA paper latches — fetch-time pixel+attr for multicolour (8×1).
