@@ -400,6 +400,42 @@ bool write_cpc_dummy_rom(const std::string& dir) {
     return bool(out);
 }
 
+void test_cpc6128_frames_not_torn_if_present() {
+    // The picture shown must be a whole frame: a frame boundary falling
+    // mid-picture used to show half-drawn rows, and the boundary drifted
+    // (instruction overrun was dropped), so a "scan line" swept the screen.
+    const char* rom = "/tmp/roms/cpc/cpc6128.zip";
+    if (!std::filesystem::exists(rom)) {
+        std::printf("skipping CPC 6128 tearing test (no %s)\n", rom);
+        return;
+    }
+    dsp::AmstradCpc cpc(dsp::AmstradCpc::Model::CPC6128);
+    std::string error;
+    check(cpc.init(rom, &error), "CPC 6128 ROMs load from cpc6128.zip");
+    const int w = cpc.screen_width(), h = cpc.screen_height();
+    std::vector<uint32_t> a, b, c;
+    int torn = 0;
+    for (int f = 0; f < 700; ++f) {
+        cpc.run_frame();
+        a.swap(b);
+        b.swap(c);
+        c.assign(cpc.framebuffer(), cpc.framebuffer() + size_t(w) * h);
+        if (f < 120 || a.empty()) continue;
+        // A row that differs from both neighbours in time is a transient
+        // (torn) row; the blinking cursor only toggles between two states.
+        for (int y = 0; y < h; ++y) {
+            bool d1 = false, d2 = false;
+            for (int x = 0; x < w; ++x) {
+                const size_t i = size_t(y) * w + size_t(x);
+                d1 |= b[i] != a[i];
+                d2 |= b[i] != c[i];
+            }
+            if (d1 && d2) ++torn;
+        }
+    }
+    check(torn == 0, "CPC 6128 frames are presented whole (no torn rows while the cursor blinks)");
+}
+
 void test_amstrad_crtc_does_not_tear() {
     const std::string dir = "/tmp/cpc_test_roms";
     if (!write_cpc_dummy_rom(dir)) {
@@ -10326,6 +10362,7 @@ int main() {
     test_z80_cpc_wait_states();
     test_z80_irq_cycle_align();
     test_amstrad_crtc_does_not_tear();
+    test_cpc6128_frames_not_torn_if_present();
     test_bagman_pal();
     test_gfx_decode();
     test_palette_weights();

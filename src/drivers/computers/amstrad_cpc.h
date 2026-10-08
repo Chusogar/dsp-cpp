@@ -50,7 +50,10 @@ public:
     void set_inputs(const MachineInputs& inputs) override;
     void set_dip_switch(int bank, uint8_t value) override;
 
-    const uint32_t* framebuffer() const override { return framebuffer_.data(); }
+    // The beam draws into framebuffer_; the picture shown is the last frame
+    // completed at vertical sync, so a frame boundary that falls mid-picture
+    // never shows a half-drawn (torn) line.
+    const uint32_t* framebuffer() const override { return display_.data(); }
     int screen_width() const override { return kScreenWidth; }
     int screen_height() const override { return kScreenHeight; }
     double frames_per_second() const override { return double(kCpuClock) / kCyclesPerFrame; }
@@ -148,6 +151,7 @@ private:
     void adjust_vertical_total();
     void draw_pixels();
     void fill_line(int line, uint32_t color);
+    void present_frame();
 
     // PPI ports.
     uint8_t port_a_read();
@@ -194,6 +198,9 @@ private:
 
     std::array<uint32_t, 32> palette_{};
     std::vector<uint32_t> framebuffer_;
+    std::vector<uint32_t> display_;
+    bool frame_presented_ = false;  // a vsync completed a frame during run_frame()
+    int cycle_debt_ = 0;            // T-states run past the previous frame
 
     int64_t tape_accumulator_ = 0;  // scales the 4 MHz clock to the tape's 3.5 MHz timings
     int64_t audio_accumulator_ = 0;

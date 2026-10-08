@@ -343,6 +343,7 @@ add_executable(dsp_tests
   src/cpu/mcs51.cpp
   src/cpu/mcs48.cpp
   src/cpu/hu6280.cpp
+  src/cpu/nec_v30.cpp
   
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp

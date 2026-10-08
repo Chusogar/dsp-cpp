@@ -194,6 +194,7 @@ AmstradCpc::AmstradCpc(Model model)
       vkb_(kCpcVkbPicture, sizeof(kCpcVkbPicture), kCpcVkbWidth, kCpcVkbHeight, kCpcVkbKeys,
            int(sizeof(kCpcVkbKeys) / sizeof(kCpcVkbKeys[0]))) {
     framebuffer_.assign(size_t(kScreenWidth) * kScreenHeight, 0xff000000u);
+    display_ = framebuffer_;
 
     cpu_.set_memory_handlers([this](uint16_t address) { return read_byte(address); },
                              [this](uint16_t address, uint8_t value) { write_byte(address, value); });
@@ -558,6 +559,7 @@ bool AmstradCpc::load_sna(const std::string& path,
     const uint8_t border_pen = ga_.pal[0x10] & 0x1f;
     framebuffer_.assign(size_t(kScreenWidth) * kScreenHeight,
                         palette_[border_pen]);
+    display_ = framebuffer_;
 
     std::printf("Loaded CPC SNA '%s' version=%u RAM=%uKB\n", path.c_str(),
                 unsigned(version), unsigned(mem_kb));
@@ -607,6 +609,8 @@ void AmstradCpc::reset() {
     crt_.borde = uint16_t((kScreenWidth - crt_.pixel_visible) / 2);
 
     framebuffer_.assign(size_t(kScreenWidth) * kScreenHeight, 0xff000000u);
+    display_ = framebuffer_;
+    cycle_debt_ = 0;
     audio_.clear();
     audio_accumulator_ = 0;
     tape_accumulator_ = 0;
@@ -955,7 +959,10 @@ void AmstradCpc::do_end_of_line() {
 
     const bool was_vsync = crt_.was_vsync;
     if (!was_vsync && crt_.state_vsync) ga_.lines_sync = 2;
-    if (was_vsync && !crt_.state_vsync) cpc_line_ = 0;
+    if (was_vsync && !crt_.state_vsync) {
+        present_frame();
+        cpc_line_ = 0;
+    }
     crt_.was_vsync = crt_.state_vsync;
 
     fill_line(cpc_line_, palette_[ga_.pal[0x10]]);
@@ -1116,7 +1123,23 @@ void AmstradCpc::on_irq_ack() {
     irq_asserted_ = false;
 }
 
-void AmstradCpc::run_frame() { cpu_.run(kCyclesPerFrame); }
+void AmstradCpc::present_frame() {
+    display_ = framebuffer_;
+    frame_presented_ = true;
+}
+
+void AmstradCpc::run_frame() {
+    // Keep the frame length exact: instructions overrun the requested
+    // T-states, and without carrying the excess the frame boundary drifted
+    // through the picture.
+    frame_presented_ = false;
+    const int want = kCyclesPerFrame - cycle_debt_;
+    const int ran = want > 0 ? cpu_.run(want) : 0;
+    cycle_debt_ = ran - want;
+    if (cycle_debt_ < 0 || cycle_debt_ > kCyclesPerFrame) cycle_debt_ = 0;
+    // No vertical sync this frame (CRTC not programmed yet): show the beam buffer.
+    if (!frame_presented_) display_ = framebuffer_;
+}
 
 // ---------------------------------------------------------------------------
 // Inputs.
