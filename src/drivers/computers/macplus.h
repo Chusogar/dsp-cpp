@@ -22,6 +22,7 @@ namespace dsp {
 // through .Sony). Stock Plus is 1MB; the ROM screen buffer is at $3FA700.
 class MacPlus : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     static constexpr uint32_t kCpuClock = 7833600;
     static constexpr int kHTotal = 704;
     static constexpr int kVTotal = 370;

@@ -18,6 +18,7 @@ namespace dsp {
 // Screen 256×224 (crop y=16), ~59.59 Hz, 262 scanlines.
 class Gng : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 256;
     static constexpr int kScreenHeight = 224;
     static constexpr double kFramesPerSecond = 12000000.0 / 2.0 / 384.0 / 262.0;  // ~59.59

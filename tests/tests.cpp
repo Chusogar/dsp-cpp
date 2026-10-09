@@ -61,6 +61,10 @@
 #include "cpu/arm7tdmi.h"
 #include "drivers/arcade/mcr.h"
 #include "drivers/computers/specnext.h"
+#include "drivers/arcade/blockout.h"
+#include "drivers/arcade/blktiger.h"
+#include "drivers/arcade/bionicc.h"
+#include "drivers/arcade/arabian.h"
 #include "drivers/arcade/model3.h"
 #include "cpu/ppc603.h"
 #include "sound/scsp.h"
@@ -10299,6 +10303,153 @@ void test_model3_swtrilgy_if_present() {
     check(white > 1500 && m.real3d().last_polygon_count() < 10, "swtrilgy test button opens the TEST MENU");
 }
 
+void test_arabian_if_present() {
+    const char* rom = "/tmp/roms/arabian/arabian.zip";
+    if (!std::filesystem::exists(rom)) {
+        std::printf("skipping Arabian test (no %s)\n", rom);
+        return;
+    }
+    dsp::Arabian m;
+    std::string err;
+    check(m.init(rom, &err), "Arabian ROM set loads");
+    check(m.warnings().empty(), "Arabian ROM CRCs match");
+    // Palette: pixel 0 is black, plane A full red/green/blue is white.
+    check(m.palette_entry(0) == 0xff000000u, "Arabian palette entry 0 is black");
+    for (int f = 0; f < 600; ++f) {
+        m.set_inputs(dsp::MachineInputs{});
+        m.run_frame();
+    }
+    std::set<uint32_t> colours(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(colours.size() >= 8, "Arabian title screen is drawn by the blitter (several colours)");
+    check(m.mcu_running(), "Arabian MB8841 is released from reset by the AY port B");
+    // Coin + start: the MCU multiplexes the inputs, the game starts with sound.
+    int peak = 0;
+    for (int f = 0; f < 300; ++f) {
+        dsp::MachineInputs in{};
+        in.coin1 = f < 5;
+        in.player1.start = f >= 60 && f < 65;
+        m.set_inputs(in);
+        m.run_frame();
+        std::vector<int16_t> audio;
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    check(peak > 1000, "Arabian credits a coin and starts a game (AY sound plays)");
+}
+
+void test_bionicc_if_present() {
+    const char* rom = "/tmp/roms/bionicc/bionicc.zip";
+    if (!std::filesystem::exists(rom)) {
+        std::printf("skipping Bionic Commando test (no %s)\n", rom);
+        return;
+    }
+    dsp::BionicCommando m;
+    std::string err;
+    check(m.init(rom, &err), "Bionic Commando ROM set loads");
+    check(m.warnings().empty(), "Bionic Commando ROM CRCs match");
+    for (int f = 0; f < 300; ++f) {
+        m.set_inputs(dsp::MachineInputs{});
+        m.run_frame();
+    }
+    check(m.mcu_dma_count() > 200 && m.sound_nmis() > 200,
+          "Bionic Commando 68000 runs its vblank DMA through the i8751 and talks to the sound CPU");
+    std::set<uint32_t> colours(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(colours.size() >= 6, "Bionic Commando title screen is drawn");
+    int peak = 0;
+    for (int f = 0; f < 300; ++f) {
+        dsp::MachineInputs in{};
+        in.coin1 = f < 5;
+        in.player1.start = f >= 60 && f < 65;
+        m.set_inputs(in);
+        m.run_frame();
+        std::vector<int16_t> audio;
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    std::set<uint32_t> game(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(game.size() > 40, "Bionic Commando starts a game (scrolling layers and sprites)");
+    check(peak > 1000, "Bionic Commando YM2151 music plays (commands reach the Z80 through the MCU)");
+}
+
+void test_blktiger_if_present() {
+    const char* path = "/tmp/roms/blktiger/blktiger.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_blktiger_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::BlackTiger m;
+    std::string err;
+    check(m.init(path, &err), "Black Tiger ROMs load");
+    if (!err.empty()) std::printf("blktiger init: %s\n", err.c_str());
+    auto colours = [&] {
+        std::set<uint32_t> c;
+        for (int i = 0; i < m.screen_width() * m.screen_height(); ++i) c.insert(m.framebuffer()[i]);
+        return c.size();
+    };
+    std::vector<int16_t> audio;
+    for (int f = 0; f < 300; ++f) {
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+    }
+    check(m.sound_irqs() > 1000, "Black Tiger YM2203 timer interrupts the sound CPU");
+    check(m.mcu_reads() >= 1, "Black Tiger i8751 reads the protection latch");
+    check(colours() >= 6, "Black Tiger title screen drawn");
+    int peak = 0;
+    for (int f = 300; f < 1100; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f < 305;
+        in.player1.start = f >= 360 && f < 365;
+        in.player1.right = f >= 420;
+        in.player1.button1 = (f >= 600 && f < 610) || (f >= 700 && f < 710);  // skip the story
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        if (f < 700)
+            for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    check(peak > 1000, "Black Tiger plays sound after starting a game");
+    check(colours() > 40, "Black Tiger game screen shows background, sprites and HUD");
+}
+
+void test_blockout_if_present() {
+    const char* path = "/tmp/roms/blockout/blockout.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skipping Block Out test (no %s)\n", path);
+        return;
+    }
+    dsp::BlockOut m;
+    std::string err;
+    check(m.init(path, &err), "Block Out ROMs load");
+    auto colours = [&] {
+        std::set<uint32_t> c;
+        for (int i = 0; i < m.screen_width() * m.screen_height(); ++i) c.insert(m.framebuffer()[i]);
+        return c.size();
+    };
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 0; f < 120; ++f) {
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    check(colours() > 20, "Block Out title screen drawn from the bitmap layers");
+    check(peak > 1000, "Block Out plays the title music (YM2151 / OKI)");
+    for (int f = 120; f < 700; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 300 && f < 305;
+        in.player1.start = f >= 400 && f < 405;
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+    }
+    check(m.sound_commands() >= 4, "Block Out sends sound commands to the Z80");
+    check(colours() > 20, "Block Out game screen drawn");
+}
+
 void test_specnext_boot_if_present() {
     namespace fs = std::filesystem;
     const char* rom = "/tmp/roms/next/tbblue.zip";
@@ -10573,6 +10724,7 @@ int main() {
     test_specnext_copper_and_interrupts();
     test_specnext_dma();
     test_specnext_boot_if_present();
+    test_arabian_if_present();
     test_ppc603_integer_and_branches();
     test_ppc603_float();
     test_model3_real3d_render();
@@ -10581,6 +10733,9 @@ int main() {
     test_scsp_slot_and_timer();
     test_model3_missing_roms();
     test_model3_swtrilgy_if_present();
+    test_bionicc_if_present();
+    test_blktiger_if_present();
+    test_blockout_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
         return 0;

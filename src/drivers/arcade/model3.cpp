@@ -97,8 +97,12 @@ Model3::Model3() : cpu_(*this, Ppc603::kPvr603r), crypt_(kSwtrilgyKey) {
     gpu_.set_host(host);
     gpu_.set_texture_write_hook([this] { finish_render(); });
     {
+#ifdef __EMSCRIPTEN__
+        gpu_.set_render_threads(1);  // no pthreads in the web build
+#else
         const unsigned hw = std::thread::hardware_concurrency();
         gpu_.set_render_threads(hw > 2 ? int(std::min(8u, hw - 1)) : 1);
+#endif
     }
     crypt_.set_read([this](uint32_t addr) -> uint16_t {
         if (addr < 0x8000) return be16(&security_ram_[size_t(addr) * 4]);

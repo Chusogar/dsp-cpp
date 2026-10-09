@@ -16,6 +16,7 @@ namespace dsp {
 // Games: Bank Panic, Combat Hawk.
 class BankPanicHw : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game { BankPanic, CombatHawk };
 
     static constexpr int kVisWidth = 224;

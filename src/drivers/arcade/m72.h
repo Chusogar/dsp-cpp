@@ -18,6 +18,7 @@ namespace dsp {
 // Harry also have a DAC sample ROM.
 class M72 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game { Rtype, Hharry, Rtype2 };
 
     static constexpr int kScreenWidth = 384;

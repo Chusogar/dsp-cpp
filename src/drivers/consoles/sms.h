@@ -17,6 +17,7 @@ namespace dsp {
 // Uses SegaVdp (Mode 4), Z80, SN76496 and YM2413 (OPLL).
 class Sms : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     // Display includes the VDP borders (284 × visible height).
     static constexpr int kScreenWidth = SegaVdp::kVisibleWidth;  // 284
     static constexpr int kScreenHeightNtsc = 243;

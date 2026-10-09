@@ -27,6 +27,7 @@ namespace dsp {
 // (see Model3Sound), mixed down to mono for the front end.
 class Model3 : public Machine, private Ppc603::Bus {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 496;
     static constexpr int kScreenHeight = 384;
     static constexpr double kFramesPerSecond = 57.524160;
@@ -137,7 +138,11 @@ private:
     std::vector<uint32_t> fb_work_;
     std::vector<uint32_t> bottom_snap_, top_snap_;
     std::thread worker_;
+#ifdef __EMSCRIPTEN__
+    bool threaded_ = false;  // no pthreads in the web build
+#else
     bool threaded_ = true;
+#endif
     bool have_pending_ = false;
     std::vector<int16_t> audio_;
     double audio_frac_ = 0;

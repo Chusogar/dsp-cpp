@@ -17,6 +17,7 @@ namespace dsp {
 // Vertical screen 224x256.
 class ShaolinsRoad : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 224;
     static constexpr int kScreenHeight = 256;
     static constexpr double kFramesPerSecond = 60.0;

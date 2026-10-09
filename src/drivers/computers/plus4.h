@@ -14,6 +14,7 @@ namespace dsp {
 // Commodore Plus/4 / C16 (TED MOS 7360). Prefer Plus/4 64K; C16 uses 16K.
 class Plus4 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     enum class Model { Plus4_64K, C16_16K };
     enum class Region { Pal, Ntsc };
 

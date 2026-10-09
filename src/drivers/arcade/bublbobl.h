@@ -20,6 +20,7 @@ namespace dsp {
 // Visible area 256×224 (internal 256×256, crop y=16), 59.185606 Hz, 264 lines.
 class BublBobl : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 256;
     static constexpr int kScreenHeight = 224;
     static constexpr double kFramesPerSecond = 59.185606;

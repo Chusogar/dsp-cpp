@@ -23,6 +23,7 @@ namespace dsp {
 // Video: DECO BAC06 (tile_1 = 16x16 BG, tile_2 = 8x8 text) + MXC06 sprites
 class ActFancer : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 256;
     static constexpr int kScreenHeight = 240;
     static constexpr double kFramesPerSecond = 57.444885;

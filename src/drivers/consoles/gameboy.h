@@ -27,6 +27,7 @@ namespace dsp {
 // distributable, unlike every other console/computer ported so far.
 class GameBoy : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     static constexpr uint32_t kClock = 4194304;
     static constexpr int kCyclesPerLine = 456;
     static constexpr int kScanlines = 154;

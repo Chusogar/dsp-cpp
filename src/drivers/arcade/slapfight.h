@@ -17,6 +17,7 @@ namespace dsp {
 // Also covers Tiger Heli hardware with different ROMs/MCU type.
 class SlapFight : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Variant { SlapFight, TigerHeli };
 
     static constexpr int kScreenWidth = 239;

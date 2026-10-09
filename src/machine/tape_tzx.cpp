@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <sys/stat.h>
 #include <zlib.h>
 
 namespace dsp {
@@ -33,21 +34,22 @@ void TapeTzx::clear() {
 }
 
 bool TapeTzx::load_file(const std::string& path, std::string* error) {
+    struct stat st {};
+    if (stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) {
+        if (error) *error = "cannot open tape: " + path;
+        return false;
+    }
     std::ifstream f(path, std::ios::binary);
     if (!f) {
         if (error) *error = "cannot open tape: " + path;
         return false;
     }
-    f.seekg(0, std::ios::end);
-    const auto sz = f.tellg();
-    if (sz <= 0) {
-        if (error) *error = "empty tape";
+    std::vector<uint8_t> buf(static_cast<size_t>(st.st_size));
+    f.read(reinterpret_cast<char*>(buf.data()), std::streamsize(buf.size()));
+    if (!f) {
+        if (error) *error = "failed reading tape: " + path;
         return false;
     }
-    f.seekg(0, std::ios::beg);
-    std::vector<uint8_t> buf;
-	buf.resize(size_t(sz));
-    f.read(reinterpret_cast<char*>(buf.data()), sz);
     return load_memory(buf.data(), buf.size(), error);
 }
 

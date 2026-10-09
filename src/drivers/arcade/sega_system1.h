@@ -24,6 +24,7 @@ namespace dsp {
 // or an 8255 PPI (Mr. Viking, Up'n Down).
 class SegaSystem1 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game {
         Pitfall2,
         TeddyBoy,

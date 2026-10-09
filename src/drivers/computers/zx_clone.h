@@ -22,6 +22,7 @@ enum class ZxCloneModel { Pentagon1024, Scorpion256 };
 // in paging.
 class ZxClone : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     static constexpr int kScreenWidth = 352;
     static constexpr int kScreenHeight = 280;
     static constexpr uint32_t kClock = 3500000;
@@ -49,6 +50,7 @@ public:
     const char* title() const override;
     bool uses_keyboard() const override { return true; }
     bool load_media(const std::string& path, std::string* error) override;
+    bool load_sna(const std::string& path, std::string* error);
     bool load_rzx(const std::string& path, std::string* error);
     bool rzx_playing() const { return rzx_.playing(); }
     void tape_toggle_play() override;

@@ -21,6 +21,7 @@ namespace dsp {
 // PC080SN tilemaps + PC090OJ sprites composed into a 320×240 screen.
 class Rastan : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 320;
     static constexpr int kScreenHeight = 240;
     static constexpr int kWorkWidth = 512;

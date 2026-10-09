@@ -19,6 +19,7 @@ namespace dsp {
 // Capcom CPS1, ported from cps1_hw.pas.
 class Cps1 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game {
         Ghouls,
         Ffight,

@@ -15,6 +15,7 @@ namespace dsp {
 // Ambush (Tehkan, 1983) — port of dsp-emulator ambush_hw.pas
 class Ambush : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 256;
     static constexpr int kScreenHeight = 224;
     static constexpr int kScanlines = 264;

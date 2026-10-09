@@ -32,6 +32,7 @@ namespace dsp {
 // with their own driver. Writes go back to the image file.
 class MacII : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     static constexpr uint32_t kCpuClock = 15667200;
     static constexpr uint32_t kRamSize = 8u << 20;
     static constexpr int kWidth = 640, kHeight = 480;

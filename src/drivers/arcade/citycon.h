@@ -17,6 +17,7 @@ namespace dsp {
 // Dual MC6809, AY-3-8910 + YM2203, scrolling BG + line-coloured FG + sprites.
 class CityCon : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 240;
     static constexpr int kScreenHeight = 224;
     static constexpr double kFramesPerSecond = 59.637405;

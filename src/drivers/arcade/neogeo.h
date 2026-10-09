@@ -17,6 +17,7 @@ namespace dsp {
 // and fix layer. Loads a MAME split cart plus `neogeo.zip` (BIOS, SFIX, SM1, LO).
 class NeoGeo : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr uint32_t kMainClock = 12000000;
     static constexpr uint32_t kZ80Clock = 4000000;
     static constexpr uint32_t kYmClock = 8000000;
@@ -59,6 +60,8 @@ public:
     YM2610& ym() { return ym_; }
 
     static bool is_game_name(const std::string& name);
+    // Names with a known title (each one a --game name).
+    static std::vector<std::string> game_names();
 
 private:
     uint16_t read_word(uint32_t address);

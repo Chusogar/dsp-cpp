@@ -39,6 +39,10 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | M68000/68010 CPU | `src/cpu/m68000.pas` | Gauntlet main CPU |
 | M6502 CPU | `src/cpu/m6502.pas` | Gauntlet sound CPU, NES 2A03, optional 65C02 CMOS opcodes for the Lynx |
 | Mr. Do driver | `src/arcade/mrdo_hw.pas` | `rol90` tile/sprite decode |
+| Arabian driver | `src/arcade/arabian_hw.pas` | Z80 + blitter bitmap, AY-3-8910 ports, MB8841 input MCU |
+| Bionic Commando driver | `src/arcade/bioniccommando_hw.pas` | 68000 + Z80/YM2151 + i8751 DMA MCU, three tilemaps, buffered sprites |
+| Black Tiger driver | `src/arcade/blacktiger_hw.pas` | Z80 + banked ROM, Z80/2× YM2203, i8751 protection latches, split-priority background |
+| Block Out driver | `src/arcade/blockout_hw.pas` | 68000 bitmap (front/back + 1-bit overlay), Z80/YM2151 + OKI MSM6295 |
 | MCR driver | `src/arcade/mcr_hw.pas` | Tapper / Tron family: dual Z80, CTC, SSIO |
 | ZX Spectrum Next | MAME `specnext` (TBBlue core 3.02) | Z80N, MMU/DivMMC/Multiface, ULA/LoRes/Layer 2/tilemap/sprites/copper, zxnDMA, CTC, IM2, 3×AY + DACs, SPI SD card; boots the firmware and NextZXOS from an SD image |
 | Sega Model 3 (Step 2.1) | MAME `model3` / Supermodel (behaviour), new code | PowerPC 603r interpreter, Real3D Pro-1000 software renderer (scene graph, LOD, textures with mipmaps, lighting, fog, translucency), tile generator, MPC106, JTAG, 315-5881 (MAME port), SCSP ×2 + 68000 sound board (MAME SCSP port), DSB2 MPEG-1 layer II music (MAME decoder); runs *Star Wars Trilogy Arcade* |
@@ -143,7 +147,53 @@ cmake --build build -j
 
 This produces `build/dsp` and the unit test binary `build/dsp_tests`.
 
+### Web build (Emscripten)
+
+The same sources also build as a web page, in the way of
+[superzazu/pac](https://github.com/superzazu/pac): with Emscripten, SDL2 and
+zlib come from Emscripten's ports and the frame loop of `src/frontend/sdl_app.cpp`
+is handed to the browser (`emscripten_set_main_loop_arg`) instead of running
+in a `while` loop. With the [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html)
+active:
+
+```bash
+emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
+cmake --build build-web
+```
+
+This produces `build-web/dsp.html`, `dsp.js` and `dsp.wasm`. Serve the
+directory over HTTP (for example `python3 -m http.server -d build-web`) and
+open `dsp.html`. The page has a **Machine Type** combo (All, Arcade, Console,
+Computer) and a **driver** combo with the drivers of that type; choosing a
+driver starts it as soon as it has its ROM: the one in the ROM file box, a
+preloaded `/roms/NAME.zip`, or else the file dialog opens and the driver starts
+once a file is picked. Another driver can be chosen at any time; the running
+one is stopped first. "More options" adds a tape/disk/cartridge and extra
+arguments. Options for the build:
+
+- `-DDSP_WEB_ROMS_DIR=roms` packages a directory into the page (`dsp.data`) as
+  `/roms`, so a game can start straight from the URL:
+  `dsp.html?game=blockout&rom=/roms/blockout.zip` (`&args=--mute ...` adds
+  more arguments).
+- `-DDSP_WEB_ARGS="--game blockout /roms/blockout.zip"` makes the page start
+  that game when the URL gives none (like pac, which always boots its ROMs).
+
+Keys are the same as natively (5 = coin, 1 = start, F2 = pause, F3 = reset,
+F12 = turbo). The web build has no threads, so Sega Model 3 renders on a
+single core, and the tests and headless tools are native only. Browsers only
+start audio after a click or key press on the page.
+
 ## Running
+
+Every driver is an arcade machine, a console or a computer
+(`Machine::machine_type()`). To list them, with their title and the other
+names they accept:
+
+```bash
+./build/dsp --listarcades
+./build/dsp --listconsoles
+./build/dsp --listcomputers
+```
 
 ROMs are **not** included. Point the emulator to a `bagman.zip` set or to a directory
 holding the individual files:
@@ -1510,6 +1560,97 @@ ROMs (MAME `swtrilgy`): `epr-21379a.17` … `epr-21382a.20` (program),
 `mpr-21374.41` (VROM), `epr-21383.21`, `mpr-21355.22`, `mpr-21357.24`
 (sound), `epr-21384.2`, `mpr-21375.18` … `mpr-21378.24` (DSB2 MPEG).
 
+### Arabian
+
+Sun Electronics, 1983 (`--game arabian`, MAME set `arabian`), ported from
+dsp-emulator's `arabian_hw.pas`. A 3 MHz Z80 draws a 256x256 bitmap of two
+4-bit planes through a blitter (pen 8 transparent) and direct writes; an
+AY-3-8910 at 1.5 MHz plays the sound and its ports select the palette bank
+(port A) and drive the MB8841 MCU's IRQ and reset (port B). The MCU reads the
+controls and DIP switch B and shares the Z80's 2 KB of work RAM. The 8192
+colours come from the resistor network of the original board. The monitor is
+vertical: 234x256.
+
+```bash
+./build/dsp --game arabian /path/to/arabian.zip
+```
+
+Controls: arrows, button 1 (Left Ctrl / Space) = kick, 5 = coin, 1 = start.
+DIP bank 0 is switch A (lives, cabinet, flip, difficulty, coinage) and bank 1
+switch B (coin counters, demo sounds, bonus life); the defaults leave demo
+sounds off, as in the Pascal driver.
+
+ROMs: `ic1rev2.87` … `ic4rev2.90` (program), `sun-8212.ic3` (MCU),
+`tvg-91.ic84` … `tvg-94.ic87` (blitter graphics).
+
+### Bionic Commando
+
+Capcom, 1987 (`--game bionicc`, MAME set `bionicc`), ported from
+dsp-emulator's `bioniccommando_hw.pas`, with the tile attributes, layer
+priorities and palette of MAME's `bionicc.cpp`. A 12 MHz 68000 drives an 8x8
+text layer, an 8x8 background and a 16x16 foreground tilemap (the foreground
+split into a half behind and a half in front of the sprites) and 160 buffered
+sprites; colours are RRRRGGGGBBBBIIII. Every vblank the 68000 halts and the
+i8751 MCU copies data over its bus ("DMA"); the MCU also passes the sound
+commands to the Z80 (3.58 MHz) that plays the YM2151.
+
+```bash
+./build/dsp --game bionicc /path/to/bionicc.zip
+```
+
+Controls: arrows, button 1 = fire, button 2 = bionic arm, 5 = coin, 1 =
+start. DIP bank 0 is the low byte (switch B: coinage, service, flip) and bank
+1 the high byte (switch A: lives, cabinet, bonus, difficulty, freeze).
+
+ROMs: `tse_02.1a`, `tse_04.1b`, `tse_03.2a`, `tse_05.2b` (68000),
+`ts_01b.4e` (Z80), `ts.2f` (i8751), `tsu_08.8l` (text), `tsu_07.5l`,
+`tsu_06.4l` (background), `ts_11.15f` … `ts_24.18k` (foreground),
+`tse_10.13f` … `tsu_21.15j` (sprites).
+### Black Tiger
+
+Capcom, 1987 (`--game blktiger`, MAME set `blktiger`), ported from
+dsp-emulator's `blacktiger_hw.pas`, with the tilemap layouts, split
+priorities and sprite rules of MAME's `blktiger.cpp`. A 6 MHz Z80 with 16
+banked 16 KB ROM pages drives an 8x8 text layer, a 16x16 scrolling
+background (128x64 or 64x128 tiles, selected by the game; by colour, part of
+each tile is drawn in front of the sprites) and 128 buffered sprites; colours
+are xBRG_444. An i8751 MCU answers the protection checks through a pair of
+latches on I/O port 7. The sound Z80 (3.58 MHz) plays two YM2203s, whose
+timer drives its interrupt.
+
+```bash
+./build/dsp --game blktiger /path/to/blktiger.zip
+```
+
+Controls: arrows, button 1 = attack, button 2 = jump, 5 = coin, 1 = start.
+DIP bank 0 is switch A (coinage, flip, test) and bank 1 is switch B (lives,
+difficulty, demo sounds, continue, cabinet).
+
+ROMs: `bdu-01a.5e`, `bdu-02a.6e`, `bdu-03a.8e`, `bd-04.9e`, `bd-05.10e`
+(main), `bd-06.1l` (sound), `bd.6k` (i8751), `bd-15.2n` (text), `bd-11.4b` …
+`bd-14.9b` (background), `bd-07.4a` … `bd-10.9a` (sprites).
+### Block Out
+
+Technos / California Dreams, 1989 (`--game blockout`, MAME set
+`blockout`), ported from dsp-emulator's `blockout_hw.pas`, with the bitmap
+layout, palette and interrupt timing of MAME's `blockout.cpp`. A 10 MHz 68000
+draws into two 512x256 8-bit bitmaps (the front one wins over the back one
+wherever it is not 0, 256 colours each) and a 1-bit overlay with its own
+colour; IRQ 5 comes at line 0 and IRQ 6 at the end of the 240 visible lines.
+The sound board is a Z80 (3.58 MHz) with a YM2151 and an OKI MSM6295.
+
+```bash
+./build/dsp --game blockout /path/to/blockout.zip
+```
+
+Controls: arrows move the block, buttons 1/2/3 = A/B/C (rotate around the
+three axes), button 4 = drop, 5 = coin, 1 = start. DIP bank 0 is switch 1
+(coinage, continue, demo sounds) and bank 1 is switch 2 (difficulty, rotate
+buttons).
+
+ROMs: `bo29a0-2.bin`, `bo29a1-2.bin` (68000), `bo29e3-0.bin` (Z80),
+`bo29e2-0.bin` (OKI samples).
+
 ### Nintendo Punch-Out!!
 
 After MAME `punchout.cpp` (set `punchout`, Rev B). Z80 at 4 MHz; a 2A03 (NES
@@ -1747,6 +1888,7 @@ src/machine/    PAL16R6, SLAPSTIC, tapes, NES/GB mappers, MOS 6526, 6532, Lynx, 
 src/drivers/arcade/     arcade machines
 src/drivers/computers/  home computers (Spectrum, QL, C64, …)
 src/drivers/consoles/   consoles (NES, Genesis, A2600, …)
-src/frontend/   SDL2 front end, driven through the core/machine.h interface
+src/frontend/   SDL2 front end (native or Emscripten), driven through the core/machine.h interface
+web/            HTML shell (launcher) of the Emscripten build
 src/core/       ROM loader (directory or zip) and the Machine interface
 ```

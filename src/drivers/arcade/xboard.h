@@ -26,6 +26,7 @@ namespace dsp {
 // YM2151 and a 315-5218 Sega PCM.
 class XBoard : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game { Aburner2 };
 
     static constexpr int kScreenWidth = 320;

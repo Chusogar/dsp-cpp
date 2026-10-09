@@ -16,6 +16,7 @@ namespace dsp {
 // Bagman (Valadon Automation, 1982), ported from bagman_hw.pas.
 class Bagman : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 224;
     static constexpr int kScreenHeight = 256;
     static constexpr double kFramesPerSecond = 60.60606060;

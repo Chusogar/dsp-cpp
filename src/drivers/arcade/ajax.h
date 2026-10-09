@@ -26,6 +26,7 @@ namespace dsp {
 // Video: K052109 tiles, K051960 sprites, K051316 zoom. Screen is rotated 90°.
 class Ajax : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 224;   // after 90° rotation of 304×224
     static constexpr int kScreenHeight = 304;
     static constexpr int kNativeWidth = 304;

@@ -24,6 +24,7 @@ namespace dsp {
 // dual MOS 6526 CIA. PLA banking matches the Pascal actualiza_mem table.
 class C64 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     static constexpr int kScreenWidth = Mos6566::kScreenWidth;
     static constexpr int kScreenHeight = Mos6566::kScreenHeight;
     static constexpr uint32_t kCpuClock = 985248;

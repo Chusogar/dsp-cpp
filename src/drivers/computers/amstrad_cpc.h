@@ -32,6 +32,7 @@ namespace dsp {
 // tape's 3.5 MHz timings like the original engine does.
 class AmstradCpc : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     enum class Model { CPC464, CPC664, CPC6128 };
 
     static constexpr int kScreenWidth = 400;

@@ -24,6 +24,7 @@ namespace dsp {
 // VDP, dual YM3438 (YM2612), RF5C68 PCM and (on Moonwalker) an I8751 MCU.
 class System18 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game {
         Astorm,
         Bloxeed,

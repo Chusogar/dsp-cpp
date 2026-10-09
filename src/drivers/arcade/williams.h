@@ -15,6 +15,7 @@ namespace dsp {
 // Ported from dsp-emulator williams_hw.pas — same clocks, map, PIA wiring and frame loop.
 class Williams : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game { Defender, Mayday, Colony7, Joust, Robotron, Stargate };
 
     // Pascal: screen_init(1,304,247) then iniciar_video(292,240), crop (xoff,7,292,240)

@@ -18,6 +18,7 @@ namespace dsp {
 // Z80 @ ~3.5469 MHz, ULA, AY-8912, +3 banking ($7FFD+$1FFD), NEC765 FDC (same as CPC).
 class Spectrum3 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     static constexpr int kScreenWidth = 352;
     static constexpr int kScreenHeight = 280;  // 48+192+40, matches Pascal putpixel range
     static constexpr uint32_t kClock = 3546895;  // 17734475 / 5
@@ -64,7 +65,10 @@ private:
     uint8_t io_in(uint16_t port);
     void io_out(uint16_t port, uint8_t value);
     void on_cycles(int cycles);
+    void maybe_start_tape_from_rom();
     void contend(int extra);
+    int ula_time();
+    void on_insn_cycles(int cycles);
 
     void apply_7ffd(uint8_t value);
     void apply_1ffd(uint8_t value);
@@ -140,6 +144,7 @@ private:
     int line_ = 0;
     int t_in_line_ = 0;
     int frame_t_ = 0;
+    int instr_t_flushed_ = 0;
     std::array<uint8_t, 72000> contention_{};
 
     // ULA paper latches — fetch-time pixel+attr for multicolour (8×1).

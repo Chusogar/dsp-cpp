@@ -19,6 +19,7 @@ namespace dsp {
 //   aso    — ASO / Alpha Mission (288x216 rotated 270°, one YM3526)
 class Snk : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game { Ikari, Athena, Tnk3, Aso };
 
     static constexpr double kFramesPerSecond = 60.0;

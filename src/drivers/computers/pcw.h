@@ -20,6 +20,7 @@ namespace dsp {
 // are stubbed.
 class Pcw : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     enum class Model { PCW8256, PCW8512 };
 
     static constexpr int kBorderWidth = 8;

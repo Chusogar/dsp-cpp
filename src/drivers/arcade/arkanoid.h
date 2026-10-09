@@ -17,6 +17,7 @@ namespace dsp {
 // Vertical monitor 224×256; paddle via analog / mouse.
 class Arkanoid : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 224;
     static constexpr int kScreenHeight = 256;
     static constexpr int kScanlines = 264;

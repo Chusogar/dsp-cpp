@@ -22,6 +22,7 @@ namespace dsp {
 // Main CPU: 68010 behind a SLAPSTIC 107, sound CPU: M6502 with a YM2151 and a POKEY.
 class Gauntlet : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 336;
     static constexpr int kScreenHeight = 240;
     static constexpr double kFramesPerSecond = 59.922743;

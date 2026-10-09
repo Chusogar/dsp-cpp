@@ -25,6 +25,7 @@ namespace dsp {
 // monitor, each with two banks.
 class PunchOut : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 256;
     static constexpr int kMonitorHeight = 224;  // lines 16-239 of each monitor
     static constexpr int kScreenHeight = kMonitorHeight * 2;

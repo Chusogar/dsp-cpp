@@ -17,6 +17,7 @@ struct SpectrumSnap {
     uint8_t border = 7;
     uint8_t port_7ffd = 0;
     uint8_t port_1ffd = 0;
+    bool trdos_paged = false;  // 128K SNA tail byte; Beta 128 / TR-DOS ROM
     bool ay_used = false;
     uint8_t ay_latch = 0;
     std::array<uint8_t, 16> ay_regs{};

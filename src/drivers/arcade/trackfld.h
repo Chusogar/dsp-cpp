@@ -20,6 +20,7 @@ namespace dsp {
 // and a VLM5030 speech chip.
 class TrackFld : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 256;
     static constexpr int kScreenHeight = 224;
     static constexpr double kFramesPerSecond = 60.0;

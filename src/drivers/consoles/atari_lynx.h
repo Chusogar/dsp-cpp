@@ -20,6 +20,7 @@ namespace dsp {
 // ($FCB2) with a 74HC164/4040 address generator clocked from Mikey SYSCTL1.
 class AtariLynx : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     static constexpr uint32_t kSystemClock = 16000000;
     static constexpr uint32_t kCpuClock = 4000000;
     static constexpr int kScanlines = 105;

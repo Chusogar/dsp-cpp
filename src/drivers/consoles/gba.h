@@ -20,6 +20,7 @@ namespace dsp {
 // The real BIOS (gba.bin) boots the cartridge after the Nintendo logo.
 class Gba : public Machine, private ArmBus {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     static constexpr uint32_t kClock = 16777216;
     static constexpr int kCyclesPerLine = 1232;
     static constexpr int kHDrawCycles = 960;

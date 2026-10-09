@@ -22,6 +22,7 @@ namespace dsp {
 // Namco Pole Position / Pole Position II: Z80 + dual Z8002, road + sprites.
 class PolePos : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game { PolePosition, PolePosition2 };
 
     static constexpr int kScreenWidth = 256;

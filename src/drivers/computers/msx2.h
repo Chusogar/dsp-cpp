@@ -20,6 +20,7 @@ namespace dsp {
 
 class Msx2 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     static constexpr uint32_t kMainClock = 3579545;
     static constexpr int kCyclesPerLine = 228;
     static constexpr int kScanlines = 313;       // 50 Hz (European BIOS)

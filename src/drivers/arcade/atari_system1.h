@@ -26,6 +26,7 @@ namespace dsp {
 // in the Pascal driver.
 class AtariSystem1 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 336;
     static constexpr int kScreenHeight = 240;
     static constexpr int kPlayfieldWidth = 512;

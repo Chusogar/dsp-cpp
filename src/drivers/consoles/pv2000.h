@@ -19,6 +19,7 @@ namespace dsp {
 // full keyboard plus a joystick; cassette I/O is stubbed like the Pascal driver.
 class Pv2000 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     static constexpr uint32_t kMainClock = 3579545;  // 7159090 / 2
     static constexpr int kCyclesPerLine = 228;
     static constexpr int kScanlines = 262;  // NTSC

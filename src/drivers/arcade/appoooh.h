@@ -16,6 +16,7 @@ namespace dsp {
 // Appoooh / Robo Wres 2001 (Sanritsu / Sega) — port of appoooh_hw.pas
 class Appoooh : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Variant { Appoooh, RoboWres };
 
     static constexpr int kScreenWidth = 256;

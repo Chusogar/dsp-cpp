@@ -18,6 +18,7 @@ namespace dsp {
 // MC68705 protection MCU on Elevator Action.
 class TaitoSJ : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Variant { ElevatorAction, JungleKing };
 
     static constexpr int kScreenWidth = 256;

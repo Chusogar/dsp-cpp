@@ -20,6 +20,7 @@ namespace dsp {
 // Main CPU: 68000, sound: an Atari JSA II board (M6502 + YM2151 + OKIM6295).
 class Skullxbo : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     // The pixel clock is the full 14.318 MHz, so the visible area is 672 pixels
     // wide: 42 of the 16 pixel wide tile columns.
     static constexpr int kScreenWidth = 672;

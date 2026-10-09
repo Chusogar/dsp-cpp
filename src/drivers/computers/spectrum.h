@@ -18,6 +18,7 @@ namespace dsp {
 // Chips: Z80 @ 3.5 MHz, ULA (border/beeper/keyboard/EAR), TapeTzx.
 class Spectrum48k : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     static constexpr int kScreenWidth = 352;   // 48 left + 256 paper + 48 right
     static constexpr int kScreenHeight = 280;  // 48 top + 192 paper + 40 bottom (matches drawn lines)
     static constexpr uint32_t kClock = 3500000;
@@ -55,6 +56,7 @@ public:
     void tape_play();
     void tape_stop();
     bool tape_playing() const { return tape_.is_playing(); }
+    bool tape_loaded() const { return tape_.is_loaded(); }
 
     bool load_sna(const std::string& path, std::string* error);
     bool load_rzx(const std::string& path, std::string* error);
@@ -68,6 +70,9 @@ public:
 
 private:
     void build_contention();
+    // Sync ULA beam to mid-instruction T-state, then return absolute ULA time.
+    int ula_time();
+    void on_insn_cycles(int cycles);
     // Apply ULA wait states as real elapsed T-states (paint border / advance beam).
     void contend(int extra);
     void apply_port_contention(uint16_t port);
@@ -77,6 +82,7 @@ private:
     void border_fill_to(int abs_t);  // absolute T in frame
     void border_on_out();
     uint8_t border_index() const;
+    void maybe_start_tape_from_rom();
     void apply_keyboard(const MachineInputs& in);
     void apply_snap(const SpectrumSnap& snap);
     void run_rzx_frame();
@@ -122,6 +128,9 @@ private:
     int line_ = 0;
     int t_in_line_ = 0;
     int frame_t_ = 0;
+    // Base T-states of the current insn already advanced on the ULA beam
+    // (via ula_time mid-access flushes). on_insn_cycles charges the remainder.
+    int instr_t_flushed_ = 0;
     std::array<uint8_t, 71000> contention_{};
 
     // ULA paper latches for the current scanline (one byte pair per 8-pixel cell).

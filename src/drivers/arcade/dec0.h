@@ -30,6 +30,7 @@ namespace dsp {
 // through a state machine.
 class Dec0 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Variant { Robocop, BadDudes, Hippodrome, SlySpy, BoulderDash };
 
     static constexpr int kScreenWidth = 256;

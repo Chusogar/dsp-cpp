@@ -17,6 +17,7 @@ namespace dsp {
 // from the 2600's TIA, with some carts adding a POKEY.
 class A7800 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     enum class Region { Ntsc, Pal };
 
     static constexpr int kWidth = Maria::kWidth;

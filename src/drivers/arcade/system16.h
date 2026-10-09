@@ -24,6 +24,7 @@ namespace dsp {
 // Sega System 16A/16B, ported from system16a_hw.pas and system16b_hw.pas.
 class System16 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game {
         Fantzone,
         Shinobi,

@@ -26,6 +26,7 @@ namespace dsp {
 // is undone once at load time.
 class Pirates : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game { Pirates, Genix };
 
     static constexpr int kScreenWidth = 288;

@@ -17,6 +17,7 @@ namespace dsp {
 // Main CPU: M6809, sound CPU: Z80 driving two SN76496.
 class Mikie : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 224;
     static constexpr int kScreenHeight = 256;
     static constexpr double kFramesPerSecond = 60.59;

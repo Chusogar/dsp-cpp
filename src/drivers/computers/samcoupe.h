@@ -27,6 +27,7 @@ namespace dsp {
 // selects the video page and one of four screen modes.
 class SamCoupe : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     static constexpr uint32_t kClock = 6000000;
     static constexpr int kTstatesPerLine = 384;
     static constexpr int kLinesPerFrame = 312;

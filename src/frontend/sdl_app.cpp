@@ -2,6 +2,10 @@
 
 #include <SDL.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -9,6 +13,7 @@
 #include <climits>
 #include <cstring>
 #include <cstdlib>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -206,90 +211,26 @@ int SdlApp::run_headless(Machine& machine) {
     return 0;
 }
 
-int SdlApp::run(Machine& machine) {
-    if (!options_.screenshot.empty()) {
-        if (SDL_Init(SDL_INIT_VIDEO) != 0) {
-            std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
-            return 1;
-        }
-        int result = run_headless(machine);
-        SDL_Quit();
-        return result;
-    }
+// Everything the interactive front end keeps between frames. The loop body is
+// LoopState::iterate(), called by a plain while loop natively and by the
+// browser's animation-frame callback under Emscripten (like superzazu/pac).
+struct SdlApp::LoopState {
+    Machine& machine;
+    AppOptions options;
 
-    uint32_t flags = SDL_INIT_VIDEO | SDL_INIT_EVENTS;
-    if (!options_.mute) flags |= SDL_INIT_AUDIO;
-    if (SDL_Init(flags) != 0) {
-        std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
-        return 1;
-    }
-
-    int width = machine.screen_width();
-    int height = machine.screen_height();
-    // Spectrum full-border (352x280): default scale 2 → ~704x560 window unless user set --scale
-    int scale = options_.scale;
-    if (scale == 3 && width == 352 && (height == 280 || height == 296 || height == 288))
-        scale = 2;
-    // Window and logical size follow the display size, which corrects the
-    // aspect ratio of non-square framebuffer pixels (the texture stays at the
-    // framebuffer size and SDL stretches it).
-    int display_w = machine.display_width();
-    int display_h = machine.display_height();
-    if (display_w != width || display_h != height || machine.fit_window()) {
-        // Keep the default window on a 1080p desktop.
-        while (scale > 1 && display_h * scale > 960) scale--;
-    }
-    const double frame_time_ms = 1000.0 / machine.frames_per_second();
-    const std::string title = std::string("DSP C++ - ") + machine.title();
-
-    SDL_Window* window =
-        SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                         display_w * scale, display_h * scale,
-                         options_.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-    if (window == nullptr) {
-        std::fprintf(stderr, "cannot create window: %s\n", SDL_GetError());
-        SDL_Quit();
-        return 1;
-    }
-
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    if (renderer == nullptr) renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
-    if (renderer == nullptr) {
-        std::fprintf(stderr, "cannot create renderer: %s\n", SDL_GetError());
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
-    }
-    SDL_RenderSetLogicalSize(renderer, display_w, display_h);
-    if (machine.uses_pointer()) SDL_ShowCursor(SDL_ENABLE);
-
-    // Texture size must track the machine framebuffer. Consoles like PSX switch
-    // between 256x240 / 320x240 / 640x480; a fixed texture + pitch wraps the
-    // BIOS logos into the garbled "scanline" look.
-    SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-                                             SDL_TEXTUREACCESS_STREAMING, width, height);
-    int tex_w = width;
-    int tex_h = height;
-
+    SDL_Window* window = nullptr;
+    SDL_Renderer* renderer = nullptr;
+    SDL_Texture* texture = nullptr;
+    SDL_Texture* overlay_texture = nullptr;
     SDL_AudioDeviceID audio_device = 0;
-    const int sample_rate = machine.sample_rate();
-    // Target \~3 frames of audio latency; keep queue between \~1.5 and \~4.5 frames.
-    // Video is paced by waiting when the SDL audio queue exceeds max_bytes, so
-    // the presentation clock stays locked to the audio clock and does not drift.
-    const double samples_per_frame = double(sample_rate) / machine.frames_per_second();
-    const uint32_t max_bytes = uint32_t(samples_per_frame * 4.5 * sizeof(int16_t));
-    const uint32_t min_bytes = uint32_t(samples_per_frame * 1.5 * sizeof(int16_t));
 
-    if (!options_.mute) {
-        SDL_AudioSpec wanted{};
-        wanted.freq = sample_rate;
-        wanted.format = AUDIO_S16SYS;
-        wanted.channels = 1;
-        // Smaller callback buffer reduces latency; SDL still queues behind it.
-        wanted.samples = 512;
-        audio_device = SDL_OpenAudioDevice(nullptr, 0, &wanted, nullptr, 0);
-        if (audio_device != 0) SDL_PauseAudioDevice(audio_device, 0);
-    }
+    int width = 0, height = 0, tex_w = 0, tex_h = 0;
+    int display_w = 0, display_h = 0;
+    int overlay_tw = 0, overlay_th = 0;
+    uint32_t overlay_serial = 0;
+    int sample_rate = 0;
+    uint32_t max_bytes = 0, min_bytes = 0;
+    double frame_time_ms = 0.0;
 
     std::vector<int16_t> samples;
     bool running = true;
@@ -299,130 +240,107 @@ int SdlApp::run(Machine& machine) {
     int turbo_present_counter = 0;
     // Accumulator for sub-ms frame pacing when muted (avoids integer truncation drift).
     double frame_debt_ms = 0.0;
-
-    // Relative-mouse machines (ST, Amiga): the host cursor is hidden over
-    // the window so the emulated pointer is the only one on screen, and the
-    // position keeps being tracked (clamped to the picture) when the mouse
-    // goes past the window edge, which pushes the emulated pointer onto the
-    // same edge. No relative mode / pointer warping: that misbehaves on some
-    // X servers and remote desktops.
-    const bool relative_mouse = machine.uses_pointer() && machine.uses_relative_pointer();
-    if (relative_mouse) SDL_ShowCursor(SDL_DISABLE);
+    bool relative_mouse = false;
     bool was_inside = false;
+#ifdef __EMSCRIPTEN__
+    double web_last_ms = 0.0;
+    double web_debt_ms = 0.0;
+#endif
 
-    // Machine overlay (on-screen keyboard), drawn smooth-scaled over the
-    // bottom of the picture.
-    SDL_Texture* overlay_texture = nullptr;
-    int overlay_tw = 0, overlay_th = 0;
-    uint32_t overlay_serial = 0;
-    auto overlay_rect = [&](const MachineOverlay& o) {
+    LoopState(Machine& m, const AppOptions& o) : machine(m), options(o) {}
+
+    SDL_Rect overlay_rect(const MachineOverlay& o) const {
         SDL_Rect r;
         r.w = display_w;
         r.h = int(double(display_w) * o.height / o.width + 0.5);
         r.x = 0;
         r.y = display_h - r.h;
         return r;
-    };
+    }
 
-    auto update_title = [&]() {
+    void update_title() {
         std::string t = std::string("DSP C++ - ") + machine.title();
         if (paused) t += " [PAUSED]";
         if (turbo) t += " [TURBO]";
         SDL_SetWindowTitle(window, t.c_str());
-    };
+    }
 
-    while (running) {
+    void toggle_turbo() {
+        turbo = !turbo;
+        frame_debt_ms = 0.0;
+        if (turbo && audio_device != 0) SDL_ClearQueuedAudio(audio_device);
+        update_title();
+    }
+
+    bool quits(const SDL_Event& event) const {
+        return event.key.keysym.sym == SDLK_ESCAPE &&
+               (!machine.uses_keyboard() || (event.key.keysym.mod & KMOD_SHIFT));
+    }
+
+    void handle_events() {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) running = false;
-
-            if (event.type == SDL_KEYDOWN) {
-				
-				//printf("KEYDOWN sym=%d scan=%d name=%s\n",
-				//		event.key.keysym.sym,
-				//		event.key.keysym.scancode,
-				//		SDL_GetScancodeName(event.key.keysym.scancode));
-
-                switch (event.key.keysym.sym) {
-                    case SDLK_ESCAPE:
-                        // Computers get Esc as a key; Shift+Esc quits them.
-                        if (!machine.uses_keyboard() || (event.key.keysym.mod & KMOD_SHIFT)) {
-                            running = false;
-                        }
-                        break;
-                    case SDLK_F3: machine.reset(); break;
-                    case SDLK_F2:
+            if (event.type != SDL_KEYDOWN) continue;
+            switch (event.key.keysym.sym) {
+                case SDLK_ESCAPE:
+                    // Computers get Esc as a key; Shift+Esc quits them.
+                    if (quits(event)) running = false;
+                    break;
+                case SDLK_F3: machine.reset(); break;
+                case SDLK_F2:
+                    paused = !paused;
+                    update_title();
+                    break;
+                case SDLK_F6: machine.tape_toggle_play(); break;
+                case SDLK_F12: toggle_turbo(); break;
+                case SDLK_p:
+                    if (!machine.uses_keyboard()) {
                         paused = !paused;
                         update_title();
-                        break;
-                    case SDLK_F6:
-                        machine.tape_toggle_play();
-                        break;
-                    case SDLK_F12:
-                        // Maximum speed: skip vsync/frame limit and audio pacing.
-                        turbo = !turbo;
-                        frame_debt_ms = 0.0;
-                        if (turbo && audio_device != 0) SDL_ClearQueuedAudio(audio_device);
+                    }
+                    break;
+                default: break;
+            }
+        }
+    }
+
+#ifndef __EMSCRIPTEN__
+    // Audio-master pacing: if the queue is already full enough, wait until it
+    // drains toward the target. This keeps video locked to the audio clock and
+    // prevents cumulative drift. Returns false when the frame must be skipped.
+    bool wait_for_audio() {
+        for (;;) {
+            const uint32_t queued = SDL_GetQueuedAudioSize(audio_device);
+            if (queued < max_bytes) break;
+            // Sleep a fraction of a frame; re-check after events.
+            SDL_Delay(1);
+            // Process quit / pause quickly while waiting.
+            SDL_Event event;
+            if (SDL_PollEvent(&event)) {
+                if (event.type == SDL_QUIT) {
+                    running = false;
+                    break;
+                }
+                if (event.type == SDL_KEYDOWN) {
+                    if (quits(event)) running = false;
+                    if (event.key.keysym.sym == SDLK_F2 ||
+                        (event.key.keysym.sym == SDLK_p && !machine.uses_keyboard())) {
+                        paused = true;
                         update_title();
-                        break;
-                    case SDLK_p:
-                        if (!machine.uses_keyboard()) {
-                            paused = !paused;
-                            update_title();
-                        }
-                        break;
-                    default: break;
+                    }
+                    if (event.key.keysym.sym == SDLK_F3) machine.reset();
+                    if (event.key.keysym.sym == SDLK_F12) toggle_turbo();
                 }
             }
+            if (!running || paused) break;
         }
+        return running && !paused;
+    }
+#endif
 
-        if (paused) {
-            // Drain a little while paused so the queue does not go silent forever
-            // and so we do not spin at 100% CPU.
-            SDL_Delay(10);
-            continue;
-        }
-
-        // --- Audio-master pacing when possible ---
-        // If the queue is already full enough, wait until it drains toward the
-        // target. This keeps video locked to the audio clock and prevents
-        // cumulative drift.
-        if (audio_device != 0 && !turbo) {
-            for (;;) {
-                const uint32_t queued = SDL_GetQueuedAudioSize(audio_device);
-                if (queued < max_bytes) break;
-                // Sleep a fraction of a frame; re-check after events.
-                SDL_Delay(1);
-                // Process quit / pause quickly while waiting.
-                if (SDL_PollEvent(&event)) {
-                    if (event.type == SDL_QUIT) {
-                        running = false;
-                        break;
-                    }
-                    if (event.type == SDL_KEYDOWN) {
-                        if (event.key.keysym.sym == SDLK_ESCAPE &&
-                            (!machine.uses_keyboard() || (event.key.keysym.mod & KMOD_SHIFT))) {
-                            running = false;
-                        }
-                        if (event.key.keysym.sym == SDLK_F2 ||
-                            (event.key.keysym.sym == SDLK_p && !machine.uses_keyboard())) {
-                            paused = true;
-                            update_title();
-                        }
-                        if (event.key.keysym.sym == SDLK_F3) machine.reset();
-                        if (event.key.keysym.sym == SDLK_F12) {
-                            turbo = !turbo;
-                            frame_debt_ms = 0.0;
-                            if (turbo && audio_device != 0) SDL_ClearQueuedAudio(audio_device);
-                            update_title();
-                        }
-                    }
-                }
-                if (!running || paused) break;
-            }
-            if (!running || paused) continue;
-        }
-
+    // Reads the host inputs and runs one emulated frame, queueing its audio.
+    void emulate_frame() {
         int pointer_x = 0;
         int pointer_y = 0;
         uint32_t mouse_buttons = 0;
@@ -478,64 +396,110 @@ int SdlApp::run(Machine& machine) {
         machine.drain_audio(samples);
         if (!turbo && audio_device != 0 && !samples.empty()) {
             // Soft drop only if the queue is pathologically large (host too
-            // slow). Prefer waiting (above) over discarding samples so pitch
-            // and A/V stay locked.
+            // slow). Prefer waiting over discarding samples so pitch and A/V
+            // stay locked.
             if (SDL_GetQueuedAudioSize(audio_device) < uint32_t(sample_rate) * 2) {
                 SDL_QueueAudio(audio_device, samples.data(),
                                uint32_t(samples.size() * sizeof(int16_t)));
             }
         }
+    }
+
+    void present() {
+        width = machine.screen_width();
+        height = machine.screen_height();
+        const int new_dw = machine.display_width();
+        const int new_dh = machine.display_height();
+        if (width != tex_w || height != tex_h) {
+            if (texture != nullptr) SDL_DestroyTexture(texture);
+            texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                        SDL_TEXTUREACCESS_STREAMING, width, height);
+            tex_w = width;
+            tex_h = height;
+        }
+        // Keep the host window size fixed; only retarget the logical render
+        // size so the new framebuffer aspect letterboxes/scales inside the
+        // existing window (PSX 320x240 <-> 640x480 logos).
+        if (new_dw != display_w || new_dh != display_h) {
+            display_w = new_dw;
+            display_h = new_dh;
+            SDL_RenderSetLogicalSize(renderer, display_w, display_h);
+        }
+        SDL_UpdateTexture(texture, nullptr, machine.framebuffer(), width * 4);
+        SDL_RenderClear(renderer);
+        SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+        const MachineOverlay o = machine.screen_overlay();
+        if (o.pixels != nullptr && o.width > 0 && o.height > 0) {
+            if (overlay_texture == nullptr || overlay_tw != o.width || overlay_th != o.height) {
+                if (overlay_texture != nullptr) SDL_DestroyTexture(overlay_texture);
+                // Linear filtering for this texture only.
+                SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
+                overlay_texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                                    SDL_TEXTUREACCESS_STREAMING, o.width, o.height);
+                SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+                if (overlay_texture != nullptr) SDL_SetTextureBlendMode(overlay_texture, SDL_BLENDMODE_BLEND);
+                overlay_tw = o.width;
+                overlay_th = o.height;
+                overlay_serial = o.serial - 1;
+            }
+            if (overlay_texture != nullptr) {
+                if (overlay_serial != o.serial) {
+                    SDL_UpdateTexture(overlay_texture, nullptr, o.pixels, o.width * 4);
+                    overlay_serial = o.serial;
+                }
+                const SDL_Rect r = overlay_rect(o);
+                SDL_RenderCopy(renderer, overlay_texture, nullptr, &r);
+            }
+        }
+        SDL_RenderPresent(renderer);
+    }
+
+#ifdef __EMSCRIPTEN__
+    // One browser animation frame (60/120/144 Hz, whatever the display does):
+    // run as many emulated frames as the wall clock asks for, held back when
+    // the audio queue is full and pushed when it runs low. Nothing may block.
+    bool iterate() {
+        handle_events();
+        const double now = emscripten_get_now();
+        if (web_last_ms == 0.0) web_last_ms = now;
+        const double elapsed = now - web_last_ms;
+        web_last_ms = now;
+        if (!running) return false;
+        if (paused) return true;
+
+        int frames = 0;
+        if (turbo) {
+            frames = 4;
+            web_debt_ms = 0.0;
+        } else {
+            web_debt_ms = std::min(web_debt_ms + elapsed, frame_time_ms * 4.0);
+            frames = int(web_debt_ms / frame_time_ms);
+            web_debt_ms -= frames * frame_time_ms;
+            if (audio_device != 0) {
+                const uint32_t queued = SDL_GetQueuedAudioSize(audio_device);
+                if (queued >= max_bytes) frames = 0;
+                else if (queued < min_bytes && frames == 0) frames = 1;
+            }
+        }
+        for (int i = 0; i < frames && running; ++i) emulate_frame();
+        if (frames > 0) present();
+        return running;
+    }
+#else
+    bool iterate() {
+        handle_events();
+        if (paused) {
+            // Do not spin at 100% CPU while paused.
+            SDL_Delay(10);
+            return running;
+        }
+        if (audio_device != 0 && !turbo && !wait_for_audio()) return running;
+
+        emulate_frame();
 
         // Turbo: present only every 4th frame to spend CPU on emulation, not GPU.
         const bool do_present = !turbo || ((++turbo_present_counter & 3) == 0);
-        if (do_present) {
-            width = machine.screen_width();
-            height = machine.screen_height();
-            const int new_dw = machine.display_width();
-            const int new_dh = machine.display_height();
-            if (width != tex_w || height != tex_h) {
-                if (texture != nullptr) SDL_DestroyTexture(texture);
-                texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-                                            SDL_TEXTUREACCESS_STREAMING, width, height);
-                tex_w = width;
-                tex_h = height;
-            }
-            // Keep the host window size fixed; only retarget the logical
-            // render size so the new framebuffer aspect letterboxes/scales
-            // inside the existing window (PSX 320x240 <-> 640x480 logos).
-            if (new_dw != display_w || new_dh != display_h) {
-                display_w = new_dw;
-                display_h = new_dh;
-                SDL_RenderSetLogicalSize(renderer, display_w, display_h);
-            }
-            SDL_UpdateTexture(texture, nullptr, machine.framebuffer(), width * 4);
-            SDL_RenderClear(renderer);
-            SDL_RenderCopy(renderer, texture, nullptr, nullptr);
-            const MachineOverlay o = machine.screen_overlay();
-            if (o.pixels != nullptr && o.width > 0 && o.height > 0) {
-                if (overlay_texture == nullptr || overlay_tw != o.width || overlay_th != o.height) {
-                    if (overlay_texture != nullptr) SDL_DestroyTexture(overlay_texture);
-                    // Linear filtering for this texture only.
-                    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
-                    overlay_texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-                                                        SDL_TEXTUREACCESS_STREAMING, o.width, o.height);
-                    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
-                    if (overlay_texture != nullptr) SDL_SetTextureBlendMode(overlay_texture, SDL_BLENDMODE_BLEND);
-                    overlay_tw = o.width;
-                    overlay_th = o.height;
-                    overlay_serial = o.serial - 1;
-                }
-                if (overlay_texture != nullptr) {
-                    if (overlay_serial != o.serial) {
-                        SDL_UpdateTexture(overlay_texture, nullptr, o.pixels, o.width * 4);
-                        overlay_serial = o.serial;
-                    }
-                    const SDL_Rect r = overlay_rect(o);
-                    SDL_RenderCopy(renderer, overlay_texture, nullptr, &r);
-                }
-            }
-            SDL_RenderPresent(renderer);
-        }
+        if (do_present) present();
 
         // --- Fallback / fine pacing when muted or queue is under-filled ---
         // Skipped entirely in turbo mode for maximum emulation throughput.
@@ -554,25 +518,170 @@ int SdlApp::run(Machine& machine) {
             } else {
                 // With audio open: if the queue is below the soft minimum, run the
                 // next frame immediately (no delay) so we refill. Otherwise sleep
-                // a tiny amount to yield CPU; the audio-wait loop at the top of
-                // the next iteration will do the real pacing.
-                const uint32_t queued = SDL_GetQueuedAudioSize(audio_device);
-                if (queued >= min_bytes) {
-                    // Aim for roughly one frame of headroom without busy-waiting.
-                    SDL_Delay(1);
-                }
+                // a tiny amount to yield CPU; the audio wait at the top of the
+                // next iteration does the real pacing.
+                if (SDL_GetQueuedAudioSize(audio_device) >= min_bytes) SDL_Delay(1);
             }
         }
+        return running;
+    }
+#endif
+
+    void shutdown() {
+        if (audio_device != 0) SDL_CloseAudioDevice(audio_device);
+        if (overlay_texture != nullptr) SDL_DestroyTexture(overlay_texture);
+        if (texture != nullptr) SDL_DestroyTexture(texture);
+        if (renderer != nullptr) SDL_DestroyRenderer(renderer);
+        if (window != nullptr) SDL_DestroyWindow(window);
+        audio_device = 0;
+        overlay_texture = texture = nullptr;
+        renderer = nullptr;
+        window = nullptr;
+        SDL_Quit();
+    }
+};
+
+#ifdef __EMSCRIPTEN__
+namespace {
+SdlApp::LoopState* g_web_state = nullptr;  // the loop the browser is driving
+}  // namespace
+
+void SdlApp::stop_web() {
+    if (g_web_state == nullptr) return;
+    emscripten_cancel_main_loop();
+    g_web_state->shutdown();
+    delete g_web_state;
+    g_web_state = nullptr;
+}
+#endif
+
+int SdlApp::run(Machine& machine) {
+    if (!options_.screenshot.empty()) {
+        if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+            std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
+            return 1;
+        }
+        int result = run_headless(machine);
+        SDL_Quit();
+        return result;
     }
 
-    if (audio_device != 0) SDL_CloseAudioDevice(audio_device);
-    if (overlay_texture != nullptr) SDL_DestroyTexture(overlay_texture);
-    SDL_DestroyTexture(texture);
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+#ifdef __EMSCRIPTEN__
+    // Keys go to the canvas only, so the page's own controls stay usable.
+    SDL_SetHint(SDL_HINT_EMSCRIPTEN_KEYBOARD_ELEMENT, "#canvas");
+#endif
+    uint32_t flags = SDL_INIT_VIDEO | SDL_INIT_EVENTS;
+    if (!options_.mute) flags |= SDL_INIT_AUDIO;
+    if (SDL_Init(flags) != 0) {
+        std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
+        return 1;
+    }
+
+    auto state = std::make_unique<LoopState>(machine, options_);
+    LoopState& s = *state;
+    s.width = machine.screen_width();
+    s.height = machine.screen_height();
+    // Spectrum full-border (352x280): default scale 2 → ~704x560 window unless user set --scale
+    int scale = options_.scale;
+    if (scale == 3 && s.width == 352 && (s.height == 280 || s.height == 296 || s.height == 288))
+        scale = 2;
+    // Window and logical size follow the display size, which corrects the
+    // aspect ratio of non-square framebuffer pixels (the texture stays at the
+    // framebuffer size and SDL stretches it).
+    s.display_w = machine.display_width();
+    s.display_h = machine.display_height();
+    if (s.display_w != s.width || s.display_h != s.height || machine.fit_window()) {
+        // Keep the default window on a 1080p desktop.
+        while (scale > 1 && s.display_h * scale > 960) scale--;
+    }
+    s.frame_time_ms = 1000.0 / machine.frames_per_second();
+    const std::string title = std::string("DSP C++ - ") + machine.title();
+
+    s.window = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                s.display_w * scale, s.display_h * scale,
+                                options_.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+    if (s.window == nullptr) {
+        std::fprintf(stderr, "cannot create window: %s\n", SDL_GetError());
+        SDL_Quit();
+        return 1;
+    }
+
+    s.renderer = SDL_CreateRenderer(s.window, -1, SDL_RENDERER_ACCELERATED);
+    if (s.renderer == nullptr) s.renderer = SDL_CreateRenderer(s.window, -1, SDL_RENDERER_SOFTWARE);
+    if (s.renderer == nullptr) {
+        std::fprintf(stderr, "cannot create renderer: %s\n", SDL_GetError());
+        SDL_DestroyWindow(s.window);
+        SDL_Quit();
+        return 1;
+    }
+    SDL_RenderSetLogicalSize(s.renderer, s.display_w, s.display_h);
+    if (machine.uses_pointer()) SDL_ShowCursor(SDL_ENABLE);
+
+    // Texture size must track the machine framebuffer. Consoles like PSX switch
+    // between 256x240 / 320x240 / 640x480; a fixed texture + pitch wraps the
+    // BIOS logos into the garbled "scanline" look.
+    s.texture = SDL_CreateTexture(s.renderer, SDL_PIXELFORMAT_ARGB8888,
+                                  SDL_TEXTUREACCESS_STREAMING, s.width, s.height);
+    s.tex_w = s.width;
+    s.tex_h = s.height;
+
+    s.sample_rate = machine.sample_rate();
+    // Target ~3 frames of audio latency; keep queue between ~1.5 and ~4.5 frames.
+    // Video is paced by waiting when the SDL audio queue exceeds max_bytes, so
+    // the presentation clock stays locked to the audio clock and does not drift.
+    const double samples_per_frame = double(s.sample_rate) / machine.frames_per_second();
+    s.max_bytes = uint32_t(samples_per_frame * 4.5 * sizeof(int16_t));
+    s.min_bytes = uint32_t(samples_per_frame * 1.5 * sizeof(int16_t));
+#ifdef __EMSCRIPTEN__
+    // Browser frames come in bursts (and the tab may throttle), so keep a
+    // little more audio queued than natively.
+    s.max_bytes = uint32_t(samples_per_frame * 8.0 * sizeof(int16_t));
+    s.min_bytes = uint32_t(samples_per_frame * 3.0 * sizeof(int16_t));
+#endif
+
+    if (!options_.mute) {
+        SDL_AudioSpec wanted{};
+        wanted.freq = s.sample_rate;
+        wanted.format = AUDIO_S16SYS;
+        wanted.channels = 1;
+        // Smaller callback buffer reduces latency; SDL still queues behind it.
+#ifdef __EMSCRIPTEN__
+        wanted.samples = 1024;
+#else
+        wanted.samples = 512;
+#endif
+        s.audio_device = SDL_OpenAudioDevice(nullptr, 0, &wanted, nullptr, 0);
+        if (s.audio_device != 0) SDL_PauseAudioDevice(s.audio_device, 0);
+    }
+
+    // Relative-mouse machines (ST, Amiga): the host cursor is hidden over
+    // the window so the emulated pointer is the only one on screen, and the
+    // position keeps being tracked (clamped to the picture) when the mouse
+    // goes past the window edge, which pushes the emulated pointer onto the
+    // same edge. No relative mode / pointer warping: that misbehaves on some
+    // X servers and remote desktops.
+    s.relative_mouse = machine.uses_pointer() && machine.uses_relative_pointer();
+    if (s.relative_mouse) SDL_ShowCursor(SDL_DISABLE);
+
+#ifdef __EMSCRIPTEN__
+    // The browser owns the loop: hand the state to the animation-frame
+    // callback. With simulate_infinite_loop the call never returns, so the
+    // state (and the machine, kept alive by main) must outlive this frame.
+    // The page calls stop_web() before starting another machine.
+    g_web_state = state.release();
+    emscripten_set_main_loop_arg(
+        [](void* arg) {
+            auto* st = static_cast<LoopState*>(arg);
+            if (!st->iterate()) stop_web();
+        },
+        g_web_state, 0, 1);
     return 0;
+#else
+    while (s.iterate()) {
+    }
+    s.shutdown();
+    return 0;
+#endif
 }
 
 }  // namespace dsp
-

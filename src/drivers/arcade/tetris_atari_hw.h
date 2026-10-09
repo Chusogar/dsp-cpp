@@ -18,6 +18,7 @@ namespace dsp {
 // sound chips and a 64x32 tilemap of 8x8 characters on a 336x240 screen.
 class AtariTetris : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 336;
     static constexpr int kScreenHeight = 240;
     static constexpr double kFramesPerSecond = 59.922743;

@@ -18,6 +18,7 @@ namespace dsp {
 // 3-button pads and cartridge loading (.bin/.md/.gen/.smd, plain or zipped).
 class Genesis : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     static constexpr uint32_t kMasterNtsc = 53693175;
     static constexpr uint32_t kMasterPal = 53203424;
     static constexpr uint32_t kM68kClockNtsc = kMasterNtsc / 7;

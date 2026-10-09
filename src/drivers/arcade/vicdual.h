@@ -32,6 +32,7 @@ namespace dsp {
 //  * Games without sound hardware emulation in MAME stay silent.
 class VicDual : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game {
         DepthCharge,
         Safari,

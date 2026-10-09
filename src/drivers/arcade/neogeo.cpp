@@ -81,7 +81,7 @@ int v_rank(const std::string& name) {
     return 9;
 }
 
-std::string title_for(const std::string& game) {
+const std::map<std::string, const char*>& titles() {
     static const std::map<std::string, const char*> kTitles = {
         {"neogeo", "NeoGeo MVS"},
         {"mvs", "NeoGeo MVS"},
@@ -177,8 +177,12 @@ std::string title_for(const std::string& game) {
         {"tecmows96", "Tecmo World Soccer '96"},
         {"tecmoworldsoccer96", "Tecmo World Soccer '96"},
     };
-    auto it = kTitles.find(game);
-    return it == kTitles.end() ? "NeoGeo" : it->second;
+    return kTitles;
+}
+
+std::string title_for(const std::string& game) {
+    auto it = titles().find(game);
+    return it == titles().end() ? "NeoGeo" : it->second;
 }
 
 uint8_t pad_bits(const InputState& pad) {
@@ -240,6 +244,12 @@ bool neo_geo_header_at(const std::vector<uint8_t>& rom, size_t offset) {
 }
 
 }  // namespace
+
+std::vector<std::string> NeoGeo::game_names() {
+    std::vector<std::string> names;
+    for (const auto& entry : titles()) names.push_back(entry.first);
+    return names;
+}
 
 bool NeoGeo::is_game_name(const std::string& name) {
     if (name == "neogeo" || name == "mvs" || name == "aes") return true;

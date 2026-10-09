@@ -22,6 +22,7 @@ namespace dsp {
 //   El vector se cierra al blank o al cambiar dx/dy/intensidad.
 class Vectrex : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     static constexpr uint32_t kCpuClock = 1500000;
     static constexpr int kFps = 50;
     static constexpr int kCyclesPerFrameDefault = int(kCpuClock) / kFps;

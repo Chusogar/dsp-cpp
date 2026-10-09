@@ -14,6 +14,7 @@ namespace dsp {
 // Sinclair ZX Spectrum 48K, ported from spectrum_48k.pas.
 class Spectrum48 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     static constexpr int kBorderLeft = 48;
     static constexpr int kBorderTop = 48;
     static constexpr int kBorderBottom = 40;

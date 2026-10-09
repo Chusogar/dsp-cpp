@@ -24,6 +24,7 @@ namespace dsp {
 
 class Psx : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     static constexpr uint32_t kCpuClock = 33868800;
     static constexpr int kCyclesPerFrame = int(kCpuClock / 60);
     static constexpr int kSyncCycles = 100;

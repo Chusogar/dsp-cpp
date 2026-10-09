@@ -16,6 +16,7 @@ namespace dsp {
 // Return of the Invaders (Taito, 1985), from returnofinvaders_hw.pas.
 class Retofinv : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 224;
     static constexpr int kScreenHeight = 288;
     static constexpr double kFramesPerSecond = 60.0;

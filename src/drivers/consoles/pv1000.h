@@ -16,6 +16,7 @@ namespace dsp {
 // Visible output is 224×192 inside a 224×244 frame (coloured border).
 class Pv1000 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     static constexpr int kActiveWidth = 224;   // 28 tiles × 8
     static constexpr int kActiveHeight = 192;  // 24 tiles × 8
     static constexpr int kScreenWidth = 224;

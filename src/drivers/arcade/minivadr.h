@@ -15,6 +15,7 @@ namespace dsp {
 // Mini Invaders, ported from minivadr_hw.pas.
 class Minivadr : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 256;
     static constexpr int kScreenHeight = 256;
     static constexpr double kFramesPerSecond = 60.0;

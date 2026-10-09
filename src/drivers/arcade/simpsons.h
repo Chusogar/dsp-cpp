@@ -24,6 +24,7 @@ namespace dsp {
 // Screen 288×224 (crop 112,16), ROT0.
 class Simpsons : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 288;
     static constexpr int kScreenHeight = 224;
     static constexpr double kFramesPerSecond = 59.185606;

@@ -26,6 +26,7 @@ namespace dsp {
 // reuses the M6809 core.
 class DoubleDragon : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Variant { DDragon, DDragon2 };
 
     static constexpr int kScreenWidth = 256;

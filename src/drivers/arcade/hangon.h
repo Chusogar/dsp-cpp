@@ -21,6 +21,7 @@ namespace dsp {
 // Hang-On, Enduro Racer and Space Harrier, ported from hangon_hw.pas.
 class HangOn : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game { HangOn, Enduro, Sharrier };
 
     static constexpr int kScreenWidth = 320;

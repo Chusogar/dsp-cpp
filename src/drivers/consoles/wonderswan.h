@@ -22,6 +22,7 @@ namespace dsp {
 // FFFF:0000 so the cartridge footer JMP runs.
 class WonderSwan : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     static constexpr uint32_t kClock = 3072000;
     static constexpr int kScreenWidth = 224;
     static constexpr int kScreenHeight = 144;

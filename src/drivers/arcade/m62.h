@@ -19,6 +19,7 @@ namespace dsp {
 // Games: Kung-Fu Master, Spelunker, Spelunker II, Lode Runner, Lode Runner II.
 class IremM62 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game { KungFuMaster, Spelunker, Spelunker2, LodeRunner, LodeRunner2 };
 
     static constexpr double kFramesPerSecond = 56.338028;

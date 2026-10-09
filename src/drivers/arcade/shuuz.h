@@ -18,6 +18,7 @@ namespace dsp {
 // 68000 @ 7.159 MHz, Atari VAD playfield + motion objects, OKIM6295 only.
 class Shuuz : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 336;
     static constexpr int kScreenHeight = 240;
     static constexpr int kScanlines = 262;

@@ -9,8 +9,27 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-find_package(SDL2 REQUIRED)
-find_package(ZLIB REQUIRED)
+# Two front-end builds share the same sources (the approach of
+# superzazu/pac): a native SDL2 application, or a web page with Emscripten:
+#   emcmake cmake -S . -B build-web [-DDSP_WEB_ROMS_DIR=roms] [-DDSP_WEB_ARGS="--game x /roms/x.zip"]
+#   cmake --build build-web        -> dsp.html, dsp.js, dsp.wasm (+ dsp.data)
+if(EMSCRIPTEN)
+  set(DSP_WEB_ROMS_DIR "" CACHE PATH "Directory packaged into the web build as /roms (optional)")
+  set(DSP_WEB_ARGS "" CACHE STRING "Arguments the page starts with when the URL gives none (optional)")
+  # SDL2 and zlib come from Emscripten's ports.
+  add_library(dsp_web_sdl2 INTERFACE)
+  target_compile_options(dsp_web_sdl2 INTERFACE "-sUSE_SDL=2")
+  target_link_options(dsp_web_sdl2 INTERFACE "-sUSE_SDL=2")
+  set(SDL2_LIBRARIES dsp_web_sdl2)
+  set(SDL2_INCLUDE_DIRS "")
+  add_library(ZLIB::ZLIB INTERFACE IMPORTED)
+  set_target_properties(ZLIB::ZLIB PROPERTIES
+    INTERFACE_COMPILE_OPTIONS "-sUSE_ZLIB=1"
+    INTERFACE_LINK_OPTIONS "-sUSE_ZLIB=1")
+else()
+  find_package(SDL2 REQUIRED)
+  find_package(ZLIB REQUIRED)
+endif()
 
 # Musashi 68000-68040 core (MIT), used by the Macintosh II driver.
 add_library(musashi STATIC
@@ -161,6 +180,10 @@ add_executable(dsp
   src/machine/pia6821.cpp
  
   src/drivers/arcade/bagman.cpp
+  src/drivers/arcade/arabian.cpp
+  src/drivers/arcade/bionicc.cpp
+  src/drivers/arcade/blktiger.cpp
+  src/drivers/arcade/blockout.cpp
   src/drivers/arcade/mikie.cpp
   src/drivers/arcade/gauntlet.cpp
   src/drivers/arcade/doubledragon.cpp
@@ -323,6 +346,36 @@ target_include_directories(dsp PRIVATE src ${SDL2_INCLUDE_DIRS})
 target_link_libraries(dsp PRIVATE ${SDL2_LIBRARIES} ZLIB::ZLIB musashi)
 target_compile_options(dsp PRIVATE -Wall -Wextra)
 
+if(EMSCRIPTEN)
+  string(REPLACE "\"" "\\\"" DSP_WEB_ARGS_ESCAPED "${DSP_WEB_ARGS}")
+  set(DSP_WEB_ARGS "${DSP_WEB_ARGS_ESCAPED}")
+  configure_file(web/shell.html.in ${CMAKE_CURRENT_BINARY_DIR}/shell.html @ONLY)
+
+  set_target_properties(dsp PROPERTIES SUFFIX ".html")
+  # The MPEG audio decoder (Model 3 music) uses C++ exceptions internally.
+  set_source_files_properties(src/sound/mpeg_audio.cpp PROPERTIES COMPILE_OPTIONS "-fexceptions")
+  target_link_options(dsp PRIVATE
+    "-fexceptions"
+    "-sALLOW_MEMORY_GROWTH=1"
+    "-sINITIAL_MEMORY=134217728"
+    "-sTOTAL_STACK=8388608"
+    "-sEXIT_RUNTIME=0"
+    "-sFORCE_FILESYSTEM=1"
+    "-sEXPORTED_FUNCTIONS=['_dsp_web_start','_dsp_web_list']"
+    "-sEXPORTED_RUNTIME_METHODS=['ccall','UTF8ToString','FS']"
+    "-sMINIFY_HTML=0"
+    "--shell-file=${CMAKE_CURRENT_BINARY_DIR}/shell.html")
+  set_property(TARGET dsp APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/shell.html)
+  if(DSP_WEB_ROMS_DIR)
+    get_filename_component(dsp_roms_abs "${DSP_WEB_ROMS_DIR}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+    target_link_options(dsp PRIVATE "--preload-file=${dsp_roms_abs}@/roms")
+    file(GLOB_RECURSE dsp_web_roms CONFIGURE_DEPENDS "${dsp_roms_abs}/*")
+    set_property(TARGET dsp APPEND PROPERTY LINK_DEPENDS ${dsp_web_roms})
+  endif()
+endif()
+
+# Tests and headless tools are native only.
+if(NOT EMSCRIPTEN)
 enable_testing()
 add_executable(dsp_tests
   tests/tests.cpp
@@ -477,7 +530,11 @@ add_executable(dsp_tests
   src/cpu/w65c816.cpp
   src/cpu/m6800.cpp
   src/machine/pia6821.cpp
+  src/drivers/arcade/bionicc.cpp
+  src/drivers/arcade/blktiger.cpp
+  src/drivers/arcade/blockout.cpp
   src/drivers/arcade/williams.cpp
+  src/drivers/arcade/arabian.cpp
   src/drivers/arcade/balsente.cpp
   src/cpu/spc700.cpp
   src/video/snes_ppu.cpp
@@ -671,3 +728,5 @@ add_executable(s32x_run EXCLUDE_FROM_ALL
 target_include_directories(s32x_run PRIVATE src)
 target_link_libraries(s32x_run PRIVATE ZLIB::ZLIB musashi)
 target_compile_options(s32x_run PRIVATE -Wall -Wextra)
+
+endif()  # NOT EMSCRIPTEN

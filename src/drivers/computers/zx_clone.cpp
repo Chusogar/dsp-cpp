@@ -79,7 +79,8 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
     for (auto& page : rom_) page.fill(0);
     std::string dir = path;
     if (ends_ci(path, ".trd") || ends_ci(path, ".scl") || ends_ci(path, ".tap") ||
-        ends_ci(path, ".tzx") || ends_ci(path, ".sna")) {
+        ends_ci(path, ".tzx") || ends_ci(path, ".cdt") || ends_ci(path, ".csw") ||
+        ends_ci(path, ".pzx") || ends_ci(path, ".sna") || ends_ci(path, ".rzx")) {
         dir = fs::path(path).parent_path().string();
         if (dir.empty()) dir = ".";
     }
@@ -273,9 +274,16 @@ bool ZxClone::init(const std::string& rom_path, std::string* error) {
 
     reset();
 
+    // Same as disks: a media path as rom_path loads ROMs from its directory
+    // (see load_roms) and then mounts/applies the image itself.
     if (ends_ci(rom_path, ".trd") || ends_ci(rom_path, ".scl")) {
         std::string disk_error;
         if (!beta_.load_disk(rom_path, &disk_error)) warnings_.push_back(disk_error);
+    } else if (ends_ci(rom_path, ".sna") || ends_ci(rom_path, ".rzx") || ends_ci(rom_path, ".tzx") ||
+               ends_ci(rom_path, ".tap") || ends_ci(rom_path, ".cdt") || ends_ci(rom_path, ".csw") ||
+               ends_ci(rom_path, ".pzx")) {
+        std::string media_error;
+        if (!load_media(rom_path, &media_error)) warnings_.push_back(media_error);
     }
     return true;
 }
@@ -629,12 +637,34 @@ void ZxClone::apply_snap(const SpectrumSnap& snap) {
     for (int b = 0; b < 8; ++b) {
         if (b < ram_pages_) ram_[size_t(b)] = snap.banks[size_t(b)];
     }
-    port_7ffd_ = snap.is_128 ? snap.port_7ffd : uint8_t(0x10);
+    // Fresh paging state — Scorpion #1FFD / Pentagon #DFFD are not in classic SNA.
+    port_1ffd_ = snap.is_128 ? snap.port_1ffd : uint8_t(0);
+    port_dffd_ = 0;
     paging_locked_ = false;
+    nmi_pending_ = false;
+    if (snap.is_128) {
+        port_7ffd_ = snap.port_7ffd;
+        if (snap.trdos_paged) beta_.enable();
+        else beta_.disable();
+    } else {
+        // 48K snapshot: ROM1 selected, bank 0 at C000, screen bank 5, Beta out.
+        port_7ffd_ = 0x10;
+        beta_.disable();
+    }
     update_memory();
     if (!snap.is_128) {
         pantalla_ = 5;
         ram3_ = 0;
+        page0_ram_ = false;
+        rom_page_ = 1;  // 48K ROM
+    }
+    if (snap.ay_used) {
+        ay_.reset();
+        for (int r = 0; r < 16; ++r) {
+            ay_.control(uint8_t(r));
+            ay_.write(snap.ay_regs[size_t(r)]);
+        }
+        ay_.control(snap.ay_latch);
     }
     cpu_.set_irq(IrqLine::Clear);
     cpu_.halted = false;
@@ -804,14 +834,28 @@ void ZxClone::apply_keyboard(const MachineInputs& in) {
 
 bool ZxClone::load_media(const std::string& path, std::string* error) {
     if (ends_ci(path, ".trd") || ends_ci(path, ".scl")) return beta_.load_disk(path, error);
-    if (ends_ci(path, ".tzx") || ends_ci(path, ".tap") || ends_ci(path, ".cdt")) {
+    if (ends_ci(path, ".tzx") || ends_ci(path, ".tap") || ends_ci(path, ".cdt") ||
+        ends_ci(path, ".csw") || ends_ci(path, ".pzx")) {
         if (!tape_.load_file(path, error)) return false;
         tape_.stop();
         return true;
     }
+    if (ends_ci(path, ".sna")) return load_sna(path, error);
     if (ends_ci(path, ".rzx")) return load_rzx(path, error);
-    if (error) *error = "unsupported media (use .trd/.scl disk, .tap/.tzx tape, or .rzx): " + path;
+    if (error) *error = "unsupported media (use .trd/.scl disk, .tap/.tzx/.csw/.pzx tape, .sna, or .rzx): " + path;
     return false;
+}
+
+bool ZxClone::load_sna(const std::string& path, std::string* error) {
+    std::vector<uint8_t> buf;
+    if (!load_file(path, buf)) {
+        if (error) *error = "cannot open SNA: " + path;
+        return false;
+    }
+    SpectrumSnap snap;
+    if (!spectrum_snap_from_sna(buf.data(), buf.size(), snap, error)) return false;
+    apply_snap(snap);
+    return true;
 }
 
 bool ZxClone::load_rzx(const std::string& path, std::string* error) {

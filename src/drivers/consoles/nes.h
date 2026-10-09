@@ -20,6 +20,7 @@ namespace dsp {
 // live in video/sound/machine.
 class Nes : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     static constexpr uint32_t kClock = NesApu::kClock;
     static constexpr int kScanlines = NesPpu::kScanlines;
     static constexpr double kFramesPerSecond = NesPpu::kFramesPerSecond;

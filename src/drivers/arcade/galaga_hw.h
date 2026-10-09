@@ -29,6 +29,7 @@ namespace dsp {
 // table), so video is handled per game.
 class GalagaHw : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game { Galaga, DigDug, Xevious, SuperXevious, Bosconian };
 
     static constexpr uint32_t kCpuClock = 3072000;

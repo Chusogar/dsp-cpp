@@ -18,6 +18,7 @@ namespace dsp {
 // Display: 192×222 cropped from an internal 256×256 plane at (24, 23).
 class Scv : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     static constexpr int kScreenWidth = 192;
     static constexpr int kScreenHeight = 222;
     static constexpr uint32_t kCrystal = 4000000;

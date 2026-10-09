@@ -17,6 +17,7 @@ namespace dsp {
 // baraduke_hw.pas. Main M6809 + HD63701V MCU (CUS60), shared Namco CUS30 sound.
 class BaradukeHw : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game { Baraduke, MetroCross };
 
     static constexpr int kScreenWidth = 288;

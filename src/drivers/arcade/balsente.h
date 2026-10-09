@@ -16,6 +16,7 @@ namespace dsp {
 // Main M6809 @ 1.25 MHz + sound Z80 @ 4 MHz with soft m6850 UART and 6×CEM3394.
 class Balsente : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game {
         Sentetst,
         Cshift,

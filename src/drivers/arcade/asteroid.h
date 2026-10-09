@@ -15,6 +15,7 @@ namespace dsp {
 // Visible vector window 400×320 at 12096000/4096/12/4 Hz (~61.52).
 class Asteroid : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 400;
     static constexpr int kScreenHeight = 320;
     static constexpr uint32_t kMasterClock = 12096000;

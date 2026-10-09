@@ -27,6 +27,7 @@ namespace dsp {
 // only the hardware itself is.
 class ColecoVision : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     static constexpr uint32_t kMainClock = 3579545;
     static constexpr int kCyclesPerLine = 228;   // Z80 cycles per scanline
     static constexpr int kScanlines = 262;       // NTSC

@@ -1,5 +1,0 @@
-build/
-*.o
-*.bmp
-compile_commands.json
-__pycache__/

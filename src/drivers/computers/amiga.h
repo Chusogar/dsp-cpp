@@ -17,6 +17,7 @@ namespace dsp {
 // 512 KiB chip RAM, ADF floppy (AmigaDOS MFM).
 class Amiga500 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     static constexpr uint32_t kCpuClock = 7093790;
     static constexpr int kSampleRate = 44100;
     static constexpr double kFps = 50.0;

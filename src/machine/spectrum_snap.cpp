@@ -81,7 +81,11 @@ void map_48k_page(SpectrumSnap& out, uint8_t page, const uint8_t* block) {
 }  // namespace
 
 bool spectrum_snap_from_sna(const uint8_t* data, size_t size, SpectrumSnap& out, std::string* error) {
-    if (!data || size < 27 + 0xc000) {
+    // Classic 48K SNA is exactly 27 + 49152 = 49179 bytes.
+    // 128K SNA is 49179 + 4 (PC, 7FFD, TR-DOS) + remaining banks (typically 131103).
+    constexpr size_t kSna48 = 27 + 0xc000;       // 49179
+    constexpr size_t kSna128Min = kSna48 + 4;    // need PC/7FFD/TR-DOS tail
+    if (!data || size < kSna48) {
         if (error) *error = "SNA too small";
         return false;
     }
@@ -104,8 +108,9 @@ bool spectrum_snap_from_sna(const uint8_t* data, size_t size, SpectrumSnap& out,
     out.b = h[14];
     out.iy = rd16(h + 15);
     out.ix = rd16(h + 17);
-    out.iff1 = (h[19] & 4) != 0;
-    out.iff2 = out.iff1;
+    // Byte 19 bit 2 = IFF2 (EI/DI). RETN semantics: IFF1 ← IFF2.
+    out.iff2 = (h[19] & 4) != 0;
+    out.iff1 = out.iff2;
     out.r = h[20];
     out.f = h[21];
     out.a = h[22];
@@ -113,33 +118,39 @@ bool spectrum_snap_from_sna(const uint8_t* data, size_t size, SpectrumSnap& out,
     out.im = uint8_t(h[25] & 3);
     out.border = uint8_t(h[26] & 7);
 
-    if (size >= 49179) {
+    if (size >= kSna128Min) {
+        // 128K: banks 5, 2, then currently paged bank (7FFD bits 0..2), then
+        // remaining banks in ascending order (skipping those already stored).
+        // The paged bank is included even when it is 5 or 2 (duplicated).
         out.is_128 = true;
-        std::memcpy(out.banks[5].data(), data + 27, 0x4000);
-        std::memcpy(out.banks[2].data(), data + 27 + 0x4000, 0x4000);
-        std::memcpy(out.banks[0].data(), data + 27 + 0x8000, 0x4000);
-        const uint8_t* tail = data + 27 + 0xc000;
+        const uint8_t* tail = data + kSna48;
         out.pc = rd16(tail);
         out.port_7ffd = tail[2];
-        size_t off = 27 + 0xc000 + 4;
+        out.trdos_paged = tail[3] != 0;
+        const int paged = int(out.port_7ffd & 7);
+
+        std::memcpy(out.banks[5].data(), data + 27, 0x4000);
+        std::memcpy(out.banks[2].data(), data + 27 + 0x4000, 0x4000);
+        std::memcpy(out.banks[size_t(paged)].data(), data + 27 + 0x8000, 0x4000);
+
+        size_t off = kSna128Min;
         for (int b = 0; b < 8; ++b) {
-            if (b == 0 || b == 2 || b == 5) continue;
-            if (off + 0x4000 <= size) {
-                std::memcpy(out.banks[size_t(b)].data(), data + off, 0x4000);
-                off += 0x4000;
-            }
+            if (b == 5 || b == 2 || b == paged) continue;
+            if (off + 0x4000 > size) break;
+            std::memcpy(out.banks[size_t(b)].data(), data + off, 0x4000);
+            off += 0x4000;
         }
-        // Also fill ram48 view from banks 5/2/0 for 48K hosts.
+        // ram48 view = what a 48K machine would see (5 / 2 / paged-at-C000).
         std::memcpy(out.ram48.data(), out.banks[5].data(), 0x4000);
         std::memcpy(out.ram48.data() + 0x4000, out.banks[2].data(), 0x4000);
-        std::memcpy(out.ram48.data() + 0x8000, out.banks[0].data(), 0x4000);
+        std::memcpy(out.ram48.data() + 0x8000, out.banks[size_t(paged)].data(), 0x4000);
     } else {
         out.is_128 = false;
         std::memcpy(out.ram48.data(), data + 27, 0xc000);
         std::memcpy(out.banks[5].data(), out.ram48.data(), 0x4000);
         std::memcpy(out.banks[2].data(), out.ram48.data() + 0x4000, 0x4000);
         std::memcpy(out.banks[0].data(), out.ram48.data() + 0x8000, 0x4000);
-        // PC is on the stack at SP.
+        // PC is on the stack at SP (Mirage Microdriver RETN).
         const uint16_t sp = out.sp;
         if (sp < 0x4000 || sp + 1 > 0xffff) {
             if (error) *error = "SNA SP out of range";
@@ -272,8 +283,8 @@ bool spectrum_snap_from_bytes(const uint8_t* data, size_t size, const char* ext_
     }
     if (ext.find("sna") != std::string::npos) return spectrum_snap_from_sna(data, size, out, error);
     if (ext.find("z80") != std::string::npos) return spectrum_snap_from_z80(data, size, out, error);
-    // Autodetect: SNA starts with I register and is exact classic sizes; Z80 is more common in RZX.
-    if (size == 49179 || size == 131103 || (size >= 27 + 0xc000 && size < 27 + 0xc000 + 100 && data[25] <= 2)) {
+    // Autodetect classic SNA sizes (48K = 49179, 128K = 131103 / 147487).
+    if (size == 49179 || size == 131103 || size == 147487) {
         if (spectrum_snap_from_sna(data, size, out, error)) return true;
     }
     return spectrum_snap_from_z80(data, size, out, error);

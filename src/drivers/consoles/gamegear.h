@@ -19,6 +19,7 @@ namespace dsp {
 // force full SMS resolution (detected by CRC, same list as the Pascal code).
 class GameGear : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     static constexpr int kGgWidth = 160;
     static constexpr int kGgHeight = 144;
     // Full SMS-sized frame used when a cart forces SMS video mode.

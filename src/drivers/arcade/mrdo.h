@@ -16,6 +16,7 @@ namespace dsp {
 // Z80 @ 4.1 MHz driving two SN76496 chips and a dual tilemap + sprite video board.
 class MrDo : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 192;
     static constexpr int kScreenHeight = 240;
     static constexpr double kFramesPerSecond = 59.94323742;

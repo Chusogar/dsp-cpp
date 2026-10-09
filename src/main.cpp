@@ -1,6 +1,11 @@
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <algorithm>
+#include <typeinfo>
+#include <set>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -54,6 +59,10 @@
 #include "drivers/arcade/gng.h"
 #include "drivers/arcade/bublbobl.h"
 #include "drivers/arcade/ambush.h"
+#include "drivers/arcade/arabian.h"
+#include "drivers/arcade/bionicc.h"
+#include "drivers/arcade/blktiger.h"
+#include "drivers/arcade/blockout.h"
 #include "drivers/arcade/shaolinsroad.h"
 #include "drivers/arcade/tehkanwc.h"
 #include "drivers/arcade/appoooh.h"
@@ -118,6 +127,10 @@
 
 #include "frontend/sdl_app.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 namespace {
 
 struct DipSetting {
@@ -163,7 +176,7 @@ void print_supported_emulators() {
 		"    shadoww, gaiden, ninjagaiden\n"
 		"    actfancer, actfancr\n"
 		"    ajax, typhoon, simpsons\n"
-		"    ambush, shaolins, tehkanwc, appoooh, robowres, arkanoid, renegade\n"
+		"    ambush, arabian, bionicc, blktiger, blockout, shaolins, tehkanwc, appoooh, robowres, arkanoid, renegade\n"
 		"    retofinv, slapfight, tigerheli,\n"
 		"    baraduke, metrocrs, bankp, combh\n"
 		"    defender, mayday, colony7, joust, robotron, stargate\n"
@@ -199,13 +212,17 @@ void print_usage(const char* program) {
     std::printf(
         "Options:\n"
         "  --game NAME        emulator / game to run (required; see list above)\n"
-        "  --tape FILE        tape/cart: Spectrum/CPC/C64/MSX (.tap/.tzx/.cdt/.prg/.t64/.cas),\n"
+        "  --listarcades      list the arcade drivers (name, title, other names)\n"
+        "  --listconsoles     list the console drivers\n"
+        "  --listcomputers    list the computer drivers\n"
+        "  --tape FILE        tape/cart/snap: Spectrum/CPC/C64/MSX (.tap/.tzx/.cdt/.prg/.t64/.cas),\n"
+        "                     Spectrum family snapshots (.sna) and RZX playback (.rzx),\n"
         "                     EXL-100 / EXELTEL cartridge (.bin/.rom) or cassette (.k7/.wav),\n"
         "                     PV-2000 cart (.bin/.rom),\n"
         "                     or QL microdrive .mdv/.qlpak or QXL.WIN\n"
         "  --cart FILE        cartridge image (Game Boy Advance .gba, plain or zipped)\n"
         "  --disk FILE        floppy: CPC/Spectrum +3/PCW .dsk/.edsk, MSX2 .dsk, Apple II .dsk/.do/.po/.nib,\n"
-        "                     Pentagon/Scorpion .trd/.scl, QL microdrive .mdv/.qlpak or QXL.WIN,\n"
+        "                     Pentagon/Scorpion .trd/.scl/.sna/.rzx, QL microdrive .mdv/.qlpak or QXL.WIN,\n"
         "                     Atari ST .st/.msa/.stx, Amiga .adf, Macintosh 400K/800K/1.44MB SuperDrive .dsk/.img/.dc42,\n"
         "                     or a Macintosh SCSI hard disk .img/.dsk (DDM+APM like MAME,\n"
         "                     or a raw 512-byte HFS volume served as-is)\n"
@@ -236,567 +253,660 @@ void print_usage(const char* program) {
         "pause moves to F2.\n");
 }
 
-std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
+// Matches the --game names in create_machine(). In listing mode every name is
+// recorded and none matches, so the same code also enumerates all drivers.
+class DriverQuery {
+public:
+    explicit DriverQuery(const std::string& game) : game_(&game) {}
+    explicit DriverQuery(std::vector<std::string>* names) : names_(names) {}
+
+    bool is(const std::string& name) {
+        if (names_ != nullptr) {
+            names_->push_back(name);
+            return false;
+        }
+        return *game_ == name;
+    }
+    bool listing() const { return names_ != nullptr; }
+    const std::string& game() const { return *game_; }
+
+private:
+    const std::string* game_ = nullptr;
+    std::vector<std::string>* names_ = nullptr;
+};
+
+std::unique_ptr<dsp::Machine> create_machine(DriverQuery& q) {
 
 	// arcade
-    if (game == "bagman") return std::make_unique<dsp::Bagman>();
-    if (game == "mikie") return std::make_unique<dsp::Mikie>();
-    if (game == "trackfld" || game == "trackfield" || game == "trackandfield") {
+    if (q.is("bagman")) return std::make_unique<dsp::Bagman>();
+    if (q.is("mikie")) return std::make_unique<dsp::Mikie>();
+    if (q.is("trackfld") || q.is("trackfield") || q.is("trackandfield")) {
         return std::make_unique<dsp::TrackFld>();
     }
-    if (game == "gauntlet") return std::make_unique<dsp::Gauntlet>();
-	if (game == "mrdo") return std::make_unique<dsp::MrDo>();
+    if (q.is("gauntlet")) return std::make_unique<dsp::Gauntlet>();
+	if (q.is("mrdo")) return std::make_unique<dsp::MrDo>();
     
-    if (game == "ddragon") {
+    if (q.is("ddragon")) {
         return std::make_unique<dsp::DoubleDragon>(dsp::DoubleDragon::Variant::DDragon);
     }
-    if (game == "ddragon2") {
+    if (q.is("ddragon2")) {
         return std::make_unique<dsp::DoubleDragon>(dsp::DoubleDragon::Variant::DDragon2);
     }
-    if (game == "elevator" || game == "elevatob" || game == "elevaction") {
+    if (q.is("elevator") || q.is("elevatob") || q.is("elevaction")) {
         return std::make_unique<dsp::TaitoSJ>(dsp::TaitoSJ::Variant::ElevatorAction);
     }
-    if (game == "junglek" || game == "jungleking") {
+    if (q.is("junglek") || q.is("jungleking")) {
         return std::make_unique<dsp::TaitoSJ>(dsp::TaitoSJ::Variant::JungleKing);
     }
-	if (game == "indydoom") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Indy);
-	if (game == "peter") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::PeterPak);	
-	if (game == "marble") return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Marble);
-	if (game == "punchout" || game == "punch-out") return std::make_unique<dsp::PunchOut>();
-	if (game == "swtrilgy" || game == "model3") return std::make_unique<dsp::Model3>();
-	if (game == "starwars" || game == "star-wars") {
+	if (q.is("indydoom")) return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Indy);
+	if (q.is("peter")) return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::PeterPak);	
+	if (q.is("marble")) return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Marble);
+	if (q.is("punchout") || q.is("punch-out")) return std::make_unique<dsp::PunchOut>();
+	if (q.is("swtrilgy") || q.is("model3")) return std::make_unique<dsp::Model3>();
+	if (q.is("starwars") || q.is("star-wars")) {
 		return std::make_unique<dsp::StarWars>(dsp::StarWars::Game::StarWars);
 	}
-	if (game == "esb") {
+	if (q.is("esb")) {
 		return std::make_unique<dsp::StarWars>(dsp::StarWars::Game::Esb);
 	}
-	if (game == "asteroid" || game == "asteroids") {
+	if (q.is("asteroid") || q.is("asteroids")) {
 		return std::make_unique<dsp::Asteroid>();
 	}
-	if (game == "roadrunn" || game == "roadrunner") {
+	if (q.is("roadrunn") || q.is("roadrunner")) {
 		return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::RoadRunner);
 	}
-	if (game == "paperboy") {
+	if (q.is("paperboy")) {
 		return std::make_unique<dsp::AtariSystem2>(dsp::AtariSystem2::Game::Paperboy);
 	}
-	if (game == "ssprint") {
+	if (q.is("ssprint")) {
 		return std::make_unique<dsp::AtariSystem2>(dsp::AtariSystem2::Game::SuperSprint);
 	}
-	if (game == "apb") {
+	if (q.is("apb")) {
 		return std::make_unique<dsp::AtariSystem2>(dsp::AtariSystem2::Game::Apb);
 	}
-	if (game == "720" || game == "720degrees") {
+	if (q.is("720") || q.is("720degrees")) {
 		return std::make_unique<dsp::AtariSystem2>(dsp::AtariSystem2::Game::Degrees720);
 	}
 
-	if (game == "tapper") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Tapper);
-	if (game == "tron") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Tron);
-    if (game == "shollow") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Shollow);
-	if (game == "domino") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Domino);
-	if (game == "wacko") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Wacko);
-	if (game == "dotron") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Dotron);
-	if (game == "timber") return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Timber);
+	if (q.is("tapper")) return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Tapper);
+	if (q.is("tron")) return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Tron);
+    if (q.is("shollow")) return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Shollow);
+	if (q.is("domino")) return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Domino);
+	if (q.is("wacko")) return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Wacko);
+	if (q.is("dotron")) return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Dotron);
+	if (q.is("timber")) return std::make_unique<dsp::Mcr>(dsp::Mcr::Game::Timber);
 
-	if (game == "robocop") return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::Robocop);
-    if (game == "baddudes" || game == "drgninja") {
+	if (q.is("robocop")) return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::Robocop);
+    if (q.is("baddudes") || q.is("drgninja")) {
         return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::BadDudes);
     }
-    if (game == "hippodrm" || game == "hippodrome") {
+    if (q.is("hippodrm") || q.is("hippodrome")) {
         return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::Hippodrome);
     }
-    if (game == "slyspy" || game == "secretag") {
+    if (q.is("slyspy") || q.is("secretag")) {
         return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::SlySpy);
     }
-    if (game == "bouldash") return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::BoulderDash);
+    if (q.is("bouldash")) return std::make_unique<dsp::Dec0>(dsp::Dec0::Variant::BoulderDash);
 
-    if (game == "kungfum" || game == "kungfu") {
+    if (q.is("kungfum") || q.is("kungfu")) {
         return std::make_unique<dsp::IremM62>(dsp::IremM62::Game::KungFuMaster);
     }
-    if (game == "spelunkr" || game == "spelunker") {
+    if (q.is("spelunkr") || q.is("spelunker")) {
         return std::make_unique<dsp::IremM62>(dsp::IremM62::Game::Spelunker);
     }
-    if (game == "spelunk2" || game == "spelunker2") {
+    if (q.is("spelunk2") || q.is("spelunker2")) {
         return std::make_unique<dsp::IremM62>(dsp::IremM62::Game::Spelunker2);
     }
-    if (game == "ldrun" || game == "loderunner") {
+    if (q.is("ldrun") || q.is("loderunner")) {
         return std::make_unique<dsp::IremM62>(dsp::IremM62::Game::LodeRunner);
     }
-    if (game == "ldrun2" || game == "loderunner2") {
+    if (q.is("ldrun2") || q.is("loderunner2")) {
         return std::make_unique<dsp::IremM62>(dsp::IremM62::Game::LodeRunner2);
     }
-    if (game == "ikari") return std::make_unique<dsp::Snk>(dsp::Snk::Game::Ikari);
-    if (game == "athena") return std::make_unique<dsp::Snk>(dsp::Snk::Game::Athena);
-    if (game == "tnk3") return std::make_unique<dsp::Snk>(dsp::Snk::Game::Tnk3);
-    if (game == "aso") return std::make_unique<dsp::Snk>(dsp::Snk::Game::Aso);
-    if (game == "ghouls") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Ghouls);
-    if (game == "ffight" || game == "finalfight") {
+    if (q.is("ikari")) return std::make_unique<dsp::Snk>(dsp::Snk::Game::Ikari);
+    if (q.is("athena")) return std::make_unique<dsp::Snk>(dsp::Snk::Game::Athena);
+    if (q.is("tnk3")) return std::make_unique<dsp::Snk>(dsp::Snk::Game::Tnk3);
+    if (q.is("aso")) return std::make_unique<dsp::Snk>(dsp::Snk::Game::Aso);
+    if (q.is("ghouls")) return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Ghouls);
+    if (q.is("ffight") || q.is("finalfight")) {
         return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Ffight);
     }
-    if (game == "kod") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Kod);
-    if (game == "sf2") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Sf2);
-    if (game == "strider") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Strider);
-    if (game == "3wonders" || game == "wonder3") {
+    if (q.is("kod")) return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Kod);
+    if (q.is("sf2")) return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Sf2);
+    if (q.is("strider")) return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Strider);
+    if (q.is("3wonders") || q.is("wonder3")) {
         return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Wonder3);
     }
-    if (game == "captcomm") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Captcomm);
-    if (game == "knights") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Knights);
-    if (game == "sf2ce") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Sf2ce);
-    if (game == "dino") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Dino);
-    if (game == "punisher") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Punisher);
-    if (game == "willow") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Willow);
-    if (game == "1941") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Ca1941);
-    if (game == "nemo") return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Nemo);
-    if (game == "rtype") return std::make_unique<dsp::M72>(dsp::M72::Game::Rtype);
-    if (game == "hharry") return std::make_unique<dsp::M72>(dsp::M72::Game::Hharry);
-    if (game == "rtype2") return std::make_unique<dsp::M72>(dsp::M72::Game::Rtype2);
-	if (game == "polepos" || game == "poleposition") {
+    if (q.is("captcomm")) return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Captcomm);
+    if (q.is("knights")) return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Knights);
+    if (q.is("sf2ce")) return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Sf2ce);
+    if (q.is("dino")) return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Dino);
+    if (q.is("punisher")) return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Punisher);
+    if (q.is("willow")) return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Willow);
+    if (q.is("1941")) return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Ca1941);
+    if (q.is("nemo")) return std::make_unique<dsp::Cps1>(dsp::Cps1::Game::Nemo);
+    if (q.is("rtype")) return std::make_unique<dsp::M72>(dsp::M72::Game::Rtype);
+    if (q.is("hharry")) return std::make_unique<dsp::M72>(dsp::M72::Game::Hharry);
+    if (q.is("rtype2")) return std::make_unique<dsp::M72>(dsp::M72::Game::Rtype2);
+	if (q.is("polepos") || q.is("poleposition")) {
 		return std::make_unique<dsp::PolePos>(dsp::PolePos::Game::PolePosition);
 	}
-	if (game == "polepos2" || game == "poleposition2") {
+	if (q.is("polepos2") || q.is("poleposition2")) {
 		return std::make_unique<dsp::PolePos>(dsp::PolePos::Game::PolePosition2);
 	}
     
-	if (game == "outrun") return std::make_unique<dsp::Outrun>();
-	if (game == "aburner2") return std::make_unique<dsp::XBoard>();
+	if (q.is("outrun")) return std::make_unique<dsp::Outrun>();
+	if (q.is("aburner2")) return std::make_unique<dsp::XBoard>();
 
-    if (game == "hangon" || game == "hang-on") return std::make_unique<dsp::HangOn>();
-    if (game == "enduro" || game == "enduror" || game == "enduro-racer") {
+    if (q.is("hangon") || q.is("hang-on")) return std::make_unique<dsp::HangOn>();
+    if (q.is("enduro") || q.is("enduror") || q.is("enduro-racer")) {
         return std::make_unique<dsp::HangOn>(dsp::HangOn::Game::Enduro);
     }
-    if (game == "sharrier" || game == "spaceharrier" || game == "space-harrier") {
+    if (q.is("sharrier") || q.is("spaceharrier") || q.is("space-harrier")) {
         return std::make_unique<dsp::HangOn>(dsp::HangOn::Game::Sharrier);
     }
-    if (game == "fantzone" || game == "fantasyzone") {
+    if (q.is("fantzone") || q.is("fantasyzone")) {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Fantzone);
     }
-    if (game == "shinobi") return std::make_unique<dsp::System16>(dsp::System16::Game::Shinobi);
-    if (game == "alexkidd" || game == "alexkid") {
+    if (q.is("shinobi")) return std::make_unique<dsp::System16>(dsp::System16::Game::Shinobi);
+    if (q.is("alexkidd") || q.is("alexkid")) {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Alexkidd);
     }
-    if (game == "aliensyn" || game == "aliensynd" || game == "aliensyndrome") {
+    if (q.is("aliensyn") || q.is("aliensynd") || q.is("aliensyndrome")) {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Aliensyn);
     }
-    if (game == "wb3" || game == "wonderboy3" || game == "wonderboyiii") {
+    if (q.is("wb3") || q.is("wonderboy3") || q.is("wonderboyiii")) {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Wb3);
     }
-    if (game == "tetris") return std::make_unique<dsp::System16>(dsp::System16::Game::Tetris);
-    if (game == "altbeast" || game == "alteredbeast") {
+    if (q.is("tetris")) return std::make_unique<dsp::System16>(dsp::System16::Game::Tetris);
+    if (q.is("altbeast") || q.is("alteredbeast")) {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Altbeast);
     }
-    if (game == "goldnaxe" || game == "goldenaxe") {
+    if (q.is("goldnaxe") || q.is("goldenaxe")) {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Goldnaxe);
     }
-    if (game == "ddux" || game == "dynamitedux") {
+    if (q.is("ddux") || q.is("dynamitedux")) {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Ddux);
     }
-    if (game == "eswat" || game == "e-swat") {
+    if (q.is("eswat") || q.is("e-swat")) {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Eswat);
     }
-    if (game == "passsht" || game == "passingshot") {
+    if (q.is("passsht") || q.is("passingshot")) {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Passsht);
     }
-    if (game == "aurail") {
+    if (q.is("aurail")) {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Aurail);
     }
-    if (game == "riotcity" || game == "riot") {
+    if (q.is("riotcity") || q.is("riot")) {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Riotcity);
     }
-    if (game == "sdi" || game == "sdib") {
+    if (q.is("sdi") || q.is("sdib")) {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Sdi);
     }
-    if (game == "cotton") {
+    if (q.is("cotton")) {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Cotton);
     }
-    if (game == "bayroute") {
+    if (q.is("bayroute")) {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Bayroute);
     }
-    if (game == "sonicbom" || game == "sonicboom") {
+    if (q.is("sonicbom") || q.is("sonicboom")) {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Sonicbom);
     }
-    if (game == "timescan" || game == "timescanner") {
+    if (q.is("timescan") || q.is("timescanner")) {
         return std::make_unique<dsp::System16>(dsp::System16::Game::Timescan);
     }
-    if (game == "mwalk" || game == "moonwalker" || game == "moonwalk") {
+    if (q.is("mwalk") || q.is("moonwalker") || q.is("moonwalk")) {
         return std::make_unique<dsp::System18>(dsp::System18::Game::Mwalk);
     }
-    if (game == "astorm" || game == "alienstorm") {
+    if (q.is("astorm") || q.is("alienstorm")) {
         return std::make_unique<dsp::System18>(dsp::System18::Game::Astorm);
     }
-    if (game == "bloxeed") {
+    if (q.is("bloxeed")) {
         return std::make_unique<dsp::System18>(dsp::System18::Game::Bloxeed);
     }
-    if (game == "cltchitr" || game == "clutchhitter") {
+    if (q.is("cltchitr") || q.is("clutchhitter")) {
         return std::make_unique<dsp::System18>(dsp::System18::Game::Cltchitr);
     }
-    if (game == "ddcrew") {
+    if (q.is("ddcrew")) {
         return std::make_unique<dsp::System18>(dsp::System18::Game::Ddcrew);
     }
-    if (game == "desertbr" || game == "desertbreaker") {
+    if (q.is("desertbr") || q.is("desertbreaker")) {
         return std::make_unique<dsp::System18>(dsp::System18::Game::Desertbr);
     }
-    if (game == "hamaway" || game == "hammeraway") {
+    if (q.is("hamaway") || q.is("hammeraway")) {
         return std::make_unique<dsp::System18>(dsp::System18::Game::Hamaway);
     }
-    if (game == "lghost" || game == "laserghost") {
+    if (q.is("lghost") || q.is("laserghost")) {
         return std::make_unique<dsp::System18>(dsp::System18::Game::Lghost);
     }
-    if (game == "pontoon") {
+    if (q.is("pontoon")) {
         return std::make_unique<dsp::System18>(dsp::System18::Game::Pontoon);
     }
-    if (game == "shdancer" || game == "shadowdancer") {
+    if (q.is("shdancer") || q.is("shadowdancer")) {
         return std::make_unique<dsp::System18>(dsp::System18::Game::Shdancer);
     }
-    if (game == "wwallyj" || game == "wwally" || game == "wally") {
+    if (q.is("wwallyj") || q.is("wwally") || q.is("wally")) {
         return std::make_unique<dsp::System18>(dsp::System18::Game::Wwallyj);
     }
 
 	// Sega System 1
-	if (game == "pitfall2" || game == "pitfallii" || game == "pitfall") {
+	if (q.is("pitfall2") || q.is("pitfallii") || q.is("pitfall")) {
 		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::Pitfall2);
 	}
-	if (game == "teddyboy" || game == "teddy" || game == "tdboy") {
+	if (q.is("teddyboy") || q.is("teddy") || q.is("tdboy")) {
 		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::TeddyBoy);
 	}
-	if (game == "wboy" || game == "wonderboy") {
+	if (q.is("wboy") || q.is("wonderboy")) {
 		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::WonderBoy);
 	}
-	if (game == "mrviking" || game == "viking") {
+	if (q.is("mrviking") || q.is("viking")) {
 		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::MrViking);
 	}
-	if (game == "seganinj" || game == "seganinja" || game == "ninja") {
+	if (q.is("seganinj") || q.is("seganinja") || q.is("ninja")) {
 		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::SegaNinja);
 	}
-	if (game == "upndown" || game == "up-n-down" || game == "upanddown") {
+	if (q.is("upndown") || q.is("up-n-down") || q.is("upanddown")) {
 		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::UpNDown);
 	}
-	if (game == "flicky") {
+	if (q.is("flicky")) {
 		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::Flicky);
 	}
-	if (game == "gardia") {
+	if (q.is("gardia")) {
 		return std::make_unique<dsp::SegaSystem1>(dsp::SegaSystem1::Game::Gardia);
 	}
 
-	if (game == "galaxian") return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::Galaxian);
-	if (game == "mooncrst" || game == "mooncresta") return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::MoonCresta);
-	if (game == "scramble") return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::Scramble);
-	if (game == "frogger") return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::Frogger);
+	if (q.is("galaxian")) return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::Galaxian);
+	if (q.is("mooncrst") || q.is("mooncresta")) return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::MoonCresta);
+	if (q.is("scramble")) return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::Scramble);
+	if (q.is("frogger")) return std::make_unique<dsp::Galaxian>(dsp::Galaxian::Game::Frogger);
 
-	if (game == "opwolf" || game == "operationwolf" || game == "operation-wolf") {
+	if (q.is("opwolf") || q.is("operationwolf") || q.is("operation-wolf")) {
 		return std::make_unique<dsp::OpWolf>();
 	}
 
 	// Sega / Gremlin VIC Dual
-	if (game == "depthch" || game == "depthcharge") {
+	if (q.is("depthch") || q.is("depthcharge")) {
 		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::DepthCharge);
 	}
-	if (game == "safari") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Safari);
-	if (game == "frogs") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Frogs);
-	if (game == "sspaceat" || game == "spaceattack") {
+	if (q.is("safari")) return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Safari);
+	if (q.is("frogs")) return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Frogs);
+	if (q.is("sspaceat") || q.is("spaceattack")) {
 		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::SpaceAttack);
 	}
-	if (game == "sspacaho" || game == "spaceattackheadon") {
+	if (q.is("sspacaho") || q.is("spaceattackheadon")) {
 		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::SpaceAttackHeadOn);
 	}
-	if (game == "headon") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::HeadOn);
-	if (game == "headon2") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::HeadOn2);
-	if (game == "headon2s" || game == "headon2sl" || game == "headon2slim") {
+	if (q.is("headon")) return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::HeadOn);
+	if (q.is("headon2")) return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::HeadOn2);
+	if (q.is("headon2s") || q.is("headon2sl") || q.is("headon2slim")) {
 		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::HeadOn2Slim);
 	}
-	if (game == "invho2" || game == "invincoheadon2") {
+	if (q.is("invho2") || q.is("invincoheadon2")) {
 		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::InvincoHeadOn2);
 	}
-	if (game == "nsub" || game == "n-sub") {
+	if (q.is("nsub") || q.is("n-sub")) {
 		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::NSub);
 	}
-	if (game == "samurai") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Samurai);
-	if (game == "invinco") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Invinco);
-	if (game == "invds" || game == "invincodeepscan") {
+	if (q.is("samurai")) return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Samurai);
+	if (q.is("invinco")) return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Invinco);
+	if (q.is("invds") || q.is("invincodeepscan")) {
 		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::InvincoDeepScan);
 	}
-	if (game == "tranqgun" || game == "tranquillizergun") {
+	if (q.is("tranqgun") || q.is("tranquillizergun")) {
 		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::TranqGun);
 	}
-	if (game == "spacetrk" || game == "spacetrek") {
+	if (q.is("spacetrk") || q.is("spacetrek")) {
 		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::SpaceTrek);
 	}
-	if (game == "carnival") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Carnival);
-	if (game == "brdrline" || game == "borderline") {
+	if (q.is("carnival")) return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Carnival);
+	if (q.is("brdrline") || q.is("borderline")) {
 		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Borderline);
 	}
-	if (game == "digger") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Digger);
-	if (game == "pulsar") return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Pulsar);
-	if (game == "heiankyo" || game == "heiankyoalien") {
+	if (q.is("digger")) return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Digger);
+	if (q.is("pulsar")) return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Pulsar);
+	if (q.is("heiankyo") || q.is("heiankyoalien")) {
 		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::Heiankyo);
 	}
-	if (game == "alphaho" || game == "alphafighter") {
+	if (q.is("alphaho") || q.is("alphafighter")) {
 		return std::make_unique<dsp::VicDual>(dsp::VicDual::Game::AlphaFighter);
 	}
 
-	if (dsp::NeoGeo::is_game_name(game)) {
-		return std::make_unique<dsp::NeoGeo>(game);
+	if (q.listing()) {
+		for (const std::string& name : dsp::NeoGeo::game_names()) q.is(name);
+	} else if (dsp::NeoGeo::is_game_name(q.game())) {
+		return std::make_unique<dsp::NeoGeo>(q.game());
 	}
 
-	if (game == "pirates") {
+	if (q.is("pirates")) {
 		return std::make_unique<dsp::Pirates>(dsp::Pirates::Game::Pirates);
 	}
-	if (game == "genix") {
+	if (q.is("genix")) {
 		return std::make_unique<dsp::Pirates>(dsp::Pirates::Game::Genix);
 	}
 
-	if (game == "shadoww" || game == "shadow_warriors" || game == "gaiden" ||
-	    game == "ninjagaiden")
+	if (q.is("shadoww") || q.is("shadow_warriors") || q.is("gaiden") ||
+	    q.is("ninjagaiden"))
 	    return std::make_unique<dsp::ShadowWarriors>();
 
-	if (game == "armedf") { return std::make_unique<dsp::ArmedfHw>(dsp::ArmedfHw::Game::ArmedF); }
-	if (game == "terraf") { return std::make_unique<dsp::ArmedfHw>(dsp::ArmedfHw::Game::TerraForce); }
-	if (game == "cclimbr2") { return std::make_unique<dsp::ArmedfHw>(dsp::ArmedfHw::Game::CrazyClimber2); }
-	if (game == "legion") { return std::make_unique<dsp::ArmedfHw>(dsp::ArmedfHw::Game::Legion); }
+	if (q.is("armedf")) { return std::make_unique<dsp::ArmedfHw>(dsp::ArmedfHw::Game::ArmedF); }
+	if (q.is("terraf")) { return std::make_unique<dsp::ArmedfHw>(dsp::ArmedfHw::Game::TerraForce); }
+	if (q.is("cclimbr2")) { return std::make_unique<dsp::ArmedfHw>(dsp::ArmedfHw::Game::CrazyClimber2); }
+	if (q.is("legion")) { return std::make_unique<dsp::ArmedfHw>(dsp::ArmedfHw::Game::Legion); }
 
-	if (game == "wwfsstar") { return std::make_unique<dsp::Wwfsstar>(); }
-	if (game == "citycon") return std::make_unique<dsp::CityCon>();
-    if (game == "commando") return std::make_unique<dsp::Commando>();
-    if (game == "actfancer" || game == "actfancr") return std::make_unique<dsp::ActFancer>();
-    if (game == "ajax" || game == "typhoon") return std::make_unique<dsp::Ajax>();
-    if (game == "aliens") return std::make_unique<dsp::Aliens>();
-    if (game == "simpsons") return std::make_unique<dsp::Simpsons>();
+	if (q.is("wwfsstar")) { return std::make_unique<dsp::Wwfsstar>(); }
+	if (q.is("citycon")) return std::make_unique<dsp::CityCon>();
+    if (q.is("commando")) return std::make_unique<dsp::Commando>();
+    if (q.is("actfancer") || q.is("actfancr")) return std::make_unique<dsp::ActFancer>();
+    if (q.is("ajax") || q.is("typhoon")) return std::make_unique<dsp::Ajax>();
+    if (q.is("aliens")) return std::make_unique<dsp::Aliens>();
+    if (q.is("simpsons")) return std::make_unique<dsp::Simpsons>();
     
-	if (game == "galaga") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Galaga);
-	if (game == "digdug") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::DigDug);
-	if (game == "xevious") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Xevious);
-	if (game == "sxevious") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::SuperXevious);
-	if (game == "bosco") return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Bosconian);
+	if (q.is("galaga")) return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Galaga);
+	if (q.is("digdug")) return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::DigDug);
+	if (q.is("xevious")) return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Xevious);
+	if (q.is("sxevious")) return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::SuperXevious);
+	if (q.is("bosco")) return std::make_unique<dsp::GalagaHw>(dsp::GalagaHw::Game::Bosconian);
 
-	if (game == "atetris") { return std::make_unique<dsp::AtariTetris>(); }
+	if (q.is("atetris")) { return std::make_unique<dsp::AtariTetris>(); }
 
-	if (game == "skullxbo") return std::make_unique<dsp::Skullxbo>();
-	if (game == "shuuz" || game == "shuzz") return std::make_unique<dsp::Shuuz>();
-	if (game == "gng") return std::make_unique<dsp::Gng>();
-	if (game == "bublbobl" || game == "bubblebobble" || game == "bublbobble") {
+	if (q.is("skullxbo")) return std::make_unique<dsp::Skullxbo>();
+	if (q.is("shuuz") || q.is("shuzz")) return std::make_unique<dsp::Shuuz>();
+	if (q.is("gng")) return std::make_unique<dsp::Gng>();
+	if (q.is("bublbobl") || q.is("bubblebobble") || q.is("bublbobble")) {
 	    return std::make_unique<dsp::BublBobl>();
 	}
-	if (game == "ambush") return std::make_unique<dsp::Ambush>();
-	if (game == "shaolin" || game == "shaolins") return std::make_unique<dsp::ShaolinsRoad>();
-	if (game == "tehkanwc") return std::make_unique<dsp::TehkanWc>();
-	if (game == "appoooh") return std::make_unique<dsp::Appoooh>(dsp::Appoooh::Variant::Appoooh);
-	if (game == "robowres") return std::make_unique<dsp::Appoooh>(dsp::Appoooh::Variant::RoboWres);
-	if (game == "arkanoid") return std::make_unique<dsp::Arkanoid>();
-	if (game == "renegade") return std::make_unique<dsp::Renegade>();
-	if (game == "retofinv") return std::make_unique<dsp::Retofinv>();
-	if (game == "slapfight") return std::make_unique<dsp::SlapFight>(dsp::SlapFight::Variant::SlapFight);
-	if (game == "tigerheli") return std::make_unique<dsp::SlapFight>(dsp::SlapFight::Variant::TigerHeli);
-	if (game == "baraduke" || game == "aliensec") {
+	if (q.is("ambush")) return std::make_unique<dsp::Ambush>();
+	if (q.is("arabian")) return std::make_unique<dsp::Arabian>();
+	if (q.is("bionicc") || q.is("bioniccommando")) return std::make_unique<dsp::BionicCommando>();
+	if (q.is("blktiger")) return std::make_unique<dsp::BlackTiger>();
+	if (q.is("blockout")) return std::make_unique<dsp::BlockOut>();
+	if (q.is("shaolin") || q.is("shaolins")) return std::make_unique<dsp::ShaolinsRoad>();
+	if (q.is("tehkanwc")) return std::make_unique<dsp::TehkanWc>();
+	if (q.is("appoooh")) return std::make_unique<dsp::Appoooh>(dsp::Appoooh::Variant::Appoooh);
+	if (q.is("robowres")) return std::make_unique<dsp::Appoooh>(dsp::Appoooh::Variant::RoboWres);
+	if (q.is("arkanoid")) return std::make_unique<dsp::Arkanoid>();
+	if (q.is("renegade")) return std::make_unique<dsp::Renegade>();
+	if (q.is("retofinv")) return std::make_unique<dsp::Retofinv>();
+	if (q.is("slapfight")) return std::make_unique<dsp::SlapFight>(dsp::SlapFight::Variant::SlapFight);
+	if (q.is("tigerheli")) return std::make_unique<dsp::SlapFight>(dsp::SlapFight::Variant::TigerHeli);
+	if (q.is("baraduke") || q.is("aliensec")) {
 	    return std::make_unique<dsp::BaradukeHw>(dsp::BaradukeHw::Game::Baraduke);
 	}
-	if (game == "metrocrs" || game == "metrocross") {
+	if (q.is("metrocrs") || q.is("metrocross")) {
 	    return std::make_unique<dsp::BaradukeHw>(dsp::BaradukeHw::Game::MetroCross);
 	}
-	if (game == "bankp" || game == "bankpanic") {
+	if (q.is("bankp") || q.is("bankpanic")) {
 	    return std::make_unique<dsp::BankPanicHw>(dsp::BankPanicHw::Game::BankPanic);
 	}
-	if (game == "combh" || game == "combathawk") {
+	if (q.is("combh") || q.is("combathawk")) {
 	    return std::make_unique<dsp::BankPanicHw>(dsp::BankPanicHw::Game::CombatHawk);
 	}
 
-	if (game == "defender") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Defender);
-	if (game == "mayday") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Mayday);
-	if (game == "colony7") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Colony7);
-	if (game == "joust") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Joust);
-	if (game == "robotron") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Robotron);
-	if (game == "stargate") return std::make_unique<dsp::Williams>(dsp::Williams::Game::Stargate);
+	if (q.is("defender")) return std::make_unique<dsp::Williams>(dsp::Williams::Game::Defender);
+	if (q.is("mayday")) return std::make_unique<dsp::Williams>(dsp::Williams::Game::Mayday);
+	if (q.is("colony7")) return std::make_unique<dsp::Williams>(dsp::Williams::Game::Colony7);
+	if (q.is("joust")) return std::make_unique<dsp::Williams>(dsp::Williams::Game::Joust);
+	if (q.is("robotron")) return std::make_unique<dsp::Williams>(dsp::Williams::Game::Robotron);
+	if (q.is("stargate")) return std::make_unique<dsp::Williams>(dsp::Williams::Game::Stargate);
 
-	if (game == "sentetst") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Sentetst);
-	if (game == "cshift") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Cshift);
-	if (game == "hattrick") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Hattrick);
-	if (game == "gghost") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Gghost);
-	if (game == "otwalls") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Otwalls);
-	if (game == "snakepit") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Snakepit);
-	if (game == "triviag1") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviag1);
-	if (game == "snakjack") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Snakjack);
-	if (game == "stocker") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Stocker);
-	if (game == "triviabb") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviabb);
-	if (game == "triviag2") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviag2);
-	if (game == "triviayp") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviayp);
-	if (game == "triviasp") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviasp);
-	if (game == "gimeabrk") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Gimeabrk);
-	if (game == "minigolf") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Minigolf);
-	if (game == "teamht") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Teamht);
-	if (game == "grudge") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Grudge);
-	if (game == "triviaes") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviaes);
-	if (game == "toggle") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Toggle);
-	if (game == "nstocker") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Nstocker);
-	if (game == "sfootbal") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Sfootbal);
-	if (game == "spiker") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Spiker);
-	if (game == "stompin") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Stompin);
-	if (game == "nametune") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Nametune);
-	if (game == "rescraid") return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Rescraid);
+	if (q.is("sentetst")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Sentetst);
+	if (q.is("cshift")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Cshift);
+	if (q.is("hattrick")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Hattrick);
+	if (q.is("gghost")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Gghost);
+	if (q.is("otwalls")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Otwalls);
+	if (q.is("snakepit")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Snakepit);
+	if (q.is("triviag1")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviag1);
+	if (q.is("snakjack")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Snakjack);
+	if (q.is("stocker")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Stocker);
+	if (q.is("triviabb")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviabb);
+	if (q.is("triviag2")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviag2);
+	if (q.is("triviayp")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviayp);
+	if (q.is("triviasp")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviasp);
+	if (q.is("gimeabrk")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Gimeabrk);
+	if (q.is("minigolf")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Minigolf);
+	if (q.is("teamht")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Teamht);
+	if (q.is("grudge")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Grudge);
+	if (q.is("triviaes")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Triviaes);
+	if (q.is("toggle")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Toggle);
+	if (q.is("nstocker")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Nstocker);
+	if (q.is("sfootbal")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Sfootbal);
+	if (q.is("spiker")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Spiker);
+	if (q.is("stompin")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Stompin);
+	if (q.is("nametune")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Nametune);
+	if (q.is("rescraid")) return std::make_unique<dsp::Balsente>(dsp::Balsente::Game::Rescraid);
 
 	// computers
-    if (game == "spectrum48" || game == "spectrum") return std::make_unique<dsp::Spectrum48k>();
-    if (game == "zx80") return std::make_unique<dsp::Zx81>(dsp::Zx81::Model::Zx80);
-    if (game == "zx81" || game == "ts1000") return std::make_unique<dsp::Zx81>();
-    if (game == "cpc464") return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC464);
-    if (game == "cpc664") return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC664);
-    if (game == "cpc6128" || game == "cpc") {
+    if (q.is("spectrum48") || q.is("spectrum")) return std::make_unique<dsp::Spectrum48k>();
+    if (q.is("zx80")) return std::make_unique<dsp::Zx81>(dsp::Zx81::Model::Zx80);
+    if (q.is("zx81") || q.is("ts1000")) return std::make_unique<dsp::Zx81>();
+    if (q.is("cpc464")) return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC464);
+    if (q.is("cpc664")) return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC664);
+    if (q.is("cpc6128") || q.is("cpc")) {
         return std::make_unique<dsp::AmstradCpc>(dsp::AmstradCpc::Model::CPC6128);
     }
-    if (game == "pcw8256" || game == "pcw") {
+    if (q.is("pcw8256") || q.is("pcw")) {
         return std::make_unique<dsp::Pcw>(dsp::Pcw::Model::PCW8256);
     }
-    if (game == "pcw8512") {
+    if (q.is("pcw8512")) {
         return std::make_unique<dsp::Pcw>(dsp::Pcw::Model::PCW8512);
     }
-	if (game == "spectrum128") return std::make_unique<dsp::Spectrum128k>(dsp::Spectrum128k::Model::Spec128k);
-	if (game == "plus3") return std::make_unique<dsp::Spectrum3>();
-	if (game == "specnext" || game == "tbblue" || game == "next" || game == "zxnext") {
+	if (q.is("spectrum128")) return std::make_unique<dsp::Spectrum128k>(dsp::Spectrum128k::Model::Spec128k);
+	if (q.is("plus3")) return std::make_unique<dsp::Spectrum3>();
+	if (q.is("specnext") || q.is("tbblue") || q.is("next") || q.is("zxnext")) {
 	    return std::make_unique<dsp::SpecNext>();
 	}
-	if (game == "pentagon" || game == "pentagon1024" || game == "pent1024") {
+	if (q.is("pentagon") || q.is("pentagon1024") || q.is("pent1024")) {
 	    return std::make_unique<dsp::Pentagon1024>();
 	}
-	if (game == "scorpion" || game == "scorpion256" || game == "scorpio" || game == "zs256") {
+	if (q.is("scorpion") || q.is("scorpion256") || q.is("scorpio") || q.is("zs256")) {
 	    return std::make_unique<dsp::Scorpion256>();
 	}
-	if (game == "msx") return std::make_unique<dsp::Msx1>();
-	if (game == "msx2" || game == "nms8250" || game == "philips-msx2") {
+	if (q.is("msx")) return std::make_unique<dsp::Msx1>();
+	if (q.is("msx2") || q.is("nms8250") || q.is("philips-msx2")) {
 	    return std::make_unique<dsp::Msx2>();
 	}
-	if (game == "msx2-jp" || game == "msx2jp") {
+	if (q.is("msx2-jp") || q.is("msx2jp")) {
 	    return std::make_unique<dsp::Msx2>(dsp::Msx2::Region::Japan);
 	}
-	if (game == "msx2-eu" || game == "msx2eu") {
+	if (q.is("msx2-eu") || q.is("msx2eu")) {
 	    return std::make_unique<dsp::Msx2>(dsp::Msx2::Region::Europe);
 	}
-	if (game == "c64" || game == "commodore64" || game == "commodore") {
+	if (q.is("c64") || q.is("commodore64") || q.is("commodore")) {
         return std::make_unique<dsp::C64>();
     }
-    if (game == "vic20p" || game == "vic-20p" || game == "vic20-pal") {
+    if (q.is("vic20p") || q.is("vic-20p") || q.is("vic20-pal")) {
         return std::make_unique<dsp::Vic20>(dsp::Vic20::Region::Pal);
     }
-    if (game == "vic20n" || game == "vic20-ntsc" || game == "vic-20n") {
+    if (q.is("vic20n") || q.is("vic20-ntsc") || q.is("vic-20n")) {
         return std::make_unique<dsp::Vic20>(dsp::Vic20::Region::Ntsc);
     }
-    if (game == "vic20" || game == "vic-20") {
+    if (q.is("vic20") || q.is("vic-20")) {
         return std::make_unique<dsp::Vic20>(dsp::Vic20::Region::Pal);
     }
-	if (game == "c128" || game == "commodore128") {
+	if (q.is("c128") || q.is("commodore128")) {
         return std::make_unique<dsp::C128>();
     }
-    if (game == "plus4" || game == "plus-4" || game == "c264") {
+    if (q.is("plus4") || q.is("plus-4") || q.is("c264")) {
         return std::make_unique<dsp::Plus4>(dsp::Plus4::Model::Plus4_64K,
                                             dsp::Plus4::Region::Pal);
     }
-    if (game == "plus4n" || game == "plus4-ntsc") {
+    if (q.is("plus4n") || q.is("plus4-ntsc")) {
         return std::make_unique<dsp::Plus4>(dsp::Plus4::Model::Plus4_64K,
                                             dsp::Plus4::Region::Ntsc);
     }
-    if (game == "c16" || game == "commodore16") {
+    if (q.is("c16") || q.is("commodore16")) {
         return std::make_unique<dsp::Plus4>(dsp::Plus4::Model::C16_16K,
                                             dsp::Plus4::Region::Pal);
     }
-    if (game == "c16n" || game == "c16-ntsc") {
+    if (q.is("c16n") || q.is("c16-ntsc")) {
         return std::make_unique<dsp::Plus4>(dsp::Plus4::Model::C16_16K,
                                             dsp::Plus4::Region::Ntsc);
     }
-    if (game == "apple2orig" || game == "apple2integer" || game == "appleii-integer") {
+    if (q.is("apple2orig") || q.is("apple2integer") || q.is("appleii-integer")) {
         return std::make_unique<dsp::Apple2>(dsp::Apple2::Model::II);
     }
-    if (game == "apple2" || game == "appleii" || game == "apple2plus" || game == "apple2p" ||
-        game == "apple2+") {
+    if (q.is("apple2") || q.is("appleii") || q.is("apple2plus") || q.is("apple2p") ||
+        q.is("apple2+")) {
         return std::make_unique<dsp::Apple2>(dsp::Apple2::Model::IIPlus);
     }
-    if (game == "apple2e" || game == "appleiie") {
+    if (q.is("apple2e") || q.is("appleiie")) {
         return std::make_unique<dsp::Apple2>(dsp::Apple2::Model::IIe);
     }
-    if (game == "apple2ee" || game == "apple2eplus" || game == "apple2e+" ||
-        game == "apple2enhanced" || game == "appleiiee") {
+    if (q.is("apple2ee") || q.is("apple2eplus") || q.is("apple2e+") ||
+        q.is("apple2enhanced") || q.is("appleiiee")) {
         return std::make_unique<dsp::Apple2>(dsp::Apple2::Model::IIeEnhanced);
     }
-	if (game == "apple2gs") { return std::make_unique<dsp::Apple2GS>(); }
-	if (game == "exl100" || game == "exl-100" || game == "exelvision") {
+	if (q.is("apple2gs")) { return std::make_unique<dsp::Apple2GS>(); }
+	if (q.is("exl100") || q.is("exl-100") || q.is("exelvision")) {
 	    return std::make_unique<dsp::Exelv>(dsp::Exelv::Model::Exl100);
 	}
-	if (game == "exeltel") {
+	if (q.is("exeltel")) {
 	    return std::make_unique<dsp::Exelv>(dsp::Exelv::Model::Exeltel);
 	}
-	if (game == "ql" || game == "sinclairql" || game == "sinclair-ql") {
+	if (q.is("ql") || q.is("sinclairql") || q.is("sinclair-ql")) {
 	    return std::make_unique<dsp::SinclairQl>();
 	}
-	if (game == "st" || game == "atarist" || game == "atari-st" || game == "1040st" ||
-	    game == "520st") {
+	if (q.is("st") || q.is("atarist") || q.is("atari-st") || q.is("1040st") ||
+	    q.is("520st")) {
 	    return std::make_unique<dsp::AtariSt>();
 	}
-	if (game == "amiga" || game == "a500" || game == "amiga500" || game == "amiga-500") {
+	if (q.is("amiga") || q.is("a500") || q.is("amiga500") || q.is("amiga-500")) {
 	    return std::make_unique<dsp::Amiga500>();
 	}
-	if (game == "macplus" || game == "mac" || game == "macintosh" || game == "plus" ||
-	    game == "mac-plus") {
+	if (q.is("macplus") || q.is("mac") || q.is("macintosh") || q.is("plus") ||
+	    q.is("mac-plus")) {
 	    return std::make_unique<dsp::MacPlus>();
 	}
-	if (game == "macii") { return std::make_unique<dsp::MacII>(); }
-	if (game == "samcoupe") { return std::make_unique<dsp::SamCoupe>(); }
-	if (game == "a800") { return std::make_unique<dsp::Atari8>(dsp::Atari8::Model::A800); }
-	if (game == "a800xl") { return std::make_unique<dsp::Atari8>(dsp::Atari8::Model::A800XL); }
-	if (game == "a800xe") { return std::make_unique<dsp::Atari8>(dsp::Atari8::Model::A800XE); }
+	if (q.is("macii")) { return std::make_unique<dsp::MacII>(); }
+	if (q.is("samcoupe")) { return std::make_unique<dsp::SamCoupe>(); }
+	if (q.is("a800")) { return std::make_unique<dsp::Atari8>(dsp::Atari8::Model::A800); }
+	if (q.is("a800xl")) { return std::make_unique<dsp::Atari8>(dsp::Atari8::Model::A800XL); }
+	if (q.is("a800xe")) { return std::make_unique<dsp::Atari8>(dsp::Atari8::Model::A800XE); }
 		
 	// consoles
-	if (game == "sms") return std::make_unique<dsp::Sms>();
-	if (game == "gamegear") return std::make_unique<dsp::GameGear>();
-	if (game == "genesis" || game == "megadrive" || game == "mega-drive" ||
-	    game == "md" || game == "gen") {
+	if (q.is("sms")) return std::make_unique<dsp::Sms>();
+	if (q.is("gamegear")) return std::make_unique<dsp::GameGear>();
+	if (q.is("genesis") || q.is("megadrive") || q.is("mega-drive") ||
+	    q.is("md") || q.is("gen")) {
 	    return std::make_unique<dsp::Genesis>();
 	}
-	if (game == "genesis-pal" || game == "megadrive-pal") {
+	if (q.is("genesis-pal") || q.is("megadrive-pal")) {
 	    return std::make_unique<dsp::Genesis>(dsp::Genesis::Region::Europe);
 	}
-	if (game == "genesis-jp" || game == "megadrive-jp") {
+	if (q.is("genesis-jp") || q.is("megadrive-jp")) {
 	    return std::make_unique<dsp::Genesis>(dsp::Genesis::Region::Japan);
 	}
-	if (game == "32x" || game == "sega32x" || game == "mars") return std::make_unique<dsp::Sega32X>();
-	if (game == "32x-pal" || game == "sega32x-pal") {
+	if (q.is("32x") || q.is("sega32x") || q.is("mars")) return std::make_unique<dsp::Sega32X>();
+	if (q.is("32x-pal") || q.is("sega32x-pal")) {
 	    return std::make_unique<dsp::Sega32X>(dsp::Genesis::Region::Europe);
 	}
-	if (game == "32x-jp" || game == "sega32x-jp") {
+	if (q.is("32x-jp") || q.is("sega32x-jp")) {
 	    return std::make_unique<dsp::Sega32X>(dsp::Genesis::Region::Japan);
 	}
-	if (game == "pv1000") return std::make_unique<dsp::Pv1000>();
-	if (game == "pv2000" || game == "pv-2000" || game == "casio-pv2000") {
+	if (q.is("pv1000")) return std::make_unique<dsp::Pv1000>();
+	if (q.is("pv2000") || q.is("pv-2000") || q.is("casio-pv2000")) {
 	    return std::make_unique<dsp::Pv2000>();
 	}
-	if (game == "coleco") return std::make_unique<dsp::ColecoVision>();
-	if (game == "sg1000") return std::make_unique<dsp::Sg1000>();
-	if (game == "gb") return std::make_unique<dsp::GameBoy>();
-    if (game == "gba" || game == "agb" || game == "gameboyadvance") return std::make_unique<dsp::Gba>();
-	if (game == "nes") return std::make_unique<dsp::Nes>();
-	if (game == "lynx") return std::make_unique<dsp::AtariLynx>();
-	if (game == "wswan" || game == "wonderswan" || game == "ws") {
+	if (q.is("coleco")) return std::make_unique<dsp::ColecoVision>();
+	if (q.is("sg1000")) return std::make_unique<dsp::Sg1000>();
+	if (q.is("gb")) return std::make_unique<dsp::GameBoy>();
+    if (q.is("gba") || q.is("agb") || q.is("gameboyadvance")) return std::make_unique<dsp::Gba>();
+	if (q.is("nes")) return std::make_unique<dsp::Nes>();
+	if (q.is("lynx")) return std::make_unique<dsp::AtariLynx>();
+	if (q.is("wswan") || q.is("wonderswan") || q.is("ws")) {
 	    return std::make_unique<dsp::WonderSwan>(dsp::WonderSwan::Model::WonderSwan);
 	}
-	if (game == "wscolor" || game == "wsc" || game == "wonderswancolor" ||
-	    game == "swancrystal" || game == "wonderswan-color") {
+	if (q.is("wscolor") || q.is("wsc") || q.is("wonderswancolor") ||
+	    q.is("swancrystal") || q.is("wonderswan-color")) {
 	    return std::make_unique<dsp::WonderSwan>(dsp::WonderSwan::Model::WonderSwanColor);
 	}
-	if (game == "a2600" || game == "atari2600" || game == "vcs" || game == "2600") {
+	if (q.is("a2600") || q.is("atari2600") || q.is("vcs") || q.is("2600")) {
 	    return std::make_unique<dsp::A2600>();
 	}
-	if (game == "scv") return std::make_unique<dsp::Scv>();
-	if (game == "vectrex") { return std::make_unique<dsp::Vectrex>(); }
-	if (game == "a7800") { return std::make_unique<dsp::A7800>(); }
+	if (q.is("scv")) return std::make_unique<dsp::Scv>();
+	if (q.is("vectrex")) { return std::make_unique<dsp::Vectrex>(); }
+	if (q.is("a7800")) { return std::make_unique<dsp::A7800>(); }
     
 	
-	if (game == "pce" || game == "pcengine" || game == "tg16")
+	if (q.is("pce") || q.is("pcengine") || q.is("tg16"))
 	    return std::make_unique<dsp::PcEngine>();
 
-	if (game == "snes") { return std::make_unique<dsp::Snes>(); }
-	if (game == "psx" || game == "playstation" || game == "ps1") {
+	if (q.is("snes")) { return std::make_unique<dsp::Snes>(); }
+	if (q.is("psx") || q.is("playstation") || q.is("ps1")) {
 	    return std::make_unique<dsp::Psx>();
 	}
 
     return nullptr;
 }
 
+std::unique_ptr<dsp::Machine> create_machine(const std::string& game) {
+    DriverQuery q(game);
+    return create_machine(q);
+}
+
+// One driver as listed by --listarcades / --listconsoles / --listcomputers
+// and the web launcher: its --game name, other names for the same machine,
+// title and type.
+struct DriverInfo {
+    std::string name;
+    std::vector<std::string> aliases;
+    std::string title;
+    dsp::MachineType type;
+};
+
+// Every driver, in the order of create_machine(). Each name is instantiated
+// (not initialised: no ROMs are read) to ask its type and title; names that
+// build the same class with the same title are folded into aliases.
+const std::vector<DriverInfo>& list_drivers() {
+    static std::vector<DriverInfo> drivers;
+    if (!drivers.empty()) return drivers;
+    std::vector<std::string> names;
+    DriverQuery q(&names);
+    create_machine(q);
+    std::map<std::string, size_t> by_key;
+    std::set<std::string> seen;
+    for (const std::string& name : names) {
+        if (!seen.insert(name).second) continue;
+        std::unique_ptr<dsp::Machine> machine = create_machine(name);
+        if (machine == nullptr) continue;
+        const dsp::Machine& m = *machine;
+        const std::string key = std::string(typeid(m).name()) + "|" + m.title();
+        auto it = by_key.find(key);
+        if (it != by_key.end()) {
+            drivers[it->second].aliases.push_back(name);
+            continue;
+        }
+        by_key[key] = drivers.size();
+        drivers.push_back(DriverInfo{name, {}, m.title(), m.machine_type()});
+    }
+    return drivers;
+}
+
+void print_drivers(dsp::MachineType type) {
+    std::vector<const DriverInfo*> list;
+    for (const DriverInfo& d : list_drivers())
+        if (d.type == type) list.push_back(&d);
+    std::sort(list.begin(), list.end(),
+              [](const DriverInfo* a, const DriverInfo* b) { return a->name < b->name; });
+    std::printf("%s drivers (%zu):\n", dsp::machine_type_name(type), list.size());
+    for (const DriverInfo* d : list) {
+        std::printf("  %-20s %s", d->name.c_str(), d->title.c_str());
+        if (!d->aliases.empty()) {
+            std::printf("  (also:");
+            for (const std::string& a : d->aliases) std::printf(" %s", a.c_str());
+            std::printf(")");
+        }
+        std::printf("\n");
+    }
+}
+
 }  // namespace
 
-int main(int argc, char** argv) {
+#ifdef __EMSCRIPTEN__
+std::unique_ptr<dsp::Machine> g_web_machine;  // the machine the page is running
+#endif
+
+static int run_dsp(int argc, char** argv) {
     dsp::AppOptions options;
     std::string game;
     std::vector<std::string> media;
@@ -813,6 +923,15 @@ int main(int argc, char** argv) {
         };
         if (argument == "--help" || argument == "-h") {
             print_usage(argv[0]);
+            return 0;
+        } else if (argument == "--listarcades") {
+            print_drivers(dsp::MachineType::Arcade);
+            return 0;
+        } else if (argument == "--listconsoles") {
+            print_drivers(dsp::MachineType::Console);
+            return 0;
+        } else if (argument == "--listcomputers") {
+            print_drivers(dsp::MachineType::Computer);
             return 0;
         } else if (argument == "--game") {
             game = next("--game");
@@ -894,5 +1013,76 @@ int main(int argc, char** argv) {
     }
 
     dsp::SdlApp app(options);
+#ifdef __EMSCRIPTEN__
+    // The browser drives the frame loop after run() hands it over, so the
+    // machine must outlive this call (until the page starts another one).
+    g_web_machine = std::move(machine);
+    return app.run(*g_web_machine);
+#else
     return app.run(*machine);
+#endif
 }
+
+int main(int argc, char** argv) { return run_dsp(argc, argv); }
+
+#ifdef __EMSCRIPTEN__
+// Entry point of the web page (web/shell.html.in): the command-line arguments,
+// one per line. Called from JavaScript instead of main() so the page can start
+// the emulator once it has the ROM, and so it does not depend on how a given
+// Emscripten release exposes main(argc, argv).
+extern "C" EMSCRIPTEN_KEEPALIVE int dsp_web_start(const char* lines) {
+    static std::vector<std::string> args;
+    static std::vector<char*> argv;
+    args.assign(1, "dsp");
+    std::string current;
+    for (const char* p = lines; *p; ++p) {
+        if (*p == '\n') {
+            if (!current.empty()) args.push_back(current);
+            current.clear();
+        } else {
+            current += *p;
+        }
+    }
+    if (!current.empty()) args.push_back(current);
+    argv.clear();
+    for (std::string& a : args) argv.push_back(a.data());
+    argv.push_back(nullptr);
+    // Another driver may be running: stop its loop before freeing it.
+    dsp::SdlApp::stop_web();
+    g_web_machine.reset();
+    return run_dsp(int(args.size()), argv.data());
+}
+
+// Every driver for the page's "Machine Type" / driver combos, as JSON:
+// [{"name":..,"title":..,"type":"arcade|console|computer","aliases":[..]}, ...]
+extern "C" EMSCRIPTEN_KEEPALIVE const char* dsp_web_list() {
+    static std::string json;
+    if (!json.empty()) return json.c_str();
+    auto quote = [](const std::string& text) {
+        std::string out = "\"";
+        for (unsigned char c : text) {
+            if (c == '"' || c == '\\') {
+                out += '\\';
+                out += char(c);
+            } else if (c < 0x20) {
+                out += ' ';
+            } else {
+                out += char(c);
+            }
+        }
+        return out + "\"";
+    };
+    json = "[";
+    for (const DriverInfo& d : list_drivers()) {
+        if (json.size() > 1) json += ",";
+        std::string type = dsp::machine_type_name(d.type);
+        for (char& c : type) c = char(std::tolower(static_cast<unsigned char>(c)));
+        json += "{\"name\":" + quote(d.name) + ",\"title\":" + quote(d.title) +
+                ",\"type\":" + quote(type) + ",\"aliases\":[";
+        for (size_t i = 0; i < d.aliases.size(); ++i) json += (i ? "," : "") + quote(d.aliases[i]);
+        json += "]}";
+    }
+    json += "]";
+    return json.c_str();
+}
+#endif

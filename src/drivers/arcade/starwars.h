@@ -19,6 +19,7 @@ namespace dsp {
 // Atari Star Wars (1983): dual 6809, AVG vector display, mathbox, 4×POKEY + TMS5220.
 class StarWars : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     // The Empire Strikes Back runs on the same board with an extra bank of
     // ROM at $8000-$9FFF selected by an Atari "slapstic" security chip.
     enum class Game { StarWars, Esb };

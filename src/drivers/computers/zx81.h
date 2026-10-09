@@ -17,6 +17,7 @@ namespace dsp {
 // the framebuffer is also filled from D_FILE each frame as a reliable fallback.
 class Zx81 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     enum class Model { Zx81, Zx80 };
 
     static constexpr uint32_t kClock = 3250000;

@@ -84,11 +84,27 @@ struct MachineOverlay {
     uint32_t serial = 0;
 };
 
-// Common interface implemented by every arcade driver, so the SDL2 front end
-// does not need to know which game it is running.
+// Kind of system a driver emulates, used to group the drivers in the
+// front ends (--listarcades / --listconsoles / --listcomputers, web launcher).
+enum class MachineType { Arcade, Console, Computer };
+
+inline const char* machine_type_name(MachineType type) {
+    switch (type) {
+        case MachineType::Arcade: return "Arcade";
+        case MachineType::Console: return "Console";
+        case MachineType::Computer: return "Computer";
+    }
+    return "?";
+}
+
+// Common interface implemented by every driver (arcade, console or computer),
+// so the SDL2 front end does not need to know which machine it is running.
 class Machine {
 public:
     virtual ~Machine() = default;
+
+    // Arcade, console or computer. Every driver declares it.
+    virtual MachineType machine_type() const = 0;
 
     // `rom_path` is a directory or a zip archive holding the ROM set.
     virtual bool init(const std::string& rom_path, std::string* error) = 0;

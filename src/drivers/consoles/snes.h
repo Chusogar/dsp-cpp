@@ -22,6 +22,7 @@ namespace dsp {
 // past its upload loop, but does not yet run SPC700 code.
 class Snes : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     static constexpr uint32_t kCpuClock = 3580000;
     static constexpr int kFps = 60;
     static constexpr int kLinesTotal = 262;

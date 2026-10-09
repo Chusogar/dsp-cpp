@@ -16,6 +16,7 @@ namespace dsp {
 // ("IIe+"), with a Disk II controller in slot 6.
 class Apple2 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     enum class Model { II, IIPlus, IIe, IIeEnhanced };
 
     static constexpr uint32_t kClock = 1020484;

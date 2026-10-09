@@ -19,6 +19,7 @@ namespace dsp {
 // 6520 PIA for the joystick ports (and, on XL/XE, memory banking).
 class Atari8 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     enum class Model { A800, A800XL, A800XE };
 
     static constexpr uint32_t kClock = 1789790;  // NTSC 6502 clock

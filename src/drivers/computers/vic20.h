@@ -15,6 +15,7 @@ namespace dsp {
 // Commodore VIC-20 (PAL 6561 preferred; NTSC 6560 fallback).
 class Vic20 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     enum class Region { Pal, Ntsc };
 
     explicit Vic20(Region region = Region::Pal);

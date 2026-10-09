@@ -17,6 +17,7 @@ namespace dsp {
 // 3×Z80 @ 4.608 MHz, 2×AY-3-8910, MSM5205 ADPCM, trackball inputs.
 class TehkanWc : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 256;
     static constexpr int kScreenHeight = 224;
     static constexpr double kFramesPerSecond = 60.0;

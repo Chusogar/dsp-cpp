@@ -19,6 +19,7 @@ namespace dsp {
 // OutRun (Sega, 1986), ported from outrun_hw.pas.
 class Outrun : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 320;
     static constexpr int kScreenHeight = 224;
     static constexpr double kFramesPerSecond = 60.0;

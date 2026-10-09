@@ -19,6 +19,7 @@ namespace dsp {
 // M6502 main + M6809 sound + Taito MC68705 + YM3526 + MSM5205
 class Renegade : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 256;
     static constexpr int kScreenHeight = 238;
     static constexpr int kScanlines = 272;

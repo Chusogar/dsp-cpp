@@ -24,6 +24,7 @@ namespace dsp {
 // M6502 with a YM2151, two POKEYs and a TMS5220C.
 class AtariSystem2 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 512;
     static constexpr int kScreenHeight = 384;
     static constexpr int kPlayfieldWidth = 1024;

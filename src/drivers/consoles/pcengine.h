@@ -20,6 +20,7 @@ namespace dsp {
 // video/ and sound/.
 class PcEngine : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     static constexpr uint32_t kMasterClock = 21477270;
     static constexpr uint32_t kClock = kMasterClock / 3;  // 7.16 MHz CPU
     static constexpr int kScanlines = 262;

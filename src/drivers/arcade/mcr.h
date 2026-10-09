@@ -18,6 +18,7 @@ namespace dsp {
 // SSIO (2×AY-8910 + 14024 /SINT), 16×16 tiles and 32×32 sprites.
 class Mcr : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenW = 512;
     static constexpr int kScreenH = 480;
     static constexpr uint32_t kMainClock = 5000000;

@@ -21,6 +21,7 @@ namespace dsp {
 // Video: K052109 tiles + K051960 sprites. Screen 288×224 (crop 112,16).
 class Aliens : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 288;
     static constexpr int kScreenHeight = 224;
     static constexpr double kFramesPerSecond = 59.185606;

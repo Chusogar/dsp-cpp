@@ -20,6 +20,7 @@ namespace dsp {
 // plus sprites composed into a 256x224 screen with blend effects.
 class ShadowWarriors : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 256;
     static constexpr int kScreenHeight = 224;
     static constexpr int kWorkSize = 512;

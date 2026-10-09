@@ -36,6 +36,7 @@ namespace dsp {
 // 640 pixels across so that the hi-res modes keep every pixel.
 class SpecNext : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     static constexpr int kWidth = 640;
     static constexpr int kHeight = 256;
     static constexpr uint32_t kMasterClock = 28000000;  // 28 MHz video/system clock
@@ -82,7 +83,7 @@ public:
     void sram_write(uint32_t address, uint8_t value) { sram_[address & (kRamPages * 0x2000 - 1)] = value; }
     bool bootrom_enabled() const { return bootrom_en_; }
     bool config_mode() const { return nr_03_config_mode_; }
-    uint8_t machine_type() const { return nr_03_machine_type_; }
+    uint8_t next_machine_type() const { return nr_03_machine_type_; }  // NextReg 0x03
     uint8_t mmu(int slot) const { return mmu_[size_t(slot & 7)]; }
     uint64_t frame_count() const { return frame_count_; }
     uint32_t sd_sectors_read() const { return sd_.sectors_read(); }

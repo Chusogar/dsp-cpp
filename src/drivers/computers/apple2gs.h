@@ -34,6 +34,7 @@ namespace dsp {
 // emulator's documented implementation.
 class Apple2GS : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     static constexpr uint32_t kMasterClock = 28636363;
     static constexpr uint32_t kFastClock = kMasterClock / 10;  // ~2.864 MHz
     static constexpr int kScreenWidth = 640;

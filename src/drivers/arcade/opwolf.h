@@ -22,6 +22,7 @@ namespace dsp {
 // 320×240 light-gun cabinet.
 class OpWolf : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 320;
     static constexpr int kScreenHeight = 240;
     static constexpr int kWorkWidth = 512;

@@ -77,6 +77,7 @@ private:
 // Port of galaxian_hw.pas — Galaxian, Moon Cresta, Scramble, Frogger.
 class Galaxian : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game {
         Galaxian,
         MoonCresta,

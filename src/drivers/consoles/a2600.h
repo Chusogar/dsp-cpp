@@ -18,6 +18,7 @@ namespace dsp {
 // the console switches and the RIOT timer live in the MOS 6532.
 class A2600 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Console; }
     static constexpr uint32_t kMasterClock = 3579545;
     static constexpr uint32_t kCpuClock = kMasterClock / 3;
     static constexpr int kCyclesPerLine = Tia::kCpuCyclesPerLine;

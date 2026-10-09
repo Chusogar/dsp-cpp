@@ -26,6 +26,7 @@ namespace dsp {
 // 8x8 text/foreground. Visible area 256x240 @ ~57.44 Hz, 272 scanlines.
 class Wwfsstar : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     static constexpr int kScreenWidth = 256;
     static constexpr int kScreenHeight = 240;
     static constexpr int kScanlines = 272;

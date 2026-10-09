@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DSP C++</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #111; color: #ddd; font: 14px/1.4 system-ui, sans-serif; }
+  #bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; padding: 10px 16px;
+         background: #1b1b1b; border-bottom: 1px solid #2a2a2a; }
+  #bar label { display: flex; flex-direction: column; gap: 3px; color: #999; font-size: 12px; }
+  #bar select, #bar input, #bar button { font: inherit; padding: 5px 8px; }
+  #driver { min-width: 280px; max-width: 420px; }
+  #more { width: 100%; color: #999; font-size: 12px; }
+  #more[open] { padding-bottom: 4px; }
+  #more .row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; margin-top: 6px; }
+  #extra { width: 260px; }
+  #canvas { display: none; margin: 12px auto 0; image-rendering: pixelated; outline: none; }
+  #status { text-align: center; color: #888; padding: 8px 16px; }
+  #help { max-width: 760px; margin: 24px auto; padding: 0 16px; color: #999; }
+  #help code { color: #ccc; }
+  #output { max-width: 900px; margin: 0 auto; padding: 0 16px; white-space: pre-wrap; color: #888;
+            font: 12px ui-monospace, monospace; max-height: 25vh; overflow: auto; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <label>Machine Type
+    <select id="mtype">
+      <option value="all">All</option>
+      <option value="arcade">Arcade</option>
+      <option value="console">Console</option>
+      <option value="computer">Computer</option>
+    </select>
+  </label>
+  <label>Driver
+    <select id="driver"><option value="">Loading…</option></select>
+  </label>
+  <label>ROM (zip or file)
+    <input id="rom" type="file">
+  </label>
+  <button id="start" title="Start the selected driver with the chosen ROM">Start</button>
+  <details id="more">
+    <summary>More options</summary>
+    <div class="row">
+      <label>Tape / disk / cartridge
+        <span><select id="mediatype"><option value="--cart">--cart</option><option value="--tape">--tape</option><option value="--disk">--disk</option></select>
+        <input id="media" type="file"></span>
+      </label>
+      <label>Extra arguments
+        <input id="extra" type="text" placeholder="--dip 1:0x6f --mute">
+      </label>
+    </div>
+  </details>
+</div>
+<div id="status">Loading…</div>
+<div id="help">
+  Pick a <b>Machine Type</b> and a <b>driver</b>: it starts as soon as it has its ROM. A ROM
+  chosen in the file box is used, or <code>/roms/NAME.zip</code> when the page was built with
+  ROMs; otherwise the file dialog opens. Keys: arrows, Ctrl/Space and Z/X/C = buttons,
+  5 = coin, 1 = start, F2 = pause, F3 = reset, F12 = turbo (click the picture first so it has
+  the keyboard). The page can also start directly with <code>?game=NAME&amp;rom=PATH</code>.
+</div>
+<canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+<div id="output"></div>
+<script>
+(() => {
+  // Everything lives in this scope: the Emscripten runtime script defines
+  // globals of its own (run, out, err, ...). Only Module is shared.
+  // Arguments the page starts with when the URL gives none (set by CMake).
+  const DSP_DEFAULT_ARGS = "@DSP_WEB_ARGS@";
+
+  const $ = (id) => document.getElementById(id);
+  const statusEl = $('status'), outputEl = $('output'), canvas = $('canvas');
+  const typeSel = $('mtype'), driverSel = $('driver'), romInput = $('rom');
+  let drivers = [];          // [{name, title, type, aliases}] from dsp_web_list()
+  let waitingForRom = false; // a driver was picked and the file dialog is open
+
+  function log(text) { outputEl.textContent += text + '\n'; outputEl.scrollTop = outputEl.scrollHeight; }
+
+  function splitArgs(text) {
+    const out = [];
+    const re = /"([^"]*)"|(\S+)/g;
+    let m;
+    while ((m = re.exec(text)) !== null) out.push(m[1] !== undefined ? m[1] : m[2]);
+    return out;
+  }
+
+  function fs() { return Module.FS || window.FS; }
+  function exists(path) { try { return fs().analyzePath(path).exists; } catch (e) { return false; } }
+
+  async function writeUpload(input, dir) {
+    const file = input.files[0];
+    if (!file) return null;
+    const data = new Uint8Array(await file.arrayBuffer());
+    try { fs().mkdir(dir); } catch (e) {}
+    const path = dir + '/' + file.name;
+    fs().writeFile(path, data);
+    return path;
+  }
+
+  function launch(args) {
+    $('help').hidden = true;
+    outputEl.textContent = '';
+    statusEl.textContent = 'dsp ' + args.join(' ');
+    canvas.style.display = 'block';
+    try {
+      Module.ccall('dsp_web_start', 'number', ['string'], [args.join('\n')]);
+    } catch (e) {
+      if (e !== 'unwind' && !(e && e.name === 'ExitStatus')) throw e;
+    }
+    canvas.focus();
+  }
+
+  function fillDrivers(selected) {
+    const type = typeSel.value;
+    const list = drivers.filter((d) => type === 'all' || d.type === type)
+                        .sort((a, b) => a.title.localeCompare(b.title));
+    driverSel.innerHTML = '';
+    const head = document.createElement('option');
+    head.value = '';
+    head.textContent = '— ' + list.length + ' drivers —';
+    driverSel.appendChild(head);
+    for (const d of list) {
+      const opt = document.createElement('option');
+      opt.value = d.name;
+      opt.textContent = d.title + ' (' + d.name + ')';
+      if (d.aliases.length) opt.title = 'also: ' + d.aliases.join(', ');
+      driverSel.appendChild(opt);
+    }
+    driverSel.value = selected && list.some((d) => d.name === selected) ? selected : '';
+  }
+
+  // ROM for a driver: the file box, else a preloaded /roms/NAME.zip (or alias).
+  async function romFor(d) {
+    const uploaded = await writeUpload(romInput, '/uploads');
+    if (uploaded) return uploaded;
+    for (const n of [d.name, ...d.aliases]) {
+      for (const p of ['/roms/' + n + '.zip', '/roms/' + n]) if (exists(p)) return p;
+    }
+    return null;
+  }
+
+  async function startSelected(openDialog) {
+    const d = drivers.find((x) => x.name === driverSel.value);
+    if (!d) { statusEl.textContent = 'Choose a driver.'; return; }
+    const rom = await romFor(d);
+    if (!rom) {
+      statusEl.textContent = 'Choose the ROM for ' + d.title + '.';
+      if (openDialog) { waitingForRom = true; romInput.click(); }
+      return;
+    }
+    const args = ['--game', d.name, rom];
+    const media = await writeUpload($('media'), '/uploads');
+    if (media) args.push($('mediatype').value, media);
+    args.push(...splitArgs($('extra').value));
+    launch(args);
+  }
+
+  typeSel.onchange = () => fillDrivers(driverSel.value);
+  driverSel.onchange = () => { romInput.value = ''; startSelected(true); };
+  romInput.onchange = () => { if (waitingForRom || driverSel.value) { waitingForRom = false; startSelected(false); } };
+  $('start').onclick = () => startSelected(true);
+  canvas.onclick = () => canvas.focus();
+
+  const Module = window.Module = {
+    canvas: canvas,
+    print: (text) => { console.log(text); log(text); },
+    printErr: (text) => { console.warn(text); log(text); },
+    onRuntimeInitialized: () => {
+      drivers = JSON.parse(Module.UTF8ToString(Module.ccall('dsp_web_list', 'number', [], [])));
+      const params = new URLSearchParams(location.search);
+      let args = [];
+      if (params.get('game')) {
+        args = ['--game', params.get('game')];
+        if (params.get('rom')) args.push(params.get('rom'));
+        if (params.get('args')) args.push(...splitArgs(params.get('args')));
+      } else if (DSP_DEFAULT_ARGS.trim() !== '') {
+        args = splitArgs(DSP_DEFAULT_ARGS);
+      }
+      const game = args[args.indexOf('--game') + 1];
+      const d = drivers.find((x) => x.name === game || x.aliases.includes(game));
+      if (d) typeSel.value = d.type;
+      fillDrivers(d ? d.name : '');
+      statusEl.textContent = drivers.length + ' drivers';
+      if (args.length > 0) launch(args);
+    },
+  };
+  window.onerror = () => { statusEl.textContent = 'Error, see the log below.'; };
+})();
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

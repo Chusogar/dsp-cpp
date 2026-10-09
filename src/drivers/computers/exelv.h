@@ -22,6 +22,7 @@ namespace dsp {
 // keyboard, cartridge at $0200-$7FFF and 2 KiB CPU RAM at $C000.
 class Exelv : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     enum class Model { Exl100, Exeltel };
 
     static constexpr int kScreenWidth = Tms3556::kTotalWidth;

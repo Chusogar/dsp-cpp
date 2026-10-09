@@ -18,6 +18,7 @@ namespace dsp {
 // MOS 8502 via M6502, MOS8722 MMU (simplified), VIC-II, SID, dual CIA.
 class C128 : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     static constexpr int kScreenWidth = Mos6566::kScreenWidth;
     static constexpr int kScreenHeight = Mos6566::kScreenHeight;
     static constexpr uint32_t kCpuClock = 985248;

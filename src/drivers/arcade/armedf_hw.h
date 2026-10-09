@@ -24,6 +24,7 @@ namespace dsp {
 // layer on command.
 class ArmedfHw : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Arcade; }
     enum class Game { ArmedF, TerraForce, CrazyClimber2, Legion };
 
     static constexpr uint32_t kMainClock = 8000000;

@@ -19,6 +19,7 @@ namespace dsp {
 // Sinclair QL (UK, JS SuperBASIC): 68008 + ZX8301/ZX8302 + 8749 IPC.
 class SinclairQl : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     static constexpr uint32_t kCpuClock = 7500000;
     static constexpr uint32_t kIpcClock = 11000000;
     static constexpr double kFps = 50.08;

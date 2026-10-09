@@ -17,6 +17,7 @@ namespace dsp {
 // Atari 1040ST (PAL): 68000, TOS ROM, shifter, MFP, YM2149, WD1772 floppy.
 class AtariSt : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::Computer; }
     static constexpr uint32_t kCpuClock = 8010265;
     static constexpr int kSampleRate = AY8910::kSampleRate;
     static constexpr double kFps = 50.053;
