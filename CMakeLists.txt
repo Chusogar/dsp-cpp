@@ -42,8 +42,12 @@ target_include_directories(musashi PUBLIC src/cpu/musashi)
 target_compile_options(musashi PRIVATE -w)
 target_link_libraries(musashi PUBLIC m)
 
-add_executable(dsp
-  src/main.cpp
+# Everything but the front end: CPUs, sound, video, machine parts, the ROM
+# loader and every driver, as a static library. An executable only pulls in
+# the objects it references, so one built with a few drivers (see
+# DSP_DRIVERS and the dsp-<driver> targets below) carries just those drivers
+# and the components they use.
+add_library(dsp_lib STATIC
   src/cpu/z80.cpp
   src/cpu/z80ctc.cpp
   src/cpu/m6800.cpp
@@ -67,7 +71,6 @@ add_executable(dsp
   src/cpu/spc700.cpp
   src/cpu/r3000a.cpp
   src/cpu/psx_gte.cpp
-
   src/sound/ay8910.cpp
   src/sound/sn76496.cpp
   src/sound/ym2151.cpp
@@ -94,7 +97,6 @@ add_executable(dsp
   src/sound/asc.cpp
   src/sound/saa1099.cpp
   src/sound/cem3394.cpp
-    
   src/video/gfx.cpp
   src/video/atari_mo.cpp
   src/video/tms9918.cpp
@@ -115,7 +117,6 @@ add_executable(dsp
   src/video/gtia.cpp
   src/video/maria.cpp
   src/video/snes_ppu.cpp
-  
   src/machine/bagman_pal.cpp
   src/machine/slapstic.cpp
   src/machine/via6522.cpp
@@ -178,7 +179,6 @@ add_executable(dsp
   src/machine/wd1772.cpp
   src/machine/sam_tape.cpp
   src/machine/pia6821.cpp
- 
   src/drivers/arcade/bagman.cpp
   src/drivers/arcade/arabian.cpp
   src/drivers/arcade/bionicc.cpp
@@ -250,7 +250,6 @@ add_executable(dsp
   src/drivers/arcade/balsente.cpp
   src/drivers/arcade/slapfight.cpp
   src/drivers/arcade/williams.cpp
-
   src/drivers/computers/spectrum.cpp
   src/drivers/computers/spectrum_128k.cpp
   src/drivers/computers/spectrum_3.cpp
@@ -291,7 +290,6 @@ add_executable(dsp
   src/drivers/computers/macii.cpp
   src/drivers/computers/samcoupe.cpp
   src/drivers/computers/atari8.cpp
-    
   src/drivers/consoles/sms.cpp
   src/machine/sega_vdp.cpp
   src/video/sega_315_5313.cpp
@@ -336,267 +334,177 @@ add_executable(dsp
   src/machine/psx_spu.cpp
   src/machine/psx_xa_adpcm.cpp
   src/machine/psx_mdec.cpp
-
-      
   src/core/rom_loader.cpp
-  src/frontend/sdl_app.cpp
+  src/core/embedded_media.cpp
 )
-
-target_include_directories(dsp PRIVATE src ${SDL2_INCLUDE_DIRS})
-target_link_libraries(dsp PRIVATE ${SDL2_LIBRARIES} ZLIB::ZLIB musashi)
-target_compile_options(dsp PRIVATE -Wall -Wextra)
-
+target_include_directories(dsp_lib PUBLIC src)
+target_link_libraries(dsp_lib PUBLIC ZLIB::ZLIB musashi)
+target_compile_options(dsp_lib PRIVATE -Wall -Wextra)
 if(EMSCRIPTEN)
+  # The MPEG audio decoder (Model 3 music) uses C++ exceptions internally.
+  set_source_files_properties(src/sound/mpeg_audio.cpp PROPERTIES COMPILE_OPTIONS "-fexceptions")
+  # dsp_lib is compiled with the SDL2 port flags too (only the front end uses them).
+  target_link_libraries(dsp_lib PUBLIC ${SDL2_LIBRARIES})
   string(REPLACE "\"" "\\\"" DSP_WEB_ARGS_ESCAPED "${DSP_WEB_ARGS}")
   set(DSP_WEB_ARGS "${DSP_WEB_ARGS_ESCAPED}")
   configure_file(web/shell.html.in ${CMAKE_CURRENT_BINARY_DIR}/shell.html @ONLY)
+endif()
 
-  set_target_properties(dsp PROPERTIES SUFFIX ".html")
-  # The MPEG audio decoder (Model 3 music) uses C++ exceptions internally.
-  set_source_files_properties(src/sound/mpeg_audio.cpp PROPERTIES COMPILE_OPTIONS "-fexceptions")
-  target_link_options(dsp PRIVATE
-    "-fexceptions"
-    "-sALLOW_MEMORY_GROWTH=1"
-    "-sINITIAL_MEMORY=134217728"
-    "-sTOTAL_STACK=8388608"
-    "-sEXIT_RUNTIME=0"
-    "-sFORCE_FILESYSTEM=1"
-    "-sEXPORTED_FUNCTIONS=['_dsp_web_start','_dsp_web_list']"
-    "-sEXPORTED_RUNTIME_METHODS=['ccall','UTF8ToString','FS']"
-    "-sMINIFY_HTML=0"
-    "--shell-file=${CMAKE_CURRENT_BINARY_DIR}/shell.html")
-  set_property(TARGET dsp APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/shell.html)
-  if(DSP_WEB_ROMS_DIR)
-    get_filename_component(dsp_roms_abs "${DSP_WEB_ROMS_DIR}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
-    target_link_options(dsp PRIVATE "--preload-file=${dsp_roms_abs}@/roms")
-    file(GLOB_RECURSE dsp_web_roms CONFIGURE_DEPENDS "${dsp_roms_abs}/*")
-    set_property(TARGET dsp APPEND PROPERTY LINK_DEPENDS ${dsp_web_roms})
+# Driver selection --------------------------------------------------------
+include(cmake/drivers.cmake)
+set(DSP_DRIVERS "" CACHE STRING
+    "Drivers built into dsp, ';' or ',' separated: names from cmake/drivers.cmake or the groups arcade, consoles, computers (empty = all)")
+option(DSP_PER_DRIVER_TARGETS "Add a dsp-<driver> executable target for every driver" ON)
+
+# Expands the DSP_DRIVERS value into driver names, checking each one.
+function(dsp_resolve_drivers out spec)
+  string(REPLACE "," ";" spec "${spec}")
+  set(result "")
+  foreach(item IN LISTS spec)
+    string(STRIP "${item}" item)
+    string(TOLOWER "${item}" item)
+    if(item STREQUAL "")
+      continue()
+    elseif(item STREQUAL "all")
+      list(APPEND result ${DSP_DRIVERS_ALL})
+    elseif(item STREQUAL "arcade")
+      list(APPEND result ${DSP_DRIVERS_ARCADE})
+    elseif(item STREQUAL "consoles" OR item STREQUAL "console")
+      list(APPEND result ${DSP_DRIVERS_CONSOLES})
+    elseif(item STREQUAL "computers" OR item STREQUAL "computer")
+      list(APPEND result ${DSP_DRIVERS_COMPUTERS})
+    elseif(item IN_LIST DSP_DRIVERS_ALL)
+      list(APPEND result ${item})
+    else()
+      string(REPLACE ";" " " valid "${DSP_DRIVERS_ALL}")
+      message(FATAL_ERROR "DSP_DRIVERS: unknown driver '${item}'. Valid names: ${valid}")
+    endif()
+  endforeach()
+  if(result STREQUAL "")
+    set(result ${DSP_DRIVERS_ALL})
   endif()
+  list(REMOVE_DUPLICATES result)
+  set(${out} ${result} PARENT_SCOPE)
+endfunction()
+
+# An executable of the front end with the given drivers: main.cpp sees one
+# "#define DSP_DRIVER_<NAME> 1" per driver in its own generated dsp_drivers.h.
+function(dsp_add_frontend target)
+  cmake_parse_arguments(ARG "EXCLUDE_FROM_ALL" "EMBED" "DRIVERS" ${ARGN})
+  if(NOT ARG_EMBED)
+    set(ARG_EMBED ${CMAKE_CURRENT_SOURCE_DIR}/src/core/embedded_media_none.c)
+  endif()
+  set(config_dir ${CMAKE_CURRENT_BINARY_DIR}/drivers/${target})
+  set(content "// Generated by CMake: drivers built into ${target}.\n#pragma once\n")
+  foreach(d IN LISTS ARG_DRIVERS)
+    string(TOUPPER "${d}" macro)
+    string(MAKE_C_IDENTIFIER "${macro}" macro)
+    string(APPEND content "#define DSP_DRIVER_${macro} 1\n")
+  endforeach()
+  file(WRITE ${config_dir}/dsp_drivers.h.in "${content}")
+  configure_file(${config_dir}/dsp_drivers.h.in ${config_dir}/dsp_drivers.h COPYONLY)
+  if(ARG_EXCLUDE_FROM_ALL)
+    add_executable(${target} EXCLUDE_FROM_ALL src/main.cpp src/frontend/sdl_app.cpp ${ARG_EMBED})
+  else()
+    add_executable(${target} src/main.cpp src/frontend/sdl_app.cpp ${ARG_EMBED})
+  endif()
+  target_include_directories(${target} PRIVATE ${config_dir} src ${SDL2_INCLUDE_DIRS})
+  target_link_libraries(${target} PRIVATE dsp_lib ${SDL2_LIBRARIES})
+  target_compile_options(${target} PRIVATE -Wall -Wextra)
+  if(EMSCRIPTEN)
+    set_target_properties(${target} PROPERTIES SUFFIX ".html")
+    target_link_options(${target} PRIVATE
+      "-fexceptions"
+      "-sALLOW_MEMORY_GROWTH=1"
+      "-sINITIAL_MEMORY=134217728"
+      "-sTOTAL_STACK=8388608"
+      "-sEXIT_RUNTIME=0"
+      "-sFORCE_FILESYSTEM=1"
+      "-sEXPORTED_FUNCTIONS=['_dsp_web_start','_dsp_web_list','_dsp_web_has_embedded']"
+      "-sEXPORTED_RUNTIME_METHODS=['ccall','UTF8ToString','FS']"
+      "-sMINIFY_HTML=0"
+      "--shell-file=${CMAKE_CURRENT_BINARY_DIR}/shell.html")
+    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/shell.html)
+    if(DSP_WEB_ROMS_DIR)
+      get_filename_component(dsp_roms_abs "${DSP_WEB_ROMS_DIR}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+      target_link_options(${target} PRIVATE "--preload-file=${dsp_roms_abs}@/roms")
+      file(GLOB_RECURSE dsp_web_roms CONFIGURE_DEPENDS "${dsp_roms_abs}/*")
+      set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS ${dsp_web_roms})
+    endif()
+  endif()
+endfunction()
+
+# Embedded media (like galagino) ------------------------------------------
+# The ROMs, disks, tapes and cartridges of one game compiled into dsp as C
+# arrays: run without arguments, it starts that game (arguments still work).
+#   cmake -S . -B build -DDSP_EMBED_GAME=blockout -DDSP_EMBED_ROM=/path/blockout.zip
+#   cmake -S . -B build -DDSP_EMBED_GAME=c64 -DDSP_EMBED_ROM=/path/c64-roms -DDSP_EMBED_TAPE=game.prg
+# or a C file made beforehand with tools/embed_media.py: -DDSP_EMBED_C=file.c
+set(DSP_EMBED_GAME "" CACHE STRING "Embedded media: --game name to start")
+set(DSP_EMBED_ROM "" CACHE PATH "Embedded media: ROM set (zip, file or directory)")
+set(DSP_EMBED_TAPE "" CACHE STRING "Embedded media: tapes/snapshots (';' separated)")
+set(DSP_EMBED_DISK "" CACHE STRING "Embedded media: disk images (';' separated)")
+set(DSP_EMBED_CART "" CACHE STRING "Embedded media: cartridges (';' separated)")
+set(DSP_EMBED_ARGS "" CACHE STRING "Embedded media: extra arguments (';' separated, e.g. --dip;1:0x6f)")
+set(DSP_EMBED_C "" CACHE FILEPATH "Embedded media: C file written by tools/embed_media.py")
+set(dsp_embed_source "")
+if(DSP_EMBED_ROM)
+  if(NOT DSP_EMBED_GAME)
+    message(FATAL_ERROR "DSP_EMBED_ROM needs DSP_EMBED_GAME (the --game name to start)")
+  endif()
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  get_filename_component(rom_abs "${DSP_EMBED_ROM}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+  set(embed_cmd ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/embed_media.py
+      -o ${CMAKE_CURRENT_BINARY_DIR}/embedded_media.c --game ${DSP_EMBED_GAME} --rom ${rom_abs})
+  set(embed_deps ${CMAKE_SOURCE_DIR}/tools/embed_media.py)
+  if(IS_DIRECTORY "${rom_abs}")
+    file(GLOB_RECURSE rom_files CONFIGURE_DEPENDS "${rom_abs}/*")
+    list(APPEND embed_deps ${rom_files})
+  else()
+    list(APPEND embed_deps ${rom_abs})
+  endif()
+  foreach(kind TAPE DISK CART)
+    string(TOLOWER ${kind} option)
+    foreach(f IN LISTS DSP_EMBED_${kind})
+      get_filename_component(f_abs "${f}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+      list(APPEND embed_cmd --${option} ${f_abs})
+      list(APPEND embed_deps ${f_abs})
+    endforeach()
+  endforeach()
+  foreach(a IN LISTS DSP_EMBED_ARGS)
+    list(APPEND embed_cmd "--arg=${a}")
+  endforeach()
+  add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/embedded_media.c
+                     COMMAND ${embed_cmd} DEPENDS ${embed_deps} VERBATIM
+                     COMMENT "Embedding the media of ${DSP_EMBED_GAME}")
+  set(dsp_embed_source ${CMAKE_CURRENT_BINARY_DIR}/embedded_media.c)
+  message(STATUS "dsp: embedded media for --game ${DSP_EMBED_GAME} (${DSP_EMBED_ROM})")
+elseif(DSP_EMBED_C)
+  get_filename_component(dsp_embed_source "${DSP_EMBED_C}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+  message(STATUS "dsp: embedded media from ${dsp_embed_source}")
+endif()
+
+dsp_resolve_drivers(dsp_selected "${DSP_DRIVERS}")
+list(LENGTH dsp_selected dsp_selected_count)
+list(LENGTH DSP_DRIVERS_ALL dsp_all_count)
+message(STATUS "dsp: ${dsp_selected_count} of ${dsp_all_count} drivers")
+dsp_add_frontend(dsp DRIVERS ${dsp_selected} EMBED ${dsp_embed_source})
+
+# One executable per driver: cmake --build build --target dsp-<driver>
+# (dsp-drivers builds them all). Not part of the default build.
+if(DSP_PER_DRIVER_TARGETS)
+  add_custom_target(dsp-drivers)
+  foreach(d IN LISTS DSP_DRIVERS_ALL)
+    dsp_add_frontend(dsp-${d} EXCLUDE_FROM_ALL DRIVERS ${d})
+    add_dependencies(dsp-drivers dsp-${d})
+  endforeach()
 endif()
 
 # Tests and headless tools are native only.
 if(NOT EMSCRIPTEN)
 enable_testing()
-add_executable(dsp_tests
-  tests/tests.cpp
-  src/cpu/z80.cpp
-  src/cpu/z80ctc.cpp
-  src/cpu/m6809.cpp
-  src/cpu/konami.cpp
-  src/cpu/m6502.cpp
-  src/cpu/t11.cpp
-  src/cpu/m68000.cpp
-  src/cpu/hd63701.cpp
-  src/cpu/m6805.cpp
-  src/cpu/lr35902.cpp
-  src/cpu/upd7801.cpp
-  src/cpu/tms7000.cpp
-  src/cpu/z8002.cpp
-  src/cpu/mb88xx.cpp
-  src/cpu/mcs51.cpp
-  src/cpu/mcs48.cpp
-  src/cpu/hu6280.cpp
-  src/cpu/nec_v30.cpp
-  
-  src/sound/ay8910.cpp
-  src/sound/sn76496.cpp
-  src/sound/ym2151.cpp
-  src/sound/ym3812.cpp
-  src/sound/pokey.cpp
-  src/sound/msm5205.cpp
-  src/sound/okim6295.cpp
-  src/sound/nes_apu.cpp
-  src/sound/qsound.cpp
-  src/sound/upd1771.cpp
-  src/sound/tms5220.cpp
-  src/sound/sid.cpp
-  src/sound/sid6581.cpp
-  src/sound/mos6560.cpp
-  src/sound/mos7360.cpp
-  src/sound/gb_apu.cpp
-  src/sound/polepos_wsg.cpp
-  src/sound/polepos_engine.cpp
-  src/sound/huc6280_psg.cpp
-  src/sound/fmopn.cpp
-  src/sound/ym2612.cpp
-  src/sound/ym2610.cpp
-  src/sound/ym2203.cpp
-  src/sound/sega_pcm.cpp
-  src/sound/upd7759.cpp
-  src/sound/rf5c68.cpp
-  src/sound/huc6280_psg.cpp
-  src/sound/vlm5030.cpp
-  src/sound/cem3394.cpp
-  src/video/huc6270.cpp
-  src/video/huc6260.cpp
-  src/video/gfx.cpp
-  src/video/atari_mo.cpp
-  src/video/nes_ppu.cpp
-  src/video/tms3556.cpp
-  src/video/tms9918.cpp
-  src/video/v9938.cpp
-  src/video/gb_ppu.cpp
-  src/video/avg_starwars.cpp
-  src/video/dvg.cpp
-  src/video/sega_315_5313.cpp
-  src/video/sega16.cpp
-  src/video/apple2_video.cpp
-  src/video/zx8301.cpp
-  src/video/neogeo_video.cpp
-  src/video/tia.cpp
-  src/machine/bagman_pal.cpp
-  src/machine/slapstic.cpp
-  src/machine/via6522.cpp
-  src/machine/spectrum_tape.cpp
-  src/machine/spectrum_snap.cpp
-  src/machine/spectrum_rzx.cpp
-  src/machine/virtual_keyboard.cpp
-  src/machine/tape_tzx.cpp
-  src/machine/i8255.cpp
-  src/machine/kabuki.cpp
-  src/machine/eeprom93c46.cpp
-  src/machine/nec765.cpp
-  src/machine/mos6526.cpp
-  src/machine/mos6566.cpp
-  src/machine/c1541.cpp
-  src/machine/d64_image.cpp
-  src/machine/t64_image.cpp
-  src/machine/g64_image.cpp
-  src/machine/gcr.cpp
-  src/machine/nes_mapper.cpp
-  src/machine/gb_mapper.cpp
-  src/machine/lynx_suzy.cpp
-  src/machine/lynx_mikey.cpp
-  src/machine/trdos_disk.cpp
-  src/machine/wd1793.cpp
-  src/machine/msx_dsk.cpp
-  src/machine/rp5c01.cpp
-  src/machine/beta128.cpp
-  src/machine/mos6532.cpp
-  src/machine/starwars_math.cpp
-  src/machine/namco51.cpp
-  src/machine/namco52.cpp
-  src/machine/namco53.cpp
-  src/machine/namco50.cpp
-  src/machine/namco54.cpp
-  src/machine/sega_315_5195.cpp
-  src/machine/fd1089.cpp
-  src/machine/fd1094.cpp
-  src/machine/i8243.cpp
-  src/machine/diskii.cpp
-  src/machine/c64_tape.cpp
-  src/machine/mos8722.cpp
-  src/machine/tc0140syt.cpp
-  src/machine/opwolf_cchip.cpp
-  src/machine/zx8302.cpp
-  src/machine/ql_mdv.cpp
-  src/machine/ql_win.cpp
-  src/machine/mc68901.cpp
-  src/machine/st_floppy.cpp
-  src/machine/mac_dsk.cpp
-  src/machine/mac_rtc.cpp
-  src/machine/ncr5380_hdd.cpp
-  src/machine/mac_dcmp.cpp
-  src/machine/iwm.cpp
-  src/machine/cia8520.cpp
-  src/machine/amiga_adf.cpp
-  src/machine/amiga_chipset.cpp
-  src/machine/konami_decrypt.cpp
-  src/machine/nb1414_m4.cpp
-  src/drivers/computers/spectrum.cpp
-  src/drivers/computers/specnext.cpp
-  src/drivers/computers/specnext_video.cpp
-  src/machine/sdcard_spi.cpp
-  src/machine/zxn_dma.cpp
-  src/drivers/arcade/model3.cpp
-  src/cpu/ppc603.cpp
-  src/video/real3d.cpp
-  src/video/model3_tilegen.cpp
-  src/machine/sega_315_5881.cpp
-  src/machine/model3_sound.cpp
-  src/sound/scsp.cpp
-  src/sound/mpeg_audio.cpp
-  src/drivers/computers/amstrad_cpc.cpp
-  src/drivers/computers/pcw.cpp
-  src/drivers/computers/msx2.cpp
-  src/drivers/consoles/nes.cpp
-  src/drivers/computers/c64.cpp
-  src/drivers/computers/vic20.cpp
-  src/drivers/computers/c128.cpp
-  src/drivers/computers/plus4.cpp
-  src/drivers/computers/zx81.cpp
-  src/drivers/computers/apple2.cpp
-  src/drivers/computers/apple2gs.cpp
-  src/cpu/w65c816.cpp
-  src/cpu/m6800.cpp
-  src/machine/pia6821.cpp
-  src/drivers/arcade/bionicc.cpp
-  src/drivers/arcade/blktiger.cpp
-  src/drivers/arcade/blockout.cpp
-  src/drivers/arcade/williams.cpp
-  src/drivers/arcade/arabian.cpp
-  src/drivers/arcade/balsente.cpp
-  src/cpu/spc700.cpp
-  src/video/snes_ppu.cpp
-  src/drivers/consoles/snes.cpp
-  src/sound/es5503.cpp
-  src/sound/asc.cpp
-  src/drivers/consoles/gameboy.cpp
-  src/drivers/consoles/gba.cpp
-  src/cpu/arm7tdmi.cpp
-  src/video/gba_ppu.cpp
-  src/sound/gba_apu.cpp
-  src/drivers/arcade/mcr.cpp
-  src/drivers/consoles/atari_lynx.cpp
-  src/drivers/consoles/wonderswan.cpp
-  src/sound/wswan_apu.cpp
-  src/drivers/consoles/a2600.cpp
-  src/drivers/consoles/scv.cpp
-  src/drivers/consoles/pv2000.cpp
-  src/drivers/computers/exelv.cpp
-  src/drivers/computers/exelv_tape.cpp
-  src/drivers/computers/ql.cpp
-  src/drivers/computers/atari_st.cpp
-  src/drivers/computers/amiga.cpp
-  src/drivers/computers/macplus.cpp
-  src/drivers/computers/macii.cpp
-  src/drivers/consoles/vectrex.cpp
-  src/drivers/arcade/starwars.cpp
-  src/drivers/arcade/vicdual.cpp
-  src/drivers/arcade/punchout.cpp
-  src/drivers/arcade/asteroid.cpp
-  src/drivers/arcade/polepos.cpp
-  src/drivers/arcade/atari_system1.cpp
-  src/drivers/arcade/atari_system2.cpp
-  src/drivers/computers/zx_clone.cpp
-  src/drivers/consoles/genesis.cpp
-  src/drivers/consoles/sega32x.cpp
-  src/cpu/sh2.cpp
-  src/drivers/arcade/outrun.cpp
-  src/drivers/arcade/xboard.cpp
-  src/drivers/arcade/hangon.cpp
-  src/drivers/arcade/system16.cpp
-  src/drivers/arcade/system18.cpp
-  src/machine/sega_315_5296.cpp
-  src/drivers/consoles/pcengine.cpp
-  src/drivers/arcade/neogeo.cpp
-  src/drivers/arcade/opwolf.cpp
-  src/drivers/arcade/trackfld.cpp
-  src/drivers/arcade/pirates.cpp
-  src/drivers/arcade/armedf_hw.cpp
-  src/drivers/arcade/skullxbo.cpp
-  src/drivers/arcade/shuuz.cpp
-  src/drivers/arcade/bublbobl.cpp
-  src/drivers/arcade/ajax.cpp
-  src/drivers/arcade/cps1.cpp
-  src/video/k052109.cpp
-  src/video/k051960.cpp
-  src/video/k051316.cpp
-  src/sound/k007232.cpp
-  src/core/rom_loader.cpp
-)
-target_include_directories(dsp_tests PRIVATE src)
-target_link_libraries(dsp_tests PRIVATE ZLIB::ZLIB musashi)
+add_executable(dsp_tests tests/tests.cpp)
+target_link_libraries(dsp_tests PRIVATE dsp_lib)
 target_compile_options(dsp_tests PRIVATE -Wall -Wextra)
 add_test(NAME dsp_tests COMMAND dsp_tests)
 

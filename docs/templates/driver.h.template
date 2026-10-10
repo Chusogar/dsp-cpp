@@ -15,6 +15,7 @@ namespace dsp {
 // {{TITLE}}, ported from {{PASCAL}}.
 class {{CLASS}} : public Machine {
 public:
+    MachineType machine_type() const override { return MachineType::{{TYPE}}; }
     static constexpr int kScreenWidth = 256;
     static constexpr int kScreenHeight = 224;
     static constexpr double kFramesPerSecond = 60.0;

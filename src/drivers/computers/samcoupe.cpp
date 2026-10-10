@@ -1,5 +1,7 @@
 #include "drivers/computers/samcoupe.h"
 
+#include "core/rom_loader.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -76,17 +78,26 @@ constexpr SamKeyPos kKeyMap[] = {
 SamCoupe::SamCoupe() : cpu_(kClock), saa_(kSaaClock) {}
 
 bool SamCoupe::init(const std::string& rom_path, std::string* error) {
+    // A zip (MAME samcoupe.zip or any zip with the ROM), a directory, or the
+    // 32K ROM image itself. Matched by name or, failing that, by the CRC of
+    // any of the ROM versions MAME knows (3.0 first).
     std::vector<uint8_t> rom;
-    const char* names[] = {"rom30.rom", "rom30.z5", "samcoupe.rom", "sam_rom.rom", "rom.bin"};
-    bool ok = false;
-    for (const char* n : names) {
-        if (try_rom(rom_path, n, rom) && rom.size() >= 0x8000) { ok = true; break; }
-    }
-    if (!ok && load_file(rom_path, rom) && rom.size() >= 0x8000) ok = true;
+    RomLoader loader;
+    std::string ignored;
+    bool ok = loader.open(rom_path, &ignored) &&
+              loader.find("rom30.rom|rom30.z5|samcoupe.rom|sam_rom.rom|rom.bin|rom31.z5|rom25.z5|"
+                          "rom24.z5|rom21.z5|rom20.z5|rom181.z5|rom18.z5|rom14.z5|rom13.z5|rom12.z5|"
+                          "rom10.z5|rom04.z5|rom01.z5|atom.z5",
+                          {0xe535c25d, 0x0b7e3585, 0xddadd358, 0xbb23fee4, 0xf6804b46, 0xeaf32054,
+                           0xd25e1de1, 0xf626063f, 0x08799596, 0x2093768c, 0x7fe37dd8, 0x3659d31f,
+                           0xf439e84e, 0xc04acfdf, 0xdec75f58},
+                          0x8000, rom);
+    if (!ok && read_plain_rom(rom_path, rom) && rom.size() >= 0x8000) ok = true;
     if (!ok) {
         if (error) *error = "SAM Coupe ROM (32 KB) not found in " + rom_path;
         return false;
     }
+    warnings_ = loader.warnings();
     std::memcpy(rom0_.data(), rom.data(), 0x4000);
     std::memcpy(rom1_.data(), rom.data() + 0x4000, 0x4000);
 

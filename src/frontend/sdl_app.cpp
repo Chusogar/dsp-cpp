@@ -245,6 +245,8 @@ struct SdlApp::LoopState {
 #ifdef __EMSCRIPTEN__
     double web_last_ms = 0.0;
     double web_debt_ms = 0.0;
+    uint32_t web_last_queued = 0;
+    double web_stall_ms = 0.0;
 #endif
 
     LoopState(Machine& m, const AppOptions& o) : machine(m), options(o) {}
@@ -345,19 +347,34 @@ struct SdlApp::LoopState {
         int pointer_y = 0;
         uint32_t mouse_buttons = 0;
         if (relative_mouse) {
-            int gx = 0, gy = 0, wx = 0, wy = 0;
-            const uint32_t global_buttons = SDL_GetGlobalMouseState(&gx, &gy);
-            SDL_GetWindowPosition(window, &wx, &wy);
             const bool focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
             const bool inside = SDL_GetMouseFocus() == window;
+            // Over the window, the window-relative position is the exact one on
+            // every platform (the global position minus the window position is
+            // not: in the browser the "global" position is not relative to the
+            // canvas, and Wayland has no global position at all). The global
+            // position is only used once the mouse has left the window, so the
+            // emulated pointer is pushed onto the edge it went out through.
+            int mx = 0, my = 0;
+            const uint32_t buttons = SDL_GetMouseState(&mx, &my);
+#ifndef __EMSCRIPTEN__
+            if (!inside) {
+                int gx = 0, gy = 0, wx = 0, wy = 0;
+                SDL_GetGlobalMouseState(&gx, &gy);
+                SDL_GetWindowPosition(window, &wx, &wy);
+                mx = gx - wx;
+                my = gy - wy;
+            }
+#endif
             float lx = 0.0f;
             float ly = 0.0f;
-            SDL_RenderWindowToLogical(renderer, gx - wx, gy - wy, &lx, &ly);
+            SDL_RenderWindowToLogical(renderer, mx, my, &lx, &ly);
             pointer_x = std::clamp(static_cast<int>(std::floor(lx * width / display_w)), 0, width - 1);
             pointer_y = std::clamp(static_cast<int>(std::floor(ly * height / display_h)), 0, height - 1);
             // Clicks only count inside the window.
-            mouse_buttons = inside ? global_buttons : 0;
-            collect_inputs(machine, pointer_x, pointer_y, mouse_buttons, focused, inside && !was_inside);
+            mouse_buttons = inside ? buttons : 0;
+            collect_inputs(machine, pointer_x, pointer_y, mouse_buttons, focused || inside,
+                           inside && !was_inside);
             was_inside = inside;
         } else if (machine.uses_pointer()) {
             int mx = 0;
@@ -476,7 +493,18 @@ struct SdlApp::LoopState {
             frames = int(web_debt_ms / frame_time_ms);
             web_debt_ms -= frames * frame_time_ms;
             if (audio_device != 0) {
-                const uint32_t queued = SDL_GetQueuedAudioSize(audio_device);
+                uint32_t queued = SDL_GetQueuedAudioSize(audio_device);
+                // Browsers keep audio suspended until the page gets a click or
+                // a key press: a queue that does not drain is not a clock.
+                // After half a second without draining, drop it and pace by
+                // time until the audio starts playing.
+                web_stall_ms = (queued != 0 && queued >= web_last_queued) ? web_stall_ms + elapsed : 0.0;
+                if (web_stall_ms > 500.0) {
+                    SDL_ClearQueuedAudio(audio_device);
+                    queued = 0;
+                    web_stall_ms = 0.0;
+                }
+                web_last_queued = queued;
                 if (queued >= max_bytes) frames = 0;
                 else if (queued < min_bytes && frames == 0) frames = 1;
             }

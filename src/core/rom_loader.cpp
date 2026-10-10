@@ -95,6 +95,7 @@ bool RomLoader::load_zip_index(std::string* error) {
         ZipEntry entry;
         entry.method = read_u16(&zip_data_[pos + 10]);
         entry.compressed_size = read_u32(&zip_data_[pos + 20]);
+        entry.crc = read_u32(&zip_data_[pos + 16]);
         entry.uncompressed_size = read_u32(&zip_data_[pos + 24]);
         uint16_t name_length = read_u16(&zip_data_[pos + 28]);
         uint16_t extra_length = read_u16(&zip_data_[pos + 30]);
@@ -206,6 +207,85 @@ bool RomLoader::read_file(const std::string& name, std::vector<uint8_t>& out) co
     return result == Z_STREAM_END;
 }
 
+bool is_zip_file(const std::string& path) {
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(path, ec)) return false;
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (f == nullptr) return false;
+    unsigned char magic[4] = {};
+    const size_t n = std::fread(magic, 1, 4, f);
+    std::fclose(f);
+    return n == 4 && magic[0] == 'P' && magic[1] == 'K' && magic[2] == 3 && magic[3] == 4;
+}
+
+bool read_plain_rom(const std::string& path, std::vector<uint8_t>& out) {
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(path, ec) || is_zip_file(path)) return false;
+    return read_whole_file(path, out);
+}
+
+bool RomLoader::open_sibling(const std::string& path, const std::string& zip_name,
+                             std::string* error) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path dir = fs::is_directory(path, ec) ? fs::path(path) : fs::path(path).parent_path();
+    if (dir.empty()) dir = ".";
+    const fs::path candidate = dir / zip_name;
+    if (!fs::is_regular_file(candidate, ec)) {
+        if (error) *error = candidate.string() + " not found";
+        return false;
+    }
+    return open(candidate.string(), error);
+}
+
+bool RomLoader::find_by_crc(uint32_t crc, size_t size, std::vector<uint8_t>& out,
+                            std::string* used) const {
+    if (is_zip_) {
+        for (const auto& kv : zip_index_) {
+            const ZipEntry& e = kv.second;
+            if (e.crc != crc || (size != 0 && e.uncompressed_size != size)) continue;
+            if (read_file(kv.first, out) && crc32_of(out.data(), out.size()) == crc) {
+                if (used) *used = kv.first;
+                return true;
+            }
+        }
+        return false;
+    }
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    for (const auto& item : fs::directory_iterator(path_, ec)) {
+        if (!item.is_regular_file(ec)) continue;
+        const auto file_size = item.file_size(ec);
+        if (ec || file_size == 0 || file_size > (8u << 20)) continue;
+        if (size != 0 && file_size != size) continue;
+        std::vector<uint8_t> data;
+        if (!read_whole_file(item.path().string(), data)) continue;
+        if (crc32_of(data.data(), data.size()) != crc) continue;
+        out = std::move(data);
+        if (used) *used = item.path().filename().string();
+        return true;
+    }
+    return false;
+}
+
+bool RomLoader::find(const std::string& names, std::initializer_list<uint32_t> crcs,
+                     size_t min_size, std::vector<uint8_t>& out, std::string* used) const {
+    for (size_t start = 0; start <= names.size();) {
+        size_t separator = names.find('|', start);
+        if (separator == std::string::npos) separator = names.size();
+        const std::string candidate = names.substr(start, separator - start);
+        if (!candidate.empty() && read_file(candidate, out) && out.size() >= min_size) {
+            if (used) *used = candidate;
+            return true;
+        }
+        start = separator + 1;
+    }
+    for (uint32_t crc : crcs) {
+        if (crc != 0 && find_by_crc(crc, 0, out, used) && out.size() >= min_size) return true;
+    }
+    return false;
+}
+
 bool RomLoader::load(const std::vector<RomEntry>& entries, std::vector<uint8_t>& dest,
                      std::string* error) {
     for (const RomEntry& entry : entries) {
@@ -225,6 +305,9 @@ bool RomLoader::load(const std::vector<RomEntry>& entries, std::vector<uint8_t>&
             }
             start = separator + 1;
         }
+        // Not under any of its names: look for the same dump by CRC (MAME
+        // sets and other collections name the files differently).
+        if (used.empty() && entry.crc != 0) find_by_crc(entry.crc, entry.length, data, &used);
         if (used.empty()) {
             if (error) *error = std::string("missing ROM file: ") + entry.name;
             return false;

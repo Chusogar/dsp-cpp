@@ -147,6 +147,79 @@ cmake --build build -j
 
 This produces `build/dsp` and the unit test binary `build/dsp_tests`.
 
+### Building some drivers only
+
+All the emulation code (CPUs, sound, video, machine parts and every driver)
+is built once as a static library, `dsp_lib`; an executable only takes the
+objects it references. Each driver is registered in `src/main.cpp` under
+`#if DSP_DRIVER_<NAME>`, with the names listed in `cmake/drivers.cmake` (one
+per header in `src/drivers/<category>/<name>.h`).
+
+- `-DDSP_DRIVERS=...` chooses the drivers built into `dsp` (empty = all):
+  driver names and/or the groups `arcade`, `consoles`, `computers`,
+  separated by `,` or `;`. An unknown name stops the configure step and
+  lists the valid ones.
+
+  ```bash
+  cmake -S . -B build -DDSP_DRIVERS="blockout,c64"     # dsp with two drivers
+  cmake -S . -B build -DDSP_DRIVERS=computers          # only the computers
+  ```
+
+- Every driver also has its own executable target, `dsp-<driver>`, outside
+  the default build (`-DDSP_PER_DRIVER_TARGETS=OFF` removes them); the target
+  `dsp-drivers` builds them all:
+
+  ```bash
+  cmake --build build --target dsp-blockout            # build/dsp-blockout
+  ./build/dsp-blockout --game blockout /path/to/blockout.zip
+  ```
+
+The same works for the web build (`dsp-blockout.html`, or a `dsp.html` with
+only the drivers in `DSP_DRIVERS`). `--listarcades` / `--listconsoles` /
+`--listcomputers` and the web page's driver list show only the drivers built
+in. A new driver adds its sources to `dsp_lib`, its name to
+`cmake/drivers.cmake`, and wraps its `#include` and `create_machine()` lines
+in `src/main.cpp` with `#if DSP_DRIVER_<NAME>` ... `#endif`.
+
+### Embedding the ROMs, disks and cartridges
+
+Besides giving the ROMs, disks, tapes and cartridges on the command line, a
+game can be compiled into the executable, as C arrays (like galagino's ROM
+conversion). Run without arguments, that executable starts the embedded game;
+any other command line still works, and `--embedded` starts the embedded game
+with extra options (`--embedded --fullscreen`, `--embedded --scale 2`).
+
+```bash
+# Block Out, with only its driver: a single self-contained executable
+cmake -S . -B build -DDSP_DRIVERS=blockout \
+      -DDSP_EMBED_GAME=blockout -DDSP_EMBED_ROM=/path/to/blockout.zip
+cmake --build build && ./build/dsp
+
+# A computer with a ROM directory and a tape (DISK / CART work the same way,
+# several files separated by ';'; DSP_EMBED_ARGS adds options such as --dip)
+cmake -S . -B build -DDSP_EMBED_GAME=c64 -DDSP_EMBED_ROM=/path/to/c64-roms \
+      -DDSP_EMBED_TAPE=/path/to/game.prg
+```
+
+`DSP_EMBED_ROM` takes a zip, a single ROM file or a directory (all its files
+are embedded). CMake runs `tools/embed_media.py`, which writes
+`embedded_media.c` in the build directory: one `static const unsigned char`
+array per file, the table of files and the command line to start them with.
+The script can also be run by hand and its output given to CMake with
+`-DDSP_EMBED_C=file.c`:
+
+```bash
+python3 tools/embed_media.py -o blockout_media.c --game blockout --rom blockout.zip
+python3 tools/embed_media.py -o amiga_media.c --game amiga --rom a500.zip --disk game.adf
+```
+
+At start-up the files are written to a temporary directory (removed on exit;
+`/embedded` in the browser, where the page starts the game by itself) and
+the drivers read them as usual. Anything a driver saves next to its media
+(cartridge saves, high scores) is therefore not kept between runs. The C
+compiler handles files of a few tens of MB; bigger images (CDs) are better
+given on the command line.
+
 ### Web build (Emscripten)
 
 The same sources also build as a web page, in the way of
@@ -267,6 +340,15 @@ holding the individual files:
 ./build/dsp --game sonicbom /path/to/sonicbom.zip
 ./build/dsp --game timescan /path/to/timescan.zip
 ```
+
+Computers take their BIOS the same way: the zip passed as the ROM path (the
+MAME set, e.g. `c64.zip`, `spec128.zip`, `a800xl.zip`, `samcoupe.zip`, or any
+zip with the files) or a directory. Each BIOS file is looked up by its usual
+names (MAME's and the common ones such as `kernal.rom` or `48.rom`) and, when
+none matches, by the CRC32 of the known dumps, so renamed files are found too.
+ROMs that MAME keeps in a device zip are also looked for next to the machine's
+zip (`betadisk.zip` for TR-DOS on the Pentagon, `nb_mdc824.zip` for the Mac II
+display card, `a2diskiing.zip` for the Apple II Disk II PROM).
 
 `--game` is required (`dsp --help` lists every name). Gauntlet accepts both the
 four player parent set (SLAPSTIC 104) and the two player `136041-xxx` set

@@ -149,7 +149,7 @@ bool MacII::init(const std::string& rom_path, std::string* error) {
     RomLoader loader;
     if (!loader.open(rom_path, error)) return false;
     std::vector<uint8_t> rom;
-    if (!loader.try_read("9779d2c4.rom", rom) && !loader.try_read("97851db6.rom", rom)) {
+    if (!loader.find("9779d2c4.rom|97851db6.rom", {0x4df6d054, 0x8c8b9d03}, 0x40000, rom)) {
         if (error) *error = "missing Mac II ROM (9779d2c4.rom or 97851db6.rom)";
         return false;
     }
@@ -158,9 +158,18 @@ bool MacII::init(const std::string& rom_path, std::string* error) {
         return false;
     }
     rom_ = rom;
+    // The display card ROM: in the same zip/directory, or in MAME's own
+    // device zip (nb_mdc824.zip) next to macii.zip.
     std::vector<uint8_t> card;
-    if (!loader.try_read("3410868.bin", card) || card.size() != 0x8000) {
-        if (error) *error = "missing Macintosh Display Card 8*24 ROM (3410868.bin)";
+    bool have_card = loader.find("3410868.bin", {0x57f925fa}, 0x8000, card);
+    if (!have_card) {
+        RomLoader device;
+        std::string ignored;
+        have_card = device.open_sibling(rom_path, "nb_mdc824.zip", &ignored) &&
+                    device.find("3410868.bin", {0x57f925fa}, 0x8000, card);
+    }
+    if (!have_card || card.size() != 0x8000) {
+        if (error) *error = "missing Macintosh Display Card 8*24 ROM (3410868.bin, or nb_mdc824.zip)";
         return false;
     }
     decl_rom_ = card;

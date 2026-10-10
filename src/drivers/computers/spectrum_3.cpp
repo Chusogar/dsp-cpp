@@ -1,5 +1,7 @@
 #include "drivers/computers/spectrum_3.h"
 
+#include "core/rom_loader.h"
+
 #include "machine/spectrum_snap.h"
 
 #include <algorithm>
@@ -116,31 +118,54 @@ void Spectrum3::border_on_out() {
 
 
 bool Spectrum3::init(const std::string& rom_path, std::string* error) {
+    // A zip (MAME specpls3.zip or any zip with the ROMs), a directory, or the
+    // 64K ROM image itself: one 64K file, MAME's two 32K chips (IC7 = ROM 0-1,
+    // IC8 = ROM 2-3) or four 16K files; matched by name or, failing that, CRC.
     std::vector<uint8_t> rom;
-    const char* names[] = {"plus3.rom", "plus3-0.rom", "zx+3.rom", "spectrum+3.rom", "p3.rom"};
-    bool ok = false;
-    for (const char* n : names) {
-        if (try_rom(rom_path, n, rom) && rom.size() >= 0x10000) { ok = true; break; }
+    RomLoader loader;
+    std::string ignored;
+    const bool opened = loader.open(rom_path, &ignored);
+    bool ok = opened && loader.find("plus3.rom|zx+3.rom|spectrum+3.rom|p3.rom|plus3-0.rom", {},
+                                    0x10000, rom);
+    if (!ok && opened) {
+        struct Pair { const char* ic7; uint32_t crc7; const char* ic8; uint32_t crc8; };
+        static const Pair kPairs[] = {
+            {"40092.ic7|plus3-01.rom|p3_01.rom", 0x9bc85686, "40093.ic8|plus3-23.rom|p3_23.rom", 0xdb551783},
+            {"40092u.ic7", 0x80808d82, "40093u.ic8", 0x61f2b50c},
+            {"40094.ic7", 0x392242fb, "40101.ic8", 0x5daaae01},
+            {"40094s.ic7", 0x9d102acf, "40101s.ic8", 0x1408ddce},
+            {"p3_01_4m.rom|p3_01_cm.rom", 0xad99380a, "p3_23_4m.rom", 0x07727895},
+        };
+        std::vector<uint8_t> lo, hi;
+        for (const Pair& p : kPairs) {
+            if (loader.find(p.ic7, {p.crc7}, 0x8000, lo) && loader.find(p.ic8, {p.crc8}, 0x8000, hi)) {
+                rom.assign(lo.begin(), lo.begin() + 0x8000);
+                rom.insert(rom.end(), hi.begin(), hi.begin() + 0x8000);
+                ok = true;
+                break;
+            }
+        }
     }
-    if (!ok) {
+    if (!ok && opened) {
         // Four 16K files
         const char* parts[] = {"plus3-0.rom", "plus3-1.rom", "plus3-2.rom", "plus3-3.rom"};
         rom.assign(0x10000, 0xff);
         ok = true;
         for (int i = 0; i < 4; ++i) {
             std::vector<uint8_t> part;
-            if (!try_rom(rom_path, parts[i], part) || part.size() < 0x4000) {
+            if (!loader.find(parts[i], {}, 0x4000, part)) {
                 ok = false;
                 break;
             }
             std::memcpy(rom.data() + i * 0x4000, part.data(), 0x4000);
         }
     }
-    if (!ok && load_file(rom_path, rom) && rom.size() >= 0x10000) ok = true;
+    if (!ok && read_plain_rom(rom_path, rom) && rom.size() >= 0x10000) ok = true;
     if (!ok) {
         if (error) *error = "+3 ROM (64 KB) not found in " + rom_path;
         return false;
     }
+    warnings_ = loader.warnings();
     for (int i = 0; i < 4; ++i)
         std::memcpy(banks_[8 + i].data(), rom.data() + i * 0x4000, 0x4000);
 

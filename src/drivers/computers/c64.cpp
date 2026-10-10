@@ -1,5 +1,7 @@
 #include "drivers/computers/c64.h"
 
+#include "core/rom_loader.h"
+
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -31,26 +33,6 @@ bool read_file(const std::string& path, std::vector<uint8_t>* out) {
     out->resize(size_t(n));
     f.read(reinterpret_cast<char*>(out->data()), n);
     return bool(f);
-}
-
-bool load_named(const std::string& dir, const char* name, uint8_t* dst,
-                size_t size, std::string* error) {
-    std::string path = dir;
-    if (!path.empty() && path.back() != '/' && path.back() != '\\') path += '/';
-    path += name;
-    std::vector<uint8_t> data;
-    if (!read_file(path, &data) || data.size() < size) {
-        if (error) *error = "missing ROM: " + path;
-        return false;
-    }
-    std::memcpy(dst, data.data(), size);
-    return true;
-}
-
-std::string join_path(const std::string& dir, const std::string& name) {
-    std::string path = dir;
-    if (!path.empty() && path.back() != '/' && path.back() != '\\') path += '/';
-    return path + name;
 }
 
 }  // namespace
@@ -119,30 +101,49 @@ bool C64::init(const std::string& rom_path, std::string* error) {
     return load_roms(rom_path, error);
 }
 
-bool C64::load_roms(const std::string& dir, std::string* error) {
-    if (!load_named(dir, "901227-03.u4", kernel_rom_.data(), 0x2000, error) &&
-        !load_named(dir, "kernal.rom", kernel_rom_.data(), 0x2000, error) &&
-        !load_named(dir, "kernal.bin", kernel_rom_.data(), 0x2000, error)) return false;
-    if (!load_named(dir, "901226-01.u3", basic_rom_.data(), 0x2000, error) &&
-        !load_named(dir, "basic.rom", basic_rom_.data(), 0x2000, error) &&
-        !load_named(dir, "basic.bin", basic_rom_.data(), 0x2000, error)) return false;
-    if (!load_named(dir, "901225-01.u5", char_rom_.data(), 0x1000, error) &&
-        !load_named(dir, "chargen.rom", char_rom_.data(), 0x1000, error) &&
-        !load_named(dir, "chargen.bin", char_rom_.data(), 0x1000, error)) return false;
+bool C64::load_roms(const std::string& path, std::string* error) {
+    // A directory or a zip (MAME c64.zip or loose kernal/basic/chargen files);
+    // files are matched by name or, failing that, by CRC.
+    RomLoader loader;
+    if (!loader.open(path, error)) return false;
+    std::vector<uint8_t> data;
+    auto need = [&](const char* names, std::initializer_list<uint32_t> crcs, size_t size,
+                    uint8_t* dst, const char* label) {
+        if (!loader.find(names, crcs, size, data)) {
+            if (error) *error = std::string("missing C64 ROM: ") + label + " (" + names + ")";
+            return false;
+        }
+        std::memcpy(dst, data.data(), size);
+        return true;
+    };
+    if (!need("901227-03.u4|kernal.rom|kernal.bin|kernal|kernal-901227-03.bin",
+              {0xdbe3e7c7, 0xa5c687b3, 0xdce782fa}, 0x2000, kernel_rom_.data(), "KERNAL") ||
+        !need("901226-01.u3|basic.rom|basic.bin|basic|basic-901226-01.bin", {0xf833d117}, 0x2000,
+              basic_rom_.data(), "BASIC") ||
+        !need("901225-01.u5|chargen.rom|chargen.bin|chargen|characters-901225-01.bin",
+              {0xec4272ee}, 0x1000, char_rom_.data(), "CHARGEN"))
+        return false;
 
     // The 1541/1540 DOS ROM is optional: without it the drive cannot answer on
     // the serial bus and disk images fall back to direct injection.
     // 1541 first, its DOS also drives a 1540 at the slower VIC-II timing.
-    static const char* kDriveRoms[] = {
-        "dos1541",   "dos1541.bin",   "1541.rom",   "1541",
-        "d1541.rom", "325302-01.uab4",
-        "dos1540",   "dos1540.bin",   "1540.rom",   "1540",
-    };
-    for (const char* name : kDriveRoms) {
-        std::vector<uint8_t> rom;
-        if (!read_file(join_path(dir, name), &rom)) continue;
-        if (drive_.load_rom(rom.data(), rom.size())) break;
+    // Whole 16K images, or MAME's c1541 halves ($C000 325302-01 + $E000 901229).
+    if (loader.find("dos1541|dos1541.bin|1541.rom|1541|d1541.rom|1541-II.rom|dos1540|dos1540.bin|"
+                    "1540.rom|1540",
+                    {}, 0x2000, data)) {
+        drive_.load_rom(data.data(), data.size());
+    } else {
+        std::vector<uint8_t> lo, hi;
+        if (loader.find("325302-01.uab4", {0x29ae9752}, 0x2000, lo) &&
+            loader.find("901229-06 aa.uab5|901229-05 ae.uab5|901229-03.uab5|901229-02.uab5|"
+                        "901229-01.uab5",
+                        {0x3a235039, 0x361c9f37, 0x9126e74a, 0xb29bab75, 0x9a48d3f0}, 0x2000, hi)) {
+            lo.resize(0x2000);
+            lo.insert(lo.end(), hi.begin(), hi.begin() + 0x2000);
+            drive_.load_rom(lo.data(), lo.size());
+        }
     }
+    warnings_ = loader.warnings();
 
     reset();
     return true;

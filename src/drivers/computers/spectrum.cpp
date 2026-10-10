@@ -1,5 +1,7 @@
 #include "drivers/computers/spectrum.h"
 
+#include "core/rom_loader.h"
+
 #include "machine/spectrum_snap.h"
 
 #include <algorithm>
@@ -127,20 +129,20 @@ const char* Spectrum48k::title() const {
 }
 
 bool Spectrum48k::init(const std::string& rom_path, std::string* error) {
+    // A zip (MAME spectrum.zip or any zip with the ROM), a directory, or the
+    // 16K ROM image itself. Matched by name or, failing that, by CRC.
     std::vector<uint8_t> rom;
-    const char* names[] = {"spectrum.rom", "48.rom", "48k.rom", "zx48.rom", "Spectrum.rom"};
-    bool ok = false;
-    for (const char* n : names) {
-        if (try_rom(rom_path, n, rom) && rom.size() >= 0x4000) {
-            ok = true;
-            break;
-        }
-    }
-    if (!ok && load_file(rom_path, rom) && rom.size() >= 0x4000) ok = true;
+    RomLoader loader;
+    std::string ignored;
+    bool ok = loader.open(rom_path, &ignored) &&
+              loader.find("spectrum.rom|48.rom|48k.rom|zx48.rom|48e.rom", {0xddee531f, 0xf051746e},
+                          0x4000, rom);
+    if (!ok && read_plain_rom(rom_path, rom) && rom.size() >= 0x4000) ok = true;
     if (!ok) {
         if (error) *error = "spectrum.rom (16 KB) not found in " + rom_path;
         return false;
     }
+    warnings_ = loader.warnings();
     std::memcpy(rom_.data(), rom.data(), 0x4000);
 
     cpu_.set_memory_handlers(

@@ -128,9 +128,17 @@ bool Plus4::load_roms(const std::string& path, std::string* error) {
         std::memcpy(dst, buf.data(), size);
         return true;
     };
+    // Any file with the CRC of a known dump, whatever it is called.
+    auto load_crc = [&](std::initializer_list<uint32_t> crcs, uint8_t* dst, size_t size) -> bool {
+        std::vector<uint8_t> buf;
+        if (!loader.find("", crcs, size, buf)) return false;
+        std::memcpy(dst, buf.data(), size);
+        return true;
+    };
 
     // BASIC at kernal_basic_[0x0000], KERNAL at [0x4000] (MAME "kernal" region).
     if (!load_one("318006-01.u23", kernal_basic_.data(), 0x4000) &&
+        !load_crc({0x74eaae87}, kernal_basic_.data(), 0x4000) &&
         !load_one("318006-01.u3", kernal_basic_.data(), 0x4000) &&
         !load_one("318006-01", kernal_basic_.data(), 0x4000) &&
         !load_one("basic", kernal_basic_.data(), 0x4000)) {
@@ -155,6 +163,11 @@ bool Plus4::load_roms(const std::string& path, std::string* error) {
                      load_one("318004-05.u24", kern, 0x4000) ||
                      load_one("kernal", kern, 0x4000);
     }
+    if (!got_kernal) {
+        got_kernal = region_ == Region::Pal
+                         ? load_crc({0x71c07bd4, 0xbe54ed79, 0x77bab934, 0x70295038}, kern, 0x4000)
+                         : load_crc({0x70295038, 0x799a633d, 0x71c07bd4}, kern, 0x4000);
+    }
     // JiffyDOS combined image: BASIC+KERNAL in one 32K file.
     if (!got_kernal) {
         std::vector<uint8_t> buf;
@@ -171,9 +184,11 @@ bool Plus4::load_roms(const std::string& path, std::string* error) {
     have_function_ = false;
     function_.fill(0xff);
     if (load_one("317053-01.u25", function_.data(), 0x4000) ||
-        load_one("317053-01", function_.data(), 0x4000)) {
+        load_one("317053-01", function_.data(), 0x4000) ||
+        load_crc({0x4fd1d8cb}, function_.data(), 0x4000)) {
         if (load_one("317054-01.u26", function_.data() + 0x4000, 0x4000) ||
-            load_one("317054-01", function_.data() + 0x4000, 0x4000)) {
+            load_one("317054-01", function_.data() + 0x4000, 0x4000) ||
+            load_crc({0x109de2fc}, function_.data() + 0x4000, 0x4000)) {
             have_function_ = true;
         }
     }

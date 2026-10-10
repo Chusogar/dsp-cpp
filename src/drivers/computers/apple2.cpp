@@ -141,7 +141,9 @@ bool Apple2::try_load_disk_prom(const std::string& rom_path) {
     const fs::path path(rom_path);
     const std::string lower = path.filename().string();
     const bool zip = lower.size() >= 4 && to_lower(lower).compare(lower.size() - 4, 4, ".zip") == 0;
-    if (!fs::is_regular_file(path, ec) || zip) {
+    // A zip without the PROM: MAME keeps it in a2diskiing.zip next to it.
+    (void)zip;
+    if (!fs::is_regular_file(path, ec)) {
         return false;
     }
     const fs::path base = path.parent_path();

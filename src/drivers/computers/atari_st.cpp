@@ -156,6 +156,10 @@ bool AtariSt::init(const std::string& rom_path, std::string* error) {
 
 void AtariSt::reset() {
     std::fill(ram_.begin(), ram_.end(), 0);
+    linea_ = 0;
+    linea_scan_wait_ = sync_fail_ = 0;
+    sync_sent_ = sync_off_ = false;
+    sync_rest_x_ = sync_rest_y_ = -1;
     palette_.fill(0);
     rom_at_zero_ = true;
     memcfg_ = 0;
@@ -574,6 +578,13 @@ void AtariSt::ikbd_mouse(const MachineInputs& inputs) {
         if (inputs.pointer_x >= kWidth - 1) dx_host += 16;
         if (inputs.pointer_y <= 0) dy_host -= 16;
         if (inputs.pointer_y >= kHeight - 1) dy_host += 16;
+        if (!dx_host && !dy_host && inputs.pointer_button1 == last_pointer_b1_ &&
+            inputs.pointer_button2 == last_pointer_b2_) {
+            // At rest: make sure GEM's cursor really is under the host pointer.
+            const int mode = resolution_ & 3;
+            gem_sync(inputs.pointer_x / (mode == 0 ? 2 : 1), inputs.pointer_y / (mode == 2 ? 1 : 2));
+            return;
+        }
     }
 
     // The shifter framebuffer is 640×400 with low/med doubled. IKBD deltas are
@@ -611,6 +622,77 @@ void AtariSt::ikbd_mouse(const MachineInputs& inputs) {
         send_button = false;
         if (!dx && !dy) break;
     }
+}
+
+// The ST mouse only reports motion, so GEM's cursor can end up away from the
+// host pointer (packets while the IKBD was paused, a program moving it, a
+// missed resync). While the host pointer rests and nothing is queued for the
+// IKBD, read where GEM's cursor really is (Line-A GCURX/GCURY) and send the
+// motion that puts it under the host pointer. A program with its own cursor
+// does not move GCURX in response: after a few tries the sync switches off,
+// and comes back when GEM's cursor follows the mouse again.
+bool AtariSt::linea_valid() const {
+    if (linea_ < 0x400 || linea_ + 4 >= kRamSize) return false;
+    static const int kHz[3] = {320, 640, 640}, kVt[3] = {200, 200, 400}, kPlanes[3] = {4, 2, 1};
+    const int mode = std::min(resolution_ & 3, 2);
+    return ram_word(linea_) == kPlanes[mode] && ram_word(linea_ - 0xc) == kHz[mode] &&
+           ram_word(linea_ - 0x4) == kVt[mode] && ram_word(linea_ - 0x2) == ram_word(linea_ + 2) &&
+           ram_word(linea_ + 2) == kHz[mode] * kPlanes[mode] / 8;
+}
+
+void AtariSt::linea_find() {
+    for (uint32_t a = 0x800; a < 0x20000; a += 2) {
+        linea_ = a;
+        if (linea_valid()) return;
+    }
+    linea_ = 0;
+}
+
+void AtariSt::gem_sync(int target_x, int target_y) {
+    if (mouse_mode_ != MouseMode::Relative || ikbd_paused_ || !ikbd_rx_.empty() ||
+        !ikbd_pending_.empty())
+        return;
+    if (!linea_valid()) {
+        if (linea_scan_wait_ > 0) {  // TOS sets Line-A up while booting: retry later
+            --linea_scan_wait_;
+            return;
+        }
+        linea_scan_wait_ = 25;
+        linea_find();
+        sync_sent_ = sync_off_ = false;
+        sync_fail_ = 0;
+        if (!linea_valid()) return;
+    }
+    const int gx = int16_t(ram_word(linea_ - 0x25a));  // GCURX
+    const int gy = int16_t(ram_word(linea_ - 0x258));  // GCURY
+    if (sync_sent_) {
+        sync_sent_ = false;
+        if (gx == sync_from_x_ && gy == sync_from_y_) {
+            if (++sync_fail_ >= 3) sync_off_ = true;
+        } else {
+            sync_fail_ = 0;
+        }
+    }
+    if (sync_off_) {
+        // GEM's cursor moved with the mouse since the last rest: GEM is back.
+        if (sync_rest_x_ >= 0 && (gx != sync_rest_x_ || gy != sync_rest_y_)) {
+            sync_off_ = false;
+            sync_fail_ = 0;
+        }
+        sync_rest_x_ = gx;
+        sync_rest_y_ = gy;
+        return;
+    }
+    const int mode = std::min(resolution_ & 3, 2);
+    const int tx = std::clamp(target_x, 0, (mode == 0 ? 320 : 640) - 1);
+    const int ty = std::clamp(target_y, 0, (mode == 2 ? 400 : 200) - 1);
+    const int dx = std::clamp(tx - gx, -127, 127);
+    const int dy = std::clamp(ty - gy, -127, 127);
+    if (!dx && !dy) return;
+    sync_from_x_ = gx;
+    sync_from_y_ = gy;
+    sync_sent_ = true;
+    ikbd_mouse_report(dx, dy, last_pointer_b1_, last_pointer_b2_);
 }
 
 void AtariSt::ikbd_keys(const MachineInputs& inputs) {

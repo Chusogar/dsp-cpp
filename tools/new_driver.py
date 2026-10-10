@@ -41,6 +41,7 @@ def main() -> int:
         "TITLE": args.title or class_name,
         "PASCAL": args.pascal or "%s_hw.pas" % name,
         "KIND": kind,
+        "TYPE": {"arcade": "Arcade", "computers": "Computer", "consoles": "Console"}[kind],
     }
 
     written = []
@@ -56,11 +57,21 @@ def main() -> int:
 
     for target in written:
         print(f"wrote {target.relative_to(ROOT)}")
-    print("\nAdd it to CMakeLists.txt (both targets that need it):")
+    macro = "DSP_DRIVER_" + "".join(c if c.isalnum() else "_" for c in name.upper())
+    group = {"arcade": "DSP_DRIVERS_ARCADE", "computers": "DSP_DRIVERS_COMPUTERS",
+             "consoles": "DSP_DRIVERS_CONSOLES"}[kind]
+    print("\nAdd the source to the dsp_lib library in CMakeLists.txt:")
     print(f"  src/drivers/{kind}/{name}.cpp")
-    print("\nAnd to src/main.cpp:")
+    print(f"\nAdd the name to {group} in cmake/drivers.cmake:")
+    print(f"  {name}")
+    print("\nAnd register it in src/main.cpp, next to the other drivers:")
+    print(f"  #if {macro}")
     print(f'  #include "drivers/{kind}/{name}.h"')
-    print(f'  if (game == "{name}") return std::make_unique<dsp::{class_name}>();')
+    print("  #endif")
+    print("  ...")
+    print(f"  #if {macro}")
+    print(f'      if (q.is("{name}")) return std::make_unique<dsp::{class_name}>();')
+    print("  #endif")
     print("\nThen follow docs/adding-a-driver.md.")
     return 0
 

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <map>
 #include <filesystem>
 #include <fstream>
 
@@ -93,12 +94,19 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
     };
     add_source(dir);
     std::error_code ec;
-    if (fs::is_directory(dir, ec)) {
+    // A zip passed directly (MAME pent1024.zip / scorpio.zip): its siblings
+    // in the same directory may hold the rest (betadisk.zip has TR-DOS).
+    std::string scan_dir = dir;
+    if (is_zip_file(dir)) {
+        scan_dir = fs::path(dir).parent_path().string();
+        if (scan_dir.empty()) scan_dir = ".";
+    }
+    if (fs::is_directory(scan_dir, ec)) {
         // MAME rompath: only open the Spectrum-clone zips, not the whole set.
-        for (const auto& item : fs::directory_iterator(dir, ec)) {
+        for (const auto& item : fs::directory_iterator(scan_dir, ec)) {
             if (!item.is_regular_file(ec)) continue;
             const std::string name = item.path().filename().string();
-            if (!ends_ci(name, ".zip")) continue;
+            if (!ends_ci(name, ".zip") || item.path().string() == dir) continue;
             std::string lower = name;
             for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
             const bool clone_zip =
@@ -106,16 +114,31 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
                 lower.find("pent1024") != std::string::npos || lower.find("scorpio") != std::string::npos ||
                 lower.find("scorpion") != std::string::npos || lower.find("spec128") != std::string::npos ||
                 lower.find("beta128") != std::string::npos || lower.find("trdos") != std::string::npos ||
+                lower.find("betadisk") != std::string::npos ||
                 lower.find("zxmak") != std::string::npos;
             if (clone_zip) add_source(item.path().string());
         }
     }
 
+    // Known dumps by CRC, so files are found whatever they are called.
+    static const std::map<std::string, uint32_t> kCrcs = {
+        {"128p-0.rom", 0x124ad9e0}, {"128p-1.rom", 0xb96a36be}, {"zx128_0.rom", 0xe76799d2},
+        {"zx128_1.rom", 0xb96a36be}, {"pentagon.rom", 0xaa1ce4bd}, {"gluk63r.rom", 0xca321d79},
+        {"gluk54r.rom", 0xf4c1e975}, {"gluk60r.rom", 0xd114a032}, {"trd504.rom", 0xba310874},
+        {"trd504t.rom", 0xe212d1e0},
+    };
     auto try_named = [&](const char* name, std::vector<uint8_t>& out) -> bool {
         for (const RomLoader& loader : sources) {
             if (loader.try_read(name, out) && !out.empty()) return true;
         }
-        return try_rom(dir, name, out);
+        if (try_rom(dir, name, out)) return true;
+        const auto crc = kCrcs.find(name);
+        if (crc != kCrcs.end()) {
+            for (const RomLoader& loader : sources) {
+                if (loader.find_by_crc(crc->second, 0, out)) return true;
+            }
+        }
+        return false;
     };
 
     auto copy_page = [&](int page, const std::vector<uint8_t>& blob, size_t off) {
@@ -200,7 +223,7 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
             have128 = true;
         }
     }
-    if (!have128 && load_file(path, blob) && blob.size() >= 0x8000) {
+    if (!have128 && read_plain_rom(path, blob) && blob.size() >= 0x8000) {
         copy_page(0, blob, 0);
         copy_page(1, blob, 0x4000);
         if (blob.size() >= 0x10000) {
@@ -229,8 +252,10 @@ bool ZxClone::load_roms(const std::string& path, std::string* error) {
         }
     }
     if (!have_dos) {
-        if (error) *error = "TR-DOS ROM (16 KB) not found in " + dir;
-        return false;
+        // MAME keeps TR-DOS in betadisk.zip, not in the machine's own set:
+        // the 128K BASIC still works, the TR-DOS page stays empty.
+        warnings_.push_back("TR-DOS ROM (trdos.rom / trd504.rom, 16 KB) not found in " + dir +
+                            ": disk images will not boot");
     }
 
     const char* gluk_names[] = {"gluk63r.rom", "gluk.rom", "gluk54r.rom", "gluk60r.rom",

@@ -52,67 +52,35 @@ const char* Zx81::title() const {
 }
 
 bool Zx81::load_roms(const std::string& path, std::string* error) {
+    // A zip (MAME zx80.zip / zx81.zip or any zip with the ROM), a directory, or
+    // the ROM image itself. Matched by name or, failing that, by CRC.
     RomLoader loader;
-    std::string load_err;
+    std::string ignored;
+    const bool opened = loader.open(path, &ignored);
     std::vector<uint8_t> blob;
-    const size_t need = model_ == Model::Zx80 ? size_t(0x1000) : size_t(0x2000);
-
-    auto try_named = [&](const char* name) -> bool {
-        if (loader.open(path, &load_err) && loader.try_read(name, blob) && blob.size() >= need) {
-            return true;
-        }
-        namespace fs = std::filesystem;
-        std::error_code ec;
-        if (fs::is_directory(path, ec)) {
-            if (load_file((fs::path(path) / name).string(), blob) && blob.size() >= need) {
-                return true;
-            }
-        }
-        if (ends_ci(path, ".rom") || ends_ci(path, ".bin")) {
-            if (load_file(path, blob) && blob.size() >= need) return true;
-        }
-        return false;
-    };
-
-    bool ok = false;
     if (model_ == Model::Zx80) {
-        const char* names[] = {"zx80.rom", "zx80.rom.bin"};
-        for (const char* n : names) {
-            if (try_named(n)) {
-                ok = true;
-                break;
-            }
-        }
-        if (!ok && load_file(path, blob) && blob.size() >= need) ok = true;
+        bool ok = opened && loader.find("zx80.rom|zx80.rom.bin|zx80.bin", {0x4c7fc597}, 0x1000, blob);
+        if (!ok && read_plain_rom(path, blob) && blob.size() >= 0x1000) ok = true;
         if (!ok) {
             if (error) *error = "zx80 ROM (4 KiB: zx80.rom) not found in " + path;
             return false;
         }
         rom_.fill(0);
         std::memcpy(rom_.data(), blob.data(), 0x1000);
+        warnings_ = loader.warnings();
         return true;
     }
 
     // Prefer the modern ZX81 ROM (CRC 522c37b8), then older variants.
-    const char* names[] = {"zx81b.rom", "zx81.rom", "zx81a.rom", "zx81.rom.bin"};
-    for (const char* n : names) {
-        if (try_named(n)) {
-            ok = true;
-            break;
-        }
-    }
-    if (!ok && load_file(path, blob) && blob.size() >= need) ok = true;
+    bool ok = opened && loader.find("zx81b.rom|zx81.rom|zx81a.rom|zx81.rom.bin|zx81.bin|ts1000.rom",
+                                    {0x522c37b8, 0xfcbbd617, 0x4b1dd6eb}, 0x2000, blob);
+    if (!ok && read_plain_rom(path, blob) && blob.size() >= 0x2000) ok = true;
     if (!ok) {
         if (error) *error = "zx81 ROM (8 KiB: zx81b.rom / zx81.rom) not found in " + path;
         return false;
     }
-
     std::memcpy(rom_.data(), blob.data(), 0x2000);
-    const uint32_t crc = crc32_of(rom_.data(), 0x2000);
-    if (crc != 0x522c37b8u && error) {
-        // Non-fatal: still boot with whatever ROM we found.
-        (void)crc;
-    }
+    warnings_ = loader.warnings();
     return true;
 }
 

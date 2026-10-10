@@ -57,8 +57,10 @@ bool Msx2::init(const std::string& rom_path, std::string* error) {
     if (!loader.load(kBiosRom, bios, error) || !loader.load(kSubRom, sub, error)) return false;
     std::copy(bios.begin(), bios.end(), bios_.begin()); std::copy(sub.begin(), sub.end(), subrom_.begin());
     diskrom_.fill(0xff); disk_rom_loaded_ = false;
-    const char* disk_names[] = {"nms8250_disk.rom", "DISK.ROM", "disk.rom", "DISKROM.ROM", "cbios_disk.rom"};
-    for (const char* n : disk_names) { std::vector<uint8_t> d; if (loader.try_read(n, d) && d.size() == 0x4000) { std::copy(d.begin(), d.end(), diskrom_.begin()); disk_rom_loaded_ = true; break; } }
+    // Disk ROM: by name, or by CRC for MAME nms8250.zip (v1.08.ic117 / jq00014.ic117).
+    { std::vector<uint8_t> d;
+      if (loader.find("nms8250_disk.rom|DISK.ROM|disk.rom|DISKROM.ROM|cbios_disk.rom|v1.08.ic117|jq00014.ic117", {0x61f6fcd3, 0xca3307d3}, 0x4000, d) && d.size() == 0x4000) {
+          std::copy(d.begin(), d.end(), diskrom_.begin()); disk_rom_loaded_ = true; } }
     if (!disk_rom_loaded_) warnings_.emplace_back("MSX2 disk ROM not found; floppy support disabled");
     logorom_.fill(0xff); logo_rom_loaded_ = false;
     const char* logo_names[] = {"cbios_logo_msx2.rom", "cbios_logo.rom"};

@@ -12,8 +12,8 @@ python3 tools/new_driver.py galaxian --class Galaxian --title "Galaxian"
 
 It writes `src/drivers/arcade/galaxian.h` and `src/drivers/arcade/galaxian.cpp`
 from `docs/templates/` (use `--kind computers` or `--kind consoles` for those
-trees), and prints the two lines you still have to paste into `CMakeLists.txt`
-and `src/main.cpp`.
+trees), and prints the lines you still have to paste into `CMakeLists.txt`,
+`cmake/drivers.cmake` and `src/main.cpp`.
 
 ## 1. Read the Pascal driver
 
@@ -108,16 +108,34 @@ front end stops stealing `P` for pause.
 
 ## 7. Register the driver
 
+The source goes into the `dsp_lib` static library (the tests and every
+front-end executable link it):
+
 ```cmake
-add_executable(dsp
+add_library(dsp_lib STATIC
   ...
   src/drivers/arcade/galaxian.cpp
 )
 ```
 
+The name goes into the list of its category in `cmake/drivers.cmake`
+(`DSP_DRIVERS_ARCADE`, `DSP_DRIVERS_CONSOLES` or `DSP_DRIVERS_COMPUTERS`), so
+`-DDSP_DRIVERS=` and the `dsp-galaxian` target know it. In `src/main.cpp` the
+include and the `create_machine()` lines sit under the driver's macro, which
+CMake defines in the generated `dsp_drivers.h` when the driver is built in:
+
 ```cpp
-if (game == "galaxian") return std::make_unique<dsp::Galaxian>();
+#if DSP_DRIVER_GALAXIAN
+#include "drivers/arcade/galaxian.h"
+#endif
+...
+#if DSP_DRIVER_GALAXIAN
+    if (q.is("galaxian")) return std::make_unique<dsp::Galaxian>();
+#endif
 ```
+
+Then `cmake --build build --target dsp-galaxian` builds an executable with
+only this driver.
 
 Add the name to `print_usage`, to `guess_game` if the ROM set is recognisable by
 its file name, and to the tables in `README.md`.

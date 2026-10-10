@@ -92,8 +92,16 @@ bool Vic20::load_roms(const std::string& path, std::string* error) {
         std::memcpy(dst, buf.data(), size);
         return true;
     };
+    // Any file with the CRC of a known dump, whatever it is called.
+    auto load_crc = [&](std::initializer_list<uint32_t> crcs, uint8_t* dst, size_t size) -> bool {
+        std::vector<uint8_t> buf;
+        if (!loader.find("", crcs, size, buf)) return false;
+        std::memcpy(dst, buf.data(), size);
+        return true;
+    };
 
     if (!load_one("901486-01.ue11", basic_rom_.data(), 0x2000) &&
+        !load_crc({0xdb4c43c1}, basic_rom_.data(), 0x2000) &&
         !load_one("901486-01", basic_rom_.data(), 0x2000) &&
         !load_one("basic", basic_rom_.data(), 0x2000) &&
         !load_one("basic.bin", basic_rom_.data(), 0x2000) &&
@@ -119,11 +127,16 @@ bool Vic20::load_roms(const std::string& path, std::string* error) {
                      load_one("kernal.rom", kernal_rom_.data(), 0x2000);
     }
     if (!got_kernal) {
+        got_kernal = want_pal ? load_crc({0x4be07cb4, 0x705e7810, 0xe5e7c174}, kernal_rom_.data(), 0x2000)
+                              : load_crc({0xe5e7c174, 0x683a757f, 0x4be07cb4}, kernal_rom_.data(), 0x2000);
+    }
+    if (!got_kernal) {
         if (error) *error = "missing KERNAL ROM (901486-06/07.ue12)";
         return false;
     }
 
     if (!load_one("901460-03.ud7", char_rom_.data(), 0x1000) &&
+        !load_crc({0x83e032a6}, char_rom_.data(), 0x1000) &&
         !load_one("901460-03", char_rom_.data(), 0x1000) &&
         !load_one("chargen", char_rom_.data(), 0x1000) &&
         !load_one("chargen.bin", char_rom_.data(), 0x1000) &&
@@ -132,6 +145,7 @@ bool Vic20::load_roms(const std::string& path, std::string* error) {
         return false;
     }
 
+    warnings_ = loader.warnings();
     reset();
     return true;
 }

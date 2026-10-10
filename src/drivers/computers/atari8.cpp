@@ -1,5 +1,7 @@
 #include "drivers/computers/atari8.h"
 
+#include "core/rom_loader.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -19,14 +21,6 @@ bool load_file(const std::string& path, std::vector<uint8_t>& out) {
     out.resize(size_t(sz));
     f.read(reinterpret_cast<char*>(out.data()), sz);
     return bool(f);
-}
-
-bool find_rom(const std::string& dir, const char* name, std::vector<uint8_t>& out) {
-    namespace fs = std::filesystem;
-    if (load_file((fs::path(dir) / name).string(), out)) return true;
-    std::string upper = name;
-    for (char& c : upper) c = char(std::toupper(static_cast<unsigned char>(c)));
-    return load_file((fs::path(dir) / upper).string(), out);
 }
 
 // Atari keyboard scan codes as they appear in POKEY's KBCODE register.
@@ -66,32 +60,34 @@ const char* Atari8::title() const {
 }
 
 bool Atari8::init(const std::string& rom_path, std::string* error) {
+    // The OS (and BASIC) come from a zip such as MAME's a800.zip / a800xl.zip
+    // / a800xe.zip or from a directory; a program file passed instead uses the
+    // directory it is in. Files are matched by name or, failing that, by CRC.
     namespace fs = std::filesystem;
-    std::string dir = rom_path;
+    std::string source = rom_path;
     std::error_code ec;
-    if (!fs::is_directory(fs::path(rom_path), ec)) {
-        dir = fs::path(rom_path).parent_path().string();
-        if (dir.empty()) dir = ".";
+    if (!fs::is_directory(fs::path(rom_path), ec) && !is_zip_file(rom_path)) {
+        source = fs::path(rom_path).parent_path().string();
+        if (source.empty()) source = ".";
     }
+    RomLoader loader;
+    if (!loader.open(source, error)) return false;
 
     if (model_ == Model::A800) {
         // The 400/800 OS lives in three chips: 4K + 4K + 2K covering
         // $D800-$FFFF. Prefer the OS-B revision when both are present.
         std::vector<uint8_t> a, b, c;
-        const bool osb = find_rom(dir, "co12499b.rom", a) &&
-                         find_rom(dir, "co14599b.rom", b);
+        const bool osb = loader.find("co12499b.rom", {0xd818f3e8}, 0x1000, a) &&
+                         loader.find("co14599b.rom", {0xc1690a9b}, 0x1000, b);
         if (!osb) {
-            if (!find_rom(dir, "co12499a.rom", a) || !find_rom(dir, "co14599a.rom", b)) {
-                if (error) *error = "Atari 800 OS ROMs (co12499*/co14599*) not found in " + dir;
+            if (!loader.find("co12499a.rom", {0x29f64e17}, 0x1000, a) ||
+                !loader.find("co14599a.rom", {0xbc533f0c}, 0x1000, b)) {
+                if (error) *error = "Atari 800 OS ROMs (co12499*/co14599*) not found in " + source;
                 return false;
             }
         }
-        if (!find_rom(dir, "co12399b.rom", c) && !find_rom(dir, "co12399a.rom", c)) {
-            if (error) *error = "Atari 800 OS ROM co12399b.rom not found in " + dir;
-            return false;
-        }
-        if (a.size() < 0x1000 || b.size() < 0x1000 || c.size() < 0x800) {
-            if (error) *error = "Atari 800 OS ROM parts have unexpected sizes";
+        if (!loader.find("co12399b.rom|co12399a.rom", {0x6a5d766e}, 0x800, c)) {
+            if (error) *error = "Atari 800 OS ROM co12399b.rom not found in " + source;
             return false;
         }
         // Chip order by address, not by part number: CO12399 is the 2K
@@ -104,18 +100,20 @@ bool Atari8::init(const std::string& rom_path, std::string* error) {
         os_.insert(os_.end(), a.begin(), a.begin() + 0x1000);
         os_.insert(os_.end(), b.begin(), b.begin() + 0x1000);
     } else {
-        const char* os_name = (model_ == Model::A800XE) ? "c300717.rom" : "co61598b.rom";
-        if (!find_rom(dir, os_name, os_) || os_.size() < 0x4000) {
-            if (error) *error = std::string("Atari XL/XE OS ROM ") + os_name + " not found in " + dir;
+        const bool xe = model_ == Model::A800XE;
+        const char* os_name = xe ? "c300717.rom" : "co61598b.rom";
+        if (!loader.find(os_name, {xe ? 0x29f133f7u : 0x1f9cd270u}, 0x4000, os_)) {
+            if (error) *error = std::string("Atari XL/XE OS ROM ") + os_name + " not found in " + source;
             return false;
         }
         os_.resize(0x4000);
-        const char* basic_name = (model_ == Model::A800XE) ? "co24947a.rom" : "co60302a.rom";
-        if (find_rom(dir, basic_name, basic_) && basic_.size() >= 0x2000) {
+        const char* basic_name = xe ? "co24947a.rom" : "co60302a.rom";
+        if (loader.find(basic_name, {xe ? 0x7d684184u : 0xf0202fb3u}, 0x2000, basic_)) {
             basic_.resize(0x2000);
             has_basic_ = true;
         }
     }
+    warnings_ = loader.warnings();
 
     cpu_.set_memory_handlers(
         [this](uint16_t a) { return cpu_read(a); },

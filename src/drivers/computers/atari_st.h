@@ -90,6 +90,13 @@ private:
     void ikbd_reset_modes();
     void ikbd_joysticks(const MachineInputs& inputs);
     void ikbd_clock_tick();
+    // Keeps GEM's cursor on the host pointer while the mouse rests (see .cpp).
+    void gem_sync(int target_x, int target_y);
+    bool linea_valid() const;
+    void linea_find();
+    uint16_t ram_word(uint32_t address) const {
+        return address + 1 < kRamSize ? uint16_t(ram_[address] << 8 | ram_[address + 1]) : 0;
+    }
     void service_acia();
     uint16_t blit_get_word(uint32_t even_addr) const;
     void blit_set_word(uint32_t even_addr, uint16_t value);
@@ -169,6 +176,11 @@ private:
     int seed_x_ = 0, seed_y_ = 0;
     bool last_pointer_b1_ = false;
     bool last_pointer_b2_ = false;
+    // GEM cursor sync: Line-A variables base (0 = not found yet) and state.
+    uint32_t linea_ = 0;
+    int linea_scan_wait_ = 0;
+    bool sync_sent_ = false, sync_off_ = false;
+    int sync_fail_ = 0, sync_from_x_ = 0, sync_from_y_ = 0, sync_rest_x_ = -1, sync_rest_y_ = -1;
     uint32_t video_count_ = 0;
 
     // Mega ST / STE blitter at $FF8A00. TOS 1.04 Line-A uses it once the

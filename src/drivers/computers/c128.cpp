@@ -68,6 +68,13 @@ bool load_first(RomLoader& loader, const RomCandidate* cands, size_t n,
         std::memcpy(dst, data.data(), std::min(dst_size, cands[i].size));
         return true;
     }
+    // Any file with the CRC of one of the candidates, whatever it is called.
+    for (size_t i = 0; i < n; i++) {
+        std::vector<uint8_t> data;
+        if (!loader.find_by_crc(cands[i].crc, cands[i].size, data)) continue;
+        std::memcpy(dst, data.data(), std::min(dst_size, cands[i].size));
+        return true;
+    }
     if (error) *error = std::string("missing C128 ROM: ") + label;
     return false;
 }

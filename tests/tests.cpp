@@ -87,6 +87,8 @@
 #include "cpu/mb88xx.h"
 #include "cpu/z8002.h"
 #include "drivers/computers/spectrum.h"
+#include "core/rom_loader.h"
+#include "core/embedded_media.h"
 #include "drivers/computers/zx_clone.h"
 #include "drivers/consoles/genesis.h"
 #include "drivers/consoles/sega32x.h"
@@ -7524,6 +7526,65 @@ void test_st_blitter() {
           "FXSR+NFSR descending blit copies both words, not the last one twice");
 }
 
+// GEM's cursor follows the host pointer exactly and is pulled back under it
+// when it drifts; with a program that ignores the mouse, the sync gives up.
+void test_st_mouse_tracks_host_if_present() {
+    const char* rom = "/tmp/roms/st.zip";
+    if (!std::filesystem::exists(rom)) {
+        std::printf("skipping Atari ST mouse test (no %s)\n", rom);
+        return;
+    }
+    dsp::AtariSt m;
+    std::string err;
+    check(m.init(rom, &err), "ST mouse: TOS loads");
+    for (int f = 0; f < 700; ++f) { m.set_inputs(dsp::MachineInputs{}); m.run_frame(); }
+    // Line-A variables: GCURX/GCURY at -$25A/-$258 from the base (planes 4,
+    // 160 bytes per line, 320x200 at boot).
+    auto w = [&](uint32_t a) { return int16_t(m.peek(a) << 8 | m.peek(a + 1)); };
+    uint32_t la = 0;
+    for (uint32_t a = 0x800; a < 0x20000 && !la; a += 2)
+        if (w(a) == 4 && w(a + 2) == 160 && w(a - 2) == 160 && w(a - 4) == 200 && w(a - 0xc) == 320) la = a;
+    check(la != 0, "ST mouse: Line-A variables found");
+    if (!la) return;
+    auto frame = [&](int x, int y) {
+        dsp::MachineInputs in;
+        in.has_pointer = true;
+        in.pointer_x = x;
+        in.pointer_y = y;
+        m.set_inputs(in);
+        m.run_frame();
+    };
+    frame(300, 200);
+    frame(302, 201);
+    int worst = 0;
+    // Slow, fast and into the corner; framebuffer is 640x400, low res halves it.
+    const int path[][2] = {{250, 150}, {200, 120}, {150, 90}, {600, 350}, {639, 399}, {639, 399},
+                           {320, 50}, {0, 0}, {450, 300}, {200, 250}, {200, 250}};
+    for (const auto& p : path) {
+        frame(p[0], p[1]);
+        frame(p[0], p[1]);
+        worst = std::max(worst, std::abs(w(la - 0x25a) - p[0] / 2) + std::abs(w(la - 0x258) - p[1] / 2));
+    }
+    check(worst <= 1, "ST mouse: GEM's cursor sits under the host pointer");
+    m.poke_word(la - 0x25a, 20);
+    m.poke_word(la - 0x258, 170);
+    for (int i = 0; i < 4; ++i) frame(200, 250);
+    check(w(la - 0x25a) == 100 && w(la - 0x258) == 125, "ST mouse: a drifted cursor is pulled back at rest");
+    int sent = 0;
+    for (int i = 0; i < 30; ++i) {
+        m.poke_word(la - 0x25a, 40);
+        m.poke_word(la - 0x258, 40);
+        dsp::MachineInputs in;
+        in.has_pointer = true;
+        in.pointer_x = 200;
+        in.pointer_y = 250;
+        m.set_inputs(in);
+        sent += int(m.ikbd_pending_bytes().size());
+        m.run_frame();
+    }
+    check(sent <= 9, "ST mouse: the sync gives up when the program ignores the mouse");
+}
+
 void test_st_boot_if_present() {
     const char* rom = "/tmp/roms/st.zip";
     std::FILE* f = std::fopen(rom, "rb");
@@ -10450,6 +10511,100 @@ void test_blockout_if_present() {
     check(colours() > 20, "Block Out game screen drawn");
 }
 
+// Writes a zip with stored (uncompressed) entries, for the ROM loader tests.
+void write_stored_zip(const std::string& path,
+                      const std::vector<std::pair<std::string, std::vector<uint8_t>>>& files) {
+    std::vector<uint8_t> out, central;
+    auto u16 = [](std::vector<uint8_t>& v, uint32_t x) { v.push_back(uint8_t(x)); v.push_back(uint8_t(x >> 8)); };
+    auto u32 = [&](std::vector<uint8_t>& v, uint32_t x) { u16(v, x & 0xffff); u16(v, x >> 16); };
+    for (const auto& f : files) {
+        const uint32_t crc = dsp::crc32_of(f.second.data(), f.second.size());
+        const uint32_t offset = uint32_t(out.size());
+        u32(out, 0x04034b50); u16(out, 20); u16(out, 0); u16(out, 0); u32(out, 0);
+        u32(out, crc); u32(out, uint32_t(f.second.size())); u32(out, uint32_t(f.second.size()));
+        u16(out, uint32_t(f.first.size())); u16(out, 0);
+        out.insert(out.end(), f.first.begin(), f.first.end());
+        out.insert(out.end(), f.second.begin(), f.second.end());
+        u32(central, 0x02014b50); u16(central, 20); u16(central, 20); u16(central, 0); u16(central, 0);
+        u32(central, 0); u32(central, crc); u32(central, uint32_t(f.second.size()));
+        u32(central, uint32_t(f.second.size())); u16(central, uint32_t(f.first.size()));
+        u16(central, 0); u16(central, 0); u16(central, 0); u16(central, 0); u32(central, 0);
+        u32(central, offset);
+        central.insert(central.end(), f.first.begin(), f.first.end());
+    }
+    const uint32_t cd_offset = uint32_t(out.size());
+    out.insert(out.end(), central.begin(), central.end());
+    u32(out, 0x06054b50); u16(out, 0); u16(out, 0); u16(out, uint32_t(files.size()));
+    u16(out, uint32_t(files.size())); u32(out, uint32_t(central.size())); u32(out, cd_offset); u16(out, 0);
+    std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char*>(out.data()), std::streamsize(out.size()));
+}
+
+// BIOS lookup inside the zip passed on the command line: by name, by CRC
+// whatever the file is called, and never the zip itself taken as a ROM.
+// Media compiled into the executable: written out under a directory, and the
+// embedded command line points into it.
+void test_embedded_media_extract() {
+    namespace fs = std::filesystem;
+    static const unsigned char rom[] = {1, 2, 3, 4};
+    static const unsigned char tape[] = {9, 8};
+    const DspEmbeddedFile files[] = {{"set/a.rom", rom, sizeof rom}, {"media/game.tzx", tape, sizeof tape}};
+    const char* const args[] = {"--game", "x", "@/set", "--tape", "@/media/game.tzx", "--mute", nullptr};
+    const fs::path dir = fs::temp_directory_path() / "dsp_embedded_test";
+    fs::remove_all(dir);
+    std::vector<std::string> out;
+    std::string err;
+    check(dsp::extract_embedded_media(files, 2, args, dir.string(), &out, &err), "embedded media are written out");
+    std::ifstream in(dir / "set" / "a.rom", std::ios::binary);
+    std::vector<char> back((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    check(back.size() == 4 && back[3] == 4, "embedded ROM file has its bytes");
+    check(fs::file_size(dir / "media" / "game.tzx") == 2, "embedded tape is written under media/");
+    check(out.size() == 6 && out[2] == (dir / "set").string() && out[4] == (dir / "media" / "game.tzx").string() &&
+              out[5] == "--mute",
+          "embedded command line points into the directory");
+    const DspEmbeddedFile evil[] = {{"../escape.rom", rom, sizeof rom}};
+    check(!dsp::extract_embedded_media(evil, 1, args, dir.string(), &out, &err), "embedded names cannot leave the directory");
+    fs::remove_all(dir);
+}
+
+void test_rom_loader_bios_in_zip() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "dsp_bios_zip_test";
+    fs::create_directories(dir);
+    std::vector<uint8_t> rom48(0x4000), other(0x2000);
+    for (size_t i = 0; i < rom48.size(); ++i) rom48[i] = uint8_t(i * 7 + 3);
+    for (size_t i = 0; i < other.size(); ++i) other[i] = uint8_t(i * 13 + 1);
+    const uint32_t crc48 = dsp::crc32_of(rom48.data(), rom48.size());
+    const std::string zip = (dir / "set.zip").string();
+    write_stored_zip(zip, {{"sub/renamed.bin", rom48}, {"basic.rom", other}});
+
+    dsp::RomLoader loader;
+    std::string err;
+    check(loader.open(zip, &err), "RomLoader opens a zip");
+    std::vector<uint8_t> out;
+    std::string used;
+    check(loader.find("basic.rom", {}, 0x2000, out, &used) && out == other && used == "basic.rom",
+          "RomLoader::find by name");
+    check(loader.find("spectrum.rom|48.rom", {crc48}, 0x4000, out, &used) && out == rom48,
+          "RomLoader::find falls back to the CRC of a file with another name");
+    check(!loader.find("spectrum.rom", {crc48}, 0x8000, out), "RomLoader::find honours the minimum size");
+    std::vector<uint8_t> dest;
+    check(loader.load({{"spectrum.rom", 0x4000, 0, crc48}}, dest, &err) && dest == rom48,
+          "RomLoader::load finds a RomEntry by CRC when the name differs");
+    check(!dsp::read_plain_rom(zip, out), "read_plain_rom refuses a zip");
+
+    // Spectrum 48K: the ROM inside the zip (common name), not the zip itself.
+    write_stored_zip((dir / "spec.zip").string(), {{"48.rom", rom48}});
+    dsp::Spectrum48k spec48;
+    check(spec48.init((dir / "spec.zip").string(), &err), "Spectrum 48K finds 48.rom inside a zip");
+    // A zip bigger than 16K without the ROM used to be read as the ROM itself.
+    std::vector<uint8_t> big(0x6000, 0x55);
+    write_stored_zip((dir / "noise.zip").string(), {{"readme.txt", big}});
+    dsp::Spectrum48k spec48b;
+    check(!spec48b.init((dir / "noise.zip").string(), &err),
+          "Spectrum 48K does not take a zip without the ROM as the ROM");
+    fs::remove_all(dir);
+}
+
 void test_specnext_boot_if_present() {
     namespace fs = std::filesystem;
     const char* rom = "/tmp/roms/next/tbblue.zip";
@@ -10687,6 +10842,7 @@ int main() {
     test_mfp_stopped_timer_data();
     test_st_blitter();
     test_st_boot_if_present();
+    test_st_mouse_tracks_host_if_present();
     test_st_north_south_if_present();
     test_st_stx_images();
     test_st_bob_winner_stx_if_present();
@@ -10723,6 +10879,8 @@ int main() {
     test_specnext_video_layers();
     test_specnext_copper_and_interrupts();
     test_specnext_dma();
+    test_rom_loader_bios_in_zip();
+    test_embedded_media_extract();
     test_specnext_boot_if_present();
     test_arabian_if_present();
     test_ppc603_integer_and_branches();

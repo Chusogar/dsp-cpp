@@ -1,5 +1,7 @@
 #include "drivers/computers/spectrum_128k.h"
 
+#include "core/rom_loader.h"
+
 #include "machine/spectrum_snap.h"
 
 #include <algorithm>
@@ -115,43 +117,41 @@ void Spectrum128k::border_on_out() {
 
 
 bool Spectrum128k::init(const std::string& rom_path, std::string* error) {
-    std::vector<uint8_t> rom;
-    const char* names128[] = {"128-0.rom", "128.rom", "zx128.rom", "spectrum128.rom"};
-    const char* names2[] = {"plus2-0.rom", "plus2.rom", "2-0.rom"};
+    // A zip (MAME spec128.zip / specpls2.zip or any zip with the ROMs), a
+    // directory, or the 32K ROM image itself. Either one 32K file or the two
+    // 16K halves; matched by name or, failing that, by CRC.
+    std::vector<uint8_t> rom, r0, r1;
+    RomLoader loader;
+    std::string ignored;
+    const bool opened = loader.open(rom_path, &ignored);
+    auto joined = [&](const char* names, std::initializer_list<uint32_t> crcs) {
+        return opened && loader.find(names, crcs, 0x8000, rom);
+    };
+    auto halves = [&](const char* n0, std::initializer_list<uint32_t> c0, const char* n1,
+                      std::initializer_list<uint32_t> c1) {
+        if (!opened || !loader.find(n0, c0, 0x4000, r0) || !loader.find(n1, c1, 0x4000, r1))
+            return false;
+        rom.assign(r0.begin(), r0.begin() + 0x4000);
+        rom.insert(rom.end(), r1.begin(), r1.begin() + 0x4000);
+        return true;
+    };
     bool ok = false;
     if (model_ == Model::SpecPlus2) {
-        for (const char* n : names2) {
-            if (try_rom(rom_path, n, rom) && rom.size() >= 0x8000) {
-                ok = true;
-                break;
-            }
-        }
+        ok = joined("plus2-0.rom|plus2.rom|2-0.rom|pl2namco.rom", {0x72a54e75}) ||
+             halves("zxp2_0.rom|plus2-0.rom|2-0.rom", {0x5d2e8c66},
+                    "zxp2_1.rom|plus2-1.rom|2-1.rom", {0x98b1320b});
     }
     if (!ok) {
-        for (const char* n : names128) {
-            if (try_rom(rom_path, n, rom) && rom.size() >= 0x8000) {
-                ok = true;
-                break;
-            }
-        }
+        ok = joined("128-0.rom|128.rom|zx128.rom|spectrum128.rom", {}) ||
+             halves("zx128_0.rom|128-0.rom|128p-0.rom|plus2-0.rom", {0xe76799d2, 0x5d2e8c66},
+                    "zx128_1.rom|128-1.rom|128p-1.rom|plus2-1.rom", {0xb96a36be, 0x98b1320b});
     }
-    // Two separate 16K files
-    if (!ok) {
-        std::vector<uint8_t> r0, r1;
-        if ((try_rom(rom_path, "128-0.rom", r0) || try_rom(rom_path, "plus2-0.rom", r0)) &&
-            (try_rom(rom_path, "128-1.rom", r1) || try_rom(rom_path, "plus2-1.rom", r1)) &&
-            r0.size() >= 0x4000 && r1.size() >= 0x4000) {
-            rom.resize(0x8000);
-            std::memcpy(rom.data(), r0.data(), 0x4000);
-            std::memcpy(rom.data() + 0x4000, r1.data(), 0x4000);
-            ok = true;
-        }
-    }
-    if (!ok && load_file(rom_path, rom) && rom.size() >= 0x8000) ok = true;
+    if (!ok && read_plain_rom(rom_path, rom) && rom.size() >= 0x8000) ok = true;
     if (!ok) {
         if (error) *error = "128K ROM (32 KB) not found in " + rom_path;
         return false;
     }
+    warnings_ = loader.warnings();
     std::memcpy(banks_[8].data(), rom.data(), 0x4000);
     std::memcpy(banks_[9].data(), rom.data() + 0x4000, 0x4000);
 

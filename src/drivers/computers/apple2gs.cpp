@@ -188,7 +188,7 @@ bool Apple2GS::init(const std::string& rom_path, std::string* error) {
     std::copy(first.begin(), first.end(), rom_.begin());
 
     std::vector<uint8_t> second;
-    if (!loader.try_read("341-0748", second) || second.size() != 0x20000) {
+    if (!loader.find("341-0748|341-0748.bin", {0x18190283}, 0x20000, second) || second.size() != 0x20000) {
         if (error) *error = "missing or wrong-size ROM file: 341-0748";
         return false;
     }
