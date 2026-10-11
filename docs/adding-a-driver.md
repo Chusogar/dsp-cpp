@@ -13,7 +13,7 @@ python3 tools/new_driver.py galaxian --class Galaxian --title "Galaxian"
 It writes `src/drivers/arcade/galaxian.h` and `src/drivers/arcade/galaxian.cpp`
 from `docs/templates/` (use `--kind computers` or `--kind consoles` for those
 trees), and prints the lines you still have to paste into `CMakeLists.txt`,
-`cmake/drivers.cmake` and `src/main.cpp`.
+`cmake/drivers.cmake` and `src/frontend/machine_registry.cpp`.
 
 ## 1. Read the Pascal driver
 
@@ -120,9 +120,11 @@ add_library(dsp_lib STATIC
 
 The name goes into the list of its category in `cmake/drivers.cmake`
 (`DSP_DRIVERS_ARCADE`, `DSP_DRIVERS_CONSOLES` or `DSP_DRIVERS_COMPUTERS`), so
-`-DDSP_DRIVERS=` and the `dsp-galaxian` target know it. In `src/main.cpp` the
-include and the `create_machine()` lines sit under the driver's macro, which
-CMake defines in the generated `dsp_drivers.h` when the driver is built in:
+`-DDSP_DRIVERS=` and the `dsp-galaxian` target know it. In
+`src/frontend/machine_registry.cpp` (the registry shared by the desktop/web
+front end and the microcontroller ports) the include and the
+`create_machine()` lines sit under the driver's macro, which CMake defines in
+the generated `dsp_drivers.h` when the driver is built in:
 
 ```cpp
 #if DSP_DRIVER_GALAXIAN
@@ -136,6 +138,15 @@ CMake defines in the generated `dsp_drivers.h` when the driver is built in:
 
 Then `cmake --build build --target dsp-galaxian` builds an executable with
 only this driver.
+
+The microcontroller ports (`ports/`) compile only the files each driver
+needs, listed in `ports/common/driver_sources.json`. After adding a driver (or
+moving code between files), regenerate the list from a desktop build:
+
+```sh
+cmake --build build -j --target dsp-drivers
+python3 tools/driver_sources.py build
+```
 
 Add the name to `print_usage`, to `guess_game` if the ROM set is recognisable by
 its file name, and to the tables in `README.md`.

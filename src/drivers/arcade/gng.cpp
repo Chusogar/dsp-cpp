@@ -174,7 +174,7 @@ void Gng::run_frame() {
     for (int i = 0; i < samples; i++) {
         int32_t s = ym0_.update() + ym1_.update();
         s *= 8;
-        audio_buffer_[size_t(i)] = int16_t(std::clamp(s, -32768, 32767));
+        audio_buffer_[size_t(i)] = int16_t(std::clamp<int32_t>(s, -32768, 32767));
     }
 }
 

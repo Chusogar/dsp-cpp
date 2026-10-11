@@ -151,7 +151,7 @@ This produces `build/dsp` and the unit test binary `build/dsp_tests`.
 
 All the emulation code (CPUs, sound, video, machine parts and every driver)
 is built once as a static library, `dsp_lib`; an executable only takes the
-objects it references. Each driver is registered in `src/main.cpp` under
+objects it references. Each driver is registered in `src/frontend/machine_registry.cpp` under
 `#if DSP_DRIVER_<NAME>`, with the names listed in `cmake/drivers.cmake` (one
 per header in `src/drivers/<category>/<name>.h`).
 
@@ -179,7 +179,7 @@ only the drivers in `DSP_DRIVERS`). `--listarcades` / `--listconsoles` /
 `--listcomputers` and the web page's driver list show only the drivers built
 in. A new driver adds its sources to `dsp_lib`, its name to
 `cmake/drivers.cmake`, and wraps its `#include` and `create_machine()` lines
-in `src/main.cpp` with `#if DSP_DRIVER_<NAME>` ... `#endif`.
+in `src/frontend/machine_registry.cpp` with `#if DSP_DRIVER_<NAME>` ... `#endif`.
 
 ### Embedding the ROMs, disks and cartridges
 
@@ -255,6 +255,26 @@ Keys are the same as natively (5 = coin, 1 = start, F2 = pause, F3 = reset,
 F12 = turbo). The web build has no threads, so Sega Model 3 renders on a
 single core, and the tests and headless tools are native only. Browsers only
 start audio after a click or key press on the page.
+
+### Microcontroller boards (TTGO VGA32, RP2350-PiZero)
+
+`ports/` builds dsp as firmware for two boards, with a handful of drivers
+chosen at build time, an on-screen ROM menu for the micro-SD card and the same
+embedded-media option as above:
+
+- [`ports/ttgo-vga32`](ports/ttgo-vga32/README.md): LilyGO TTGO VGA32 v1.4
+  (ESP32 + PSRAM, VGA, PS/2), with arduino-cli (`./setup.sh && ./build.sh`) or
+  PlatformIO.
+- [`ports/rp2350-pizero`](ports/rp2350-pizero/README.md): Waveshare
+  RP2350-PiZero (HDMI via PicoDVI, USB keyboard/gamepad via PIO-USB), with the
+  Pico SDK (`./setup.sh && ./build.sh`).
+
+They share `ports/common` (menu, frame loop, embedded file system, USB HID),
+which also builds and is tested on the desktop. Both firmwares compile but
+have not yet been tried on the hardware; see [`ports/README.md`](ports/README.md).
+File access goes through `dsp::fsx` (`src/core/fs_compat.h`): `std::filesystem`
+normally, a POSIX layer with `-DDSP_FS_POSIX=ON` (the boards' toolchains lack
+the `std::filesystem` library).
 
 ## Running
 

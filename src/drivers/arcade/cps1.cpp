@@ -433,7 +433,7 @@ void Cps1::on_sound_cycles(int cycles) {
         audio_accumulator_ += int64_t(cycles) * YM2151::kSampleRate;
         while (audio_accumulator_ >= int64_t(clock)) {
             audio_accumulator_ -= clock;
-            audio_.push_back(int16_t(std::clamp(qsound_.mixed(), -32768, 32767)));
+            audio_.push_back(int16_t(std::clamp<int32_t>(qsound_.mixed(), -32768, 32767)));
         }
         return;
     }
@@ -448,7 +448,7 @@ void Cps1::on_sound_cycles(int cycles) {
     while (audio_accumulator_ >= int64_t(clock)) {
         audio_accumulator_ -= clock;
         int32_t sample = ym_.update() + int32_t(last_oki_ * 0.8f);
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
 

@@ -112,8 +112,8 @@ void QSound::clock() {
         out_right_ += (current.lastdt * rvol) / 32;
         current.offset += current.pitch;
     }
-    out_left_ = std::clamp(out_left_, -32767, 32767);
-    out_right_ = std::clamp(out_right_, -32767, 32767);
+    out_left_ = std::clamp<int32_t>(out_left_, -32767, 32767);
+    out_right_ = std::clamp<int32_t>(out_right_, -32767, 32767);
 }
 
 }  // namespace dsp

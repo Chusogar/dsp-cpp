@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 #include "core/rom_loader.h"
@@ -14,7 +14,7 @@ const std::vector<RomEntry> kBiosRom = {{"MSX2.ROM|nms8250_basic-bios2.rom|msx2.
 const std::vector<RomEntry> kSubRom = {{"MSX2EXT.ROM|nms8250_msx2sub.rom|msx2ext.rom|msx2_ext.rom|cbios_sub.rom", 0x4000, 0x0000, 0x66237ecf}};
 
 bool read_plain_or_zip_file(const std::string& path, std::vector<uint8_t>& data, size_t max_size, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     if (fs::is_regular_file(path, ec)) {
         std::ifstream probe(path, std::ios::binary);
@@ -121,7 +121,7 @@ void Msx2::ay_port_b_write(uint8_t v){joy_select_=(v&0x40)>>6;port_b_ay_=v;}
 uint8_t Msx2::port_b_read(){return teclado_<keypad_.size()?keypad_[teclado_]:0xff;}
 void Msx2::port_a_write(uint8_t v){port_a_=v;}
 void Msx2::port_c_write(uint8_t v){teclado_=v&0x0f;if(((port_c_^v)&0x10)&&tape_.is_loaded()){bool on=(v&0x10)==0;if(on&&!tape_.is_playing())tape_.play(false);if(!on&&tape_.is_playing())tape_.pause();}port_c_=v;}
-void Msx2::on_main_cycles(int cycles){if(tape_.is_playing())tape_.advance(int(double(cycles)*3500000.0/double(kMainClock)));audio_accumulator_+=uint64_t(cycles)*uint64_t(AY8910::kSampleRate);while(audio_accumulator_>=kMainClock){audio_accumulator_-=kMainClock;int32_t s=ay8910_.update()+cartridge_.audio_sample(kMainClock,AY8910::kSampleRate)*2;if(port_c_&0x80)s+=3000;if(tape_.is_playing())s+=int32_t(tape_.level())*96;audio_.push_back(int16_t(std::clamp(s,-32768,32767)));}}
+void Msx2::on_main_cycles(int cycles){if(tape_.is_playing())tape_.advance(int(double(cycles)*3500000.0/double(kMainClock)));audio_accumulator_+=uint64_t(cycles)*uint64_t(AY8910::kSampleRate);while(audio_accumulator_>=kMainClock){audio_accumulator_-=kMainClock;int32_t s=ay8910_.update()+cartridge_.audio_sample(kMainClock,AY8910::kSampleRate)*2;if(port_c_&0x80)s+=3000;if(tape_.is_playing())s+=int32_t(tape_.level())*96;audio_.push_back(int16_t(std::clamp<int32_t>(s,-32768,32767)));}}
 void Msx2::run_frame(){const int lines=scanlines();for(int line=0;line<lines;++line){z80_.run(kCyclesPerLine);vdp_.refresh_line(line,lines);}}
 
 void Msx2::set_inputs(const MachineInputs& inputs){keypad_.fill(0xff);bool r=inputs.key(Key::RightShift);if(inputs.key(Key::Num0))keypad_[0]&=0xfe;if(inputs.key(Key::Num1)&&!r)keypad_[0]&=0xfd;if(inputs.key(Key::Num2)&&!r)keypad_[0]&=0xfb;if(inputs.key(Key::Num3)&&!r)keypad_[0]&=0xf7;if(inputs.key(Key::Num4)&&!r)keypad_[0]&=0xef;if(inputs.key(Key::Num5)&&!r)keypad_[0]&=0xdf;if(inputs.key(Key::Num6))keypad_[0]&=0xbf;if(inputs.key(Key::Num7))keypad_[0]&=0x7f;if(inputs.key(Key::Num8))keypad_[1]&=0xfe;if(inputs.key(Key::Num9))keypad_[1]&=0xfd;if(inputs.key(Key::Semicolon))keypad_[1]&=0xfb;if(inputs.key(Key::Comma))keypad_[1]&=0xef;if(inputs.key(Key::Period))keypad_[1]&=0xdf;if(inputs.key(Key::Slash))keypad_[1]&=0xbf;if(inputs.key(Key::Minus))keypad_[1]&=0x7f;if(inputs.key(Key::Quote))keypad_[2]&=0xfe;if(inputs.key(Key::A))keypad_[2]&=0xbf;if(inputs.key(Key::B))keypad_[2]&=0x7f;if(inputs.key(Key::C))keypad_[3]&=0xfe;if(inputs.key(Key::D))keypad_[3]&=0xfd;if(inputs.key(Key::E))keypad_[3]&=0xfb;if(inputs.key(Key::F))keypad_[3]&=0xf7;if(inputs.key(Key::G))keypad_[3]&=0xef;if(inputs.key(Key::H))keypad_[3]&=0xdf;if(inputs.key(Key::I))keypad_[3]&=0xbf;if(inputs.key(Key::J))keypad_[3]&=0x7f;if(inputs.key(Key::K))keypad_[4]&=0xfe;if(inputs.key(Key::L))keypad_[4]&=0xfd;if(inputs.key(Key::M))keypad_[4]&=0xfb;if(inputs.key(Key::N))keypad_[4]&=0xf7;if(inputs.key(Key::O))keypad_[4]&=0xef;if(inputs.key(Key::P))keypad_[4]&=0xdf;if(inputs.key(Key::Q))keypad_[4]&=0xbf;if(inputs.key(Key::R))keypad_[4]&=0x7f;if(inputs.key(Key::S))keypad_[5]&=0xfe;if(inputs.key(Key::T))keypad_[5]&=0xfd;if(inputs.key(Key::U))keypad_[5]&=0xfb;if(inputs.key(Key::V))keypad_[5]&=0xf7;if(inputs.key(Key::W))keypad_[5]&=0xef;if(inputs.key(Key::X))keypad_[5]&=0xdf;if(inputs.key(Key::Y))keypad_[5]&=0xbf;if(inputs.key(Key::Z))keypad_[5]&=0x7f;if(inputs.key(Key::LeftShift))keypad_[6]&=0xfe;if(inputs.key(Key::LeftCtrl))keypad_[6]&=0xfd;if(inputs.key(Key::CapsLock))keypad_[6]&=0xf7;if(inputs.key(Key::F1))keypad_[6]&=0xdf;if(inputs.key(Key::F2)||(inputs.key(Key::Num2)&&r))keypad_[6]&=0xbf;if(inputs.key(Key::F3)||(inputs.key(Key::Num3)&&r))keypad_[6]&=0x7f;if(inputs.key(Key::F4)||(inputs.key(Key::Num4)&&r))keypad_[7]&=0xfe;if(inputs.key(Key::F5)||(inputs.key(Key::Num5)&&r))keypad_[7]&=0xfd;if(inputs.key(Key::Escape))keypad_[7]&=0xfb;if(inputs.key(Key::Tab))keypad_[7]&=0xf7;if(inputs.key(Key::Backspace))keypad_[7]&=0xdf;if(inputs.key(Key::Enter))keypad_[7]&=0x7f;if(inputs.key(Key::Space))keypad_[8]&=0xfe;if(inputs.key(Key::Left))keypad_[8]&=0xef;if(inputs.key(Key::Up))keypad_[8]&=0xdf;if(inputs.key(Key::Down))keypad_[8]&=0xbf;if(inputs.key(Key::Right))keypad_[8]&=0x7f;joystick_={0x3f,0x3f};const InputState* ps[2]={&inputs.player1,&inputs.player2};for(int p=0;p<2;++p){const auto& q=*ps[p];uint8_t j=0x3f;if(q.up)j&=0xfe;if(q.down)j&=0xfd;if(q.left)j&=0xfb;if(q.right)j&=0xf7;if(q.button1)j&=0xef;if(q.button2)j&=0xdf;joystick_[size_t(p)]=j;}}
@@ -133,7 +133,7 @@ bool Msx2::load_media(const std::string& path,std::string* error){std::string l=
 bool Msx2::load_tape(const std::string& path,std::string* error){if(!tape_.load_file(path,error))return false;tape_.stop();return true;}
 void Msx2::tape_toggle_play(){if(!tape_.is_loaded())return;if(tape_.is_playing())tape_.pause();else tape_.play(false);}
 bool Msx2::load_cartridge(const std::string& path,std::string* error){std::vector<uint8_t> data;if(!read_plain_or_zip_file(path,data,kMaxCartridge,error))return false;if(data.empty()){if(error)*error="empty cartridge";return false;}if(!cartridge_.load(std::move(data),path)){if(error)*error="cannot initialize cartridge mapper";return false;}warnings_.emplace_back(std::string("MSX2 cartridge mapper: ")+cartridge_.name());
-    std::string name=std::filesystem::path(path).filename().string();for(char& c:name)c=char(std::tolower(static_cast<unsigned char>(c)));
+    std::string name=dsp::fsx::path(path).filename().string();for(char& c:name)c=char(std::tolower(static_cast<unsigned char>(c)));
     cart_japanese_=name.find("(j)")!=std::string::npos||name.find("[j]")!=std::string::npos||name.find("(japan")!=std::string::npos||name.find("(jp)")!=std::string::npos||name.find("_j.")!=std::string::npos||name.find(" j.")!=std::string::npos||name.find("-j.")!=std::string::npos;
     reset();if(japan_)warnings_.emplace_back("MSX2: Japanese cartridge, BIOS reports a 60 Hz Japanese machine");return true;}
 

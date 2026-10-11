@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 #include "core/rom_loader.h"
@@ -58,7 +58,7 @@ bool find_boot_rom(const RomLoader& loader, std::vector<uint8_t>& out) {
 }
 
 bool is_sd_image(const std::string& path) {
-    const std::string ext = lower(std::filesystem::path(path).extension().string());
+    const std::string ext = lower(dsp::fsx::path(path).extension().string());
     return ext == ".img" || ext == ".mmc" || ext == ".hdf" || ext == ".sd";
 }
 
@@ -131,7 +131,7 @@ SpecNext::SpecNext() : cpu_(3500000) {
 SpecNext::~SpecNext() = default;
 
 bool SpecNext::init(const std::string& rom_path, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     // The boot ROM: rom_path may be the tbblue zip, a directory holding it
     // (or holding the loose files), or the ROM file itself.
     std::vector<std::string> candidates;
@@ -240,7 +240,7 @@ bool SpecNext::insert_sd(const std::string& path, bool read_only, std::string* e
 
 bool SpecNext::load_media(const std::string& path, std::string* error) {
     if (is_sd_image(path)) return insert_sd(path, false, error);
-    const std::string ext = lower(std::filesystem::path(path).extension().string());
+    const std::string ext = lower(dsp::fsx::path(path).extension().string());
     if (ext == ".nex") {
         std::vector<uint8_t> data;
         if (!read_file(path, data) || data.size() < 512 || std::memcmp(data.data(), "Next", 4) != 0) {

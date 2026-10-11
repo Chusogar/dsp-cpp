@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 #include "core/rom_loader.h"
@@ -47,7 +47,7 @@ std::string lower_copy(std::string value) {
 
 bool read_plain_or_zip_file(const std::string& path, std::vector<uint8_t>& data, size_t max_size,
                             std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     if (fs::is_regular_file(path, ec)) {
         std::ifstream probe(path, std::ios::binary);
@@ -122,7 +122,7 @@ WonderSwan::WonderSwan(Model model)
 }
 
 bool WonderSwan::init(const std::string& rom_path, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     search_bios(rom_path);
 
@@ -170,7 +170,7 @@ bool WonderSwan::init(const std::string& rom_path, std::string* error) {
 }
 
 void WonderSwan::search_bios(const std::string& rom_path) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     std::vector<fs::path> candidates;
 
@@ -220,7 +220,7 @@ bool WonderSwan::load_bios(const std::string& path, std::string* error) {
 
     // Prefer boot.rom from a multi-file zip via RomLoader if the plain read
     // returned a random member; re-open zips looking for boot.rom.
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     if (fs::is_regular_file(path, ec)) {
         std::ifstream probe(path, std::ios::binary);
@@ -256,7 +256,7 @@ bool WonderSwan::load_bios(const std::string& path, std::string* error) {
 bool WonderSwan::load_media(const std::string& path, std::string* error) {
     std::vector<uint8_t> data;
     if (!read_plain_or_zip_file(path, data, kMaxCartridge, error)) return false;
-    auto ext = lower_copy(std::filesystem::path(path).extension().string());
+    auto ext = lower_copy(dsp::fsx::path(path).extension().string());
     if (ext == ".wsc") color_ = true;
     else if (ext == ".ws" && model_ == Model::WonderSwan) color_ = false;
     return load_cart_bytes(std::move(data), error);
@@ -931,9 +931,9 @@ uint32_t WonderSwan::rgb12_to_argb(uint16_t color) const {
     uint32_t r = (color >> 8) & 0xf;
     if (color_ && !grayscale()) {
         // Approximate WSC LCD mix (ares/Mednafen-style).
-        uint32_t R = std::min(480u, r * 26 + g * 4 + b * 2);
-        uint32_t G = std::min(480u, g * 24 + b * 8);
-        uint32_t B = std::min(480u, r * 6 + g * 4 + b * 22);
+        uint32_t R = std::min<uint32_t>(480u, r * 26 + g * 4 + b * 2);
+        uint32_t G = std::min<uint32_t>(480u, g * 24 + b * 8);
+        uint32_t B = std::min<uint32_t>(480u, r * 6 + g * 4 + b * 22);
         r = (R * 255) / 480;
         g = (G * 255) / 480;
         b = (B * 255) / 480;
@@ -1036,9 +1036,9 @@ void WonderSwan::render_scanline(int y) {
                 uint32_t b = color & 0xf;
                 uint32_t g = (color >> 4) & 0xf;
                 uint32_t r = (color >> 8) & 0xf;
-                b = std::min(15u, (b * 3) / 2);
-                g = std::min(15u, (g * 3) / 2);
-                r = std::min(15u, (r * 3) / 2);
+                b = std::min<uint32_t>(15u, (b * 3) / 2);
+                g = std::min<uint32_t>(15u, (g * 3) / 2);
+                r = std::min<uint32_t>(15u, (r * 3) / 2);
                 color = uint16_t(b | (g << 4) | (r << 8));
             }
         }

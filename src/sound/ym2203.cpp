@@ -81,7 +81,7 @@ int32_t YM2203::update() {
     const int32_t fm =
         opn_.channel_output(0) + opn_.channel_output(1) + opn_.channel_output(2);
     int32_t out = ay_.update() + int32_t(float(fm) * amplitude_);
-    out = std::max(-0x7fff, std::min(0x7fff, out));
+    out = std::max<int32_t>(-0x7fff, std::min<int32_t>(0x7fff, out));
 
     opn_.internal_timer_a(ch2);
     opn_.internal_timer_b();

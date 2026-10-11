@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 #include "core/rom_loader.h"
@@ -199,7 +199,7 @@ bool Exelv::load_bios(const std::string& rom_path, std::string* error) {
 }
 
 bool Exelv::init(const std::string& rom_path, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     bios_loaded_ = false;
     sub_present_ = false;
@@ -246,7 +246,7 @@ bool Exelv::load_cart_bytes(std::vector<uint8_t> data, std::string* error) {
 
 bool Exelv::load_media(const std::string& path, std::string* error) {
     std::vector<uint8_t> data;
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     const std::string ext = lower_copy(fs::path(path).extension().string());
     if (ext == ".k7" || ext == ".wav") {

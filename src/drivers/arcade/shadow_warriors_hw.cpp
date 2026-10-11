@@ -393,7 +393,7 @@ void ShadowWarriors::on_sound_cycles(int cycles) {
     while (audio_accumulator_ >= int64_t(kSoundClock)) {
         audio_accumulator_ -= int64_t(kSoundClock);
         const int32_t sample = ym0_.update() + ym1_.update() + oki_last_;
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
 

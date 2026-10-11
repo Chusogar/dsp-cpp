@@ -8,7 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 #include "core/rom_loader.h"
@@ -145,7 +145,7 @@ uint32_t Psx::physical_addr(uint32_t address) {
 }
 
 bool Psx::load_bios(const std::string& rom_path, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     std::vector<uint8_t> data;
 

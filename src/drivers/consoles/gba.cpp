@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 #include "core/rom_loader.h"
@@ -31,7 +31,7 @@ bool ends_with_ci(const std::string& s, const char* ext) {
 
 // A plain file, or the first file of a zip.
 bool read_plain_or_zip(const std::string& path, std::vector<uint8_t>& data, size_t max_size, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     if (fs::is_regular_file(path, ec)) {
         std::ifstream in(path, std::ios::binary);
@@ -86,7 +86,7 @@ Gba::Gba() : cpu_(*this), ppu_(io_.data(), pal_.data(), nullptr, oam_.data()) {
 Gba::~Gba() { flush_save(); }
 
 bool Gba::init(const std::string& rom_path, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     std::string bios_source = rom_path;
     std::string cart;
@@ -145,7 +145,7 @@ bool Gba::load_media(const std::string& path, std::string* error) {
     rom_ = std::move(data);
     game_title_.assign(reinterpret_cast<const char*>(rom_.data() + 0xA0), 12);
     game_title_.erase(std::find(game_title_.begin(), game_title_.end(), '\0'), game_title_.end());
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     fs::path sav = fs::path(path);
     sav.replace_extension(".sav");
     save_path_ = sav.string();

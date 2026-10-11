@@ -224,7 +224,7 @@ void Ajax::on_sound_cycles(int cycles) {
         if (k007232_1_) sample += k007232_1_->update();
         // YM2151 internal scale is quiet vs 16-bit full scale; boost for arcade levels.
         sample *= 24;
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
 

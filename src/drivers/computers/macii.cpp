@@ -650,7 +650,7 @@ void MacII::tick_devices(int) {
     while (asc_acc_ >= int64_t(kCpuClock)) {
         asc_acc_ -= kCpuClock;
         int32_t s = asc_.generate() * 48;
-        if (audio_.size() < 48000) audio_.push_back(int16_t(std::clamp(s, -32768, 32767)));
+        if (audio_.size() < 48000) audio_.push_back(int16_t(std::clamp<int32_t>(s, -32768, 32767)));
     }
 
     second_cycles_ += delta;

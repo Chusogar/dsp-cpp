@@ -895,14 +895,14 @@ int32_t YM2151::update() {
         outl += chanout_[channel] & int32_t(pan_[channel * 2]);
         outr += chanout_[channel] & int32_t(pan_[channel * 2 + 1]);
     }
-    outl = std::min(std::max(outl, kMinOut), kMaxOut);
-    outr = std::min(std::max(outr, kMinOut), kMaxOut);
+    outl = std::min<int32_t>(std::max<int32_t>(outl, kMinOut), kMaxOut);
+    outr = std::min<int32_t>(std::max<int32_t>(outr, kMinOut), kMaxOut);
     out_left_ = outl;
     out_right_ = outr;
     advance();
 
     const int32_t mono = int32_t((outl + outr) * amplitude_);
-    return std::min(std::max(mono, -32767), 32767);
+    return std::min<int32_t>(std::max<int32_t>(mono, -32767), 32767);
 }
 
 }  // namespace dsp

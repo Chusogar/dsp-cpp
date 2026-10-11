@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 #include "core/rom_loader.h"
@@ -20,7 +20,7 @@ std::string lower_copy(std::string value) {
 const char* kBiosNames[] = {"lynxboot.img", "lynx.bin", "lynxa.bin", "lynx.rom"};
 
 bool is_bios_filename(const std::string& path) {
-    const std::string name = lower_copy(std::filesystem::path(path).filename().string());
+    const std::string name = lower_copy(dsp::fsx::path(path).filename().string());
     for (const char* candidate : kBiosNames) {
         if (name == candidate) return true;
     }
@@ -38,7 +38,7 @@ bool looks_like_bios(const std::vector<uint8_t>& data, const std::string& path) 
 
 bool read_plain_or_zip_file(const std::string& path, std::vector<uint8_t>& data, size_t max_size,
                             std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     if (fs::is_regular_file(path, ec)) {
         std::ifstream probe(path, std::ios::binary);
@@ -136,7 +136,7 @@ AtariLynx::AtariLynx() : cpu_(kCpuClock) {
 }
 
 bool AtariLynx::init(const std::string& rom_path, std::string*) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     search_bios(rom_path);
     if (!rom_path.empty() && fs::is_directory(rom_path, ec)) {
@@ -185,7 +185,7 @@ bool AtariLynx::load_bios(const std::string& path, std::string* error) {
 }
 
 void AtariLynx::search_bios(const std::string& rom_path) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     if (rom_path.empty()) return;
 
@@ -246,7 +246,7 @@ void AtariLynx::search_bios(const std::string& rom_path) {
 }
 
 bool AtariLynx::load_cart_from_directory(const std::string& directory, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     for (const auto& item : fs::directory_iterator(directory, ec)) {
         if (!item.is_regular_file(ec)) continue;

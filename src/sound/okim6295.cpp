@@ -121,7 +121,7 @@ int32_t OKIM6295::update() {
     for (Voice& voice : voices_) {
         if (voice.playing) out += generate_adpcm(voice);
     }
-    return std::clamp(out, -32767, 32767);
+    return std::clamp<int32_t>(out, -32767, 32767);
 }
 
 }  // namespace dsp

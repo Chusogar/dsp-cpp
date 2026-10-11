@@ -476,7 +476,7 @@ void TaitoSJ::on_sound_cycles(int cycles) {
         audio_accumulator_ -= kSoundClock;
         int32_t sample = ay0_.update() + ay1_.update() + ay2_.update() + ay3_.update();
         sample += int32_t(dac_sample_ * 0.30f);
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
 

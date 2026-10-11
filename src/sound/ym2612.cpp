@@ -101,7 +101,7 @@ int32_t YM2612::update() {
     }
 
     int32_t out = int32_t(float(mix) * amplitude_);
-    out = std::max(-0x7fff, std::min(0x7fff, out));
+    out = std::max<int32_t>(-0x7fff, std::min<int32_t>(0x7fff, out));
 
     opn_.internal_timer_a(opn_.channel(2));
     opn_.internal_timer_b();

@@ -446,7 +446,7 @@ void DoubleDragon::on_sound_cycles(int cycles) {
     while (audio_accumulator_ >= kSoundClock) {
         audio_accumulator_ -= kSoundClock;
         int32_t sample = ym_.update() + (msm0_.output() + msm1_.output()) * 2 / 5;
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
 
@@ -456,7 +456,7 @@ void DoubleDragon::on_sound2_cycles(int cycles) {
     while (audio_accumulator_ >= kSound2Clock) {
         audio_accumulator_ -= kSound2Clock;
         int32_t sample = ym_.update() + oki_.update() / 2;
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
 

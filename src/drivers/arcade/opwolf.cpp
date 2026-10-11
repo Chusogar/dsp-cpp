@@ -1,7 +1,7 @@
 #include "drivers/arcade/opwolf.h"
 
 #include <algorithm>
-#include <filesystem>
+#include "core/fs_compat.h"
 
 #include "core/rom_loader.h"
 
@@ -67,7 +67,7 @@ bool load_cchip_mcu(const std::string& rom_path, RomLoader& game, std::vector<ui
     std::string game_error;
     if (load_bytes(game, kCchipMcu, dest, &game_error)) return true;
 
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     const fs::path parent = fs::path(rom_path).parent_path();
     const char* extras[] = {"taito_cchip.zip", "cchip.zip"};
     for (const char* zip : extras) {
@@ -439,7 +439,7 @@ void OpWolf::on_sound_cycles(int cycles) {
     while (audio_accumulator_ >= int64_t(kSoundClock)) {
         audio_accumulator_ -= int64_t(kSoundClock);
         int32_t sample = ym_.update() + (msm0_.output() + msm1_.output()) / 4;
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
 

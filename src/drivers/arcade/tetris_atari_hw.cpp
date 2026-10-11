@@ -168,7 +168,7 @@ void AtariTetris::on_sound_cycles(int cycles) {
     while (audio_accumulator_ >= int64_t(kCpuClock)) {
         audio_accumulator_ -= int64_t(kCpuClock);
         const int32_t sample = pokey0_.update() + pokey1_.update();
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
 

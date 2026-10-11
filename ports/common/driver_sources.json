@@ -1,0 +1,1208 @@
+{
+ "core": [
+  "src/core/rom_loader.cpp",
+  "src/core/fs_compat.cpp",
+  "src/core/embedded_media.cpp"
+ ],
+ "drivers": {
+  "a2600": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/drivers/consoles/a2600.cpp",
+    "src/machine/mos6532.cpp",
+    "src/video/tia.cpp"
+   ]
+  },
+  "a7800": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/drivers/consoles/a7800.cpp",
+    "src/video/maria.cpp",
+    "src/video/tia.cpp"
+   ]
+  },
+  "actfancer": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/hu6280.cpp",
+    "src/cpu/m6502.cpp",
+    "src/drivers/arcade/actfancer.cpp",
+    "src/sound/ay8910.cpp",
+    "src/sound/fmopn.cpp",
+    "src/sound/okim6295.cpp",
+    "src/sound/ym2203.cpp",
+    "src/sound/ym3812.cpp",
+    "src/video/deco_bac06.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "ajax": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/konami.cpp",
+    "src/cpu/m6809.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/ajax.cpp",
+    "src/sound/k007232.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/gfx.cpp",
+    "src/video/k051316.cpp",
+    "src/video/k051960.cpp",
+    "src/video/k052109.cpp"
+   ]
+  },
+  "aliens": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/konami.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/aliens.cpp",
+    "src/sound/k007232.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/gfx.cpp",
+    "src/video/k051960.cpp",
+    "src/video/k052109.cpp"
+   ]
+  },
+  "ambush": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/ambush.cpp",
+    "src/sound/ay8910.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "amiga": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/drivers/computers/amiga.cpp",
+    "src/machine/amiga_adf.cpp",
+    "src/machine/amiga_chipset.cpp",
+    "src/machine/cia8520.cpp"
+   ]
+  },
+  "amstrad_cpc": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/computers/amstrad_cpc.cpp",
+    "src/machine/i8255.cpp",
+    "src/machine/nec765.cpp",
+    "src/machine/spectrum_tape.cpp",
+    "src/machine/virtual_keyboard.cpp",
+    "src/sound/ay8910.cpp"
+   ]
+  },
+  "apple2": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/drivers/computers/apple2.cpp",
+    "src/machine/diskii.cpp",
+    "src/video/apple2_video.cpp"
+   ]
+  },
+  "apple2gs": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/w65c816.cpp",
+    "src/drivers/computers/apple2gs.cpp",
+    "src/sound/es5503.cpp"
+   ]
+  },
+  "appoooh": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/appoooh.cpp",
+    "src/machine/sega_decrypt.cpp",
+    "src/sound/msm5205.cpp",
+    "src/sound/sn76496.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "arabian": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/mb88xx.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/arabian.cpp",
+    "src/sound/ay8910.cpp"
+   ]
+  },
+  "arkanoid": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6805.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/arkanoid.cpp",
+    "src/machine/taito_68705.cpp",
+    "src/sound/ay8910.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "armedf_hw": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/armedf_hw.cpp",
+    "src/sound/ym3812.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "asteroid": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/drivers/arcade/asteroid.cpp",
+    "src/video/dvg.cpp"
+   ]
+  },
+  "atari8": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/drivers/computers/atari8.cpp",
+    "src/sound/pokey.cpp",
+    "src/video/antic.cpp",
+    "src/video/gtia.cpp"
+   ]
+  },
+  "atari_lynx": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/drivers/consoles/atari_lynx.cpp",
+    "src/machine/lynx_mikey.cpp",
+    "src/machine/lynx_suzy.cpp"
+   ]
+  },
+  "atari_st": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/drivers/computers/atari_st.cpp",
+    "src/machine/mc68901.cpp",
+    "src/machine/st_floppy.cpp",
+    "src/sound/ay8910.cpp"
+   ]
+  },
+  "atari_system1": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/cpu/m68000.cpp",
+    "src/drivers/arcade/atari_system1.cpp",
+    "src/machine/slapstic.cpp",
+    "src/machine/via6522.cpp",
+    "src/sound/pokey.cpp",
+    "src/sound/tms5220.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/atari_mo.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "atari_system2": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/cpu/t11.cpp",
+    "src/drivers/arcade/atari_system2.cpp",
+    "src/machine/slapstic.cpp",
+    "src/sound/pokey.cpp",
+    "src/sound/tms5220.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/atari_mo.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "bagman": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/bagman.cpp",
+    "src/machine/bagman_pal.cpp",
+    "src/sound/ay8910.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "balsente": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6809.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/balsente.cpp",
+    "src/sound/cem3394.cpp"
+   ]
+  },
+  "bankpanic_hw": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/bankpanic_hw.cpp",
+    "src/sound/sn76496.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "baraduke_hw": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/hd63701.cpp",
+    "src/cpu/m6809.cpp",
+    "src/drivers/arcade/baraduke_hw.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "bionicc": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/mcs51.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/bionicc.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "blktiger": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/mcs51.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/blktiger.cpp",
+    "src/sound/ay8910.cpp",
+    "src/sound/fmopn.cpp",
+    "src/sound/ym2203.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "blockout": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/blockout.cpp",
+    "src/sound/okim6295.cpp",
+    "src/sound/ym2151.cpp"
+   ]
+  },
+  "bublbobl": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/hd63701.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/bublbobl.cpp",
+    "src/sound/ay8910.cpp",
+    "src/sound/fmopn.cpp",
+    "src/sound/ym2203.cpp",
+    "src/sound/ym3812.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "c128": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/drivers/computers/c128.cpp",
+    "src/machine/mos6526.cpp",
+    "src/machine/mos6566.cpp",
+    "src/machine/mos8722.cpp",
+    "src/sound/sid6581.cpp"
+   ]
+  },
+  "c64": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/drivers/computers/c64.cpp",
+    "src/machine/c1541.cpp",
+    "src/machine/c64_tape.cpp",
+    "src/machine/d64_image.cpp",
+    "src/machine/g64_image.cpp",
+    "src/machine/gcr.cpp",
+    "src/machine/mos6526.cpp",
+    "src/machine/mos6566.cpp",
+    "src/machine/t64_image.cpp",
+    "src/machine/via6522.cpp",
+    "src/sound/sid6581.cpp"
+   ]
+  },
+  "citycon": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6809.cpp",
+    "src/drivers/arcade/citycon.cpp",
+    "src/sound/ay8910.cpp",
+    "src/sound/fmopn.cpp",
+    "src/sound/ym2203.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "colecovision": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/consoles/colecovision.cpp",
+    "src/machine/i2cmem.cpp",
+    "src/sound/ay8910.cpp",
+    "src/sound/sn76496.cpp",
+    "src/video/tms9918.cpp"
+   ]
+  },
+  "commando": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/commando.cpp",
+    "src/sound/ay8910.cpp",
+    "src/sound/fmopn.cpp",
+    "src/sound/ym2203.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "cps1": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/cps1.cpp",
+    "src/machine/eeprom93c46.cpp",
+    "src/machine/kabuki.cpp",
+    "src/sound/okim6295.cpp",
+    "src/sound/qsound.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "dec0": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/hu6280.cpp",
+    "src/cpu/m6502.cpp",
+    "src/cpu/m68000.cpp",
+    "src/cpu/mcs51.cpp",
+    "src/drivers/arcade/dec0.cpp",
+    "src/sound/ay8910.cpp",
+    "src/sound/fmopn.cpp",
+    "src/sound/okim6295.cpp",
+    "src/sound/ym2203.cpp",
+    "src/sound/ym3812.cpp",
+    "src/video/deco_bac06.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "doubledragon": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/hd63701.cpp",
+    "src/cpu/m6809.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/doubledragon.cpp",
+    "src/sound/msm5205.cpp",
+    "src/sound/okim6295.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "exelv": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/tms7000.cpp",
+    "src/drivers/computers/exelv.cpp",
+    "src/drivers/computers/exelv_tape.cpp",
+    "src/sound/tms5220.cpp",
+    "src/video/tms3556.cpp"
+   ]
+  },
+  "galaga_hw": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/mb88xx.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/galaga_hw.cpp",
+    "src/machine/namco50.cpp",
+    "src/machine/namco51.cpp",
+    "src/machine/namco53.cpp",
+    "src/machine/namco54.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "galaxian": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/galaxian.cpp",
+    "src/sound/ay8910.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "gameboy": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/lr35902.cpp",
+    "src/drivers/consoles/gameboy.cpp",
+    "src/machine/gb_mapper.cpp",
+    "src/sound/gb_apu.cpp",
+    "src/video/gb_ppu.cpp"
+   ]
+  },
+  "gamegear": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/consoles/gamegear.cpp",
+    "src/machine/sega_vdp.cpp",
+    "src/sound/sn76496.cpp"
+   ]
+  },
+  "gauntlet": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/cpu/m68000.cpp",
+    "src/drivers/arcade/gauntlet.cpp",
+    "src/machine/slapstic.cpp",
+    "src/sound/pokey.cpp",
+    "src/sound/tms5220.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/atari_mo.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "gba": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/arm7tdmi.cpp",
+    "src/drivers/consoles/gba.cpp",
+    "src/sound/gba_apu.cpp",
+    "src/video/gba_ppu.cpp"
+   ]
+  },
+  "genesis": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/consoles/genesis.cpp",
+    "src/sound/fmopn.cpp",
+    "src/sound/sn76496.cpp",
+    "src/sound/ym2612.cpp",
+    "src/video/sega_315_5313.cpp"
+   ]
+  },
+  "gng": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6809.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/gng.cpp",
+    "src/sound/ay8910.cpp",
+    "src/sound/fmopn.cpp",
+    "src/sound/ym2203.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "hangon": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/mcs51.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/hangon.cpp",
+    "src/machine/fd1089.cpp",
+    "src/machine/i8255.cpp",
+    "src/sound/ay8910.cpp",
+    "src/sound/fmopn.cpp",
+    "src/sound/sega_pcm.cpp",
+    "src/sound/ym2151.cpp",
+    "src/sound/ym2203.cpp",
+    "src/video/gfx.cpp",
+    "src/video/sega16.cpp"
+   ]
+  },
+  "m62": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/hd63701.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/m62.cpp",
+    "src/sound/ay8910.cpp",
+    "src/sound/msm5205.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "m72": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/nec_v30.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/m72.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "macii": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/musashi/m68kcpu.c",
+    "src/cpu/musashi/m68kdasm.c",
+    "src/cpu/musashi/m68kops.c",
+    "src/cpu/musashi/softfloat/softfloat.c",
+    "src/drivers/computers/macii.cpp",
+    "src/machine/iwm.cpp",
+    "src/machine/mac_dsk.cpp",
+    "src/machine/ncr5380_hdd.cpp",
+    "src/machine/via6522.cpp",
+    "src/sound/asc.cpp"
+   ]
+  },
+  "macplus": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/drivers/computers/macplus.cpp",
+    "src/machine/iwm.cpp",
+    "src/machine/mac_dcmp.cpp",
+    "src/machine/mac_dsk.cpp",
+    "src/machine/mac_rtc.cpp",
+    "src/machine/ncr5380_hdd.cpp",
+    "src/machine/via6522.cpp"
+   ]
+  },
+  "mcr": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/cpu/z80ctc.cpp",
+    "src/drivers/arcade/mcr.cpp",
+    "src/sound/ay8910.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "mikie": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6809.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/mikie.cpp",
+    "src/sound/sn76496.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "model3": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/ppc603.cpp",
+    "src/drivers/arcade/model3.cpp",
+    "src/machine/eeprom93c46.cpp",
+    "src/machine/model3_sound.cpp",
+    "src/machine/sega_315_5881.cpp",
+    "src/sound/mpeg_audio.cpp",
+    "src/sound/scsp.cpp",
+    "src/video/model3_tilegen.cpp",
+    "src/video/real3d.cpp"
+   ]
+  },
+  "mrdo": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/mrdo.cpp",
+    "src/sound/sn76496.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "msx1": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/computers/msx1.cpp",
+    "src/machine/i8255.cpp",
+    "src/machine/tape_tzx.cpp",
+    "src/sound/ay8910.cpp",
+    "src/video/tms9918.cpp"
+   ]
+  },
+  "msx2": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/computers/msx2.cpp",
+    "src/machine/i8255.cpp",
+    "src/machine/msx_dsk.cpp",
+    "src/machine/rp5c01.cpp",
+    "src/machine/tape_tzx.cpp",
+    "src/sound/ay8910.cpp",
+    "src/video/v9938.cpp"
+   ]
+  },
+  "neogeo": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/neogeo.cpp",
+    "src/sound/ay8910.cpp",
+    "src/sound/fmopn.cpp",
+    "src/sound/ym2610.cpp",
+    "src/video/neogeo_video.cpp"
+   ]
+  },
+  "nes": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/drivers/consoles/nes.cpp",
+    "src/machine/nes_mapper.cpp",
+    "src/sound/nes_apu.cpp",
+    "src/video/nes_ppu.cpp"
+   ]
+  },
+  "opwolf": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/opwolf.cpp",
+    "src/machine/opwolf_cchip.cpp",
+    "src/machine/tc0140syt.cpp",
+    "src/sound/msm5205.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "outrun": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/outrun.cpp",
+    "src/machine/i8255.cpp",
+    "src/machine/sega_315_5195.cpp",
+    "src/sound/sega_pcm.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/gfx.cpp",
+    "src/video/sega16.cpp"
+   ]
+  },
+  "pcengine": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/hu6280.cpp",
+    "src/drivers/consoles/pcengine.cpp",
+    "src/sound/huc6280_psg.cpp",
+    "src/video/huc6260.cpp",
+    "src/video/huc6270.cpp"
+   ]
+  },
+  "pcw": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/computers/pcw.cpp",
+    "src/machine/nec765.cpp",
+    "src/sound/ay8910.cpp"
+   ]
+  },
+  "pirates": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/drivers/arcade/pirates.cpp",
+    "src/machine/eeprom93c46.cpp",
+    "src/sound/okim6295.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "plus4": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/drivers/computers/plus4.cpp",
+    "src/sound/mos7360.cpp"
+   ]
+  },
+  "polepos": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/mb88xx.cpp",
+    "src/cpu/z80.cpp",
+    "src/cpu/z8002.cpp",
+    "src/drivers/arcade/polepos.cpp",
+    "src/machine/namco51.cpp",
+    "src/machine/namco52.cpp",
+    "src/machine/namco53.cpp",
+    "src/machine/namco54.cpp",
+    "src/sound/polepos_engine.cpp",
+    "src/sound/polepos_wsg.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "psx": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/psx_gte.cpp",
+    "src/cpu/r3000a.cpp",
+    "src/drivers/consoles/psx.cpp",
+    "src/machine/psx_cdrom.cpp",
+    "src/machine/psx_dma.cpp",
+    "src/machine/psx_gpu.cpp",
+    "src/machine/psx_irq.cpp",
+    "src/machine/psx_joypad.cpp",
+    "src/machine/psx_mdec.cpp",
+    "src/machine/psx_spu.cpp",
+    "src/machine/psx_timers.cpp",
+    "src/machine/psx_xa_adpcm.cpp"
+   ]
+  },
+  "punchout": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/punchout.cpp",
+    "src/sound/nes_apu.cpp",
+    "src/sound/vlm5030.cpp"
+   ]
+  },
+  "pv1000": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/consoles/pv1000.cpp"
+   ]
+  },
+  "pv2000": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/consoles/pv2000.cpp",
+    "src/sound/sn76496.cpp",
+    "src/video/tms9918.cpp"
+   ]
+  },
+  "ql": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/mcs48.cpp",
+    "src/drivers/computers/ql.cpp",
+    "src/machine/i8243.cpp",
+    "src/machine/ql_mdv.cpp",
+    "src/machine/ql_win.cpp",
+    "src/machine/virtual_keyboard.cpp",
+    "src/machine/zx8302.cpp",
+    "src/video/zx8301.cpp"
+   ]
+  },
+  "renegade": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/cpu/m6805.cpp",
+    "src/cpu/m6809.cpp",
+    "src/drivers/arcade/renegade.cpp",
+    "src/machine/taito_68705.cpp",
+    "src/sound/msm5205.cpp",
+    "src/sound/ym3812.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "retofinv": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6805.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/retofinv.cpp",
+    "src/machine/taito_68705.cpp",
+    "src/sound/sn76496.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "samcoupe": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/computers/samcoupe.cpp",
+    "src/machine/disk_image.cpp",
+    "src/machine/sam_disk.cpp",
+    "src/machine/sam_tape.cpp",
+    "src/machine/wd1772.cpp",
+    "src/sound/saa1099.cpp"
+   ]
+  },
+  "scv": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/upd7801.cpp",
+    "src/drivers/consoles/scv.cpp",
+    "src/sound/upd1771.cpp"
+   ]
+  },
+  "sega32x": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/sh2.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/consoles/genesis.cpp",
+    "src/drivers/consoles/sega32x.cpp",
+    "src/sound/fmopn.cpp",
+    "src/sound/sn76496.cpp",
+    "src/sound/ym2612.cpp",
+    "src/video/sega_315_5313.cpp"
+   ]
+  },
+  "sega_system1": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/sega_system1.cpp",
+    "src/machine/i8255.cpp",
+    "src/machine/sega_decrypt.cpp",
+    "src/machine/z80pio.cpp",
+    "src/sound/sn76496.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "sg1000": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/consoles/sg1000.cpp",
+    "src/sound/sn76496.cpp",
+    "src/video/tms9918.cpp"
+   ]
+  },
+  "shadow_warriors_hw": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/shadow_warriors_hw.cpp",
+    "src/sound/ay8910.cpp",
+    "src/sound/fmopn.cpp",
+    "src/sound/okim6295.cpp",
+    "src/sound/ym2203.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "shaolinsroad": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6809.cpp",
+    "src/drivers/arcade/shaolinsroad.cpp",
+    "src/sound/sn76496.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "shuuz": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/drivers/arcade/shuuz.cpp",
+    "src/sound/okim6295.cpp",
+    "src/video/atari_mo.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "simpsons": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/konami.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/simpsons.cpp",
+    "src/machine/eeprom_er5911.cpp",
+    "src/sound/k053260.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/gfx.cpp",
+    "src/video/k052109.cpp",
+    "src/video/k053246.cpp",
+    "src/video/k053251.cpp"
+   ]
+  },
+  "skullxbo": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/cpu/m68000.cpp",
+    "src/drivers/arcade/skullxbo.cpp",
+    "src/sound/okim6295.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/atari_mo.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "slapfight": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6805.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/slapfight.cpp",
+    "src/machine/taito_68705.cpp",
+    "src/sound/ay8910.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "sms": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/consoles/sms.cpp",
+    "src/machine/sega_vdp.cpp",
+    "src/sound/sn76496.cpp",
+    "src/sound/ym2413.cpp"
+   ]
+  },
+  "snes": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/spc700.cpp",
+    "src/cpu/w65c816.cpp",
+    "src/drivers/consoles/snes.cpp",
+    "src/video/snes_ppu.cpp"
+   ]
+  },
+  "snk": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/snk.cpp",
+    "src/sound/ym3812.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "specnext": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/computers/specnext.cpp",
+    "src/drivers/computers/specnext_video.cpp",
+    "src/machine/sdcard_spi.cpp",
+    "src/machine/zxn_dma.cpp",
+    "src/sound/ay8910.cpp"
+   ]
+  },
+  "spectrum": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/computers/spectrum.cpp",
+    "src/machine/spectrum_rzx.cpp",
+    "src/machine/spectrum_snap.cpp",
+    "src/machine/tape_tzx.cpp",
+    "src/machine/virtual_keyboard.cpp"
+   ]
+  },
+  "spectrum_128k": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/computers/spectrum_128k.cpp",
+    "src/machine/spectrum_rzx.cpp",
+    "src/machine/spectrum_snap.cpp",
+    "src/machine/tape_tzx.cpp",
+    "src/sound/ay8910.cpp"
+   ]
+  },
+  "spectrum_3": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/computers/spectrum_3.cpp",
+    "src/machine/nec765.cpp",
+    "src/machine/spectrum_rzx.cpp",
+    "src/machine/spectrum_snap.cpp",
+    "src/machine/tape_tzx.cpp",
+    "src/sound/ay8910.cpp"
+   ]
+  },
+  "starwars": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6809.cpp",
+    "src/drivers/arcade/starwars.cpp",
+    "src/machine/mos6532.cpp",
+    "src/machine/starwars_math.cpp",
+    "src/sound/pokey.cpp",
+    "src/sound/tms5220.cpp",
+    "src/video/avg_starwars.cpp"
+   ]
+  },
+  "system16": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/mcs48.cpp",
+    "src/cpu/mcs51.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/system16.cpp",
+    "src/machine/fd1089.cpp",
+    "src/machine/fd1094.cpp",
+    "src/machine/i8243.cpp",
+    "src/machine/i8255.cpp",
+    "src/machine/sega_315_5195.cpp",
+    "src/sound/upd7759.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/gfx.cpp",
+    "src/video/sega16.cpp"
+   ]
+  },
+  "system18": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/mcs51.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/system18.cpp",
+    "src/machine/fd1094.cpp",
+    "src/machine/sega_315_5195.cpp",
+    "src/machine/sega_315_5296.cpp",
+    "src/sound/fmopn.cpp",
+    "src/sound/rf5c68.cpp",
+    "src/sound/sn76496.cpp",
+    "src/sound/ym2612.cpp",
+    "src/video/gfx.cpp",
+    "src/video/sega16.cpp",
+    "src/video/sega_315_5313.cpp"
+   ]
+  },
+  "taitosj": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6805.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/taitosj.cpp",
+    "src/sound/ay8910.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "tehkanwc": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/tehkanwc.cpp",
+    "src/sound/ay8910.cpp",
+    "src/sound/msm5205.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "tetris_atari_hw": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/drivers/arcade/tetris_atari_hw.cpp",
+    "src/machine/slapstic.cpp",
+    "src/sound/pokey.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "trackfld": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6809.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/trackfld.cpp",
+    "src/machine/konami_decrypt.cpp",
+    "src/sound/sn76496.cpp",
+    "src/sound/vlm5030.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "vectrex": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/m6809.cpp",
+    "src/drivers/consoles/vectrex.cpp",
+    "src/machine/via6522.cpp",
+    "src/sound/ay8910.cpp"
+   ]
+  },
+  "vic20": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/drivers/computers/vic20.cpp",
+    "src/machine/via6522.cpp",
+    "src/sound/mos6560.cpp"
+   ]
+  },
+  "vicdual": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/mcs48.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/vicdual.cpp",
+    "src/machine/i8243.cpp",
+    "src/sound/ay8910.cpp"
+   ]
+  },
+  "williams": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6800.cpp",
+    "src/cpu/m6809.cpp",
+    "src/drivers/arcade/williams.cpp",
+    "src/machine/pia6821.cpp"
+   ]
+  },
+  "wonderswan": {
+   "group": "consoles",
+   "sources": [
+    "src/cpu/nec_v30.cpp",
+    "src/drivers/consoles/wonderswan.cpp",
+    "src/sound/wswan_apu.cpp"
+   ]
+  },
+  "wwfsstar": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/wwfsstar.cpp",
+    "src/sound/okim6295.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "xboard": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/xboard.cpp",
+    "src/sound/sega_pcm.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/gfx.cpp",
+    "src/video/sega16.cpp"
+   ]
+  },
+  "zx81": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/computers/zx81.cpp"
+   ]
+  },
+  "zx_clone": {
+   "group": "computers",
+   "sources": [
+    "src/cpu/z80.cpp",
+    "src/drivers/computers/zx_clone.cpp",
+    "src/machine/beta128.cpp",
+    "src/machine/spectrum_rzx.cpp",
+    "src/machine/spectrum_snap.cpp",
+    "src/machine/tape_tzx.cpp",
+    "src/machine/trdos_disk.cpp",
+    "src/machine/wd1793.cpp",
+    "src/sound/ay8910.cpp"
+   ]
+  }
+ }
+}

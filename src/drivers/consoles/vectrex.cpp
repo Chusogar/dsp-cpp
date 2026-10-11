@@ -4,7 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 #include <system_error>
 
@@ -13,7 +13,7 @@ namespace {
 
 bool read_file(const std::string& path, std::vector<uint8_t>& out) {
     std::error_code ec;
-    if (!std::filesystem::is_regular_file(path, ec)) return false;
+    if (!dsp::fsx::is_regular_file(path, ec)) return false;
     std::ifstream f(path, std::ios::binary);
     if (!f) return false;
     out.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());

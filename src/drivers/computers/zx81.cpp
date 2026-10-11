@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 #include "core/rom_loader.h"

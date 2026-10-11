@@ -219,7 +219,7 @@ bool SamDisk::load_edsk(const std::string& path, std::string* error) {
                 const size_t want = size_t(sec.size_bytes());
                 const size_t avail = si.data_length ? si.data_length : want;
                 if (!sec.data_missing && si.data_offset < src.data.size()) {
-                    const size_t n = std::min({want, size_t(avail),
+                    const size_t n = std::min<size_t>({want, size_t(avail),
                                                src.data.size() - si.data_offset});
                     sec.data.assign(src.data.begin() + long(si.data_offset),
                                     src.data.begin() + long(si.data_offset + n));

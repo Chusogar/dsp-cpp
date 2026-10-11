@@ -64,7 +64,7 @@ public:
             v.pos = offset + uint32_t(v.frequency);
         }
         sample = (sample / kVoices) * 4;
-        return int16_t(std::max(-32768, std::min(32767, sample)));
+        return int16_t(std::max<int32_t>(-32768, std::min<int32_t>(32767, sample)));
     }
 
     void set_enabled(bool enabled) { enabled_ = enabled; }

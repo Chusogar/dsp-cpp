@@ -155,7 +155,7 @@ void Real3D::write_texture_port(uint32_t value) {
                 data[i * 2 + 1] = uint16_t(w >> 16);
             }
         } else if (size_t(addr) < vrom_words_) {
-            const size_t avail = std::min(kMaxTexels, (vrom_words_ - addr) * 2);
+            const size_t avail = std::min<size_t>(kMaxTexels, (vrom_words_ - addr) * 2);
             std::memcpy(data.data(), vrom_ + size_t(addr) * 4, avail * 2);
         }
         upload_texture(header, data.data());

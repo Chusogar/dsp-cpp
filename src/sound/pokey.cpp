@@ -369,7 +369,7 @@ int32_t Pokey::update() const {
     int32_t out = 0;
     for (int i = 0; i < kChannels; ++i) out += int32_t((output_ >> (4 * i)) & 0x0f);
     out = int32_t(out * kDefaultGain * amplitude_);
-    return std::min(out, 0x7fff);
+    return std::min<int32_t>(out, 0x7fff);
 }
 
 }  // namespace dsp

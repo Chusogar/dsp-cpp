@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 
 #include "core/rom_loader.h"
 
@@ -113,8 +113,8 @@ bool try_load_zip(const std::string& path, const std::vector<RomEntry>& entries,
     return loader.open(path, attempt) && loader.load(entries, dest, attempt);
 }
 
-bool download_mame_zip(const char* zip_name, const std::filesystem::path& dest, std::string* error) {
-    namespace fs = std::filesystem;
+bool download_mame_zip(const char* zip_name, const dsp::fsx::path& dest, std::string* error) {
+    namespace fs = dsp::fsx;
     std::error_code ec;
     if (!dest.parent_path().empty()) fs::create_directories(dest.parent_path(), ec);
     const fs::path part = dest.string() + ".part";
@@ -136,7 +136,7 @@ bool download_mame_zip(const char* zip_name, const std::filesystem::path& dest, 
 
 bool load_mcu_rom(const std::string& game_path, const char* zip_name, const std::vector<RomEntry>& entries,
                   std::vector<uint8_t>& dest, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     const fs::path given(game_path);
     const fs::path sibling = given.has_parent_path() ? given.parent_path() / zip_name : fs::path(zip_name);
     const fs::path cached = fs::path("/tmp/roms") / zip_name;

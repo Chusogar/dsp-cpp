@@ -345,7 +345,7 @@ int32_t YM2610::update() {
     mix += ay_.update();
     mix += adpcm_a_mix_ * 2;
     mix += adpcm_b_mix_;
-    mix = std::max(-0x7fff, std::min(0x7fff, mix));
+    mix = std::max<int32_t>(-0x7fff, std::min<int32_t>(0x7fff, mix));
 
     opn_.internal_timer_a(opn_.channel(2));
     opn_.internal_timer_b();

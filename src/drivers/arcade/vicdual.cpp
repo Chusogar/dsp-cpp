@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 
 #include "core/rom_loader.h"
 
@@ -805,7 +805,7 @@ void VicDual::load_samples(const std::string& rom_path) {
     samples_from_files_ = false;
     if (names.empty()) return;
     // MAME keeps samples in a "samples" folder next to the ROM folder.
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     fs::path base = fs::path(rom_path);
     if (!fs::is_directory(base, ec)) base = base.parent_path();

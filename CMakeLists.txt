@@ -336,8 +336,16 @@ add_library(dsp_lib STATIC
   src/machine/psx_mdec.cpp
   src/core/rom_loader.cpp
   src/core/embedded_media.cpp
+  src/core/fs_compat.cpp
 )
 target_include_directories(dsp_lib PUBLIC src)
+# File access through the small POSIX layer of src/core/fs_compat.cpp instead
+# of std::filesystem, as on the microcontroller ports (ports/): lets that code
+# be built and tested on the desktop.
+option(DSP_FS_POSIX "Use dsp's POSIX file-system layer instead of std::filesystem" OFF)
+if(DSP_FS_POSIX)
+  target_compile_definitions(dsp_lib PUBLIC DSP_FS_POSIX=1)
+endif()
 target_link_libraries(dsp_lib PUBLIC ZLIB::ZLIB musashi)
 target_compile_options(dsp_lib PRIVATE -Wall -Wextra)
 if(EMSCRIPTEN)
@@ -404,9 +412,9 @@ function(dsp_add_frontend target)
   file(WRITE ${config_dir}/dsp_drivers.h.in "${content}")
   configure_file(${config_dir}/dsp_drivers.h.in ${config_dir}/dsp_drivers.h COPYONLY)
   if(ARG_EXCLUDE_FROM_ALL)
-    add_executable(${target} EXCLUDE_FROM_ALL src/main.cpp src/frontend/sdl_app.cpp ${ARG_EMBED})
+    add_executable(${target} EXCLUDE_FROM_ALL src/main.cpp src/frontend/sdl_app.cpp src/frontend/machine_registry.cpp ${ARG_EMBED})
   else()
-    add_executable(${target} src/main.cpp src/frontend/sdl_app.cpp ${ARG_EMBED})
+    add_executable(${target} src/main.cpp src/frontend/sdl_app.cpp src/frontend/machine_registry.cpp ${ARG_EMBED})
   endif()
   target_include_directories(${target} PRIVATE ${config_dir} src ${SDL2_INCLUDE_DIRS})
   target_link_libraries(${target} PRIVATE dsp_lib ${SDL2_LIBRARIES})

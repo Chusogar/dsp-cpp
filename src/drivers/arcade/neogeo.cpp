@@ -4,7 +4,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <map>
 
 #include "core/rom_loader.h"
@@ -343,7 +343,7 @@ bool NeoGeo::load_roms(const std::string& rom_path, std::string* error) {
 
     RomLoader bios_loader;
     bool have_bios_zip = false;
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     const fs::path given(rom_path);
     const fs::path parent = given.has_parent_path() ? given.parent_path() : fs::path(".");
     const fs::path siblings[] = {parent / "neogeo.zip", fs::path("neogeo.zip"), given};

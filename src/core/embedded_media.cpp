@@ -1,13 +1,13 @@
 #include "core/embedded_media.h"
 
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 namespace dsp {
 
 bool extract_embedded_media(const DspEmbeddedFile* files, size_t count, const char* const* embedded_args,
                             const std::string& dir, std::vector<std::string>* args, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     fs::create_directories(dir, ec);
     for (size_t i = 0; i < count; ++i) {

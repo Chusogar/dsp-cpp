@@ -1,0 +1,4 @@
+deps/
+build/
+.pio/
+dsp_vga32/src/gen/

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 #include "core/rom_loader.h"
@@ -53,7 +53,7 @@ bool A2600::init(const std::string& rom_path, std::string* error) {
 }
 
 bool A2600::load_media(const std::string& path, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     std::vector<uint8_t> data;
     if (fs::is_directory(path, ec)) {
@@ -69,7 +69,7 @@ bool A2600::load_media(const std::string& path, std::string* error) {
 
 bool A2600::read_plain_or_zip(const std::string& path, std::vector<uint8_t>& data,
                               std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     if (fs::is_regular_file(path, ec)) {
         std::ifstream probe(path, std::ios::binary);
@@ -99,7 +99,7 @@ bool A2600::read_plain_or_zip(const std::string& path, std::vector<uint8_t>& dat
 
 bool A2600::load_from_directory(const std::string& directory, std::vector<uint8_t>& data,
                                 std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(directory, ec)) {
         if (!entry.is_regular_file(ec)) continue;

@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 #include "core/rom_loader.h"
@@ -136,7 +136,7 @@ bool Apple2::try_load_disk_prom(const std::string& rom_path) {
     if (try_path(rom_path)) {
         return true;
     }
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     const fs::path path(rom_path);
     const std::string lower = path.filename().string();
@@ -159,7 +159,7 @@ bool Apple2::try_load_disk_prom(const std::string& rom_path) {
 }
 
 bool Apple2::load_roms(const std::string& rom_path, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     std::vector<uint8_t> firmware;
     std::vector<uint8_t> chargen;

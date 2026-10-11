@@ -185,8 +185,8 @@ void K053260::update(int samples, int16_t* left, int16_t* right) {
             mix_l += s;
             mix_r += s;
         }
-        left[i] = int16_t(std::clamp(mix_l, -32768, 32767));
-        right[i] = int16_t(std::clamp(mix_r, -32768, 32767));
+        left[i] = int16_t(std::clamp<int32_t>(mix_l, -32768, 32767));
+        right[i] = int16_t(std::clamp<int32_t>(mix_r, -32768, 32767));
     }
 }
 

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 
 #include "core/rom_loader.h"
 
@@ -344,7 +344,7 @@ bool AtariSystem1::load_roms(const std::string& rom_path, std::string* error) {
 
     RomLoader bios_loader;
     bool bios_separate = false;
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     const fs::path given(rom_path);
     const fs::path sibling = given.has_parent_path() ? given.parent_path() / "atarisy1.zip"
                                                      : fs::path("atarisy1.zip");

@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 #include "core/rom_loader.h"
@@ -55,7 +55,7 @@ bool ColecoVision::init(const std::string& rom_path, std::string* error) {
 
 bool ColecoVision::load_media(const std::string& path, std::string* error) {
     std::vector<uint8_t> data;
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     if (fs::is_regular_file(path, ec)) {
         // Sniff the local zip signature so plain cartridge files (.rom/.col),
@@ -162,7 +162,7 @@ bool ColecoVision::open_cartridge(const std::vector<uint8_t>& data, std::string*
 
 void ColecoVision::load_eeprom_save() {
     if (i2cmem_ == nullptr || eeprom_save_name_.empty()) return;
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     fs::path save_path = fs::path(cartridge_path_).parent_path() / (eeprom_save_name_ + ".nv");
     std::ifstream stream(save_path, std::ios::binary);
     if (!stream) return;
@@ -173,7 +173,7 @@ void ColecoVision::load_eeprom_save() {
 
 void ColecoVision::save_eeprom() {
     if (i2cmem_ == nullptr || eeprom_save_name_.empty()) return;
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     fs::path save_path = fs::path(cartridge_path_).parent_path() / (eeprom_save_name_ + ".nv");
     std::vector<uint8_t> data;
     i2cmem_->write_data(data);
@@ -324,7 +324,7 @@ void ColecoVision::on_main_cycles(int cycles) {
     while (audio_accumulator_ >= kMainClock) {
         audio_accumulator_ -= kMainClock;
         int32_t sample = sn76489_.update() + ay8910_.update();
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
 

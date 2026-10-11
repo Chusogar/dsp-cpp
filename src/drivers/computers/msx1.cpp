@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 #include "core/rom_loader.h"
@@ -16,7 +16,7 @@ const std::array<uint16_t,35> kRunKey0={0x027f,0x02ff,0x04fd,0x04ff,0x04ef,0x04f
 const std::array<uint16_t,13> kRunKey1={0x03fe,0x03ff,0x04fd,0x04ff,0x04ef,0x04ff,0x02bf,0x02ff,0x03fd,0x03ff,0x077f,0x07ff,0xffff};
 const std::array<uint16_t,23> kRunKey2={0x047f,0x04ff,0x05fb,0x05ff,0x04f7,0x04ff,0x06fe,0x02fe,0x06ff,0x02ff,0x03fe,0x03ff,0x02bf,0x02ff,0x05fe,0x05ff,0x06fe,0x017f,0x06ff,0x01ff,0x077f,0x07ff,0xffff};
 
-bool read_plain_or_zip_file(const std::string& path,std::vector<uint8_t>& data,size_t max_size,std::string* error){namespace fs=std::filesystem;std::error_code ec;if(fs::is_regular_file(path,ec)){std::ifstream probe(path,std::ios::binary);char magic[4]={};probe.read(magic,4);bool zip=probe.gcount()==4&&magic[0]=='P'&&magic[1]=='K'&&magic[2]==3&&magic[3]==4;if(!zip){probe.clear();probe.seekg(0,std::ios::end);std::streamoff size=probe.tellg();probe.seekg(0,std::ios::beg);if(size<=0){if(error)*error="cannot read "+path;return false;}data.resize(size_t(size));probe.read(reinterpret_cast<char*>(data.data()),size);if(data.size()>max_size)data.resize(max_size);return bool(probe);}}RomLoader loader;if(!loader.open(path,error))return false;data.reserve(max_size);if(!loader.load_first_file(data,error))return false;if(data.size()>max_size)data.resize(max_size);return true;}
+bool read_plain_or_zip_file(const std::string& path,std::vector<uint8_t>& data,size_t max_size,std::string* error){namespace fs=dsp::fsx;std::error_code ec;if(fs::is_regular_file(path,ec)){std::ifstream probe(path,std::ios::binary);char magic[4]={};probe.read(magic,4);bool zip=probe.gcount()==4&&magic[0]=='P'&&magic[1]=='K'&&magic[2]==3&&magic[3]==4;if(!zip){probe.clear();probe.seekg(0,std::ios::end);std::streamoff size=probe.tellg();probe.seekg(0,std::ios::beg);if(size<=0){if(error)*error="cannot read "+path;return false;}data.resize(size_t(size));probe.read(reinterpret_cast<char*>(data.data()),size);if(data.size()>max_size)data.resize(max_size);return bool(probe);}}RomLoader loader;if(!loader.open(path,error))return false;data.reserve(max_size);if(!loader.load_first_file(data,error))return false;if(data.size()>max_size)data.resize(max_size);return true;}
 }
 
 Msx1::Msx1():z80_(kMainClock),vdp_(1,[this](bool a){on_vdp_interrupt(a);}),ay8910_(kMainClock/2,0.8f){z80_.set_memory_handlers([this](uint16_t a){return read_byte(a);},[this](uint16_t a,uint8_t v){write_byte(a,v);});z80_.set_io_handlers([this](uint16_t p){return read_port(p);},[this](uint16_t p,uint8_t v){write_port(p,v);});z80_.set_cycle_handler([this](int c){on_main_cycles(c);});ay8910_.set_port_handlers([this]{return ay_port_a_read();},[this]{return ay_port_b_read();},nullptr,[this](uint8_t v){ay_port_b_write(v);});ppi_.set_port_handlers([this]{return port_a_read();},[this]{return port_b_read();},nullptr,[this](uint8_t v){port_a_write(v);},nullptr,[this](uint8_t v){port_c_write(v);});}
@@ -36,7 +36,7 @@ void Msx1::ay_port_b_write(uint8_t v){joy_select_=(v&0x40)>>6;port_b_ay_=v;}
 uint8_t Msx1::port_b_read(){return teclado_<10?keypad_[teclado_]:0xff;}
 void Msx1::port_a_write(uint8_t v){for(int p=0;p<4;++p){int s=(v>>(p*2))&3;page_slot_[p]=s;pag_rom_[p]=slot_[s][p].rom;pag_ena_[p]=slot_[s][p].ena;}port_a_=v;}
 void Msx1::port_c_write(uint8_t v){teclado_=v&0x0f;if(((port_c_^v)&0x10)&&tape_.is_loaded()){bool on=(v&0x10)==0;if(on&&!tape_.is_playing())tape_.play(false);if(!on&&tape_.is_playing())tape_.pause();}port_c_=v;}
-void Msx1::on_main_cycles(int cycles){if(tape_.is_playing())tape_.advance(int(double(cycles)*3500000.0/double(kMainClock)));audio_accumulator_+=uint64_t(cycles)*uint64_t(AY8910::kSampleRate);while(audio_accumulator_>=kMainClock){audio_accumulator_-=kMainClock;int32_t s=ay8910_.update()+cartridge_.audio_sample(kMainClock,AY8910::kSampleRate)*2;if(port_c_&0x80)s+=3000;if(tape_.is_playing())s+=int32_t(tape_.level())*96;audio_.push_back(int16_t(std::clamp(s,-32768,32767)));}}
+void Msx1::on_main_cycles(int cycles){if(tape_.is_playing())tape_.advance(int(double(cycles)*3500000.0/double(kMainClock)));audio_accumulator_+=uint64_t(cycles)*uint64_t(AY8910::kSampleRate);while(audio_accumulator_>=kMainClock){audio_accumulator_-=kMainClock;int32_t s=ay8910_.update()+cartridge_.audio_sample(kMainClock,AY8910::kSampleRate)*2;if(port_c_&0x80)s+=3000;if(tape_.is_playing())s+=int32_t(tape_.level())*96;audio_.push_back(int16_t(std::clamp<int32_t>(s,-32768,32767)));}}
 
 bool Msx1::load_media(const std::string& path,std::string* error){std::string l=path;for(char& c:l)c=char(std::tolower(static_cast<unsigned char>(c)));if(l.size()>=4&&((l.size()>=4&&l.compare(l.size()-4,4,".tzx")==0)||(l.size()>=4&&l.compare(l.size()-4,4,".tsx")==0)||(l.size()>=4&&l.compare(l.size()-4,4,".cas")==0)||(l.size()>=4&&l.compare(l.size()-4,4,".wav")==0)))return load_tape(path,error);std::vector<uint8_t> data;if(!read_plain_or_zip_file(path,data,kMaxCartridge,error))return false;if(data.empty()){if(error)*error="empty cartridge";return false;}if(!cartridge_.load(std::move(data),path)){if(error)*error="cannot initialize cartridge mapper";return false;}warnings_.emplace_back(std::string("MSX1 cartridge mapper: ")+cartridge_.name());reset();return true;}
 

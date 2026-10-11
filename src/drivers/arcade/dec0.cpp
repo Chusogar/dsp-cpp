@@ -493,7 +493,7 @@ void Dec0::generate_audio(int cycles, uint32_t clock) {
     while (audio_accumulator_ >= clock) {
         audio_accumulator_ -= clock;
         int32_t sample = ym3812_.update() + ym2203_.update() + oki_.update();
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
 

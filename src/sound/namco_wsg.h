@@ -41,7 +41,7 @@ public:
     int16_t update() {
         int32_t mix = 0;
         for (int v = 0; v < 3; v++) mix += update_voice(v);
-        return int16_t(std::max(-32768, std::min(32767, mix)));
+        return int16_t(std::max<int32_t>(-32768, std::min<int32_t>(32767, mix)));
     }
 
 private:

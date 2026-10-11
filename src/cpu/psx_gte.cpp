@@ -599,7 +599,7 @@ void PsxGte::rtps(int r, bool set_mac0_flag) {
   IR_[2] = set_ir(2, MAC2_, lm_);
   set_ir(3, static_cast<int>(mac3 >> 12), false);
   IR_[3] = static_cast<int16_t>(
-      std::clamp(MAC3_, lm_ ? 0 : -0x8000, 0x7FFF));
+      std::clamp<int32_t>(MAC3_, lm_ ? 0 : -0x8000, 0x7FFF));
 
   SZ_[0] = SZ_[1];
   SZ_[1] = SZ_[2];

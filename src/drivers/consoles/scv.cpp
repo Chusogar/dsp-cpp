@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 #include "core/rom_loader.h"
@@ -41,7 +41,7 @@ bool read_plain_file(const std::string& path, std::vector<uint8_t>& out) {
 }
 
 bool load_bytes(const std::string& path, std::vector<uint8_t>& data, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     if (fs::is_regular_file(path, ec)) {
         std::ifstream probe(path, std::ios::binary);
@@ -98,7 +98,7 @@ bool Scv::install_bios(const std::vector<uint8_t>& bios, const std::vector<uint8
 }
 
 bool Scv::search_bios(const std::string& rom_path, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     auto try_loader = [this, error](const std::string& path) {
         RomLoader loader;
@@ -134,7 +134,7 @@ bool Scv::search_bios(const std::string& rom_path, std::string* error) {
 }
 
 bool Scv::init(const std::string& rom_path, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     search_bios(rom_path, error);
     if (!bios_loaded_) {
@@ -194,7 +194,7 @@ void Scv::apply_cart_crc(uint32_t crc) {
 
 bool Scv::load_split_companion(const std::string& path, std::vector<uint8_t>& data,
                                std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     const std::string ext = lower_copy(fs::path(path).extension().string());
     if (ext != ".0") return true;
 

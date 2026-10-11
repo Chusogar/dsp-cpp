@@ -1,5 +1,5 @@
 # Drivers that can be built in or left out (-DDSP_DRIVERS=...), one per
-# header in src/drivers/<category>/<name>.h. main.cpp registers each one under
+# header in src/drivers/<category>/<name>.h. src/frontend/machine_registry.cpp registers each one under
 # "#if DSP_DRIVER_<NAME>"; a new driver adds its name here and wraps its
 # include and create_machine() lines the same way.
 set(DSP_DRIVERS_ARCADE

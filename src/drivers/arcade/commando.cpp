@@ -246,7 +246,7 @@ void Commando::on_sound_cycles(int cycles) {
     while (audio_accumulator_ >= int64_t(kCpuClock)) {
         audio_accumulator_ -= int64_t(kCpuClock);
         const int32_t s = ym0_.update() + ym1_.update();
-        audio_.push_back(int16_t(std::max(-32768, std::min(32767, s))));
+        audio_.push_back(int16_t(std::max<int32_t>(-32768, std::min<int32_t>(32767, s))));
     }
 }
 

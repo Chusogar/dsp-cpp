@@ -8,7 +8,7 @@
 #include <cctype>
 #include <cstring>
 #include <fstream>
-#include <filesystem>
+#include "core/fs_compat.h"
 
 namespace dsp {
 namespace {
@@ -37,7 +37,7 @@ const Key kMatrix[8][5] = {
 };
 
 bool load_file(const std::string& path, std::vector<uint8_t>& out) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     if (!fs::is_regular_file(path, ec)) return false;
     std::ifstream f(path, std::ios::binary);
@@ -52,7 +52,7 @@ bool load_file(const std::string& path, std::vector<uint8_t>& out) {
 }
 
 bool try_rom(const std::string& dir, const char* name, std::vector<uint8_t>& out) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     if (load_file((fs::path(dir) / name).string(), out)) return true;
     std::string upper = name;
     for (char& c : upper) c = char(std::toupper(static_cast<unsigned char>(c)));

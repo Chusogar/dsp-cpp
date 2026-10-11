@@ -1,7 +1,7 @@
 #include "drivers/consoles/pcengine.h"
 
 #include <algorithm>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 #include "core/rom_loader.h"
@@ -11,7 +11,7 @@ namespace {
 
 bool read_plain_or_zip_file(const std::string& path, std::vector<uint8_t>& data, size_t max_size,
                             std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     if (fs::is_regular_file(path, ec)) {
         std::ifstream probe(path, std::ios::binary);
@@ -62,7 +62,7 @@ PcEngine::PcEngine() {
 }
 
 bool PcEngine::init(const std::string& rom_path, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     if (!rom_path.empty() && fs::is_regular_file(rom_path, ec)) {
         std::string cart_error;

@@ -154,7 +154,7 @@ void Aliens::mix_audio_line(int sound_cycles) {
         int32_t sample = ym2151_.update();
         if (k007232_) sample += k007232_->update();
         sample *= 24;
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
 

@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 namespace dsp {
@@ -44,7 +44,7 @@ uint32_t crc32_of(const uint8_t* data, size_t length) {
 
 bool RomLoader::open(const std::string& path, std::string* error) {
     path_ = path;
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     if (fs::is_directory(path_, ec)) {
         is_zip_ = false;
@@ -115,7 +115,7 @@ std::vector<std::string> RomLoader::filenames() const {
         return slash == std::string::npos ? path : path.substr(slash + 1);
     };
     if (!is_zip_) {
-        namespace fs = std::filesystem;
+        namespace fs = dsp::fsx;
         std::error_code ec;
         for (const auto& item : fs::directory_iterator(path_, ec)) {
             if (!item.is_regular_file(ec)) continue;
@@ -130,7 +130,7 @@ std::vector<std::string> RomLoader::filenames() const {
 
 bool RomLoader::load_first_file(std::vector<uint8_t>& dest, std::string* error) const {
     if (!is_zip_) {
-        namespace fs = std::filesystem;
+        namespace fs = dsp::fsx;
         std::error_code ec;
         for (const auto& item : fs::directory_iterator(path_, ec)) {
             if (!item.is_regular_file(ec)) continue;
@@ -153,7 +153,7 @@ bool RomLoader::load_first_file(std::vector<uint8_t>& dest, std::string* error) 
 
 bool RomLoader::read_file(const std::string& name, std::vector<uint8_t>& out) const {
     if (!is_zip_) {
-        namespace fs = std::filesystem;
+        namespace fs = dsp::fsx;
         if (read_whole_file((fs::path(path_) / name).string(), out)) return true;
         // Fall back to a case insensitive search in the directory.
         std::error_code ec;
@@ -209,7 +209,7 @@ bool RomLoader::read_file(const std::string& name, std::vector<uint8_t>& out) co
 
 bool is_zip_file(const std::string& path) {
     std::error_code ec;
-    if (!std::filesystem::is_regular_file(path, ec)) return false;
+    if (!dsp::fsx::is_regular_file(path, ec)) return false;
     std::FILE* f = std::fopen(path.c_str(), "rb");
     if (f == nullptr) return false;
     unsigned char magic[4] = {};
@@ -220,13 +220,13 @@ bool is_zip_file(const std::string& path) {
 
 bool read_plain_rom(const std::string& path, std::vector<uint8_t>& out) {
     std::error_code ec;
-    if (!std::filesystem::is_regular_file(path, ec) || is_zip_file(path)) return false;
+    if (!dsp::fsx::is_regular_file(path, ec) || is_zip_file(path)) return false;
     return read_whole_file(path, out);
 }
 
 bool RomLoader::open_sibling(const std::string& path, const std::string& zip_name,
                              std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     fs::path dir = fs::is_directory(path, ec) ? fs::path(path) : fs::path(path).parent_path();
     if (dir.empty()) dir = ".";
@@ -251,7 +251,7 @@ bool RomLoader::find_by_crc(uint32_t crc, size_t size, std::vector<uint8_t>& out
         }
         return false;
     }
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::error_code ec;
     for (const auto& item : fs::directory_iterator(path_, ec)) {
         if (!item.is_regular_file(ec)) continue;

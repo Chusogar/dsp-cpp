@@ -345,7 +345,7 @@ void Pirates::on_main_cycles(int cycles) {
     audio_accumulator_ += int64_t(cycles) * int64_t(sample_rate());
     while (audio_accumulator_ >= int64_t(kMainClock)) {
         audio_accumulator_ -= int64_t(kMainClock);
-        audio_.push_back(int16_t(std::clamp(last_oki_, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(last_oki_, -32768, 32767)));
     }
 }
 

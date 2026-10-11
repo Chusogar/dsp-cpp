@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 namespace dsp {
@@ -63,7 +63,7 @@ bool Atari8::init(const std::string& rom_path, std::string* error) {
     // The OS (and BASIC) come from a zip such as MAME's a800.zip / a800xl.zip
     // / a800xe.zip or from a directory; a program file passed instead uses the
     // directory it is in. Files are matched by name or, failing that, by CRC.
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     std::string source = rom_path;
     std::error_code ec;
     if (!fs::is_directory(fs::path(rom_path), ec) && !is_zip_file(rom_path)) {

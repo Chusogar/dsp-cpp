@@ -736,7 +736,7 @@ int32_t YM3812::update() {
         calc_rhythm(noise_rng_ & 1);
     }
     int32_t out = int32_t(float(output_ * 2) * amplitude_);
-    out = std::max(-0x7fff, std::min(0x7fff, out));
+    out = std::max<int32_t>(-0x7fff, std::min<int32_t>(0x7fff, out));
     advance();
     run_timers();
     return out;

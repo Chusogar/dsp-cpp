@@ -770,7 +770,7 @@ void IremM62::on_sound_cycles(int cycles) {
     while (audio_accumulator_ >= int64_t(kSoundClock)) {
         audio_accumulator_ -= int64_t(kSoundClock);
         int32_t sample = ay0_.update() + ay1_.update() + msm0_.output() + msm1_.output();
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
 

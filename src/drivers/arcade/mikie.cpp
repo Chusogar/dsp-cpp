@@ -250,7 +250,7 @@ void Mikie::on_sound_cycles(int cycles) {
     while (audio_accumulator_ >= kSoundClock) {
         audio_accumulator_ -= kSoundClock;
         int32_t sample = (sn0_.update() + sn1_.update()) / 2;
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
 

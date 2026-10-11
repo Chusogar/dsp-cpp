@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 #include <system_error>
 
@@ -11,7 +11,7 @@ namespace {
 
 bool read_file(const std::string& path, std::vector<uint8_t>& out) {
     std::error_code ec;
-    if (!std::filesystem::is_regular_file(path, ec)) return false;
+    if (!dsp::fsx::is_regular_file(path, ec)) return false;
     std::ifstream f(path, std::ios::binary);
     if (!f) return false;
     out.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -46,8 +46,8 @@ bool Snes::init(const std::string& rom_path, std::string* error) {
     // The 64-byte SPC700 boot ROM: looked for next to the path given, since
     // the console itself has no BIOS the user would otherwise supply.
     std::vector<uint8_t> ipl;
-    const std::filesystem::path base(rom_path);
-    for (const std::filesystem::path& dir : {base.parent_path(), base}) {
+    const dsp::fsx::path base(rom_path);
+    for (const dsp::fsx::path& dir : {base.parent_path(), base}) {
         if (read_file((dir / "spc700.rom").string(), ipl) && ipl.size() >= ipl_.size()) break;
         ipl.clear();
     }

@@ -64,7 +64,7 @@ def main() -> int:
     print(f"  src/drivers/{kind}/{name}.cpp")
     print(f"\nAdd the name to {group} in cmake/drivers.cmake:")
     print(f"  {name}")
-    print("\nAnd register it in src/main.cpp, next to the other drivers:")
+    print("\nAnd register it in src/frontend/machine_registry.cpp, next to the other drivers:")
     print(f"  #if {macro}")
     print(f'  #include "drivers/{kind}/{name}.h"')
     print("  #endif")
@@ -72,6 +72,8 @@ def main() -> int:
     print(f"  #if {macro}")
     print(f'      if (q.is("{name}")) return std::make_unique<dsp::{class_name}>();')
     print("  #endif")
+    print("\nFor the microcontroller ports, refresh ports/common/driver_sources.json:")
+    print("  cmake --build build -j --target dsp-drivers && python3 tools/driver_sources.py build")
     print("\nThen follow docs/adding-a-driver.md.")
     return 0
 

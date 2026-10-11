@@ -1111,7 +1111,7 @@ void AmstradCpc::on_cycles(int cycles) {
         audio_accumulator_ -= int64_t(kCpuClock);
         int32_t sample = ay_.update();
         if (tape_.playing() && tape_.ear()) sample += 4000;
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
 

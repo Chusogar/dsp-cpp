@@ -9,7 +9,7 @@
 #include <cstring>
 #include <cctype>
 #include <fstream>
-#include <filesystem>
+#include "core/fs_compat.h"
 
 namespace dsp {
 namespace {
@@ -76,7 +76,7 @@ void PsxCdrom::reset() {
 }
 
 bool PsxCdrom::load_disc(const std::string& path, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     tracks_.clear();
     track_data_.clear();
 

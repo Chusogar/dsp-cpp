@@ -6,7 +6,7 @@
 #include <cctype>
 #include <cstring>
 #include <map>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 
 #include "core/rom_loader.h"
@@ -43,7 +43,7 @@ bool load_file(const std::string& path, std::vector<uint8_t>& out) {
 }
 
 bool try_rom(const std::string& dir, const char* name, std::vector<uint8_t>& out) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     if (load_file((fs::path(dir) / name).string(), out)) return true;
     std::string upper = name;
     for (char& c : upper) c = char(std::toupper(static_cast<unsigned char>(c)));
@@ -76,7 +76,7 @@ const char* ZxClone::title() const {
 }
 
 bool ZxClone::load_roms(const std::string& path, std::string* error) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     for (auto& page : rom_) page.fill(0);
     std::string dir = path;
     if (ends_ci(path, ".trd") || ends_ci(path, ".scl") || ends_ci(path, ".tap") ||

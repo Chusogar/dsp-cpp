@@ -253,7 +253,7 @@ void MrDo::on_cycles(int cycles) {
     while (audio_accumulator_ >= int64_t(kCpuClock)) {
         audio_accumulator_ -= int64_t(kCpuClock);
         const int32_t sample = (sn0_.update() + sn1_.update()) / 2;
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
 

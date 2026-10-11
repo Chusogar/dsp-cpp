@@ -498,7 +498,7 @@ void Snk::on_sound_cycles(int cycles) {
         audio_accumulator_ -= kSoundClock;
         int32_t sample = ym0_.update();
         if (uses_two_ym()) sample += ym1_.update();
-        audio_.push_back(int16_t(std::clamp(sample, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
 

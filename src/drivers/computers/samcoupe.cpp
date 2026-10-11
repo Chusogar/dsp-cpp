@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <filesystem>
+#include "core/fs_compat.h"
 #include <fstream>
 #include <system_error>
 
@@ -18,7 +18,7 @@ bool load_file(const std::string& path, std::vector<uint8_t>& out) {
     // a nonsense size, so the resize() below threw std::bad_alloc instead of
     // the caller getting a clean "not found" and trying the next candidate.
     std::error_code ec;
-    if (!std::filesystem::is_regular_file(path, ec)) return false;
+    if (!dsp::fsx::is_regular_file(path, ec)) return false;
     std::ifstream f(path, std::ios::binary);
     if (!f) return false;
     f.seekg(0, std::ios::end);
@@ -31,7 +31,7 @@ bool load_file(const std::string& path, std::vector<uint8_t>& out) {
 }
 
 bool try_rom(const std::string& dir, const char* name, std::vector<uint8_t>& out) {
-    namespace fs = std::filesystem;
+    namespace fs = dsp::fsx;
     if (load_file((fs::path(dir) / name).string(), out)) return true;
     std::string upper = name;
     for (char& c : upper) c = char(std::toupper(static_cast<unsigned char>(c)));
