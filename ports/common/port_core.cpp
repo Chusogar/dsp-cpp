@@ -8,6 +8,7 @@
 #include <cstring>
 #include <fstream>
 #include <memory>
+#include <new>
 #include <sstream>
 
 #include "core/fs_compat.h"
@@ -168,19 +169,23 @@ bool read_text(const std::string& path, std::string* text) {
 constexpr uint32_t kBack = 0xff101820, kText = 0xffd8d8d8, kDim = 0xff8090a0;
 constexpr uint32_t kBar = 0xff203850, kSelect = 0xff3070b0, kTitle = 0xffffd060, kError = 0xffff7060;
 
+// Menu screen: one byte per pixel (an index into a few colours), so a
+// 320x240 menu takes 75 KB, which a board without PSRAM can still spare. It is
+// sent to the board a few rows at a time (Hal::draw_rows).
 class Canvas {
 public:
-    Canvas(int w, int h) : w_(w), h_(h), px_(size_t(w) * size_t(h), kBack) {}
+    Canvas(int w, int h) : w_(w), h_(h), px_(size_t(w) * size_t(h), 0) { palette_.push_back(kBack); }
     int width() const { return w_; }
     int height() const { return h_; }
-    const uint32_t* data() const { return px_.data(); }
-    void clear(uint32_t c) { std::fill(px_.begin(), px_.end(), c); }
+    void clear(uint32_t c) { std::fill(px_.begin(), px_.end(), index(c)); }
     void rect(int x, int y, int w, int h, uint32_t c) {
+        const uint8_t i = index(c);
         for (int j = std::max(0, y); j < std::min(h_, y + h); ++j)
-            for (int i = std::max(0, x); i < std::min(w_, x + w); ++i) px_[size_t(j) * w_ + i] = c;
+            for (int k = std::max(0, x); k < std::min(w_, x + w); ++k) px_[size_t(j) * w_ + k] = i;
     }
     // Draws up to `max_chars` characters; returns the x after the text.
     int text(int x, int y, const std::string& s, uint32_t c, size_t max_chars = 1000) {
+        const uint8_t i = index(c);
         for (size_t n = 0; n < s.size() && n < max_chars; ++n, x += 8) {
             const unsigned char ch = static_cast<unsigned char>(s[n]);
             const uint8_t* g = kFont8x8[(ch >= 0x20 && ch < 0x7f) ? ch - 0x20 : '?' - 0x20];
@@ -188,15 +193,33 @@ public:
                 for (int col = 0; col < 8; ++col)
                     if ((g[row] >> col) & 1) {
                         const int px = x + col, py = y + row;
-                        if (px >= 0 && px < w_ && py >= 0 && py < h_) px_[size_t(py) * w_ + px] = c;
+                        if (px >= 0 && px < w_ && py >= 0 && py < h_) px_[size_t(py) * w_ + px] = i;
                     }
         }
         return x;
     }
+    void show(Hal& hal) const {
+        constexpr int kBand = 8;
+        std::vector<uint32_t> rows(size_t(w_) * kBand);
+        for (int y = 0; y < h_; y += kBand) {
+            const int n = std::min(kBand, h_ - y);
+            const uint8_t* src = &px_[size_t(y) * w_];
+            for (size_t k = 0; k < size_t(w_) * size_t(n); ++k) rows[k] = palette_[src[k]];
+            hal.draw_rows(y, n, rows.data());
+        }
+    }
 
 private:
+    uint8_t index(uint32_t c) {
+        for (size_t i = 0; i < palette_.size(); ++i)
+            if (palette_[i] == c) return uint8_t(i);
+        if (palette_.size() >= 255) return 0;
+        palette_.push_back(c);
+        return uint8_t(palette_.size() - 1);
+    }
     int w_, h_;
-    std::vector<uint32_t> px_;
+    std::vector<uint8_t> px_;
+    std::vector<uint32_t> palette_;
 };
 
 // Word-wraps `text` to `cols` characters a line.
@@ -316,7 +339,7 @@ void Port::message(const std::string& title, const std::string& text, bool wait)
         y += 10;
     }
     if (wait) c.text(8, c.height() - 12, "Press a button", kDim);
-    hal_.present(c.data(), c.width(), c.height(), c.width(), c.height());
+    c.show(hal_);
     hal_.log((title + ": " + text).c_str());
     if (!wait) return;
     wait_release();
@@ -443,7 +466,7 @@ bool Port::menu(std::vector<std::string>* args) {
             if (selected < top) top = selected;
             if (selected >= top + rows) top = selected - rows + 1;
             draw_menu(c, entries, selected, top, note);
-            hal_.present(c.data(), c.width(), c.height(), c.width(), c.height());
+            c.show(hal_);
             dirty = false;
         }
         hal_.idle();
@@ -588,7 +611,18 @@ int Port::run(int max_frames) {
         if (!from_start && !menu(&args)) return 1;
         from_start = false;
         error.clear();
-        const int r = play(args, max_frames, &error);
+        int r;
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+        try {
+            r = play(args, max_frames, &error);
+        } catch (const std::bad_alloc&) {
+            // Boards without PSRAM: the driver's RAM/ROM arrays did not fit.
+            error = "not enough memory for this driver on this board";
+            r = -1;
+        }
+#else
+        r = play(args, max_frames, &error);
+#endif
         if (r < 0) {
             message("Cannot start", error, max_frames <= 0);
             if (max_frames > 0) return 2;

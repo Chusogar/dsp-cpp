@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -51,6 +52,15 @@ public:
         }
         ++presents;
         if (!menu_out.empty() && presents == 1) save(menu_out);
+    }
+
+    void draw_rows(int y, int rows, const uint32_t* argb) override {
+        std::copy(argb, argb + size_t(rows) * 320, screen_.begin() + size_t(y) * 320);
+        map_.invalidate();
+        if (y + rows >= 240) {  // a whole menu screen
+            ++presents;
+            if (!menu_out.empty() && presents == 1) save(menu_out);
+        }
     }
 
     int output_rate() const override { return 22050; }

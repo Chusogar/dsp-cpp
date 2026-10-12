@@ -7,15 +7,13 @@
 // The emulator is the normal dsp code driven by ports/common (menu, frame loop).
 #include <Arduino.h>
 
-#include <driver/i2s.h>
-#include <esp_vfs.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
 #include "fabgl.h"
 #include "src/gen/dsp_port_config.h"
 
-#include "memfs.h"
+#include "esp32_support.h"
 #include "port.h"
 
 // The emulator needs more than the 8 KB Arduino gives loop().
@@ -28,102 +26,6 @@ fabgl::PS2Controller g_ps2;
 
 constexpr int kWidth = 320, kHeight = 240;
 constexpr int kAudioRate = 22050;
-
-// --- sound: ring buffer -> task on core 0 -> I2S0 built-in DAC -----------------
-
-constexpr uint32_t kRingSize = 8192;  // samples, power of two
-int16_t g_ring[kRingSize];
-volatile uint32_t g_ring_read = 0, g_ring_write = 0;
-
-void audio_task(void*) {
-    uint16_t frames[256 * 2];
-    int16_t last = 0;
-    for (;;) {
-        uint32_t r = g_ring_read;
-        const uint32_t w = g_ring_write;
-        for (int i = 0; i < 256; ++i) {
-            if (r != w) last = g_ring[r++ & (kRingSize - 1)];
-            // Built-in DAC: unsigned, top byte used; same value on both slots.
-            const uint16_t v = uint16_t(int32_t(last) + 32768);
-            frames[2 * i] = v;
-            frames[2 * i + 1] = v;
-        }
-        g_ring_read = r;
-        size_t written = 0;
-        i2s_write(I2S_NUM_0, frames, sizeof frames, &written, portMAX_DELAY);
-    }
-}
-
-void audio_begin() {
-    i2s_config_t cfg = {};
-    cfg.mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_DAC_BUILT_IN);
-    cfg.sample_rate = kAudioRate;
-    cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
-    cfg.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
-    cfg.communication_format = I2S_COMM_FORMAT_STAND_MSB;
-    cfg.intr_alloc_flags = 0;
-    cfg.dma_buf_count = 4;
-    cfg.dma_buf_len = 256;
-    cfg.use_apll = false;  // the APLL belongs to the VGA output
-    i2s_driver_install(I2S_NUM_0, &cfg, 0, nullptr);
-    i2s_set_pin(I2S_NUM_0, nullptr);
-    i2s_set_dac_mode(I2S_DAC_CHANNEL_RIGHT_EN);  // GPIO25
-    xTaskCreatePinnedToCore(audio_task, "dsp-audio", 3072, nullptr, 5, nullptr, 0);
-}
-
-// --- embedded media as a read-only VFS on /embedded -----------------------------
-
-namespace memfs = dsp::port::memfs;
-
-struct MemDir {
-    DIR dir;  // must come first: the VFS layer fills it in
-    int handle;
-    struct dirent entry;
-};
-
-int vfs_open(const char* path, int flags, int) { return memfs::open(path, flags); }
-ssize_t vfs_read(int fd, void* dst, size_t size) { return memfs::read(fd, dst, size); }
-off_t vfs_lseek(int fd, off_t offset, int whence) { return off_t(memfs::lseek(fd, long(offset), whence)); }
-int vfs_close(int fd) { return memfs::close(fd); }
-int vfs_fstat(int fd, struct stat* st) { return memfs::fstat(fd, st); }
-int vfs_stat(const char* path, struct stat* st) { return memfs::stat(path, st); }
-DIR* vfs_opendir(const char* path) {
-    const int h = memfs::opendir(path);
-    if (h < 0) return nullptr;
-    MemDir* d = new MemDir();
-    d->handle = h;
-    return &d->dir;
-}
-struct dirent* vfs_readdir(DIR* dir) {
-    MemDir* d = reinterpret_cast<MemDir*>(dir);
-    const char* name;
-    bool is_dir;
-    if (!memfs::readdir(d->handle, &name, &is_dir)) return nullptr;
-    strlcpy(d->entry.d_name, name, sizeof d->entry.d_name);
-    d->entry.d_type = is_dir ? DT_DIR : DT_REG;
-    return &d->entry;
-}
-int vfs_closedir(DIR* dir) {
-    MemDir* d = reinterpret_cast<MemDir*>(dir);
-    memfs::closedir(d->handle);
-    delete d;
-    return 0;
-}
-
-bool mount_memfs(const char* prefix) {
-    esp_vfs_t vfs = {};
-    vfs.flags = ESP_VFS_FLAG_DEFAULT;
-    vfs.open = vfs_open;
-    vfs.read = vfs_read;
-    vfs.lseek = vfs_lseek;
-    vfs.close = vfs_close;
-    vfs.fstat = vfs_fstat;
-    vfs.stat = vfs_stat;
-    vfs.opendir = vfs_opendir;
-    vfs.readdir = vfs_readdir;
-    vfs.closedir = vfs_closedir;
-    return esp_vfs_register(prefix, &vfs, nullptr) == ESP_OK;
-}
 
 // --- keyboard -------------------------------------------------------------------
 
@@ -203,13 +105,23 @@ public:
         }
     }
 
+    void draw_rows(int y, int rows, const uint32_t* argb) override {
+        for (int r = 0; r < rows; ++r) {
+            uint8_t* row = g_vga.getScanline(y + r);
+            const uint32_t* src = argb + size_t(r) * kWidth;
+            for (int x = 0; x < kWidth; ++x) {
+                const uint32_t p = src[x];
+                VGA_PIXELINROW(row, x) = lut_[((p >> 18) & 0x30) | ((p >> 12) & 0x0c) | ((p >> 6) & 0x03)];
+            }
+        }
+        map_.invalidate();
+    }
+
     int output_rate() const override { return kAudioRate; }
     void push_audio(const int16_t* samples, size_t count) override {
-        uint32_t w = g_ring_write;
-        for (size_t i = 0; i < count && w - g_ring_read < kRingSize; ++i) g_ring[w++ & (kRingSize - 1)] = samples[i];
-        g_ring_write = w;
+        dsp::port::esp32::audio_push(samples, count);
     }
-    size_t audio_queued() const override { return size_t(g_ring_write - g_ring_read); }
+    size_t audio_queued() const override { return dsp::port::esp32::audio_queued(); }
 
     void poll(dsp::port::HostInput& in) override {
         in = dsp::port::HostInput();
@@ -259,8 +171,7 @@ public:
     }
     bool mount_embedded(const DspEmbeddedFile* files, size_t count, std::string* dir,
                         std::string* error) override {
-        memfs::mount(files, count, "/embedded");
-        if (!mount_memfs("/embedded")) {
+        if (!dsp::port::esp32::mount_embedded(files, count, "/embedded")) {
             *error = "cannot register the /embedded file system";
             return false;
         }
@@ -294,7 +205,7 @@ void setup() {
     g_vga.begin();  // TTGO VGA32 pins are FabGL's defaults
     g_vga.setResolution(QVGA_320x240_60Hz);
     g_vga.enableBackgroundPrimitiveExecution(false);  // the frame buffer is written directly
-    audio_begin();
+    dsp::port::esp32::audio_begin(kAudioRate, 25);
     g_hal = new Vga32Hal();
     g_hal->begin();
 }

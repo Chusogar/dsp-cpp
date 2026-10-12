@@ -256,21 +256,24 @@ F12 = turbo). The web build has no threads, so Sega Model 3 renders on a
 single core, and the tests and headless tools are native only. Browsers only
 start audio after a click or key press on the page.
 
-### Microcontroller boards (TTGO VGA32, RP2350-PiZero)
+### Microcontroller boards (TTGO VGA32, ESP32 CYD, RP2350-PiZero)
 
-`ports/` builds dsp as firmware for two boards, with a handful of drivers
+`ports/` builds dsp as firmware for three boards, with a handful of drivers
 chosen at build time, an on-screen ROM menu for the micro-SD card and the same
 embedded-media option as above:
 
 - [`ports/ttgo-vga32`](ports/ttgo-vga32/README.md): LilyGO TTGO VGA32 v1.4
   (ESP32 + PSRAM, VGA, PS/2), with arduino-cli (`./setup.sh && ./build.sh`) or
   PlatformIO.
+- [`ports/esp32-cyd`](ports/esp32-cyd/README.md): ESP32 "Cheap Yellow
+  Display" (ILI9341/ST7789 touch screen), with arduino-cli or PlatformIO; the
+  stock board has no PSRAM, which the current drivers need.
 - [`ports/rp2350-pizero`](ports/rp2350-pizero/README.md): Waveshare
   RP2350-PiZero (HDMI via PicoDVI, USB keyboard/gamepad via PIO-USB), with the
   Pico SDK (`./setup.sh && ./build.sh`).
 
 They share `ports/common` (menu, frame loop, embedded file system, USB HID),
-which also builds and is tested on the desktop. Both firmwares compile but
+which also builds and is tested on the desktop. The firmwares compile but
 have not yet been tried on the hardware; see [`ports/README.md`](ports/README.md).
 File access goes through `dsp::fsx` (`src/core/fs_compat.h`): `std::filesystem`
 normally, a POSIX layer with `-DDSP_FS_POSIX=ON` (the boards' toolchains lack

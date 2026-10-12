@@ -1,0 +1,4 @@
+deps/
+build/
+.pio/
+dsp_cyd/src/gen/

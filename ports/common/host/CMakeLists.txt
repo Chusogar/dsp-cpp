@@ -36,3 +36,10 @@ dsp_port_add_sources(dsp-port-tests DRIVERS galaxian)
 target_link_libraries(dsp-port-tests PRIVATE ZLIB::ZLIB m)
 enable_testing()
 add_test(NAME dsp-port-tests COMMAND dsp-port-tests)
+
+# Memory needs of each driver (object size, largest allocation, peak heap):
+#   cmake -S ports/common/host -B b -DDSP_PORT_DRIVERS=all && cmake --build b --target dsp-port-mem
+#   b/dsp-port-mem --roms /path/to/roms
+add_executable(dsp-port-mem EXCLUDE_FROM_ALL mem_main.cpp)
+dsp_port_add_sources(dsp-port-mem DRIVERS ${DSP_PORT_DRIVERS})
+target_link_libraries(dsp-port-mem PRIVATE ZLIB::ZLIB m)

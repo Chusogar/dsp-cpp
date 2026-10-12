@@ -46,6 +46,12 @@ public:
         }
     }
 
+    void draw_rows(int y, int rows, const uint32_t* argb) override {
+        uint16_t* dst = &video_framebuffer[size_t(y) * VIDEO_WIDTH];
+        for (size_t i = 0; i < size_t(rows) * VIDEO_WIDTH; ++i) dst[i] = rgb565(argb[i]);
+        map_.invalidate();
+    }
+
     int output_rate() const override { return audio_pwm_rate(); }
     void push_audio(const int16_t* samples, size_t count) override { audio_pwm_push(samples, count); }
     size_t audio_queued() const override { return audio_pwm_queued(); }

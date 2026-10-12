@@ -1,20 +1,22 @@
 # Microcontroller ports
 
-dsp-cpp also builds as firmware for two boards. They run the same emulator
+dsp-cpp also builds as firmware for three boards. They run the same emulator
 code as the desktop version (drivers, CPUs, sound chips, `RomLoader`); only
 the front end is different.
 
 | Folder | Board | Picture | Input | Sound | Files |
 |---|---|---|---|---|---|
 | [`ttgo-vga32/`](ttgo-vga32/README.md) | LilyGO TTGO VGA32 v1.4 (ESP32-WROVER, 4 MB PSRAM) | VGA 320x240, 64 colours | PS/2 keyboard and mouse | DAC on GPIO25 | micro-SD |
+| [`esp32-cyd/`](esp32-cyd/README.md) | ESP32 "Cheap Yellow Display" (ESP32-2432S028R / CYD2USB) | 2.8" ILI9341 or ST7789, 320x240 | touch screen as a game pad, BOOT button | speaker (DAC on GPIO26) | micro-SD |
 | [`rp2350-pizero/`](rp2350-pizero/README.md) | Waveshare RP2350-PiZero (RP2350B, 8 MB PSRAM) | HDMI 640x480 (320x240 doubled), 65536 colours | USB keyboard, mouse or HID gamepad (PIO-USB port) | PWM on GPIO18 | micro-SD |
 
-> **Status:** both firmwares compile with the scripts here (ESP32 core 2.0.17
+> **Status:** all three firmwares compile with the scripts here (ESP32 core 2.0.17
 > + FabGL 1.0.9; Pico SDK 2.1.1 + PicoDVI), and the shared front end is run
 > and tested on the desktop (`common/host`). They have **not been tried on the
 > real boards yet**: expect to adjust things, and keep in mind that the
 > heavier drivers (16/32-bit machines) will not reach full speed on these
 > chips. The 8-bit arcade games and computers are the realistic targets.
+> The stock CYD has no PSRAM, which today's drivers need (see its README).
 
 ## How it fits together
 
@@ -23,12 +25,15 @@ ports/
   common/              shared by both boards
     port.h, port_core.cpp   Hal interface, ROM menu, driver start, frame loop
     memfs.*                 read-only file system over the embedded media
+    esp32_support.*         ESP32: DAC sound, embedded media through the VFS
+    arduino_prepare.py      ESP32 ports: driver selection for arduino-cli/PlatformIO
     hid.*                   USB HID keyboard/mouse/gamepad decoding
     font8x8.h               menu font (public domain)
     driver_sources.json     dsp sources each driver needs (+ .cmake)
     dsp_port.cmake          CMake helpers (RP2350 build, host build)
     host/                   desktop build of the port front end + its tests
   ttgo-vga32/          arduino-cli (build.sh) or PlatformIO
+  esp32-cyd/           arduino-cli (build.sh) or PlatformIO
   rp2350-pizero/       Pico SDK (CMake)
 ```
 
@@ -67,6 +72,7 @@ ports/
 cmake -S ports/common/host -B build-port-host -DDSP_PORT_DRIVERS="galaxian;blockout;c64"
 cmake --build build-port-host -j
 build-port-host/dsp-port-tests                       # memfs, HID, scaling, dsp::fsx...
+cmake --build build-port-host --target dsp-port-mem  # RAM each driver needs (object, largest block, peak)
 build-port-host/dsp-port-host --root /path/to/sdcard --keys down,enter --frames 600 --out shot.ppm
 ```
 

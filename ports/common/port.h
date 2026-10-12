@@ -52,6 +52,9 @@ public:
     virtual int screen_height() const = 0;
     virtual void present(const uint32_t* argb, int width, int height, int display_width,
                          int display_height) = 0;
+    // Menu screens: `rows` full-width rows (screen_width() pixels each, ARGB)
+    // drawn unscaled from row `y`. The next present() must redraw its borders.
+    virtual void draw_rows(int y, int rows, const uint32_t* argb) = 0;
 
     // Sound: mono signed 16-bit at output_rate(). push_audio() never blocks;
     // audio_queued() is how many samples are still waiting to be played.
@@ -92,6 +95,8 @@ struct ScaleMap {
     // board then clears the borders).
     bool update(int src_width, int src_height, int display_width, int display_height,
                 int screen_w, int screen_h);
+    // Forces the next update() to report a change (after a menu was drawn).
+    void invalidate() { src_w = 0; }
 };
 
 // Turns the host keyboard/gamepad into the machine's inputs, with the same
