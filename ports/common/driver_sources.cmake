@@ -215,7 +215,9 @@ set(DSP_PORT_SOURCES_bloodbros
   src/cpu/z80.cpp
   src/drivers/arcade/bloodbros.cpp
   src/machine/seibu_sound.cpp
+  src/sound/msm5205.cpp
   src/sound/okim6295.cpp
+  src/sound/ym2151.cpp
   src/sound/ym3812.cpp
   src/video/gfx.cpp
 )
@@ -289,6 +291,17 @@ set(DSP_PORT_SOURCES_c64
   src/machine/t64_image.cpp
   src/machine/via6522.cpp
   src/sound/sid6581.cpp
+)
+set(DSP_PORT_SOURCES_cabal
+  src/cpu/m68000.cpp
+  src/cpu/z80.cpp
+  src/drivers/arcade/cabal.cpp
+  src/machine/seibu_sound.cpp
+  src/sound/msm5205.cpp
+  src/sound/okim6295.cpp
+  src/sound/ym2151.cpp
+  src/sound/ym3812.cpp
+  src/video/gfx.cpp
 )
 set(DSP_PORT_SOURCES_citycon
   src/cpu/m6809.cpp

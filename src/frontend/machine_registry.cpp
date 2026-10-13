@@ -181,6 +181,9 @@
 #if DSP_DRIVER_BTIME
 #include "drivers/arcade/btime.h"
 #endif
+#if DSP_DRIVER_CABAL
+#include "drivers/arcade/cabal.h"
+#endif
 #if DSP_DRIVER_BLOCKOUT
 #include "drivers/arcade/blockout.h"
 #endif
@@ -851,6 +854,9 @@ std::unique_ptr<Machine> create_machine(DriverQuery& q) {
     if (q.is("btime") || q.is("burgertime")) return std::make_unique<dsp::BurgerTime>(dsp::BurgerTime::Game::BurgerTime);
     if (q.is("lnc") || q.is("locknchase")) return std::make_unique<dsp::BurgerTime>(dsp::BurgerTime::Game::LockNChase);
     if (q.is("mmonkey")) return std::make_unique<dsp::BurgerTime>(dsp::BurgerTime::Game::MinkyMonkey);
+#endif
+#if DSP_DRIVER_CABAL
+    if (q.is("cabal")) return std::make_unique<dsp::Cabal>();
 #endif
 #if DSP_DRIVER_BLOCKOUT
 	if (q.is("blockout")) return std::make_unique<dsp::BlockOut>();

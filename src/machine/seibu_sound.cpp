@@ -42,8 +42,14 @@ uint8_t decrypt_opcode(uint32_t a, uint8_t src) {
 
 }  // namespace
 
-SeibuSound::SeibuSound(uint32_t clock, uint32_t oki_clock)
-    : clock_(clock), z80_(clock), ym_(clock), oki_(oki_clock, true) {
+SeibuSound::SeibuSound(uint32_t clock, uint32_t oki_clock, Variant variant)
+    : clock_(clock), variant_(variant), z80_(clock), ym_(clock), oki_(oki_clock, true) {
+    if (variant_ == Variant::Adpcm) {
+        ym2151_ = std::make_unique<YM2151>(clock);
+        ym2151_->set_irq_handler([this](bool on) { update_irq_lines(on ? kRst10Assert : kRst10Clear); });
+        // 12 MHz / 32 with the /48 prescaler: 7812.5 Hz, 4-bit samples.
+        for (auto& chip : adpcm_) chip = std::make_unique<MSM5205>(12000000 / 32, 48, 4);
+    }
     z80_.set_memory_handlers([this](uint16_t a) { return read(a); },
                              [this](uint16_t a, uint8_t v) { write(a, v); });
     z80_.set_opcode_read([this](uint16_t a) { return a < 0x2000 ? opcode_[a] : read(a); });
@@ -76,6 +82,29 @@ void SeibuSound::load_program(const std::vector<uint8_t>& rom, bool encrypted) {
     std::copy_n(r.begin(), 0x8000, banks_[1].begin());
 }
 
+void SeibuSound::load_adpcm(const std::vector<uint8_t>& channel0, const std::vector<uint8_t>& channel1) {
+    if (variant_ != Variant::Adpcm) return;
+    const std::vector<uint8_t>* roms[2] = {&channel0, &channel1};
+    for (int i = 0; i < 2; ++i) {
+        std::vector<uint8_t> rom(roms[i]->size());
+        for (size_t f = 0; f < rom.size(); ++f) rom[f] = bitswap8((*roms[i])[f], 7, 5, 3, 1, 6, 4, 2, 0);
+        adpcm_[i]->set_rom(std::move(rom));
+    }
+}
+
+void SeibuSound::adpcm_write(int channel, uint16_t address, uint8_t value) {
+    MSM5205& chip = *adpcm_[channel];
+    switch (address & 0xff) {
+        case 0x05: chip.set_start(uint32_t(value) << 8); break;
+        case 0x06: chip.set_end(uint32_t(value) << 8); break;
+        case 0x1a:
+            if (value == 0) chip.set_reset(true);
+            else if (value == 1) chip.set_reset(false);
+            break;
+        default: break;
+    }
+}
+
 void SeibuSound::reset() {
     rst10_irq_ = rst18_irq_ = rst10_service_ = rst18_service_ = false;
     main2sub_pending_ = sub2main_pending_ = false;
@@ -84,13 +113,17 @@ void SeibuSound::reset() {
     ram_.fill(0);
     bank_ = 0;
     rst18_count_ = 0;
-    ym_accum_ = oki_accum_ = 0;
+    ym_accum_ = oki_accum_ = adpcm_accum_ = 0;
     oki_level_ = 0;
     audio_.clear();
     z80_.reset();
     z80_.set_irq(IrqLine::Clear);
     ym_.reset();
     oki_.reset();
+    if (variant_ == Variant::Adpcm) {
+        ym2151_->reset();
+        for (auto& chip : adpcm_) chip->reset();
+    }
 }
 
 uint8_t SeibuSound::read(uint16_t a) {
@@ -98,12 +131,13 @@ uint8_t SeibuSound::read(uint16_t a) {
     if (a < 0x2800) return ram_[a & 0x7ff];
     if (a >= 0x8000) return banks_[bank_][a & 0x7fff];
     switch (a) {
-        case 0x4008: return ym_.status();
+        case 0x4008:
+        case 0x4009: return variant_ == Variant::Adpcm ? ym2151_->status() : ym_.status();
         case 0x4010: return sound_latch_[0];
         case 0x4011: return sound_latch_[1];
         case 0x4012: return sub2main_pending_ ? 1 : 0;
         case 0x4013: return coins_;
-        case 0x6000: return oki_.read();
+        case 0x6000: return variant_ == Variant::Oki ? oki_.read() : 0xff;
         default: return 0xff;
     }
 }
@@ -112,6 +146,21 @@ void SeibuSound::write(uint16_t a, uint8_t v) {
     if (a >= 0x2000 && a < 0x2800) {
         ram_[a & 0x7ff] = v;
         return;
+    }
+    if (variant_ == Variant::Adpcm) {
+        switch (a) {
+            case 0x4005:
+            case 0x4006:
+            case 0x401a: adpcm_write(0, a, v); return;
+            case 0x6005:
+            case 0x6006:
+            case 0x601a: adpcm_write(1, a, v); return;
+            case 0x4007: return;  // no banking
+            case 0x4008: ym2151_->select_register(v); return;
+            case 0x4009: ym2151_->write(v); return;
+            case 0x6000: return;
+            default: break;
+        }
     }
     switch (a) {
         case 0x4000:  // reply posted
@@ -179,6 +228,23 @@ void SeibuSound::update_irq_lines(IrqEvent event) {
 int SeibuSound::run(int cycles) { return z80_.run(cycles); }
 
 void SeibuSound::on_cycles(int cycles) {
+    if (variant_ == Variant::Adpcm) {
+        ym2151_->run_timers(cycles);  // same clock as the Z80
+        // Both ADPCM channels are clocked at 7812.5 Hz and held in between.
+        adpcm_accum_ += int64_t(cycles) * adpcm_[0]->sample_frequency();
+        while (adpcm_accum_ >= int64_t(clock_)) {
+            adpcm_accum_ -= int64_t(clock_);
+            adpcm_[0]->vclk();
+            adpcm_[1]->vclk();
+        }
+        ym_accum_ += int64_t(cycles) * kSampleRate;
+        while (ym_accum_ >= int64_t(clock_)) {
+            ym_accum_ -= int64_t(clock_);
+            const int32_t s = (ym2151_->update() + adpcm_[0]->output() + adpcm_[1]->output()) / 2;
+            audio_.push_back(int16_t(std::clamp<int32_t>(s, -32768, 32767)));
+        }
+        return;
+    }
     // The OKI makes a new sample at clock/132 Hz; it is held between them.
     oki_accum_ += int64_t(cycles) * oki_.sample_frequency();
     while (oki_accum_ >= int64_t(clock_)) {

@@ -69,6 +69,7 @@
 #include "drivers/arcade/boogwing.h"
 #include "drivers/arcade/brkthru.h"
 #include "drivers/arcade/btime.h"
+#include "drivers/arcade/cabal.h"
 #include "machine/seibu_sound.h"
 #include "drivers/arcade/bionicc.h"
 #include "drivers/arcade/arabian.h"
@@ -10672,6 +10673,38 @@ void test_btime_if_present() {
     check(peak > 1000 && peak < 32767, "BurgerTime makes sound without clipping");
 }
 
+void test_cabal_if_present() {
+    const char* path = "/tmp/roms/cabal.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_cabal_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::Cabal m;
+    std::string err;
+    check(m.init(path, &err), "Cabal ROMs load");
+    if (!err.empty()) std::printf("cabal init: %s\n", err.c_str());
+    check(m.screen_width() == 256 && m.screen_height() == 224, "Cabal screen is 256x224");
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 1; f <= 1800; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 1200 && f < 1206;
+        in.player1.start = f >= 1260 && f < 1266;
+        in.player1.button1 = f > 1400 && (f % 20) < 10;
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(c.size() >= 40, "Cabal draws the background, sprites and text");
+    check(m.sound().rst18_count() > 100, "Cabal sends commands to the Seibu sound CPU");
+    // The encrypted Z80 polls the YM2151 busy flag at 4009 and drives the two
+    // ADPCM channels.
+    check(peak > 1000 && peak < 32767, "Cabal makes sound (YM2151 + ADPCM) without clipping");
+}
+
 void test_blktiger_if_present() {
     const char* path = "/tmp/roms/blktiger/blktiger.zip";
     if (!std::filesystem::exists(path)) {
@@ -11140,6 +11173,7 @@ int main() {
     test_boogwing_if_present();
     test_brkthru_if_present();
     test_btime_if_present();
+    test_cabal_if_present();
     test_blockout_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");

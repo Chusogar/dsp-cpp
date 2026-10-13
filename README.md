@@ -48,6 +48,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Boogie Wings driver | `src/arcade/boogiewings_hw.pas` | 68000 with DECO 102 encrypted program, DECO 104 protection, two DECO 16IC tilemap chips (5 bpp layer, DECO 56 graphics), two sprite sets, DECO ACE palette fades, HuC6280 with YM2151 and two banked OKI M6295 |
 | Break Thru driver | `src/arcade/breakthru_hw.pas` | 6809 with banked ROM, text layer, scrolling 3 bpp 16x16 tile layer, 16x16/16x32 sprites with priority, sound 6809 with YM2203 and YM3526; Darwin 4078 too |
 | BurgerTime driver | `src/arcade/burgertime_hw.pas` | 6502 with write-dependent opcode encryption, rotated 3 bpp characters/sprites, ROM-mapped 16x16 background, sound 6502 with 2× AY-3-8910; Lock'n'Chase and Minky Monkey (protection) too |
+| Cabal driver | `src/arcade/cabal_hw.pas` | 68000, 16x16 background, 2 bpp text, 512 sprites; Seibu sound system ADPCM variant (encrypted Z80, YM2151, 2 ADPCM channels) |
 | Block Out driver | `src/arcade/blockout_hw.pas` | 68000 bitmap (front/back + 1-bit overlay), Z80/YM2151 + OKI MSM6295 |
 | MCR driver | `src/arcade/mcr_hw.pas` | Tapper / Tron family: dual Z80, CTC, SSIO |
 | ZX Spectrum Next | MAME `specnext` (TBBlue core 3.02) | Z80N, MMU/DivMMC/Multiface, ULA/LoRes/Layer 2/tilemap/sprites/copper, zxnDMA, CTC, IM2, 3×AY + DACs, SPI SD card; boots the firmware and NextZXOS from an SD image |
@@ -1918,6 +1919,30 @@ ROMs (BurgerTime): `aa04.9b`, `aa05.10b`, `aa06.13b`, `aa07.15b` (main),
 `aa8.13k`, `ab9.15k` (characters and sprites), `ab00.1b` … `ab02.4b`
 (background tiles), `ab03.6b` (background maps). Lock'n'Chase and Minky
 Monkey are untested.
+
+### Cabal
+
+TAD, 1988 (`--game cabal`, MAME set `cabal`), ported from dsp-emulator's
+`cabal_hw.pas` (MAME `cabal.cpp`). A 68000 at 10 MHz draws a fixed background
+of 16x16 tiles, 512 16x16 sprites and a 2 bpp text layer, in 1024 colours of
+4-bit RGB. The sound board is the Seibu sound system in its ADPCM form
+(`src/machine/seibu_sound.cpp`, `SeibuSound::Variant::Adpcm`): an encrypted
+Z80 with a YM2151 and two ADPCM channels (MSM5205 playing from bit-swapped
+ROMs between addresses set by the Z80); it also reads the coins.
+
+```bash
+./build/dsp --game cabal /path/to/cabal.zip
+```
+
+Controls: arrows move the sight (the joystick version's inputs; the
+trackball reads as centred), button 1 = fire, button 2 = grenade, button 3 =
+roll, 5/6 = coins, 1/2 = start. DIP bank 0 is the low byte of the 16-bit
+switch word (coinage, coin mode, invert buttons, flip, trackball size) and
+bank 1 the high byte (lives, bonus life, difficulty, demo sounds).
+
+ROMs: `13.7h`, `11.6h`, `12.7j`, `10.6j` (main), `4-3n`, `3-3p` (sound),
+`2-1s`, `1-1u` (ADPCM), `5-6s` (text), `bg_rom1.bin` … `bg_rom8.bin`
+(background), `sp_rom1.bin` … `sp_rom8.bin` (sprites).
 
 ### Block Out
 

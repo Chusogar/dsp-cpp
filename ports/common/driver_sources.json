@@ -298,7 +298,9 @@
     "src/cpu/z80.cpp",
     "src/drivers/arcade/bloodbros.cpp",
     "src/machine/seibu_sound.cpp",
+    "src/sound/msm5205.cpp",
     "src/sound/okim6295.cpp",
+    "src/sound/ym2151.cpp",
     "src/sound/ym3812.cpp",
     "src/video/gfx.cpp"
    ]
@@ -396,6 +398,20 @@
     "src/machine/t64_image.cpp",
     "src/machine/via6522.cpp",
     "src/sound/sid6581.cpp"
+   ]
+  },
+  "cabal": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m68000.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/cabal.cpp",
+    "src/machine/seibu_sound.cpp",
+    "src/sound/msm5205.cpp",
+    "src/sound/okim6295.cpp",
+    "src/sound/ym2151.cpp",
+    "src/sound/ym3812.cpp",
+    "src/video/gfx.cpp"
    ]
   },
   "citycon": {
