@@ -68,7 +68,7 @@ void print_supported_emulators() {
 		"    shadoww, gaiden, ninjagaiden\n"
 		"    actfancer, actfancr\n"
 		"    ajax, typhoon, simpsons\n"
-		"    ambush, arabian, bionicc, blktiger, blockout, shaolins, tehkanwc, appoooh, robowres, arkanoid, renegade\n"
+		"    ambush, arabian, bionicc, blktiger, blockout, cabal, shaolins, tehkanwc, appoooh, robowres, arkanoid, renegade\n"
 		"    retofinv, slapfight, tigerheli,\n"
 		"    baraduke, metrocrs, bankp, combh\n"
 		"    defender, mayday, colony7, joust, robotron, stargate\n"

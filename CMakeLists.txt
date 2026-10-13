@@ -184,6 +184,8 @@ add_library(dsp_lib STATIC
   src/drivers/arcade/bionicc.cpp
   src/drivers/arcade/blktiger.cpp
   src/drivers/arcade/blockout.cpp
+  src/drivers/arcade/cabal.cpp
+  src/machine/seibu_sound.cpp
   src/drivers/arcade/mikie.cpp
   src/drivers/arcade/gauntlet.cpp
   src/drivers/arcade/doubledragon.cpp
