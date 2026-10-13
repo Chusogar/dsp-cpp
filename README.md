@@ -47,6 +47,7 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Bomb Jack driver | `src/arcade/bombjack_hw.pas` | Z80, text layer, 16 ROM background pictures, 16x16/32x32 sprites, sound Z80 with 3× AY-3-8910; Calorie Kun (Sega 317-000x opcodes) too |
 | Boogie Wings driver | `src/arcade/boogiewings_hw.pas` | 68000 with DECO 102 encrypted program, DECO 104 protection, two DECO 16IC tilemap chips (5 bpp layer, DECO 56 graphics), two sprite sets, DECO ACE palette fades, HuC6280 with YM2151 and two banked OKI M6295 |
 | Break Thru driver | `src/arcade/breakthru_hw.pas` | 6809 with banked ROM, text layer, scrolling 3 bpp 16x16 tile layer, 16x16/16x32 sprites with priority, sound 6809 with YM2203 and YM3526; Darwin 4078 too |
+| BurgerTime driver | `src/arcade/burgertime_hw.pas` | 6502 with write-dependent opcode encryption, rotated 3 bpp characters/sprites, ROM-mapped 16x16 background, sound 6502 with 2× AY-3-8910; Lock'n'Chase and Minky Monkey (protection) too |
 | Block Out driver | `src/arcade/blockout_hw.pas` | 68000 bitmap (front/back + 1-bit overlay), Z80/YM2151 + OKI MSM6295 |
 | MCR driver | `src/arcade/mcr_hw.pas` | Tapper / Tron family: dual Z80, CTC, SSIO |
 | ZX Spectrum Next | MAME `specnext` (TBBlue core 3.02) | Z80N, MMU/DivMMC/Multiface, ULA/LoRes/Layer 2/tilemap/sprites/copper, zxnDMA, CTC, IM2, 3×AY + DACs, SPI SD card; boots the firmware and NextZXOS from an SD image |
@@ -1886,6 +1887,37 @@ ROMs (Break Thru): `brkthru.1` … `brkthru.4` (main), `brkthru.5` (sound),
 `brkthru.12` (characters), `brkthru.6` … `brkthru.8` (tiles), `brkthru.9`
 … `brkthru.11` (sprites), `brkthru.13`, `brkthru.14` (colour PROMs). Darwin
 4078 (`darw_01.rom` … `darw_12.rom`, `df.12`, `df.13`) is untested.
+
+### BurgerTime, Lock'n'Chase and Minky Monkey
+
+Data East, 1982 (`--game btime`, MAME set `btime`), Lock'n'Chase (`--game
+lnc`) and Minky Monkey (`--game mmonkey`), ported from dsp-emulator's
+`burgertime_hw.pas` (MAME `btime.cpp`). A 6502 at 1.5 MHz draws a 32x32
+layer of 3 bpp characters and 8 sprites of 16x16 kept in the character RAM,
+which can also be written through a second window with rows and columns
+swapped. BurgerTime adds a background of 16x16 tiles laid out from one of
+eight maps in ROM, writes its 16 colours itself and encrypts its program: an
+opcode at an address matching `xxxx xxx1 xxxx x1xx` has its bits swapped
+when the previous instruction wrote to memory (the 6502 core now has an
+opcode-fetch hook for this). Lock'n'Chase and Minky Monkey swap bits 5 and 6
+of every opcode and use a colour PROM; Minky Monkey's protection adds BCD
+scores and searches a table. A 500 kHz sound 6502 plays two AY-3-8910; its
+NMI ticks every 16 scanlines when the first AY's port A allows it. The
+monitor is vertical and the graphics are decoded turned, as in the original.
+
+```bash
+./build/dsp --game btime /path/to/btime.zip
+```
+
+Controls: arrows, button 1 = pepper, 5/6 = coins, 1/2 = start. DIP bank 0
+is switch A (coinage, cross hatch pattern, cabinet) and bank 1 switch B
+(lives, bonus life, enemies, end of level pepper).
+
+ROMs (BurgerTime): `aa04.9b`, `aa05.10b`, `aa06.13b`, `aa07.15b` (main),
+`ab14.12h` (sound), `aa12.7k`, `ab13.9k`, `ab10.10k`, `ab11.12k`,
+`aa8.13k`, `ab9.15k` (characters and sprites), `ab00.1b` … `ab02.4b`
+(background tiles), `ab03.6b` (background maps). Lock'n'Chase and Minky
+Monkey are untested.
 
 ### Block Out
 

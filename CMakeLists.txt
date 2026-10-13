@@ -188,6 +188,7 @@ add_library(dsp_lib STATIC
   src/drivers/arcade/bombjack.cpp
   src/drivers/arcade/boogwing.cpp
   src/drivers/arcade/brkthru.cpp
+  src/drivers/arcade/btime.cpp
   src/machine/deco_crypt.cpp
   src/machine/deco146.cpp
   src/video/deco16ic.cpp

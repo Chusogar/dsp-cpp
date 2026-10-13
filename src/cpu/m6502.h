@@ -29,6 +29,9 @@ public:
 
     void set_memory_handlers(ReadHandler read, WriteHandler write);
     void set_cycle_handler(CycleHandler handler) { cycle_handler_ = std::move(handler); }
+    // Optional reader for opcode bytes only (the SYNC cycle), for boards
+    // that decrypt or alter the instruction stream.
+    void set_opcode_read(ReadHandler handler) { opcode_read_ = std::move(handler); }
 
     // WDC/GTE 65C02 (and the Lynx G65SC02) extra opcodes: BRA, STZ, PHX/PHY,
     // TRB/TSB, BIT imm/zp,x/abs,x, INC/DEC A, JMP (abs,X), (zp) and the CMOS
@@ -91,6 +94,7 @@ private:
     bool halted_ = false;
 
     ReadHandler read_;
+    ReadHandler opcode_read_;
     WriteHandler write_;
     CycleHandler cycle_handler_;
 };

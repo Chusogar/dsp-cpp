@@ -274,7 +274,8 @@ int M6502::run(int cycles) {
         }
         after_ei_ = false;
 
-        const uint8_t instruction = fetch();
+        // Opcode fetch (SYNC high): a driver hook may substitute the byte.
+        const uint8_t instruction = opcode_read_ ? opcode_read_(pc_++) : fetch();
         const uint8_t* const modes = cmos_ ? kModeCmos : kMode;
         const uint8_t* const cycle_table = cmos_ ? kCyclesCmos : kCycles;
         uint8_t offset = 0;
