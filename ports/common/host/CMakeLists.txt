@@ -21,6 +21,7 @@ set(DSP_EMBED_DISK "" CACHE STRING "Embedded media: disk images (';' separated)"
 set(DSP_EMBED_CART "" CACHE STRING "Embedded media: cartridges (';' separated)")
 set(DSP_EMBED_ARGS "" CACHE STRING "Embedded media: extra arguments (';' separated)")
 set(DSP_EMBED_C "" CACHE FILEPATH "Embedded media: C file written by tools/embed_media.py")
+set(DSP_EMBED_ENTRIES "" CACHE STRING "Several built-in games: LABEL=COMMAND LINE, ';' separated")
 
 include(${CMAKE_CURRENT_LIST_DIR}/../dsp_port.cmake)
 find_package(ZLIB REQUIRED)

@@ -163,6 +163,21 @@
 #if DSP_DRIVER_BLKTIGER
 #include "drivers/arcade/blktiger.h"
 #endif
+#if DSP_DRIVER_BLOODBROS
+#include "drivers/arcade/bloodbros.h"
+#endif
+#if DSP_DRIVER_BLUEPRINT
+#include "drivers/arcade/blueprint.h"
+#endif
+#if DSP_DRIVER_BOMBJACK
+#include "drivers/arcade/bombjack.h"
+#endif
+#if DSP_DRIVER_BOOGWING
+#include "drivers/arcade/boogwing.h"
+#endif
+#if DSP_DRIVER_BRKTHRU
+#include "drivers/arcade/brkthru.h"
+#endif
 #if DSP_DRIVER_BLOCKOUT
 #include "drivers/arcade/blockout.h"
 #endif
@@ -808,6 +823,26 @@ std::unique_ptr<Machine> create_machine(DriverQuery& q) {
 #endif
 #if DSP_DRIVER_BLKTIGER
 	if (q.is("blktiger")) return std::make_unique<dsp::BlackTiger>();
+#endif
+#if DSP_DRIVER_BLOODBROS
+    if (q.is("bloodbros") || q.is("bloodbro")) return std::make_unique<dsp::BloodBros>(dsp::BloodBros::Game::BloodBros);
+    if (q.is("skysmash")) return std::make_unique<dsp::BloodBros>(dsp::BloodBros::Game::SkySmasher);
+#endif
+#if DSP_DRIVER_BLUEPRINT
+    if (q.is("blueprnt") || q.is("blueprint")) return std::make_unique<dsp::Blueprint>(dsp::Blueprint::Game::Blueprint);
+    if (q.is("saturnzi") || q.is("saturn")) return std::make_unique<dsp::Blueprint>(dsp::Blueprint::Game::Saturn);
+    if (q.is("grasspin")) return std::make_unique<dsp::Blueprint>(dsp::Blueprint::Game::Grasspin);
+#endif
+#if DSP_DRIVER_BOMBJACK
+    if (q.is("bombjack")) return std::make_unique<dsp::BombJack>(dsp::BombJack::Game::BombJack);
+    if (q.is("calorie") || q.is("caloriekun")) return std::make_unique<dsp::BombJack>(dsp::BombJack::Game::CalorieKun);
+#endif
+#if DSP_DRIVER_BOOGWING
+    if (q.is("boogwing") || q.is("boogiewings")) return std::make_unique<dsp::BoogieWings>();
+#endif
+#if DSP_DRIVER_BRKTHRU
+    if (q.is("brkthru") || q.is("breakthru")) return std::make_unique<dsp::BreakThru>(dsp::BreakThru::Game::BreakThru);
+    if (q.is("darwin")) return std::make_unique<dsp::BreakThru>(dsp::BreakThru::Game::Darwin);
 #endif
 #if DSP_DRIVER_BLOCKOUT
 	if (q.is("blockout")) return std::make_unique<dsp::BlockOut>();

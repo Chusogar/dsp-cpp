@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
     -d|--drivers) PREP+=(--drivers "$2"); shift 2 ;;
     -p|--port) PORT="$2"; shift 2 ;;
     -b|--build-dir) BUILD="$2"; shift 2 ;;
-    --embed-game|--embed-rom|--embed-tape|--embed-disk|--embed-cart|--embed-arg|--sd-pins)
+    --embed-game|--embed-rom|--embed-tape|--embed-disk|--embed-cart|--embed-arg|--embed-entry|--sd-pins)
       PREP+=("$1" "$2"); shift 2 ;;
     -h|--help) usage ;;
     *) echo "build.sh: unknown option $1" >&2; usage 1 ;;

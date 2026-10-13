@@ -63,6 +63,12 @@
 #include "drivers/computers/specnext.h"
 #include "drivers/arcade/blockout.h"
 #include "drivers/arcade/blktiger.h"
+#include "drivers/arcade/bloodbros.h"
+#include "drivers/arcade/blueprint.h"
+#include "drivers/arcade/bombjack.h"
+#include "drivers/arcade/boogwing.h"
+#include "drivers/arcade/brkthru.h"
+#include "machine/seibu_sound.h"
 #include "drivers/arcade/bionicc.h"
 #include "drivers/arcade/arabian.h"
 #include "drivers/arcade/model3.h"
@@ -10432,6 +10438,203 @@ void test_bionicc_if_present() {
     check(peak > 1000, "Bionic Commando YM2151 music plays (commands reach the Z80 through the MCU)");
 }
 
+// Seibu sound: a main CPU command raises RST 18h on the Z80 (IM 0); the
+// handler answers through 4018 and ends the interrupt, so a second command
+// is taken too.
+void test_seibu_sound_command_irq() {
+    std::vector<uint8_t> rom(0x10000, 0x00);
+    const uint8_t boot[] = {0xed, 0x46,              // im 0
+                            0x31, 0x00, 0x28,        // ld sp,2800h
+                            0xfb,                    // ei
+                            0x18, 0xfe};             // jr $
+    std::copy(std::begin(boot), std::end(boot), rom.begin());
+    const uint8_t rst18[] = {0x3a, 0x10, 0x40,       // ld a,(4010h)  command
+                             0x3c,                   // inc a
+                             0x32, 0x18, 0x40,       // ld (4018h),a  reply
+                             0x32, 0x00, 0x40,       // ld (4000h),a  reply posted
+                             0x32, 0x01, 0x40,       // ld (4001h),a  end of RST 18h
+                             0xfb, 0xed, 0x4d};      // ei; reti
+    std::copy(std::begin(rst18), std::end(rst18), rom.begin() + 0x18);
+    dsp::SeibuSound snd(3579545);
+    snd.load_program(rom, false);
+    snd.reset();
+    snd.run(200);
+    snd.main_write(0, 0x41);
+    snd.main_write(2, 0);  // command pending
+    check(snd.main_read(5) == 1, "Seibu sound: main-to-sound command pending");
+    snd.main_write(4, 0);  // RST 18h
+    snd.run(400);
+    check(snd.main_read(2) == 0x42, "Seibu sound: RST 18h handler answers the command");
+    check(snd.main_read(5) == 0, "Seibu sound: the reply clears the pending flag");
+    snd.main_write(0, 0x10);
+    snd.main_write(4, 0);
+    snd.run(400);
+    check(snd.main_read(2) == 0x11, "Seibu sound: a second command after the end of interrupt");
+    std::vector<int16_t> audio;
+    snd.drain_audio(audio);
+    check(audio.size() >= 10, "Seibu sound: samples generated while the Z80 runs");
+}
+
+void test_bloodbros_if_present() {
+    const char* path = "/tmp/roms/bloodbros.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_bloodbros_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::BloodBros m;
+    std::string err;
+    check(m.init(path, &err), "Blood Bros. ROMs load");
+    if (!err.empty()) std::printf("bloodbros init: %s\n", err.c_str());
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 0; f < 900; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 600 && f < 605;
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(c.size() > 16, "Blood Bros. draws its attract mode");
+    check(m.sound().rst18_count() > 0, "Blood Bros. sends commands to the Seibu sound CPU");
+    check(peak > 500, "Blood Bros. makes sound");
+}
+
+void test_blueprint_if_present() {
+    const char* path = "/tmp/roms/blueprnt.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_blueprint_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::Blueprint m;
+    std::string err;
+    check(m.init(path, &err), "Blue Print ROMs load");
+    if (!err.empty()) std::printf("blueprnt init: %s\n", err.c_str());
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 0; f < 600; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 200 && f < 206;
+        in.player1.start = f >= 300 && f < 306;
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(c.size() > 8, "Blue Print draws the maze");
+    check(m.sound_nmis() > 0, "Blue Print sends commands to the sound CPU");
+    check(peak > 1000 && peak < 32767, "Blue Print makes sound without clipping");
+}
+
+void test_bombjack_if_present() {
+    const char* path = "/tmp/roms/bombjack.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_bombjack_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::BombJack m;
+    std::string err;
+    check(m.init(path, &err), "Bomb Jack ROMs load");
+    if (!err.empty()) std::printf("bombjack init: %s\n", err.c_str());
+    check(m.screen_width() == 224 && m.screen_height() == 256, "Bomb Jack is a vertical game");
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 0; f < 2300; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 1600 && f < 1606;
+        in.player1.start = f >= 1700 && f < 1706;
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(c.size() >= 20, "Bomb Jack draws a round (background picture and sprites)");
+    check(m.sound_commands() > 0, "Bomb Jack sends commands to the sound CPU");
+    check(peak > 1000 && peak < 32767, "Bomb Jack makes sound without clipping");
+}
+
+void test_boogwing_if_present() {
+    const char* path = "/tmp/roms/boogwing.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_boogwing_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::BoogieWings m;
+    std::string err;
+    check(m.init(path, &err), "Boogie Wings ROMs load");
+    if (!err.empty()) std::printf("boogwing init: %s\n", err.c_str());
+    check(m.screen_width() == 320 && m.screen_height() == 240, "Boogie Wings screen is 320x240");
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 1; f <= 2400; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 600 && f < 606;
+        in.player1.start = f >= 660 && f < 666;
+        const int phase = (f / 60) % 4;
+        if (f > 720) {
+            in.player1.left = phase == 0;
+            in.player1.up = phase == 1;
+            in.player1.right = phase == 2;
+            in.player1.down = phase == 3;
+            in.player1.button1 = (f % 20) < 10;
+        }
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(c.size() >= 100, "Boogie Wings draws the playfields and sprites (DECO 56 graphics)");
+    check(m.sound_commands() > 100, "Boogie Wings sends sound commands through the DECO 104");
+    check(peak > 1000 && peak < 32767, "Boogie Wings makes sound without clipping");
+    // Player 1 score: 8 BCD digits at $2080ca, added with ABCD from a table in
+    // the encrypted ROM (data view, not the opcode one).
+    const uint32_t score = uint32_t(m.ram_word(0x4065)) << 16 | m.ram_word(0x4066);
+    bool bcd = true;
+    for (int i = 0; i < 8; ++i) bcd = bcd && ((score >> (4 * i)) & 0xf) <= 9;
+    check(score > 0 && score < 0x09999999 && bcd, "Boogie Wings scores points in BCD");
+}
+
+void test_brkthru_if_present() {
+    const char* path = "/tmp/roms/brkthru.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_brkthru_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::BreakThru m;
+    std::string err;
+    check(m.init(path, &err), "Break Thru ROMs load");
+    if (!err.empty()) std::printf("brkthru init: %s\n", err.c_str());
+    check(m.screen_width() == 240 && m.screen_height() == 240, "Break Thru screen is 240x240");
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 1; f <= 2100; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 1200 && f < 1206;
+        in.player1.start = f >= 1260 && f < 1266;
+        in.player1.right = f > 1320;
+        in.player1.button1 = f > 1320 && (f % 20) < 10;
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+        if (f == 1800) {  // in the first stage
+            std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+            check(c.size() >= 20, "Break Thru draws the scrolling tiles, sprites and text");
+        }
+    }
+    check(m.sound_commands() > 5, "Break Thru sends sound commands after a coin");
+    check(peak > 1000 && peak < 32767, "Break Thru makes sound without clipping");
+}
+
 void test_blktiger_if_present() {
     const char* path = "/tmp/roms/blktiger/blktiger.zip";
     if (!std::filesystem::exists(path)) {
@@ -10893,6 +11096,12 @@ int main() {
     test_model3_swtrilgy_if_present();
     test_bionicc_if_present();
     test_blktiger_if_present();
+    test_seibu_sound_command_irq();
+    test_bloodbros_if_present();
+    test_blueprint_if_present();
+    test_bombjack_if_present();
+    test_boogwing_if_present();
+    test_brkthru_if_present();
     test_blockout_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");

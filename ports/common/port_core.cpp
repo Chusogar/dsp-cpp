@@ -15,6 +15,13 @@
 #include "font8x8.h"
 #include "frontend/machine_registry.h"
 
+// Defined by the C files of tools/embed_media.py since --entry; weak so that
+// files written by older versions still link (their address is then null).
+extern "C" {
+extern const DspEmbeddedEntry dsp_embedded_entries[] __attribute__((weak));
+extern const size_t dsp_embedded_entry_count __attribute__((weak));
+}
+
 namespace dsp {
 namespace port {
 
@@ -310,6 +317,7 @@ private:
     Hal& hal_;
     std::string root_;
     MenuKeys keys_;
+    std::vector<MenuEntry> embedded_;  // games compiled in, listed first
 };
 
 std::string Port::resolve(const std::string& path) const {
@@ -357,10 +365,10 @@ void Port::message(const std::string& title, const std::string& text, bool wait)
 // Menu entries: <root>/dsp/*.txt command files, then <root>/roms/<name>.zip
 // (or folder) for each built-in driver name or alias.
 std::vector<MenuEntry> Port::scan_entries(std::string* note) {
-    std::vector<MenuEntry> entries;
+    std::vector<MenuEntry> entries = embedded_;
     const auto& drivers = list_drivers();
     if (root_.empty()) {
-        *note = "No SD card.";
+        if (entries.empty()) *note = "No SD card.";
         return entries;
     }
     std::error_code ec;
@@ -400,7 +408,7 @@ std::vector<MenuEntry> Port::scan_entries(std::string* note) {
             break;
         }
     }
-    if (entries.empty()) {
+    if (entries.empty() && embedded_.empty()) {
         std::string list;
         for (const DriverInfo& d : drivers) list += (list.empty() ? "" : ", ") + d.name;
         *note = "Nothing to start. Copy ROM sets to " + root_ + "/roms/NAME.zip (or a folder) or "
@@ -592,12 +600,25 @@ int Port::run(int max_frames) {
         if (!hal_.mount_embedded(dsp_embedded_files, dsp_embedded_file_count, &dir, &error)) {
             message("Embedded media", error, true);
         } else {
-            for (const char* const* a = dsp_embedded_args; a && *a; ++a) {
-                std::string v = *a;
-                if (v.compare(0, 2, "@/") == 0) v = (fs::path(dir) / v.substr(2)).string();
-                args.push_back(v);
+            auto expand = [&](const char* const* list) {
+                std::vector<std::string> out;
+                for (const char* const* a = list; a && *a; ++a) {
+                    std::string v = *a;
+                    if (v.compare(0, 2, "@/") == 0) v = (fs::path(dir) / v.substr(2)).string();
+                    out.push_back(v);
+                }
+                return out;
+            };
+            const size_t count = &dsp_embedded_entry_count ? dsp_embedded_entry_count : 0;
+            if (count > 1 && &dsp_embedded_entries) {
+                // Several games: they head the menu instead of starting.
+                for (size_t i = 0; i < count; ++i)
+                    embedded_.push_back(MenuEntry{std::string(dsp_embedded_entries[i].label) + " (built in)",
+                                                  expand(dsp_embedded_entries[i].args)});
+            } else {
+                args = expand(dsp_embedded_args);
+                from_start = true;
             }
-            from_start = true;
         }
     }
     if (!from_start && !root_.empty()) {

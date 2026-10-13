@@ -99,7 +99,8 @@ public:
     uint32_t pc() const { return pc_.l; }
     uint32_t ppc() const { return ppc_.l; }
     uint16_t peek_word(uint32_t address) { return getword(address); }
-    // True while fetching instructions / extension words (FD1089 opcode stream).
+    // True only while fetching instructions / extension words (the opcode
+    // stream of the FD1089/FD1094/DECO 102 encrypted ROMs).
     bool opcode() const { return opcode_; }
 
     std::array<Reg32, 8> d{};
@@ -173,7 +174,7 @@ private:
 
     uint32_t clock_;
     Type type_;
-    bool opcode_ = true;
+    bool opcode_ = false;
     bool prefetch_ = false;
     uint32_t exceptions_ = 0;  // exceptions taken through exception()
     uint32_t pq_addr_ = 0;  // address of pq_val_[0]

@@ -210,6 +210,48 @@ set(DSP_PORT_SOURCES_blockout
   src/sound/okim6295.cpp
   src/sound/ym2151.cpp
 )
+set(DSP_PORT_SOURCES_bloodbros
+  src/cpu/m68000.cpp
+  src/cpu/z80.cpp
+  src/drivers/arcade/bloodbros.cpp
+  src/machine/seibu_sound.cpp
+  src/sound/okim6295.cpp
+  src/sound/ym3812.cpp
+  src/video/gfx.cpp
+)
+set(DSP_PORT_SOURCES_blueprint
+  src/cpu/z80.cpp
+  src/drivers/arcade/blueprint.cpp
+  src/sound/ay8910.cpp
+  src/video/gfx.cpp
+)
+set(DSP_PORT_SOURCES_bombjack
+  src/cpu/z80.cpp
+  src/drivers/arcade/bombjack.cpp
+  src/machine/sega_decrypt.cpp
+  src/sound/ay8910.cpp
+  src/video/gfx.cpp
+)
+set(DSP_PORT_SOURCES_boogwing
+  src/cpu/hu6280.cpp
+  src/cpu/m68000.cpp
+  src/drivers/arcade/boogwing.cpp
+  src/machine/deco146.cpp
+  src/machine/deco_crypt.cpp
+  src/sound/okim6295.cpp
+  src/sound/ym2151.cpp
+  src/video/deco16ic.cpp
+  src/video/gfx.cpp
+)
+set(DSP_PORT_SOURCES_brkthru
+  src/cpu/m6809.cpp
+  src/drivers/arcade/brkthru.cpp
+  src/sound/ay8910.cpp
+  src/sound/fmopn.cpp
+  src/sound/ym2203.cpp
+  src/sound/ym3812.cpp
+  src/video/gfx.cpp
+)
 set(DSP_PORT_SOURCES_bublbobl
   src/cpu/hd63701.cpp
   src/cpu/z80.cpp

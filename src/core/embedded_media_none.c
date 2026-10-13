@@ -5,3 +5,5 @@
 const DspEmbeddedFile dsp_embedded_files[] = {{0, 0, 0}};
 const size_t dsp_embedded_file_count = 0;
 const char* const dsp_embedded_args[] = {0};
+const DspEmbeddedEntry dsp_embedded_entries[] = {{0, 0}};
+const size_t dsp_embedded_entry_count = 0;

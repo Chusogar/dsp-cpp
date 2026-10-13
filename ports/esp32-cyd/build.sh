@@ -6,6 +6,8 @@
 #   ./build.sh --panel st7789                    CYD2USB (ST7789 display)
 #   ./build.sh -d a2600 --embed-game a2600 --embed-rom ~/roms/game.a26
 #   ./build.sh --psram                           board with PSRAM (e.g. WROVER module fitted)
+#   ./build.sh -d "c64;spectrum" --embed-entry "C64=--game c64 $HOME/roms/c64" \
+#              --embed-entry "Spectrum=--game spectrum48 $HOME/roms/zx48"   several built-in games
 #   ./build.sh -p /dev/ttyUSB0                   build and upload
 # Panel, touch and pin options are passed to prepare.py (see its --help).
 #
@@ -25,7 +27,7 @@ while [ $# -gt 0 ]; do
     -p|--port) PORT="$2"; shift 2 ;;
     -b|--build-dir) BUILD="$2"; shift 2 ;;
     --psram) PSRAM=enabled; shift ;;
-    --embed-game|--embed-rom|--embed-tape|--embed-disk|--embed-cart|--embed-arg|--panel|--lcd-mhz|\
+    --embed-game|--embed-rom|--embed-tape|--embed-disk|--embed-cart|--embed-arg|--embed-entry|--panel|--lcd-mhz|\
     --touch-cal|--buttons|--sd-pins)
       PREP+=("$1" "$2"); shift 2 ;;
     --invert|--no-invert|--swap-colours|--flip|--touch-swap|--touch-flip-x|--touch-flip-y|--touch-debug)

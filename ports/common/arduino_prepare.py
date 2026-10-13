@@ -86,6 +86,8 @@ def main(port_dir, sketch, title, default_drivers, add_options=None, config=None
     p.add_argument("--embed-disk", action="append", default=[])
     p.add_argument("--embed-cart", action="append", default=[])
     p.add_argument("--embed-arg", action="append", default=[])
+    p.add_argument("--embed-entry", action="append", default=[],
+                   help='several built-in games: "LABEL=COMMAND LINE" each (see tools/embed_media.py)')
     if add_options:
         add_options(p)
     p.add_argument("--print-flags", action="store_true", help="print the -I flags and exit")
@@ -115,7 +117,11 @@ def main(port_dir, sketch, title, default_drivers, add_options=None, config=None
     targets += [os.path.join(COMMON, "port_core.cpp"), os.path.join(COMMON, "memfs.cpp")]
     targets += [os.path.join(COMMON, e) for e in extra]
     targets += [os.path.join(zlib_dir, z + ".c") for z in ZLIB_FILES]
-    if args.embed_rom:
+    if args.embed_entry:
+        cmd = [sys.executable, os.path.join(REPO, "tools", "embed_media.py"), "-o",
+               os.path.join(gen, "embedded_media.c")] + [f"--entry={e}" for e in args.embed_entry]
+        subprocess.run(cmd, check=True)
+    elif args.embed_rom:
         if not args.embed_game:
             sys.exit("prepare: --embed-rom needs --embed-game")
         cmd = [sys.executable, os.path.join(REPO, "tools", "embed_media.py"), "-o",
@@ -139,5 +145,7 @@ def main(port_dir, sketch, title, default_drivers, add_options=None, config=None
         for line in (config(args) if config else []):
             f.write(line + "\n")
     print(f"prepare: {len(drivers)} driver(s) ({' '.join(drivers)}), {len(sources)} dsp source files"
-          f"{', embedded ' + args.embed_game if args.embed_rom else ''} -> {os.path.relpath(gen, port_dir)}")
+          f"{', embedded ' + args.embed_game if args.embed_rom else ''}"
+          f"{', %d built-in games' % len(args.embed_entry) if args.embed_entry else ''}"
+          f" -> {os.path.relpath(gen, port_dir)}")
     return args

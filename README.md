@@ -42,6 +42,11 @@ explains the port workflow and comes with a driver skeleton (`tools/new_driver.p
 | Arabian driver | `src/arcade/arabian_hw.pas` | Z80 + blitter bitmap, AY-3-8910 ports, MB8841 input MCU |
 | Bionic Commando driver | `src/arcade/bioniccommando_hw.pas` | 68000 + Z80/YM2151 + i8751 DMA MCU, three tilemaps, buffered sprites |
 | Black Tiger driver | `src/arcade/blacktiger_hw.pas` | Z80 + banked ROM, Z80/2× YM2203, i8751 protection latches, split-priority background |
+| Blood Bros. driver | `src/arcade/bloodbros_hw.pas` | 68000, Seibu sound (Z80 + YM3812 + OKI MSM6295, RST 10h/18h controller), two 16x16 tile layers, text, multi-tile sprites with priority; Sky Smasher too |
+| Blue Print driver | `src/arcade/blueprint_hw.pas` | Z80, column-scrolled tilemap with priority tiles, 8x16 sprites, resistor palette, sound Z80 with 2× AY-3-8910 (DIPs through AY ports); Saturn and Grasspin too |
+| Bomb Jack driver | `src/arcade/bombjack_hw.pas` | Z80, text layer, 16 ROM background pictures, 16x16/32x32 sprites, sound Z80 with 3× AY-3-8910; Calorie Kun (Sega 317-000x opcodes) too |
+| Boogie Wings driver | `src/arcade/boogiewings_hw.pas` | 68000 with DECO 102 encrypted program, DECO 104 protection, two DECO 16IC tilemap chips (5 bpp layer, DECO 56 graphics), two sprite sets, DECO ACE palette fades, HuC6280 with YM2151 and two banked OKI M6295 |
+| Break Thru driver | `src/arcade/breakthru_hw.pas` | 6809 with banked ROM, text layer, scrolling 3 bpp 16x16 tile layer, 16x16/16x32 sprites with priority, sound 6809 with YM2203 and YM3526; Darwin 4078 too |
 | Block Out driver | `src/arcade/blockout_hw.pas` | 68000 bitmap (front/back + 1-bit overlay), Z80/YM2151 + OKI MSM6295 |
 | MCR driver | `src/arcade/mcr_hw.pas` | Tapper / Tron family: dual Z80, CTC, SSIO |
 | ZX Spectrum Next | MAME `specnext` (TBBlue core 3.02) | Z80N, MMU/DivMMC/Multiface, ULA/LoRes/Layer 2/tilemap/sprites/copper, zxnDMA, CTC, IM2, 3×AY + DACs, SPI SD card; boots the firmware and NextZXOS from an SD image |
@@ -211,6 +216,18 @@ The script can also be run by hand and its output given to CMake with
 ```bash
 python3 tools/embed_media.py -o blockout_media.c --game blockout --rom blockout.zip
 python3 tools/embed_media.py -o amiga_media.c --game amiga --rom a500.zip --disk game.adf
+```
+
+Several games go in with one `--entry "LABEL=COMMAND LINE"` each; every
+argument that names an existing file or folder is embedded. The
+microcontroller ports list them in their menu (`--embed-entry` in their build
+scripts, `DSP_EMBED_ENTRIES` in their CMake builds); the desktop build starts
+the first one:
+
+```bash
+python3 tools/embed_media.py -o games.c \
+    --entry "Atari Tetris=--game atetris roms/atetris.zip" \
+    --entry "ZX Spectrum 48K=--game spectrum48 roms/zx48"
 ```
 
 At start-up the files are written to a temporary directory (removed on exit;
@@ -1734,6 +1751,142 @@ difficulty, demo sounds, continue, cabinet).
 ROMs: `bdu-01a.5e`, `bdu-02a.6e`, `bdu-03a.8e`, `bd-04.9e`, `bd-05.10e`
 (main), `bd-06.1l` (sound), `bd.6k` (i8751), `bd-15.2n` (text), `bd-11.4b` …
 `bd-14.9b` (background), `bd-07.4a` … `bd-10.9a` (sprites).
+### Blood Bros. and Sky Smasher
+
+TAD, 1990 (`--game bloodbros` or `bloodbro`, MAME set `bloodbro`) and Nihon System, 1990
+(`--game skysmash`, MAME set `skysmash`), ported from dsp-emulator's
+`bloodbros_hw.pas` (MAME `bloodbros.cpp`). A 10 MHz 68000 draws an 8x8 text
+layer, two scrolling 512x256 layers of 16x16 tiles and 512 sprites built from
+up to 8x8 tiles, whose priority bit puts them behind the front layer; CRT
+register 0x0e switches the layers off. Colours are xxxxBBBBGGGGRRRR. Sound is
+the Seibu sound system (`src/machine/seibu_sound.cpp`): a 3.58 MHz Z80 with a
+YM3812 and an OKI MSM6295, commands posted through two latches with an RST 18h
+interrupt (RST 10h for the YM3812 timers), and the coin switches read by the
+sound CPU. Sky Smasher is vertical (shown turned 270 degrees) and swaps two
+address bits of the CRT registers.
+
+```bash
+./build/dsp --game bloodbros /path/to/bloodbro.zip
+./build/dsp --game skysmash /path/to/skysmash.zip
+```
+
+Controls: arrows, buttons 1-3, 5/6 = coins, 1/2 = start. The DIP switches are
+one 16-bit word: bank 0 is its low byte (coinage, start coin), bank 1 the high
+byte (lives, bonus, difficulty, continue, demo sounds); all on by default.
+
+ROMs (Blood Bros.): `1.u022.8n` … `4.u023.7l` (main), `bb_07.u1016.6a` (sound),
+`bb_08.u095.5a` (samples), `bb_05.u061.6f`, `bb_06.u063.6d` (text),
+`blood_bros_bk__=c=1990_tad_corp.u064.4d` (tiles),
+`blood_bros_obj__=c=1990_tad_corp.u078.2n` (sprites). Sky Smasher: `rom1`
+… `rom10`.
+
+### Blue Print, Saturn and Grasspin
+
+Zilec / Bally Midway, 1982 (`--game blueprnt` or `blueprint`, MAME set
+`blueprnt`), Jaleco's Saturn (`--game saturnzi`) and Grasspin
+(`--game grasspin`), 1983, ported from dsp-emulator's `blueprint_hw.pas`
+(MAME `blueprnt.cpp`). A 3.5 MHz Z80 draws a 32x32 tilemap of 8x8 characters
+whose 32 columns scroll vertically one by one; the attribute of each tile
+picks its colour, its bank (through the tile stored before it) and whether it
+covers the 64 8x16 sprites. There is no colour PROM: the palette comes from
+the resistor logic. A 1.25 MHz sound Z80, woken by NMI for each command and by
+a 240 Hz timer, plays two AY-3-8910s; the first one's port A latches the DIP
+value the main CPU reads, the second one's ports read the two DIP banks. The
+monitor is vertical (the picture is turned 270 degrees).
+
+```bash
+./build/dsp --game blueprnt /path/to/blueprnt.zip
+```
+
+Controls: arrows, button 1 (Saturn and Grasspin also button 2), 5/6 = coins,
+1/2 = start. DIP bank 0 is switch A (bonus life, free play, maze monster,
+coinage) and bank 1 is switch B (lives, cabinet, difficulty).
+
+ROMs (Blue Print): `bp-1.1m` … `bp-5.1s` (main), `snd-1.3u`, `snd-2.3v`
+(sound), `bg-1.3c`, `bg-2.3d` (characters), `red.17d`, `blue.18d`,
+`green.20d` (sprites).
+
+### Bomb Jack and Calorie Kun
+
+Tehkan, 1984 (`--game bombjack`, MAME set `bombjack`) and Sega's Calorie Kun
+vs Moguranian, 1986 (`--game calorie`), ported from dsp-emulator's
+`bombjack_hw.pas` (MAME `bombjack.cpp` / `calorie.cpp`). A Z80 draws a
+32x32 text layer over one of 16 background pictures stored as 16x16 tile maps
+in ROM, plus 16x16 and 32x32 sprites, in 128 colours of 4-bit RGB. A second
+Z80 plays three AY-3-8910s and reads its commands from a latch that clears
+when read. On Bomb Jack (4 MHz, vertical monitor) the main CPU runs on a
+VBLANK NMI and two registers choose which sprite pairs are drawn big; Calorie
+Kun's opcodes are scrambled by a Sega 317-000x chip, both CPUs take IRQs and a
+sprite attribute bit makes it big.
+
+```bash
+./build/dsp --game bombjack /path/to/bombjack.zip
+```
+
+Controls: arrows, button 1 = jump (Calorie Kun: buttons 1 and 2), 5/6 =
+coins, 1/2 = start. DIP bank 0 is switch A (coinage, lives, cabinet, demo
+sounds) and bank 1 switch B (bonus life, bird speed, enemies, special coin).
+Bomb Jack starts with its ROM/RAM check screen, as the arcade board does.
+
+ROMs (Bomb Jack): `09_j01b.bin` … `12_n01b.bin`, `13.1r` (main),
+`01_h03t.bin` (sound), `03_e08t.bin` … `05_k08t.bin` (text),
+`06_l08t.bin` … `08_r08t.bin` (background tiles), `02_p04t.bin` (background
+maps), `14_j07b.bin` … `16_m07b.bin` (sprites).
+
+### Boogie Wings
+
+Data East, 1992 (`--game boogwing`, MAME set `boogwing`), ported from
+dsp-emulator's `boogiewings_hw.pas` (MAME `boogwing.cpp`). The 68000 runs a
+program encrypted by the DECO 102 (decrypted at load time into separate opcode
+and data views, see `src/machine/deco_crypt.cpp`); the DECO 104 protection
+chip (`src/machine/deco146.cpp`) scrambles the words written to it, reads the
+joysticks, coins and DIP switches and passes the sound commands. Two DECO
+16IC chips (`src/video/deco16ic.cpp`) give four playfields with row and column
+scroll, one of them with 5 bpp 16x16 tiles; all tile graphics are encrypted
+by the DECO 56. Two sets of 256 sprites, up to 8 tiles high, and 2048 colours
+that the DECO ACE fades. The sound board is a HuC6280 with a YM2151 and two
+OKI M6295 whose sample banks are selected through the YM2151 port.
+
+```bash
+./build/dsp --game boogwing /path/to/boogwing.zip
+```
+
+Controls: arrows, buttons 1-3, 5/6 = coins, 1/2 = start. DIP bank 0 is the
+low byte of the 16-bit switch word (coinage, flip screen, continue coin) and
+bank 1 the high byte (lives, difficulty, free play, demo sounds). The demo
+plays without sound when the demo sounds switch is off, as on the board.
+
+ROMs: `kn_00-2.2b`, `kn_02-2.2e`, `kn_01-2.4b`, `kn_03-2.4e` (main),
+`km06.18p` (sound), `km05.9e`, `km04.8e` (characters), `mbd-00.8b` …
+`mbd-04.14b` (tiles), `mbd-05.16b` … `mbd-08.19b` (sprites), `mbd-10.17p`,
+`mbd-09.16p` (samples).
+
+### Break Thru and Darwin 4078
+
+Data East, 1986 (`--game brkthru`, MAME set `brkthru`; `--game darwin`),
+ported from dsp-emulator's `breakthru_hw.pas` (MAME `brkthru.cpp`). A 6809
+at 1.5 MHz with eight 8 KB ROM banks draws a 32x32 text layer, a 512x256
+layer of 3 bpp 16x16 tiles scrolled horizontally (eight groups of 128 tiles;
+the colour register picks the pair in use) and 64 sprites of 16x16 or 16x32
+whose priority bit puts them behind the tile layer. 256 colours from two
+PROMs. A second 6809 plays a YM2203 and a YM3526 and reads its commands from
+a latch with NMI; the coins interrupt the main CPU. Darwin 4078 moves the I/O
+and sprite RAM and is a vertical game.
+
+```bash
+./build/dsp --game brkthru /path/to/brkthru.zip
+```
+
+Controls: arrows, button 1 = fire, button 2 = jump, 5/6 = coins, 1/2 =
+start. DIP bank 0 is switch A (coinage, enemy speed, control panel,
+cabinet) and bank 1 switch B (lives, bonus life, continue). The attract mode
+is silent, as on the board.
+
+ROMs (Break Thru): `brkthru.1` … `brkthru.4` (main), `brkthru.5` (sound),
+`brkthru.12` (characters), `brkthru.6` … `brkthru.8` (tiles), `brkthru.9`
+… `brkthru.11` (sprites), `brkthru.13`, `brkthru.14` (colour PROMs). Darwin
+4078 (`darw_01.rom` … `darw_12.rom`, `df.12`, `df.13`) is untested.
+
 ### Block Out
 
 Technos / California Dreams, 1989 (`--game blockout`, MAME set

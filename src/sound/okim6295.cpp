@@ -63,7 +63,7 @@ int OKIM6295::clock_adpcm(Voice& voice, uint8_t nibble) {
 }
 
 int OKIM6295::generate_adpcm(Voice& voice) {
-    size_t offset = size_t(voice.base_offset + (voice.sample >> 1));
+    size_t offset = size_t(bank_offset_) + voice.base_offset + (voice.sample >> 1);
     uint8_t byte = offset < rom_.size() ? rom_[offset] : 0;
     uint8_t nibble = (voice.sample & 1) == 0 ? uint8_t(byte >> 4) : uint8_t(byte & 0x0f);
     voice.sample++;
@@ -86,7 +86,7 @@ void OKIM6295::write(uint8_t value) {
             if ((mask & 1) == 0) continue;
             Voice& voice = voices_[size_t(index)];
             if (voice.playing) continue;
-            size_t base = size_t(command_) * 8;
+            size_t base = size_t(bank_offset_) + size_t(command_) * 8;
             auto rom_byte = [this](size_t offset) {
                 return offset < rom_.size() ? uint32_t(rom_[offset]) : 0u;
             };

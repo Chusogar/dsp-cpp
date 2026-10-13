@@ -60,9 +60,11 @@ ports/
   `/sd/dsp/autostart.txt` is started straight away. F12 (or Start+Select on a
   gamepad, held for half a second) leaves the game and returns to the menu.
 * **Embedded media.** As on the desktop, a game can be compiled into the
-  firmware (`--embed-game` / `--embed-rom` in both build scripts, see
-  `tools/embed_media.py`); it starts without an SD card. The arrays stay in
-  flash and are read in place.
+  firmware (`--embed-game` / `--embed-rom` in the build scripts, see
+  `tools/embed_media.py`); it starts without an SD card. Several games can be
+  built in with one `--embed-entry "LABEL=--game NAME path ..."` each: they
+  head the menu instead of starting. The arrays stay in flash and are read in
+  place.
 * **Keys.** As on the desktop: arrows, Ctrl/Space and Z/X/C for the buttons,
   1/2 start, 5/6 coin, F1 service; home computers get the whole keyboard.
 

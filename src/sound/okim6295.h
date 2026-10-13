@@ -15,6 +15,8 @@ public:
     OKIM6295(uint32_t clock, bool pin7_high);
 
     void set_rom(std::vector<uint8_t> rom) { rom_ = std::move(rom); }
+    // Offset added to every ROM access: selects a 256 KB bank of a larger ROM.
+    void set_rom_bank_offset(uint32_t offset) { bank_offset_ = offset; }
     // CPS1 sound maps $F006 to pin 7 (divisor 132 when high, 165 when low).
     void set_pin7(bool high) { divisor_ = high ? 132 : 165; }
 
@@ -47,6 +49,7 @@ private:
     uint32_t clock_;
     int divisor_;
     std::vector<uint8_t> rom_;
+    uint32_t bank_offset_ = 0;
     std::array<Voice, kVoices> voices_{};
     int command_ = -1;
 };

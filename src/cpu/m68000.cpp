@@ -106,6 +106,7 @@ void M68000::reset() {
     a[7].set_wl(getword(2));
     pc_.set_wh(getword(4));
     pc_.set_wl(getword(6));
+    opcode_ = false;
     irq_.fill(IrqLine::Clear);
     halt_request_ = IrqLine::Clear;
     reset_request_ = IrqLine::Clear;
@@ -172,7 +173,13 @@ uint16_t M68000::prog_word(uint32_t address) {
             if (address == pq_addr_ + uint32_t(i) * 2) return pq_val_[i];
         }
     }
-    return getword(address);
+    // Instruction stream: opcode() is true only during these reads, so the
+    // drivers with encrypted ROMs serve the decrypted opcodes here and the
+    // data view to every other access (ABCD, MOVEM, stack...).
+    opcode_ = true;
+    const uint16_t value = getword(address);
+    opcode_ = false;
+    return value;
 }
 
 uint16_t M68000::get_flags() const {
@@ -283,11 +290,10 @@ uint8_t M68000::read_b(uint8_t dir) {
     } else if (dir == 0x3c) {
         ea_ = pc_.l;
         pc_.l += 2;
-        return uint8_t(getword(ea_) & 0xff);
+        return uint8_t(prog_word(ea_) & 0xff);
     }
     opcode_ = false;
     const uint8_t value = getbyte(ea_);
-    opcode_ = true;
     return value;
 }
 
@@ -353,11 +359,10 @@ uint16_t M68000::read_w(uint8_t dir) {
     } else if (dir == 0x3c) {
         ea_ = pc_.l;
         pc_.l += 2;
-        return getword(ea_);
+        return prog_word(ea_);
     }
     opcode_ = false;
     const uint16_t value = getword(ea_);
-    opcode_ = true;
     return value;
 }
 
@@ -426,7 +431,6 @@ uint32_t M68000::read_l(uint8_t dir) {
     }
     opcode_ = false;
     const uint32_t value = (uint32_t(getword(ea_)) << 16) | getword(ea_ + 2);
-    opcode_ = true;
     return value;
 }
 
@@ -530,7 +534,6 @@ void M68000::exception(uint32_t vector, int cycles) {
     }
     opcode_ = false;
     pc_.l = (uint32_t(getword(vec_addr)) << 16) | getword(vec_addr + 2);
-    opcode_ = true;
 }
 
 bool M68000::check_supervisor() {
@@ -2567,7 +2570,6 @@ void M68000::group_4(uint16_t instruction) {
                 const uint32_t vec_addr = vbr_ + 0x80u + uint32_t(instruction & 0x0f) * 4u;
                 pc_.set_wh(getword(vec_addr));
                 pc_.set_wl(getword(vec_addr + 2));
-                opcode_ = true;
             } else if (dir <= 0x17) {  // link
                 cycles_ += 16;
                 const int16_t displacement = int16_t(fetch_word());
@@ -2651,7 +2653,6 @@ void M68000::group_4(uint16_t instruction) {
                             const uint32_t vec_addr = vbr_ + 7u * 4u;
                             pc_.set_wh(getword(vec_addr));
                             pc_.set_wl(getword(vec_addr + 2));
-                            opcode_ = true;
                         } else {
                             cycles_ += 4;
                         }
@@ -2796,7 +2797,6 @@ bool M68000::take_irq() {
         }
         pc_.set_wh(getword(vbr_ + vec_addr));
         pc_.set_wl(getword(vbr_ + vec_addr + 2));
-        opcode_ = true;
         if (irq_[size_t(level)] == IrqLine::Hold) irq_[size_t(level)] = IrqLine::Clear;
         cc.im = uint8_t(level);
         return true;

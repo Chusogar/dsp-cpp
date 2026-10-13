@@ -23,6 +23,16 @@ extern const size_t dsp_embedded_file_count;
 // of an argument stands for the directory the files are written to.
 extern const char* const dsp_embedded_args[];
 
+// Every embedded game (embed_media.py --entry; one entry otherwise), listed by
+// the microcontroller ports' menus. dsp_embedded_args is the first one's.
+// Files written by older versions of embed_media.py do not define these.
+typedef struct DspEmbeddedEntry {
+    const char* label;
+    const char* const* args;  // NULL terminated, "@/" as above
+} DspEmbeddedEntry;
+extern const DspEmbeddedEntry dsp_embedded_entries[];
+extern const size_t dsp_embedded_entry_count;
+
 #ifdef __cplusplus
 }
 

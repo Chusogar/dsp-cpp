@@ -183,6 +183,15 @@ add_library(dsp_lib STATIC
   src/drivers/arcade/arabian.cpp
   src/drivers/arcade/bionicc.cpp
   src/drivers/arcade/blktiger.cpp
+  src/drivers/arcade/bloodbros.cpp
+  src/drivers/arcade/blueprint.cpp
+  src/drivers/arcade/bombjack.cpp
+  src/drivers/arcade/boogwing.cpp
+  src/drivers/arcade/brkthru.cpp
+  src/machine/deco_crypt.cpp
+  src/machine/deco146.cpp
+  src/video/deco16ic.cpp
+  src/machine/seibu_sound.cpp
   src/drivers/arcade/blockout.cpp
   src/drivers/arcade/mikie.cpp
   src/drivers/arcade/gauntlet.cpp

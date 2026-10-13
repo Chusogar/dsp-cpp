@@ -90,6 +90,10 @@ Options (all go to `prepare.py`, see `python3 prepare.py --help`):
 ./build.sh --touch-swap --touch-flip-x          # if the touch axes are swapped/mirrored
 ./build.sh --buttons 0,22,27,-1                 # A=BOOT, B=GPIO22, START=GPIO27
 ./build.sh -d a2600 --embed-game a2600 --embed-rom ~/roms/game.a26
+./build.sh -d "tetris_atari_hw;c64;spectrum" --psram \
+    --embed-entry "Atari Tetris=--game atetris $HOME/roms/atetris.zip" \
+    --embed-entry "Commodore 64=--game c64 $HOME/roms/c64" \
+    --embed-entry "ZX Spectrum 48K=--game spectrum48 $HOME/roms/zx48"
 ```
 
 To calibrate the touch screen: build with `--touch-debug`, open the serial
