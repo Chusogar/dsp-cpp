@@ -166,6 +166,9 @@
 #if DSP_DRIVER_BLOCKOUT
 #include "drivers/arcade/blockout.h"
 #endif
+#if DSP_DRIVER_CABAL
+#include "drivers/arcade/cabal.h"
+#endif
 #if DSP_DRIVER_SHAOLINSROAD
 #include "drivers/arcade/shaolinsroad.h"
 #endif
@@ -811,6 +814,9 @@ std::unique_ptr<Machine> create_machine(DriverQuery& q) {
 #endif
 #if DSP_DRIVER_BLOCKOUT
 	if (q.is("blockout")) return std::make_unique<dsp::BlockOut>();
+#endif
+#if DSP_DRIVER_CABAL
+	if (q.is("cabal")) return std::make_unique<dsp::Cabal>();
 #endif
 #if DSP_DRIVER_SHAOLINSROAD
 	if (q.is("shaolin") || q.is("shaolins")) return std::make_unique<dsp::ShaolinsRoad>();
