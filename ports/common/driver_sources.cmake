@@ -252,6 +252,12 @@ set(DSP_PORT_SOURCES_brkthru
   src/sound/ym3812.cpp
   src/video/gfx.cpp
 )
+set(DSP_PORT_SOURCES_btime
+  src/cpu/m6502.cpp
+  src/drivers/arcade/btime.cpp
+  src/sound/ay8910.cpp
+  src/video/gfx.cpp
+)
 set(DSP_PORT_SOURCES_bublbobl
   src/cpu/hd63701.cpp
   src/cpu/z80.cpp

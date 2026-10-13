@@ -348,6 +348,15 @@
     "src/video/gfx.cpp"
    ]
   },
+  "btime": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/drivers/arcade/btime.cpp",
+    "src/sound/ay8910.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
   "bublbobl": {
    "group": "arcade",
    "sources": [
