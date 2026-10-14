@@ -70,6 +70,7 @@
 #include "drivers/arcade/brkthru.h"
 #include "drivers/arcade/btime.h"
 #include "drivers/arcade/cabal.h"
+#include "drivers/arcade/centipede.h"
 #include "drivers/arcade/cninja.h"
 #include "machine/seibu_sound.h"
 #include "drivers/arcade/bionicc.h"
@@ -10674,6 +10675,65 @@ void test_btime_if_present() {
     check(peak > 1000 && peak < 32767, "BurgerTime makes sound without clipping");
 }
 
+void test_centipede_if_present() {
+    const char* path = "/tmp/roms/arcade/centiped.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_centipede_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::Centipede m(dsp::Centipede::Game::Centipede);
+    std::string err;
+    check(m.init(path, &err), "Centipede ROMs load");
+    if (!err.empty()) std::printf("centiped init: %s\n", err.c_str());
+    check(m.screen_width() == 240 && m.screen_height() == 256, "Centipede screen is 240x256");
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 1; f <= 1200; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 600 && f < 606;
+        in.player1.start = f >= 660 && f < 666;
+        in.player1.button1 = f > 700 && (f % 15) < 5;
+        in.player1.right = f > 720;
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(c.size() >= 4, "Centipede draws the playfield");
+    check(peak < 32767, "Centipede audio does not clip");
+}
+
+void test_millipede_if_present() {
+    const char* path = "/tmp/roms/arcade/milliped.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_millipede_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::Centipede m(dsp::Centipede::Game::Millipede);
+    std::string err;
+    check(m.init(path, &err), "Millipede ROMs load");
+    if (!err.empty()) std::printf("milliped init: %s\n", err.c_str());
+    check(m.screen_width() == 240 && m.screen_height() == 256, "Millipede screen is 240x256");
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 1; f <= 1200; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 600 && f < 606;
+        in.player1.start = f >= 660 && f < 666;
+        in.player1.button1 = f > 700 && (f % 15) < 5;
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(c.size() >= 4, "Millipede draws the playfield");
+    check(peak < 32767, "Millipede audio does not clip");
+}
+
 void test_cabal_if_present() {
     const char* path = "/tmp/roms/cabal.zip";
     if (!std::filesystem::exists(path)) {
@@ -11233,6 +11293,8 @@ int main() {
     test_brkthru_if_present();
     test_btime_if_present();
     test_cabal_if_present();
+    test_centipede_if_present();
+    test_millipede_if_present();
     test_cninja_if_present();
     test_robocop2_if_present();
     test_blockout_if_present();
