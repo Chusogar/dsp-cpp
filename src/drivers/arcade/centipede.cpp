@@ -379,7 +379,9 @@ void Centipede::run_frame() {
     for (int line = 0; line < kScanlines; ++line) {
         switch (line) {
             case 0:
-                if (game_ == Game::Centipede) dsw_c_ = uint8_t(dsw_c_ & ~0x40);
+                // VBLANK clear. Centipede reads it from DSWC; Millipede ORs
+                // DSWC into $2000 (same bit 6 as MAME's IN0 vblank).
+                dsw_c_ = uint8_t(dsw_c_ & ~0x40);
                 break;
             case 16:
             case 80:
@@ -395,7 +397,7 @@ void Centipede::run_frame() {
             case 240:
                 update_video();
                 cpu_.set_irq(IrqLine::Assert);
-                if (game_ == Game::Centipede) dsw_c_ = uint8_t(dsw_c_ | 0x40);
+                dsw_c_ = uint8_t(dsw_c_ | 0x40);
                 break;
             default:
                 break;
@@ -449,9 +451,8 @@ void Centipede::set_dip_switch(int bank, uint8_t value) {
     if (bank == 0) dsw_a_ = value;
     else if (bank == 1) dsw_b_ = value;
     else if (bank == 2) {
-        // Preserve the live vsync bit on Centipede.
-        if (game_ == Game::Centipede) dsw_c_ = uint8_t((dsw_c_ & 0x40) | (value & ~0x40));
-        else dsw_c_ = value;
+        // Preserve the live VBLANK bit (both games use dsw_c bit 6).
+        dsw_c_ = uint8_t((dsw_c_ & 0x40) | (value & ~0x40));
     }
 }
 
