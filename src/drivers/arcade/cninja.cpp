@@ -8,8 +8,8 @@
 namespace dsp {
 namespace {
 
-// Alternate names cover both Pascal dumps (*.rom) and MAME 0.260 non-merged.
-const std::vector<RomEntry> kProgram = {
+// --- Caveman Ninja ROMs (Pascal names | MAME 0.260 non-merged) ---
+const std::vector<RomEntry> kCninjaProgram = {
     {"gn-02-3.1k|gn-02-3.rom", 0x20000, 0x00000, 0x39aea12a},
     {"gn-05-2.3k|gn-05-2.rom", 0x20000, 0x00001, 0x0f4360ef},
     {"gn-01-2.1j|gn-01-2.rom", 0x20000, 0x40000, 0xf740ef7e},
@@ -17,20 +17,44 @@ const std::vector<RomEntry> kProgram = {
     {"gn-00.1h|gn-00.rom", 0x20000, 0x80000, 0x0b110b16},
     {"gn-03.1k|gn-03.rom", 0x20000, 0x80001, 0x1e28e697},
 };
-const std::vector<RomEntry> kSound = {{"gl-07.13k|gl-07.rom", 0x10000, 0, 0xca8bef96}};
-const std::vector<RomEntry> kChars = {{"gl-09.6z|gl-09.rom", 0x10000, 0, 0x5a2d4752},
-                                      {"gl-08.6y|gl-08.rom", 0x10000, 1, 0x33a2b400}};
-const std::vector<RomEntry> kTiles1 = {{"mag-02.4z|mag-02.rom", 0x80000, 0, 0xde89c69a}};
-const std::vector<RomEntry> kTiles2 = {{"mag-00.1y|mag-00.rom", 0x80000, 0x00000, 0xa8f05d33},
-                                       {"mag-01.1z|mag-01.rom", 0x80000, 0x80000, 0x5b399eed}};
-const std::vector<RomEntry> kSprites = {
+const std::vector<RomEntry> kCninjaSound = {{"gl-07.13k|gl-07.rom", 0x10000, 0, 0xca8bef96}};
+const std::vector<RomEntry> kCninjaChars = {{"gl-09.6z|gl-09.rom", 0x10000, 0, 0x5a2d4752},
+                                            {"gl-08.6y|gl-08.rom", 0x10000, 1, 0x33a2b400}};
+const std::vector<RomEntry> kCninjaTiles1 = {{"mag-02.4z|mag-02.rom", 0x80000, 0, 0xde89c69a}};
+const std::vector<RomEntry> kCninjaTiles2 = {{"mag-00.1y|mag-00.rom", 0x80000, 0x00000, 0xa8f05d33},
+                                             {"mag-01.1z|mag-01.rom", 0x80000, 0x80000, 0x5b399eed}};
+const std::vector<RomEntry> kCninjaSprites = {
     {"mag-03.9y|mag-03.rom", 0x80000, 0x000000, 0x2220eb9f},
     {"mag-05.12y|mag-05.rom", 0x80000, 0x000001, 0x56a53254},
     {"mag-04.9z|mag-04.rom", 0x80000, 0x100000, 0x144b94cc},
     {"mag-06.12z|mag-06.rom", 0x80000, 0x100001, 0x82d44749},
 };
-const std::vector<RomEntry> kOki1 = {{"gl-06.13j|gl-06.rom", 0x20000, 0, 0xd92e519d}};
-const std::vector<RomEntry> kOki2 = {{"mag-07.13f|mag-07.rom", 0x80000, 0, 0x08eb5264}};
+const std::vector<RomEntry> kCninjaOki1 = {{"gl-06.13j|gl-06.rom", 0x20000, 0, 0xd92e519d}};
+const std::vector<RomEntry> kCninjaOki2 = {{"mag-07.13f|mag-07.rom", 0x80000, 0, 0x08eb5264}};
+
+// --- Robocop 2 ROMs ---
+const std::vector<RomEntry> kRoboProgram = {
+    {"gq-03.k1", 0x20000, 0x00000, 0xa7e90c28}, {"gq-07.k3", 0x20000, 0x00001, 0xd2287ec1},
+    {"gq-02.j1", 0x20000, 0x40000, 0x6777b8a0}, {"gq-06.j3", 0x20000, 0x40001, 0xe11e27b5},
+    {"go-01-1.h1", 0x20000, 0x80000, 0xab5356c0}, {"go-05-1.h3", 0x20000, 0x80001, 0xce21bda5},
+    {"go-00.f1", 0x20000, 0xc0000, 0xa93369ea}, {"go-04.f3", 0x20000, 0xc0001, 0xee2f6ad9},
+};
+const std::vector<RomEntry> kRoboSound = {{"gp-09.k13", 0x10000, 0, 0x4a4e0f8d}};
+// Pascal loads gp10 at odd bytes, gp11 at even.
+const std::vector<RomEntry> kRoboChars = {{"gp11-1.z6", 0x10000, 0, 0x030ded47},
+                                          {"gp10-1.y6", 0x10000, 1, 0xd25d719c}};
+const std::vector<RomEntry> kRoboTiles1 = {{"mah-04.z4", 0x80000, 0x00000, 0x9b6ca18c},
+                                           {"mah-03.y4", 0x80000, 0x80000, 0x37894ddc}};
+const std::vector<RomEntry> kRoboTiles2 = {{"mah-01.z1", 0x80000, 0x000000, 0x26e0dfff},
+                                           {"mah-00.y1", 0x80000, 0x080000, 0x7bd69e41},
+                                           {"mah-02.a1", 0x80000, 0x100000, 0x328a247d}};
+const std::vector<RomEntry> kRoboSprites = {
+    {"mah-05.y9", 0x80000, 0x000000, 0x6773e613}, {"mah-08.y12", 0x80000, 0x000001, 0x88d310a5},
+    {"mah-06.z9", 0x80000, 0x100000, 0x27a8808a}, {"mah-09.z12", 0x80000, 0x100001, 0xa58c43a7},
+    {"mah-07.a9", 0x80000, 0x200000, 0x526f4190}, {"mah-10.a12", 0x80000, 0x200001, 0x14b770da},
+};
+const std::vector<RomEntry> kRoboOki1 = {{"gp-08.j13", 0x20000, 0, 0x365183b1}};
+const std::vector<RomEntry> kRoboOki2 = {{"mah-11.f13", 0x80000, 0, 0x642bc692}};
 
 bool load_interleaved(RomLoader& loader, const std::vector<RomEntry>& entries,
                       std::vector<uint8_t>& dest, std::string* error) {
@@ -54,7 +78,6 @@ GfxLayout char_layout() {
     return l;
 }
 
-// 16x16 tiles: high bitplanes live in the second half of the ROM region.
 GfxLayout tile16_layout(int total, int half_bytes) {
     GfxLayout l;
     l.width = l.height = 16;
@@ -68,7 +91,21 @@ GfxLayout tile16_layout(int total, int half_bytes) {
     return l;
 }
 
-// DECO 52 sprites: planes packed in 16-bit words, 128 bytes per tile.
+GfxLayout tile16_8bpp_layout() {
+    GfxLayout l;
+    l.width = l.height = 16;
+    l.total = 0x1000;
+    l.planes = 8;
+    l.char_increment = 64 * 8;
+    // Plane order from cavemanninja_hw.pas tiles-8bpp convert.
+    l.plane_offsets = {0x100000 * 8 + 8, 0x100000 * 8, 0x40000 * 8 + 8, 0x40000 * 8,
+                       0xc0000 * 8 + 8,  0xc0000 * 8,  8,               0};
+    for (int i = 0; i < 8; ++i) l.x_offsets.push_back(32 * 8 + i);
+    for (int i = 0; i < 8; ++i) l.x_offsets.push_back(i);
+    for (int i = 0; i < 16; ++i) l.y_offsets.push_back(i * 16);
+    return l;
+}
+
 GfxLayout sprite_layout(int total) {
     GfxLayout l;
     l.width = l.height = 16;
@@ -82,18 +119,45 @@ GfxLayout sprite_layout(int total) {
     return l;
 }
 
-// Only two 4 KB banks; when bits 7-4 of the bank register are set the low bank
-// is selected (cninja_video_bank in cavemanninja_hw.pas).
+// Split each 512 KB ROM into low/high 256 KB halves for the 4bpp plane layout.
+void rearrange_two_roms(const uint8_t* src, uint8_t* dst) {
+    std::memcpy(dst + 0x00000, src + 0x00000, 0x40000);
+    std::memcpy(dst + 0x80000, src + 0x40000, 0x40000);
+    std::memcpy(dst + 0x40000, src + 0x80000, 0x40000);
+    std::memcpy(dst + 0xc0000, src + 0xc0000, 0x40000);
+}
+
+// Robocop 2 tiles2: three 512 KB ROMs -> 1.5 MB with the Pascal scramble.
+void rearrange_three_roms(const uint8_t* src, uint8_t* dst) {
+    std::memcpy(dst + 0x00000, src + 0x00000, 0x40000);
+    std::memcpy(dst + 0xc0000, src + 0x40000, 0x40000);
+    std::memcpy(dst + 0x40000, src + 0x80000, 0x40000);
+    std::memcpy(dst + 0x100000, src + 0xc0000, 0x40000);
+    std::memcpy(dst + 0x80000, src + 0x100000, 0x40000);
+    std::memcpy(dst + 0x140000, src + 0x140000, 0x40000);
+}
+
 int cninja_bank(int bank) { return ((bank >> 4) & 0xf) != 0 ? 0 : 0x1000; }
+int robocop2_bank(int bank) { return (bank & 0x30) << 8; }
 
 }  // namespace
 
-CavemanNinja::CavemanNinja()
-    : screen_(size_t(kWidth) * kHeight, 0xff000000u),
-      framebuffer_(size_t(kWidth) * kHeight, 0xff000000u) {
+CavemanNinja::CavemanNinja(Game game)
+    : game_(game),
+      width_(game == Game::Robocop2 ? 320 : 256),
+      main_clock_(game == Game::Robocop2 ? 14000000u : 12000000u),
+      main_cpu_(main_clock_),
+      deco_prot_(game == Game::Robocop2 ? Deco146::Type::Deco146 : Deco146::Type::Deco104,
+                 Deco146::kUseMagicAddressXor),
+      screen_(size_t(kMaxWidth) * kHeight, 0xff000000u),
+      framebuffer_(size_t(kMaxWidth) * kHeight, 0xff000000u) {
+    if (game_ == Game::Robocop2) {
+        dsw_ = 0x7fbf;
+        dsw_b_ = 0x00ff;
+    }
+
     main_cpu_.set_memory_handlers([this](uint32_t a) { return main_read(a); },
                                   [this](uint32_t a, uint16_t v) { main_write(a, v); });
-    // Byte writes to the protection chip must not read first (side effects).
     main_cpu_.set_byte_handlers(
         [this](uint32_t a) {
             const uint16_t w = main_read(a & ~1u);
@@ -101,9 +165,11 @@ CavemanNinja::CavemanNinja()
         },
         [this](uint32_t a, uint8_t v) {
             const uint32_t masked = a & 0xffffff;
-            if (masked >= 0x1bc000 && masked < 0x1c0000) {
-                deco104_.write_data(prot_address(masked - 0x1bc000), uint16_t(v << 8 | v),
-                                    (a & 1) ? 0x00ff : 0xff00);
+            const uint32_t prot_base = game_ == Game::Robocop2 ? 0x18c000u : 0x1bc000u;
+            const uint32_t prot_end = game_ == Game::Robocop2 ? 0x190000u : 0x1c0000u;
+            if (masked >= prot_base && masked < prot_end) {
+                deco_prot_.write_data(prot_address(masked - prot_base), uint16_t(v << 8 | v),
+                                      (a & 1) ? 0x00ff : 0xff00);
                 return;
             }
             const uint16_t w = main_read(a & ~1u);
@@ -116,102 +182,162 @@ CavemanNinja::CavemanNinja()
     ym2151_.set_irq_handler([this](bool state) {
         sound_cpu_.set_irq_line(1, state ? IrqLine::Assert : IrqLine::Clear);
     });
-    // YM2151 port A selects one of the two 256 KB banks of OKI #2.
     ym2151_.set_port_handler([this](uint8_t value) {
         oki2_.set_rom_bank_offset((value & 1) ? 0x40000 : 0);
     });
-    deco104_.set_port_handlers([this] { return in0_; }, [this] { return in1_; },
-                               [this] { return dsw_; });
-    deco104_.set_soundlatch_handler([this](uint8_t value) {
+    deco_prot_.set_port_handlers([this] { return in0_; }, [this] { return in1_; },
+                                 [this] { return dsw_; });
+    deco_prot_.set_soundlatch_handler([this](uint8_t value) {
         sound_latch_ = value;
         sound_cpu_.set_irq_line(0, IrqLine::Hold);
     });
 
-    // Chip 0: 8x8 chars + 16x16 tiles1 (colour bank 16 -> palette $100).
+    configure_tilegens();
+}
+
+void CavemanNinja::configure_tilegens() {
+    const auto bank = game_ == Game::Robocop2 ? robocop2_bank : cninja_bank;
+    // Chip 0: chars + tiles1; pf2 colour bank 16.
     {
         Deco16ic::Layer pf1;
         pf1.gfx8 = &chars_;
         pf1.gfx16 = &tiles1_;
-        pf1.color_base8 = 0;
-        pf1.color_base16 = 0;
-        pf1.color_bank = 0;
         tilegen_[0].configure(0, std::move(pf1));
         Deco16ic::Layer pf2;
         pf2.gfx8 = &chars_;
         pf2.gfx16 = &tiles1_;
-        pf2.color_base8 = 0;
-        pf2.color_base16 = 0;
         pf2.color_bank = 16;
+        if (game_ == Game::Robocop2) pf2.bank = bank;
         tilegen_[0].configure(1, std::move(pf2));
     }
-    // Chip 1: chars + tiles2, pf1 base $200, pf2 colour bank 48 -> $500.
+    // Chip 1: chars + tiles2; pf1 base $200, pf2 colour bank 48.
     {
         Deco16ic::Layer pf1;
         pf1.gfx8 = &chars_;
         pf1.gfx16 = &tiles2_;
-        pf1.color_base8 = 0;
         pf1.color_base16 = 0x200;
-        pf1.color_bank = 0;
-        pf1.bank = cninja_bank;
+        if (game_ == Game::Robocop2 || game_ == Game::Cninja) pf1.bank = bank;
+        // Cninja banks both playfields of chip 1; Robocop 2 too.
         tilegen_[1].configure(0, std::move(pf1));
         Deco16ic::Layer pf2;
         pf2.gfx8 = &chars_;
         pf2.gfx16 = &tiles2_;
-        pf2.color_base8 = 0;
         pf2.color_base16 = 0x200;
         pf2.color_bank = 48;
-        pf2.bank = cninja_bank;
+        pf2.bank = bank;
         tilegen_[1].configure(1, std::move(pf2));
     }
+}
+
+void CavemanNinja::apply_robocop2_priority() {
+    // Bit 4 selects the 8 bpp tile set for chip 1 (both playfields in Pascal
+    // update gfx_plane[2] which is the 16x16 set).
+    const bool use_8bpp = (priority_ & 4) != 0;
+    const auto bank = robocop2_bank;
+    Deco16ic::Layer pf1;
+    pf1.gfx8 = &chars_;
+    pf1.gfx16 = use_8bpp ? &tiles2_8bpp_ : &tiles2_;
+    pf1.color_base16 = 0x200;
+    pf1.color_mask16 = use_8bpp ? 0 : 0x0f;
+    pf1.bank = bank;
+    tilegen_[1].configure(0, std::move(pf1));
+    Deco16ic::Layer pf2;
+    pf2.gfx8 = &chars_;
+    pf2.gfx16 = use_8bpp ? &tiles2_8bpp_ : &tiles2_;
+    pf2.color_base16 = 0x200;
+    pf2.color_bank = 48;
+    pf2.color_mask16 = use_8bpp ? 0 : 0x0f;
+    pf2.bank = bank;
+    tilegen_[1].configure(1, std::move(pf2));
 }
 
 bool CavemanNinja::init(const std::string& rom_path, std::string* error) {
     RomLoader loader;
     if (!loader.open(rom_path, error)) return false;
 
-    std::vector<uint8_t> image(0xc0000, 0xff);
-    if (!load_interleaved(loader, kProgram, image, error)) return false;
-    rom_.resize(0x60000);
-    for (size_t i = 0; i < rom_.size(); ++i) {
-        rom_[i] = uint16_t(image[2 * i] << 8 | image[2 * i + 1]);
-    }
+    if (game_ == Game::Robocop2) {
+        std::vector<uint8_t> image(0x100000, 0xff);
+        if (!load_interleaved(loader, kRoboProgram, image, error)) return false;
+        rom_.resize(0x80000);
+        for (size_t i = 0; i < rom_.size(); ++i) {
+            rom_[i] = uint16_t(image[2 * i] << 8 | image[2 * i + 1]);
+        }
 
-    sound_rom_.assign(0x10000, 0xff);
-    if (!loader.load(kSound, sound_rom_, error)) return false;
+        sound_rom_.assign(0x10000, 0xff);
+        if (!loader.load(kRoboSound, sound_rom_, error)) return false;
 
-    std::vector<uint8_t> oki(0x20000, 0);
-    if (!loader.load(kOki1, oki, error)) return false;
-    oki1_.set_rom(std::move(oki));
-    oki.assign(0x80000, 0);
-    if (!loader.load(kOki2, oki, error)) return false;
-    oki2_.set_rom(std::move(oki));
+        std::vector<uint8_t> oki(0x20000, 0);
+        if (!loader.load(kRoboOki1, oki, error)) return false;
+        oki1_.set_rom(std::move(oki));
+        oki.assign(0x80000, 0);
+        if (!loader.load(kRoboOki2, oki, error)) return false;
+        oki2_.set_rom(std::move(oki));
 
-    {
-        std::vector<uint8_t> chars(0x20000, 0);
-        if (!load_interleaved(loader, kChars, chars, error)) return false;
-        chars_.decode(char_layout(), chars);
-    }
-    {
-        std::vector<uint8_t> gfx(0x80000, 0);
-        if (!loader.load(kTiles1, gfx, error)) return false;
-        tiles1_.decode(tile16_layout(0x1000, 0x40000), gfx);
-    }
-    {
-        std::vector<uint8_t> raw(0x100000, 0);
-        if (!loader.load(kTiles2, raw, error)) return false;
-        // Split each ROM into low/high halves so the plane layout matches
-        // cavemanninja_hw.pas (mag-00 / mag-01 rearrange).
-        std::vector<uint8_t> gfx(0x100000, 0);
-        std::memcpy(gfx.data() + 0x00000, raw.data() + 0x00000, 0x40000);
-        std::memcpy(gfx.data() + 0x80000, raw.data() + 0x40000, 0x40000);
-        std::memcpy(gfx.data() + 0x40000, raw.data() + 0x80000, 0x40000);
-        std::memcpy(gfx.data() + 0xc0000, raw.data() + 0xc0000, 0x40000);
-        tiles2_.decode(tile16_layout(0x2000, 0x80000), gfx);
-    }
-    {
-        std::vector<uint8_t> gfx(0x200000, 0);
-        if (!load_interleaved(loader, kSprites, gfx, error)) return false;
-        sprites_.decode(sprite_layout(0x4000), gfx);
+        {
+            std::vector<uint8_t> chars(0x20000, 0);
+            if (!load_interleaved(loader, kRoboChars, chars, error)) return false;
+            chars_.decode(char_layout(), chars);
+        }
+        {
+            std::vector<uint8_t> raw(0x100000, 0);
+            if (!loader.load(kRoboTiles1, raw, error)) return false;
+            std::vector<uint8_t> gfx(0x100000, 0);
+            rearrange_two_roms(raw.data(), gfx.data());
+            tiles1_.decode(tile16_layout(0x2000, 0x80000), gfx);
+        }
+        {
+            std::vector<uint8_t> raw(0x180000, 0);
+            if (!loader.load(kRoboTiles2, raw, error)) return false;
+            std::vector<uint8_t> gfx(0x180000, 0);
+            rearrange_three_roms(raw.data(), gfx.data());
+            tiles2_.decode(tile16_layout(0x3000, 0xc0000), gfx);
+            tiles2_8bpp_.decode(tile16_8bpp_layout(), gfx);
+        }
+        {
+            std::vector<uint8_t> gfx(0x300000, 0);
+            if (!load_interleaved(loader, kRoboSprites, gfx, error)) return false;
+            sprites_.decode(sprite_layout(0x6000), gfx);
+        }
+    } else {
+        std::vector<uint8_t> image(0xc0000, 0xff);
+        if (!load_interleaved(loader, kCninjaProgram, image, error)) return false;
+        rom_.resize(0x60000);
+        for (size_t i = 0; i < rom_.size(); ++i) {
+            rom_[i] = uint16_t(image[2 * i] << 8 | image[2 * i + 1]);
+        }
+
+        sound_rom_.assign(0x10000, 0xff);
+        if (!loader.load(kCninjaSound, sound_rom_, error)) return false;
+
+        std::vector<uint8_t> oki(0x20000, 0);
+        if (!loader.load(kCninjaOki1, oki, error)) return false;
+        oki1_.set_rom(std::move(oki));
+        oki.assign(0x80000, 0);
+        if (!loader.load(kCninjaOki2, oki, error)) return false;
+        oki2_.set_rom(std::move(oki));
+
+        {
+            std::vector<uint8_t> chars(0x20000, 0);
+            if (!load_interleaved(loader, kCninjaChars, chars, error)) return false;
+            chars_.decode(char_layout(), chars);
+        }
+        {
+            std::vector<uint8_t> gfx(0x80000, 0);
+            if (!loader.load(kCninjaTiles1, gfx, error)) return false;
+            tiles1_.decode(tile16_layout(0x1000, 0x40000), gfx);
+        }
+        {
+            std::vector<uint8_t> raw(0x100000, 0);
+            if (!loader.load(kCninjaTiles2, raw, error)) return false;
+            std::vector<uint8_t> gfx(0x100000, 0);
+            rearrange_two_roms(raw.data(), gfx.data());
+            tiles2_.decode(tile16_layout(0x2000, 0x80000), gfx);
+        }
+        {
+            std::vector<uint8_t> gfx(0x200000, 0);
+            if (!load_interleaved(loader, kCninjaSprites, gfx, error)) return false;
+            sprites_.decode(sprite_layout(0x4000), gfx);
+        }
     }
 
     warnings_ = loader.warnings();
@@ -228,9 +354,11 @@ void CavemanNinja::reset() {
     sound_ram_.fill(0);
     tilegen_[0].reset();
     tilegen_[1].reset();
-    deco104_.reset();
+    deco_prot_.reset();
+    configure_tilegens();
     in0_ = 0xffff;
     in1_ = 0x00f7;
+    priority_ = 0;
     irq_mask_ = 0;
     irq_line_ = 0;
     raster_irq_ = false;
@@ -249,9 +377,6 @@ void CavemanNinja::reset() {
     oki2_.reset();
     oki2_.set_rom_bank_offset(0);
 }
-
-// ---------------------------------------------------------------------------
-// DECO 104 address scramble (cavemanninja_hw.pas)
 
 uint16_t CavemanNinja::prot_address(uint32_t real_address) const {
     // BITSWAP32(addr, 31..18, 13,12,11, 17,16,15,14, 10..0) & 0x7fff
@@ -272,7 +397,10 @@ uint16_t CavemanNinja::prot_address(uint32_t real_address) const {
 
 uint16_t CavemanNinja::main_read(uint32_t a) {
     a &= 0xffffff;
-    if (a < 0xc0000) return rom_[a >> 1];
+    const uint32_t rom_end = game_ == Game::Robocop2 ? 0x100000u : 0xc0000u;
+    if (a < rom_end) return rom_[a >> 1];
+
+    // Shared tilemap / rowscroll windows.
     if (a >= 0x144000 && a < 0x145000) return tilegen_[0].data[0][(a & 0xfff) >> 1];
     if (a >= 0x146000 && a < 0x147000) return tilegen_[0].data[1][(a & 0xfff) >> 1];
     if (a >= 0x14c000 && a < 0x14c800) return tilegen_[0].rowscroll[0][(a & 0x7ff) >> 1];
@@ -281,6 +409,27 @@ uint16_t CavemanNinja::main_read(uint32_t a) {
     if (a >= 0x156000 && a < 0x157000) return tilegen_[1].data[1][(a & 0xfff) >> 1];
     if (a >= 0x15c000 && a < 0x15c800) return tilegen_[1].rowscroll[0][(a & 0x7ff) >> 1];
     if (a >= 0x15e000 && a < 0x15e800) return tilegen_[1].rowscroll[1][(a & 0x7ff) >> 1];
+
+    if (game_ == Game::Robocop2) {
+        if (a >= 0x180000 && a < 0x180800) return sprite_buf_[(a & 0x7ff) >> 1];
+        if (a >= 0x18c000 && a < 0x190000) return deco_prot_.read_data(prot_address(a - 0x18c000));
+        if (a >= 0x1a8000 && a < 0x1aa000) return pal_ram_[(a & 0x1fff) >> 1];
+        if (a >= 0x1b0000 && a < 0x1b0008) {
+            switch ((a >> 1) & 7) {
+                case 1: return uint16_t(scanline_);
+                case 2:
+                    main_cpu_.set_irq(3, IrqLine::Clear);
+                    main_cpu_.set_irq(4, IrqLine::Clear);
+                    return 0;
+                default: return 0;
+            }
+        }
+        if (a >= 0x1b8000 && a < 0x1bc000) return ram_[(a & 0x3fff) >> 1];
+        if (a >= 0x1f8000 && a < 0x1f8002) return dsw_b_;
+        return 0xffff;
+    }
+
+    // Caveman Ninja map
     if (a >= 0x184000 && a < 0x188000) return ram_[(a & 0x3fff) >> 1];
     if (a >= 0x190000 && a < 0x190008) {
         switch ((a >> 1) & 7) {
@@ -294,13 +443,15 @@ uint16_t CavemanNinja::main_read(uint32_t a) {
     }
     if (a >= 0x19c000 && a < 0x19e000) return pal_ram_[(a & 0x1fff) >> 1];
     if (a >= 0x1a4000 && a < 0x1a4800) return sprite_buf_[(a & 0x7ff) >> 1];
-    if (a >= 0x1bc000 && a < 0x1c0000) return deco104_.read_data(prot_address(a - 0x1bc000));
+    if (a >= 0x1bc000 && a < 0x1c0000) return deco_prot_.read_data(prot_address(a - 0x1bc000));
     return 0xffff;
 }
 
 void CavemanNinja::main_write(uint32_t a, uint16_t v) {
     a &= 0xffffff;
-    if (a < 0xc0000) return;
+    const uint32_t rom_end = game_ == Game::Robocop2 ? 0x100000u : 0xc0000u;
+    if (a < rom_end) return;
+
     if (a >= 0x140000 && a < 0x140010) {
         tilegen_[0].control_w(int((a & 0xf) >> 1), v);
         return;
@@ -342,22 +493,62 @@ void CavemanNinja::main_write(uint32_t a, uint16_t v) {
         tilegen_[1].rowscroll[1][(a & 0x7ff) >> 1] = v;
         return;
     }
-    if (a >= 0x184000 && a < 0x188000) {
-        ram_[(a & 0x3fff) >> 1] = v;
-        return;
-    }
-    if (a >= 0x190000 && a < 0x190008) {
+
+    auto write_irq = [&](uint32_t base) {
+        if (a < base || a >= base + 8) return false;
         switch ((a >> 1) & 7) {
             case 0: irq_mask_ = uint8_t(v & 0xff); break;
             case 1:
                 irq_line_ = uint8_t(v & 0xff);
-                // Valid raster lines are 1..239; bit 1 of the mask disables them.
                 raster_irq_ = irq_line_ > 0 && irq_line_ < 240 && (irq_mask_ & 2) == 0;
                 break;
             default: break;
         }
+        return true;
+    };
+
+    if (game_ == Game::Robocop2) {
+        if (a >= 0x180000 && a < 0x180800) {
+            sprite_buf_[(a & 0x7ff) >> 1] = v;
+            return;
+        }
+        if (a >= 0x18c000 && a < 0x190000) {
+            deco_prot_.write_data(prot_address(a - 0x18c000), v);
+            return;
+        }
+        if (a >= 0x198000 && a < 0x198002) {
+            sprite_ram_ = sprite_buf_;
+            return;
+        }
+        if (a >= 0x1a8000 && a < 0x1aa000) {
+            const size_t idx = (a & 0x1fff) >> 1;
+            if (pal_ram_[idx] != v) {
+                pal_ram_[idx] = v;
+                update_palette_entry(int(idx >> 1));
+            }
+            return;
+        }
+        if (write_irq(0x1b0000)) return;
+        if (a >= 0x1b8000 && a < 0x1bc000) {
+            ram_[(a & 0x3fff) >> 1] = v;
+            return;
+        }
+        if (a >= 0x1f0000 && a < 0x1f0002) {
+            if (priority_ != v) {
+                priority_ = v;
+                apply_robocop2_priority();
+            }
+            return;
+        }
         return;
     }
+
+    // Caveman Ninja map
+    if (a >= 0x184000 && a < 0x188000) {
+        ram_[(a & 0x3fff) >> 1] = v;
+        return;
+    }
+    if (write_irq(0x190000)) return;
     if (a >= 0x19c000 && a < 0x19e000) {
         const size_t idx = (a & 0x1fff) >> 1;
         if (pal_ram_[idx] != v) {
@@ -375,7 +566,7 @@ void CavemanNinja::main_write(uint32_t a, uint16_t v) {
         return;
     }
     if (a >= 0x1bc000 && a < 0x1c0000) {
-        deco104_.write_data(prot_address(a - 0x1bc000), v);
+        deco_prot_.write_data(prot_address(a - 0x1bc000), v);
         return;
     }
 }
@@ -391,7 +582,7 @@ void CavemanNinja::update_palette_entry(int index) {
 }
 
 // ---------------------------------------------------------------------------
-// Sound CPU (deco16_snd_double)
+// Sound CPU
 
 uint8_t CavemanNinja::sound_read(uint32_t a) {
     if (a < 0x10000) return sound_rom_[a];
@@ -465,7 +656,7 @@ void CavemanNinja::drain_audio(std::vector<int16_t>& out) {
 // Video
 
 void CavemanNinja::draw_sprites(int priority) {
-    constexpr int kGlobalX = 240;
+    const int global_x = game_ == Game::Robocop2 ? 304 : 240;
     constexpr int kColorAdd = 0x300;
     for (int f = 0; f < 0x100; ++f) {
         const uint16_t x0 = sprite_ram_[size_t(f) * 4 + 2];
@@ -485,7 +676,7 @@ void CavemanNinja::draw_sprites(int priority) {
             inc = 1;
         }
         if (code == 0) continue;
-        const int sx = (kGlobalX - x0) & 0x1ff;
+        const int sx = (global_x - x0) & 0x1ff;
         const int sy = (240 - y0) & 0x1ff;
         for (; multi >= 0; --multi) {
             const int tile = code - multi * inc;
@@ -495,10 +686,10 @@ void CavemanNinja::draw_sprites(int priority) {
                 const int py = ((py0 + r) & 0x1ff) - kFirstLine;
                 if (py < 0 || py >= kHeight) continue;
                 const uint8_t* row = g + (flip_y ? 15 - r : r) * 16;
-                uint32_t* out = &screen_[size_t(py) * kWidth];
+                uint32_t* out = &screen_[size_t(py) * size_t(width_)];
                 for (int c = 0; c < 16; ++c) {
                     const int px = sx + c;
-                    if (px < 0 || px >= kWidth) continue;
+                    if (px < 0 || px >= width_) continue;
                     const int pen = row[flip_x ? 15 - c : c];
                     if (pen) out[px] = palette_[size_t(kColorAdd + color * 16 + pen) & 0x7ff];
                 }
@@ -507,14 +698,13 @@ void CavemanNinja::draw_sprites(int priority) {
     }
 }
 
-void CavemanNinja::update_video() {
+void CavemanNinja::update_video_cninja() {
     auto pf = [&](int chip, int playfield, bool transparent) {
         if (!tilegen_[chip].enabled(playfield)) return;
-        tilegen_[chip].draw(playfield, screen_.data(), kWidth, kHeight, kFirstLine, palette_.data(),
+        tilegen_[chip].draw(playfield, screen_.data(), width_, kHeight, kFirstLine, palette_.data(),
                             !transparent);
     };
-    std::fill(screen_.begin(), screen_.end(), palette_[0]);
-    // update_video_cninja: chip1.pf2, spr $80, chip1.pf1, spr $40, chip0.pf2, spr 0, chip0.pf1
+    std::fill(screen_.begin(), screen_.begin() + size_t(width_) * kHeight, palette_[0]);
     pf(1, 1, false);
     draw_sprites(0x80);
     pf(1, 0, true);
@@ -522,22 +712,54 @@ void CavemanNinja::update_video() {
     pf(0, 1, true);
     draw_sprites(0);
     pf(0, 0, true);
+}
+
+void CavemanNinja::update_video_robocop2() {
+    auto pf = [&](int chip, int playfield, bool transparent) {
+        if (!tilegen_[chip].enabled(playfield)) return;
+        tilegen_[chip].draw(playfield, screen_.data(), width_, kHeight, kFirstLine, palette_.data(),
+                            !transparent);
+    };
+    if ((priority_ & 4) == 0) {
+        std::fill(screen_.begin(), screen_.begin() + size_t(width_) * kHeight, palette_[0]);
+        pf(1, 1, false);
+    } else {
+        draw_sprites(0xc0);
+        std::fill(screen_.begin(), screen_.begin() + size_t(width_) * kHeight, palette_[0x200]);
+    }
+    draw_sprites(0x80);
+    if (priority_ & 8) {
+        pf(0, 1, true);
+        draw_sprites(0x40);
+        pf(1, 0, true);
+    } else {
+        pf(1, 0, (priority_ & 4) == 0);
+        draw_sprites(0x40);
+        pf(0, 1, true);
+    }
+    draw_sprites(0);
+    pf(0, 0, true);
+}
+
+void CavemanNinja::update_video() {
+    if (game_ == Game::Robocop2) update_video_robocop2();
+    else update_video_cninja();
 
     if (flip_screen_) {
         for (int y = 0; y < kHeight; ++y) {
-            const uint32_t* src = &screen_[size_t(kHeight - 1 - y) * kWidth];
-            uint32_t* dst = &framebuffer_[size_t(y) * kWidth];
-            for (int x = 0; x < kWidth; ++x) dst[x] = src[kWidth - 1 - x];
+            const uint32_t* src = &screen_[size_t(kHeight - 1 - y) * size_t(width_)];
+            uint32_t* dst = &framebuffer_[size_t(y) * size_t(width_)];
+            for (int x = 0; x < width_; ++x) dst[x] = src[width_ - 1 - x];
         }
     } else {
-        framebuffer_ = screen_;
+        std::copy_n(screen_.data(), size_t(width_) * kHeight, framebuffer_.data());
     }
 }
 
 // ---------------------------------------------------------------------------
 
 void CavemanNinja::run_frame() {
-    const double main_cycles = double(kMainClock) / kFramesPerSecond / kScanlines;
+    const double main_cycles = double(main_clock_) / kFramesPerSecond / kScanlines;
     const double sound_cycles = double(kSoundClock) / kFramesPerSecond / kScanlines;
     for (int line = 0; line < kScanlines; ++line) {
         scanline_ = line;
@@ -585,6 +807,7 @@ void CavemanNinja::set_inputs(const MachineInputs& in) {
 void CavemanNinja::set_dip_switch(int bank, uint8_t value) {
     if (bank == 0) dsw_ = uint16_t((dsw_ & 0xff00) | value);
     else if (bank == 1) dsw_ = uint16_t((dsw_ & 0x00ff) | (uint16_t(value) << 8));
+    else if (bank == 2) dsw_b_ = uint16_t((dsw_b_ & 0xff00) | value);
 }
 
 }  // namespace dsp

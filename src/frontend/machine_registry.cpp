@@ -862,7 +862,10 @@ std::unique_ptr<Machine> create_machine(DriverQuery& q) {
     if (q.is("cabal")) return std::make_unique<dsp::Cabal>();
 #endif
 #if DSP_DRIVER_CNINJA
-    if (q.is("cninja") || q.is("cavemanninja") || q.is("joemac")) return std::make_unique<dsp::CavemanNinja>();
+    if (q.is("cninja") || q.is("cavemanninja") || q.is("joemac"))
+        return std::make_unique<dsp::CavemanNinja>(dsp::CavemanNinja::Game::Cninja);
+    if (q.is("robocop2") || q.is("robocop_2"))
+        return std::make_unique<dsp::CavemanNinja>(dsp::CavemanNinja::Game::Robocop2);
 #endif
 #if DSP_DRIVER_BLOCKOUT
 	if (q.is("blockout")) return std::make_unique<dsp::BlockOut>();
