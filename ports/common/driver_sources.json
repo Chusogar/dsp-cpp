@@ -414,6 +414,15 @@
     "src/video/gfx.cpp"
    ]
   },
+  "centipede": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6502.cpp",
+    "src/drivers/arcade/centipede.cpp",
+    "src/sound/pokey.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
   "citycon": {
    "group": "arcade",
    "sources": [
@@ -422,6 +431,22 @@
     "src/sound/ay8910.cpp",
     "src/sound/fmopn.cpp",
     "src/sound/ym2203.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "cninja": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/hu6280.cpp",
+    "src/cpu/m68000.cpp",
+    "src/drivers/arcade/cninja.cpp",
+    "src/machine/deco146.cpp",
+    "src/sound/ay8910.cpp",
+    "src/sound/fmopn.cpp",
+    "src/sound/okim6295.cpp",
+    "src/sound/ym2151.cpp",
+    "src/sound/ym2203.cpp",
+    "src/video/deco16ic.cpp",
     "src/video/gfx.cpp"
    ]
   },
@@ -475,6 +500,17 @@
     "src/sound/ym2203.cpp",
     "src/sound/ym3812.cpp",
     "src/video/deco_bac06.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
+  "chinagate": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6809.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/chinagate.cpp",
+    "src/sound/okim6295.cpp",
+    "src/sound/ym2151.cpp",
     "src/video/gfx.cpp"
    ]
   },

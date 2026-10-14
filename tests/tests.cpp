@@ -70,6 +70,10 @@
 #include "drivers/arcade/brkthru.h"
 #include "drivers/arcade/btime.h"
 #include "drivers/arcade/cabal.h"
+#include "drivers/arcade/centipede.h"
+#include "drivers/arcade/opwolf.h"
+#include "drivers/arcade/chinagate.h"
+#include "drivers/arcade/cninja.h"
 #include "machine/seibu_sound.h"
 #include "drivers/arcade/bionicc.h"
 #include "drivers/arcade/arabian.h"
@@ -1668,6 +1672,44 @@ void test_spectrum_tzx() {
           "a loop block loads");
     loop.set_playing(true);
     check(tape_pulses(loop, 6 * 100).size() == 6, "the loop plays its body three times");
+}
+
+// Gyroscope RZX (SPIN recording): many frames end halted before the beam
+// reaches the bottom; the rest of the picture is drawn from screen memory and
+// must not repeat the cells latched on the line where the beam stopped.
+void test_spectrum_rzx_gyroscope_if_present() {
+    const char* rom = "/tmp/roms/zx48";
+    const char* rzx = "/tmp/roms/zx48/gyroscope.rzx";
+    if (!std::filesystem::exists(rzx)) {
+        std::printf("skip test_spectrum_rzx_gyroscope_if_present (no %s)\n", rzx);
+        return;
+    }
+    dsp::Spectrum48k m;
+    std::string err;
+    check(m.init(rom, &err), "Spectrum 48K ROM loads for the Gyroscope RZX");
+    check(m.load_media(rzx, &err), "Gyroscope RZX loads");
+    std::vector<int16_t> audio;
+    int worst = 0;
+    for (int f = 1; f <= 1031; ++f) {
+        m.set_inputs(dsp::MachineInputs{});
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        if (f < 1001) continue;
+        // In play the lower playfield is a white grid with thin diagonal
+        // lines: no screen column is black all the way down its last 40 rows.
+        const uint32_t* fb = m.framebuffer();
+        const int w = m.screen_width();
+        int columns = 0;
+        for (int x = 48; x < 304; ++x) {
+            bool black = true;
+            for (int y = 200; y < 240 && black; ++y) black = (fb[y * w + x] & 0xffffff) == 0;
+            columns += black;
+        }
+        worst = std::max(worst, columns);
+    }
+    check(m.rzx_playing(), "Gyroscope RZX still playing after 1031 frames");
+    check(worst <= 2, "Gyroscope: no vertical stripes at the bottom of the playfield");
 }
 
 void test_spectrum_ula() {
@@ -10673,6 +10715,150 @@ void test_btime_if_present() {
     check(peak > 1000 && peak < 32767, "BurgerTime makes sound without clipping");
 }
 
+void test_centipede_if_present() {
+    const char* path = "/tmp/roms/arcade/centiped.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_centipede_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::Centipede m(dsp::Centipede::Game::Centipede);
+    std::string err;
+    check(m.init(path, &err), "Centipede ROMs load");
+    if (!err.empty()) std::printf("centiped init: %s\n", err.c_str());
+    check(m.screen_width() == 240 && m.screen_height() == 256, "Centipede screen is 240x256");
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 1; f <= 1200; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 600 && f < 606;
+        in.player1.start = f >= 660 && f < 666;
+        in.player1.button1 = f > 700 && (f % 15) < 5;
+        in.player1.right = f > 720;
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(c.size() >= 4, "Centipede draws the playfield");
+    check(peak < 32767, "Centipede audio does not clip");
+}
+
+void test_chinagate_if_present() {
+    const char* path = "/tmp/roms/arcade/chinagat.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_chinagate_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::ChinaGate m;
+    std::string err;
+    check(m.init(path, &err), "China Gate ROMs load");
+    if (!err.empty()) std::printf("chinagat init: %s\n", err.c_str());
+    check(m.screen_width() == 256 && m.screen_height() == 240, "China Gate screen is 256x240");
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 1; f <= 900; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 400 && f < 406;
+        in.player1.start = f >= 460 && f < 466;
+        in.player1.button1 = f > 500 && (f % 15) < 5;
+        in.player1.right = f > 520;
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(c.size() >= 8, "China Gate draws the playfield");
+    check(peak < 32767, "China Gate audio does not clip");
+}
+
+void test_millipede_if_present() {
+    const char* path = "/tmp/roms/arcade/milliped.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_millipede_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::Centipede m(dsp::Centipede::Game::Millipede);
+    std::string err;
+    check(m.init(path, &err), "Millipede ROMs load");
+    if (!err.empty()) std::printf("milliped init: %s\n", err.c_str());
+    check(m.screen_width() == 240 && m.screen_height() == 256, "Millipede screen is 240x256");
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 1; f <= 1200; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 600 && f < 606;
+        in.player1.start = f >= 660 && f < 666;
+        in.player1.button1 = f > 700 && (f % 15) < 5;
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+        if (f == 450) {
+            // Attract screen: the red captions (DRAGONFLY, MOSQUITO...) must
+            // read left to right on the vertical monitor, so some row holds
+            // far more red pixels than any column does.
+            const int w = m.screen_width(), h = m.screen_height();
+            auto red = [&](int x, int y) {
+                const uint32_t p = m.framebuffer()[y * w + x];
+                return ((p >> 16) & 0xff) > 150 && ((p >> 8) & 0xff) < 80 && (p & 0xff) < 80;
+            };
+            int best_row = 0, best_col = 0;
+            for (int y = 0; y < h; ++y) {
+                int n = 0;
+                for (int x = 0; x < w; ++x) n += red(x, y);
+                best_row = std::max(best_row, n);
+            }
+            for (int x = 0; x < w; ++x) {
+                int n = 0;
+                for (int y = 0; y < h; ++y) n += red(x, y);
+                best_col = std::max(best_col, n);
+            }
+            check(best_row > 2 * best_col, "Millipede text reads horizontally (ROT270 picture)");
+        }
+    }
+    std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(c.size() >= 4, "Millipede draws the playfield");
+    check(peak < 32767, "Millipede audio does not clip");
+}
+
+void test_opwolf_if_present() {
+    const char* path = "/tmp/roms/opwolf.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_opwolf_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::OpWolf m;
+    std::string err;
+    check(m.init(path, &err), "Operation Wolf ROMs load");
+    if (!err.empty()) std::printf("opwolf init: %s\n", err.c_str());
+    std::vector<int16_t> audio;
+    for (int f = 1; f <= 2400; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 1200 && f < 1206;
+        in.player1.start = f >= 1300 && f < 1306;
+        in.has_pointer = true;
+        in.pointer_x = 160;
+        in.pointer_y = 120;
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+    }
+    // "Good Luck!": the HUD panel on the right is drawn with a colour the
+    // game has not written yet. It must come out opaque black, hiding the
+    // scrolling scenery behind it.
+    const int w = m.screen_width();
+    int black = 0;
+    for (int y = 30; y < 230; ++y)
+        for (int x = 250; x < 315; ++x) black += (m.framebuffer()[y * w + x] & 0xffffff) == 0;
+    check(black > 65 * 200 / 2, "Operation Wolf HUD panel is opaque at the start of a mission");
+}
+
 void test_cabal_if_present() {
     const char* path = "/tmp/roms/cabal.zip";
     if (!std::filesystem::exists(path)) {
@@ -10703,6 +10889,64 @@ void test_cabal_if_present() {
     // The encrypted Z80 polls the YM2151 busy flag at 4009 and drives the two
     // ADPCM channels.
     check(peak > 1000 && peak < 32767, "Cabal makes sound (YM2151 + ADPCM) without clipping");
+}
+
+void test_cninja_if_present() {
+    const char* path = "/tmp/roms/arcade/cninja.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_cninja_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::CavemanNinja m(dsp::CavemanNinja::Game::Cninja);
+    std::string err;
+    check(m.init(path, &err), "Caveman Ninja ROMs load");
+    if (!err.empty()) std::printf("cninja init: %s\n", err.c_str());
+    check(m.screen_width() == 256 && m.screen_height() == 240, "Caveman Ninja screen is 256x240");
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 1; f <= 1800; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 1200 && f < 1206;
+        in.player1.start = f >= 1260 && f < 1266;
+        in.player1.button1 = f > 1400 && (f % 20) < 10;
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(c.size() >= 16, "Caveman Ninja draws tilemaps / sprites");
+    check(peak < 32767, "Caveman Ninja audio does not clip");
+}
+
+void test_robocop2_if_present() {
+    const char* path = "/tmp/roms/arcade/robocop2.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_robocop2_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::CavemanNinja m(dsp::CavemanNinja::Game::Robocop2);
+    std::string err;
+    check(m.init(path, &err), "Robocop 2 ROMs load");
+    if (!err.empty()) std::printf("robocop2 init: %s\n", err.c_str());
+    check(m.screen_width() == 320 && m.screen_height() == 240, "Robocop 2 screen is 320x240");
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 1; f <= 1800; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 1200 && f < 1206;
+        in.player1.start = f >= 1260 && f < 1266;
+        in.player1.button1 = f > 1400 && (f % 20) < 10;
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(c.size() >= 16, "Robocop 2 draws tilemaps / sprites");
+    check(peak < 32767, "Robocop 2 audio does not clip");
 }
 
 void test_blktiger_if_present() {
@@ -10997,6 +11241,7 @@ int main() {
     test_spectrum_tape();
     test_spectrum_tzx();
     test_spectrum_ula();
+    test_spectrum_rzx_gyroscope_if_present();
     test_nes_apu_status();
     test_nes_ppu_sprites_and_palette();
     test_nes_smb_if_present();
@@ -11174,6 +11419,12 @@ int main() {
     test_brkthru_if_present();
     test_btime_if_present();
     test_cabal_if_present();
+    test_opwolf_if_present();
+    test_centipede_if_present();
+    test_millipede_if_present();
+    test_chinagate_if_present();
+    test_cninja_if_present();
+    test_robocop2_if_present();
     test_blockout_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");

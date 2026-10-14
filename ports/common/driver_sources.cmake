@@ -303,12 +303,31 @@ set(DSP_PORT_SOURCES_cabal
   src/sound/ym3812.cpp
   src/video/gfx.cpp
 )
+set(DSP_PORT_SOURCES_centipede
+  src/cpu/m6502.cpp
+  src/drivers/arcade/centipede.cpp
+  src/sound/pokey.cpp
+  src/video/gfx.cpp
+)
 set(DSP_PORT_SOURCES_citycon
   src/cpu/m6809.cpp
   src/drivers/arcade/citycon.cpp
   src/sound/ay8910.cpp
   src/sound/fmopn.cpp
   src/sound/ym2203.cpp
+  src/video/gfx.cpp
+)
+set(DSP_PORT_SOURCES_cninja
+  src/cpu/hu6280.cpp
+  src/cpu/m68000.cpp
+  src/drivers/arcade/cninja.cpp
+  src/machine/deco146.cpp
+  src/sound/ay8910.cpp
+  src/sound/fmopn.cpp
+  src/sound/okim6295.cpp
+  src/sound/ym2151.cpp
+  src/sound/ym2203.cpp
+  src/video/deco16ic.cpp
   src/video/gfx.cpp
 )
 set(DSP_PORT_SOURCES_colecovision
@@ -350,6 +369,14 @@ set(DSP_PORT_SOURCES_dec0
   src/sound/ym2203.cpp
   src/sound/ym3812.cpp
   src/video/deco_bac06.cpp
+  src/video/gfx.cpp
+)
+set(DSP_PORT_SOURCES_chinagate
+  src/cpu/m6809.cpp
+  src/cpu/z80.cpp
+  src/drivers/arcade/chinagate.cpp
+  src/sound/okim6295.cpp
+  src/sound/ym2151.cpp
   src/video/gfx.cpp
 )
 set(DSP_PORT_SOURCES_doubledragon

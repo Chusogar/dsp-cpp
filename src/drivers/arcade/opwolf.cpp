@@ -235,6 +235,13 @@ void OpWolf::reset_sound() {
 }
 
 void OpWolf::reset() {
+    // Colours the program has not written yet are opaque black, as on the
+    // board. A zero entry would also be the foreground layer's transparency
+    // marker: the black HUD panel tiles (pen 1 of colour 0x10, which the game
+    // leaves at its power-on value 0) then let the scenery and the sprites
+    // show through the panel until the colour is first written.
+    palette_ram_.fill(0);
+    for (int i = 0; i < int(palette_.size()); ++i) set_palette(i, 0);
     main_cpu_.reset();
     syt_.reset();
     reset_sound();

@@ -184,6 +184,15 @@
 #if DSP_DRIVER_CABAL
 #include "drivers/arcade/cabal.h"
 #endif
+#if DSP_DRIVER_CENTIPEDE
+#include "drivers/arcade/centipede.h"
+#endif
+#if DSP_DRIVER_CHINAGATE
+#include "drivers/arcade/chinagate.h"
+#endif
+#if DSP_DRIVER_CNINJA
+#include "drivers/arcade/cninja.h"
+#endif
 #if DSP_DRIVER_BLOCKOUT
 #include "drivers/arcade/blockout.h"
 #endif
@@ -857,6 +866,21 @@ std::unique_ptr<Machine> create_machine(DriverQuery& q) {
 #endif
 #if DSP_DRIVER_CABAL
     if (q.is("cabal")) return std::make_unique<dsp::Cabal>();
+#endif
+#if DSP_DRIVER_CENTIPEDE
+    if (q.is("centiped") || q.is("centipede"))
+        return std::make_unique<dsp::Centipede>(dsp::Centipede::Game::Centipede);
+    if (q.is("milliped") || q.is("millipede"))
+        return std::make_unique<dsp::Centipede>(dsp::Centipede::Game::Millipede);
+#endif
+#if DSP_DRIVER_CHINAGATE
+    if (q.is("chinagat") || q.is("chinagate")) return std::make_unique<dsp::ChinaGate>();
+#endif
+#if DSP_DRIVER_CNINJA
+    if (q.is("cninja") || q.is("cavemanninja") || q.is("joemac"))
+        return std::make_unique<dsp::CavemanNinja>(dsp::CavemanNinja::Game::Cninja);
+    if (q.is("robocop2") || q.is("robocop_2"))
+        return std::make_unique<dsp::CavemanNinja>(dsp::CavemanNinja::Game::Robocop2);
 #endif
 #if DSP_DRIVER_BLOCKOUT
 	if (q.is("blockout")) return std::make_unique<dsp::BlockOut>();

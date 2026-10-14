@@ -621,6 +621,10 @@ void Spectrum48k::run_rzx_frame() {
     if (line_ < kLinesPerFrame) {
         while (line_ < kLinesPerFrame) {
             render_line(line_);
+            // The latches only hold the cells the beam fetched on the line it
+            // stopped in; later lines must read the screen memory, or those
+            // cells repeat down the rest of the picture as vertical stripes.
+            latch_mask_ = 0;
             ++line_;
         }
     }
@@ -668,6 +672,10 @@ void Spectrum48k::run_frame() {
     if (line_ < kLinesPerFrame) {
         while (line_ < kLinesPerFrame) {
             render_line(line_);
+            // The latches only hold the cells the beam fetched on the line it
+            // stopped in; later lines must read the screen memory, or those
+            // cells repeat down the rest of the picture as vertical stripes.
+            latch_mask_ = 0;
             ++line_;
         }
     }
