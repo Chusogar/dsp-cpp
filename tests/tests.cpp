@@ -71,7 +71,10 @@
 #include "drivers/arcade/btime.h"
 #include "drivers/arcade/cabal.h"
 #include "drivers/arcade/centipede.h"
+<<<<<<< HEAD
 #include "drivers/arcade/opwolf.h"
+=======
+>>>>>>> 9b2384d263e32bcaee700e2e2a031fa21089ea6d
 #include "drivers/arcade/chinagate.h"
 #include "drivers/arcade/cninja.h"
 #include "machine/seibu_sound.h"
@@ -10826,6 +10829,7 @@ void test_millipede_if_present() {
     check(peak < 32767, "Millipede audio does not clip");
 }
 
+<<<<<<< HEAD
 void test_opwolf_if_present() {
     const char* path = "/tmp/roms/opwolf.zip";
     if (!std::filesystem::exists(path)) {
@@ -10859,6 +10863,8 @@ void test_opwolf_if_present() {
     check(black > 65 * 200 / 2, "Operation Wolf HUD panel is opaque at the start of a mission");
 }
 
+=======
+>>>>>>> 9b2384d263e32bcaee700e2e2a031fa21089ea6d
 void test_cabal_if_present() {
     const char* path = "/tmp/roms/cabal.zip";
     if (!std::filesystem::exists(path)) {
@@ -11419,7 +11425,10 @@ int main() {
     test_brkthru_if_present();
     test_btime_if_present();
     test_cabal_if_present();
+<<<<<<< HEAD
     test_opwolf_if_present();
+=======
+>>>>>>> 9b2384d263e32bcaee700e2e2a031fa21089ea6d
     test_centipede_if_present();
     test_millipede_if_present();
     test_chinagate_if_present();
