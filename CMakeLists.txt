@@ -191,6 +191,7 @@ add_library(dsp_lib STATIC
   src/drivers/arcade/btime.cpp
   src/drivers/arcade/cabal.cpp
   src/drivers/arcade/centipede.cpp
+  src/drivers/arcade/chinagate.cpp
   src/drivers/arcade/cninja.cpp
   src/machine/deco_crypt.cpp
   src/machine/deco146.cpp

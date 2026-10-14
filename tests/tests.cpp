@@ -71,6 +71,7 @@
 #include "drivers/arcade/btime.h"
 #include "drivers/arcade/cabal.h"
 #include "drivers/arcade/centipede.h"
+#include "drivers/arcade/chinagate.h"
 #include "drivers/arcade/cninja.h"
 #include "machine/seibu_sound.h"
 #include "drivers/arcade/bionicc.h"
@@ -10705,6 +10706,36 @@ void test_centipede_if_present() {
     check(peak < 32767, "Centipede audio does not clip");
 }
 
+void test_chinagate_if_present() {
+    const char* path = "/tmp/roms/arcade/chinagat.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_chinagate_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::ChinaGate m;
+    std::string err;
+    check(m.init(path, &err), "China Gate ROMs load");
+    if (!err.empty()) std::printf("chinagat init: %s\n", err.c_str());
+    check(m.screen_width() == 256 && m.screen_height() == 240, "China Gate screen is 256x240");
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 1; f <= 900; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 400 && f < 406;
+        in.player1.start = f >= 460 && f < 466;
+        in.player1.button1 = f > 500 && (f % 15) < 5;
+        in.player1.right = f > 520;
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(c.size() >= 8, "China Gate draws the playfield");
+    check(peak < 32767, "China Gate audio does not clip");
+}
+
 void test_millipede_if_present() {
     const char* path = "/tmp/roms/arcade/milliped.zip";
     if (!std::filesystem::exists(path)) {
@@ -11295,6 +11326,7 @@ int main() {
     test_cabal_if_present();
     test_centipede_if_present();
     test_millipede_if_present();
+    test_chinagate_if_present();
     test_cninja_if_present();
     test_robocop2_if_present();
     test_blockout_if_present();

@@ -352,6 +352,14 @@ set(DSP_PORT_SOURCES_dec0
   src/video/deco_bac06.cpp
   src/video/gfx.cpp
 )
+set(DSP_PORT_SOURCES_chinagate
+  src/cpu/m6809.cpp
+  src/cpu/z80.cpp
+  src/drivers/arcade/chinagate.cpp
+  src/sound/okim6295.cpp
+  src/sound/ym2151.cpp
+  src/video/gfx.cpp
+)
 set(DSP_PORT_SOURCES_doubledragon
   src/cpu/hd63701.cpp
   src/cpu/m6809.cpp

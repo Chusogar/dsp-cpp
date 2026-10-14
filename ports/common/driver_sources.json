@@ -478,6 +478,17 @@
     "src/video/gfx.cpp"
    ]
   },
+  "chinagate": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6809.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/chinagate.cpp",
+    "src/sound/okim6295.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
   "doubledragon": {
    "group": "arcade",
    "sources": [

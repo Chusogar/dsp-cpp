@@ -187,6 +187,9 @@
 #if DSP_DRIVER_CENTIPEDE
 #include "drivers/arcade/centipede.h"
 #endif
+#if DSP_DRIVER_CHINAGATE
+#include "drivers/arcade/chinagate.h"
+#endif
 #if DSP_DRIVER_CNINJA
 #include "drivers/arcade/cninja.h"
 #endif
@@ -869,6 +872,9 @@ std::unique_ptr<Machine> create_machine(DriverQuery& q) {
         return std::make_unique<dsp::Centipede>(dsp::Centipede::Game::Centipede);
     if (q.is("milliped") || q.is("millipede"))
         return std::make_unique<dsp::Centipede>(dsp::Centipede::Game::Millipede);
+#endif
+#if DSP_DRIVER_CHINAGATE
+    if (q.is("chinagat") || q.is("chinagate")) return std::make_unique<dsp::ChinaGate>();
 #endif
 #if DSP_DRIVER_CNINJA
     if (q.is("cninja") || q.is("cavemanninja") || q.is("joemac"))
