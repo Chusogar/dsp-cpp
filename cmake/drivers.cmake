@@ -5,7 +5,7 @@
 set(DSP_DRIVERS_ARCADE
   actfancer ajax aliens ambush appoooh arabian arkanoid armedf_hw asteroid
   atari_system1 atari_system2 bagman balsente bankpanic_hw baraduke_hw
-  bionicc blktiger blockout bloodbros blueprint bombjack boogwing brkthru btime bublbobl cabal centipede citycon cninja commando cps1 dec0 doubledragon
+  bionicc blktiger blockout bloodbros blueprint bombjack boogwing brkthru btime bublbobl cabal centipede chinagate citycon cninja commando cps1 dec0 doubledragon
   galaga_hw galaxian gauntlet gng hangon m62 m72 mcr mikie model3 mrdo neogeo
   opwolf outrun pirates polepos punchout renegade retofinv sega_system1
   shadow_warriors_hw shaolinsroad shuuz simpsons skullxbo slapfight snk
