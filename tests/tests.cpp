@@ -71,10 +71,7 @@
 #include "drivers/arcade/btime.h"
 #include "drivers/arcade/cabal.h"
 #include "drivers/arcade/centipede.h"
-<<<<<<< HEAD
 #include "drivers/arcade/opwolf.h"
-=======
->>>>>>> 9b2384d263e32bcaee700e2e2a031fa21089ea6d
 #include "drivers/arcade/chinagate.h"
 #include "drivers/arcade/cninja.h"
 #include "machine/seibu_sound.h"
@@ -1713,6 +1710,87 @@ void test_spectrum_rzx_gyroscope_if_present() {
     }
     check(m.rzx_playing(), "Gyroscope RZX still playing after 1031 frames");
     check(worst <= 2, "Gyroscope: no vertical stripes at the bottom of the playfield");
+}
+
+void test_spectrum_floating_bus() {
+    dsp::Spectrum48k m;
+    m.mem_write(0x4000, 0xaa);
+    m.mem_write(0x5800, 0x55);
+    m.mem_write(0x4001, 0xbb);
+    m.mem_write(0x5801, 0x66);
+    m.mem_write(0x4002, 0xcc);
+    m.mem_write(0x5802, 0x77);
+    m.mem_write(0x4100, 0x11);  // second pixel line, same attribute row
+    m.mem_write(0x4020, 0x22);  // first line of the second character row
+    m.mem_write(0x5820, 0x33);
+    check(m.debug_floating_bus(14337) == 0xff, "floating bus idles before the first fetch");
+    check(m.debug_floating_bus(14338) == 0xaa, "floating bus: bitmap $4000 at T 14338");
+    check(m.debug_floating_bus(14339) == 0x55, "floating bus: attribute $5800 at T 14339");
+    check(m.debug_floating_bus(14340) == 0xbb, "floating bus: bitmap $4001 at T 14340");
+    check(m.debug_floating_bus(14341) == 0x66, "floating bus: attribute $5801 at T 14341");
+    bool idle = true;
+    for (int t = 14342; t <= 14345; ++t) idle = idle && m.debug_floating_bus(t) == 0xff;
+    check(idle, "floating bus idles for 4 T-states between fetch pairs");
+    check(m.debug_floating_bus(14346) == 0xcc, "floating bus: bitmap $4002 eight T-states later");
+    check(m.debug_floating_bus(14338 + 224) == 0x11, "floating bus follows the next pixel line");
+    check(m.debug_floating_bus(14338 + 8 * 224) == 0x22 && m.debug_floating_bus(14339 + 8 * 224) == 0x33,
+          "floating bus: the ninth line reads the second character row");
+    check(m.debug_floating_bus(14338 + 128) == 0xff, "floating bus idles in the right border");
+    check(m.debug_floating_bus(14338 + 192 * 224) == 0xff, "floating bus idles in the bottom border");
+}
+
+// Top Gun's wait before play: a loop in contended RAM polls port $28FF until
+// the attribute $42 goes past on the floating bus. It only ever samples the
+// right phase of the ULA fetch if the internal T-states of JR are contended
+// and the bus is read where Fuse reads it.
+void test_spectrum_floating_bus_program_if_present() {
+    const char* rom = "/tmp/roms/zx48";
+    if (!std::filesystem::exists(rom)) {
+        std::printf("skip test_spectrum_floating_bus_program_if_present (no %s)\n", rom);
+        return;
+    }
+    dsp::Spectrum48k m;
+    std::vector<uint8_t> sna(27 + 0xc000, 0);
+    sna[0] = 0x3f;                        // I
+    sna[1] = 0; sna[2] = 0;               // HL'
+    sna[3] = 0; sna[4] = 0;               // DE'
+    sna[5] = 0; sna[6] = 0;               // BC'
+    sna[7] = 0; sna[8] = 0;               // AF'
+    sna[9] = 0; sna[10] = 0;              // HL
+    sna[11] = 0; sna[12] = 0;             // DE
+    sna[13] = 0; sna[14] = 0;             // BC
+    sna[15] = 0; sna[16] = 0;             // IY
+    sna[17] = 0; sna[18] = 0;             // IX
+    sna[19] = 0;                          // IFF2
+    sna[20] = 0;                          // R
+    sna[21] = 0; sna[22] = 0;             // AF
+    sna[23] = 0x00; sna[24] = 0x91;       // SP -> $9100
+    sna[25] = 1;                          // IM 1
+    sna[26] = 7;                          // border
+    auto ram = [&](uint16_t a) -> uint8_t& { return sna[27 + (a - 0x4000)]; };
+    for (uint16_t a = 0x5800; a < 0x5b00; ++a) ram(a) = 0x38;
+    for (uint16_t a : {0x5a81, 0x5a91, 0x5ac4, 0x5ad4}) ram(a) = 0x42;  // as Top Gun has them
+    const uint8_t prog[] = {0xf3,                    // DI
+                            0x3e, 0x28,              // loop: LD A,$28
+                            0xdb, 0xff,              // IN A,($FF)
+                            0xfe, 0x42,              // CP $42
+                            0x20, 0xf8,              // JR NZ,loop
+                            0x3e, 0x99,              // LD A,$99
+                            0x32, 0x00, 0x90,        // LD ($9000),A
+                            0x76};                   // HALT
+    for (size_t i = 0; i < sizeof(prog); ++i) ram(uint16_t(0x6811 + i)) = prog[i];
+    ram(0x9100) = 0x11;
+    ram(0x9101) = 0x68;                   // RETN target $6811
+    const std::string path = "/tmp/dsp-floating-bus.sna";
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(sna.data()), std::streamsize(sna.size()));
+    }
+    std::string err;
+    check(m.init(rom, &err), "Spectrum 48K ROM loads for the floating bus program");
+    check(m.load_media(path, &err), "floating bus test snapshot loads");
+    for (int f = 0; f < 10; ++f) m.run_frame();
+    check(m.mem_read(0x9000) == 0x99, "a loop in contended RAM sees the attribute on the floating bus (Top Gun)");
 }
 
 void test_spectrum_ula() {
@@ -10829,7 +10907,6 @@ void test_millipede_if_present() {
     check(peak < 32767, "Millipede audio does not clip");
 }
 
-<<<<<<< HEAD
 void test_opwolf_if_present() {
     const char* path = "/tmp/roms/opwolf.zip";
     if (!std::filesystem::exists(path)) {
@@ -10863,8 +10940,6 @@ void test_opwolf_if_present() {
     check(black > 65 * 200 / 2, "Operation Wolf HUD panel is opaque at the start of a mission");
 }
 
-=======
->>>>>>> 9b2384d263e32bcaee700e2e2a031fa21089ea6d
 void test_cabal_if_present() {
     const char* path = "/tmp/roms/cabal.zip";
     if (!std::filesystem::exists(path)) {
@@ -11247,6 +11322,8 @@ int main() {
     test_spectrum_tape();
     test_spectrum_tzx();
     test_spectrum_ula();
+    test_spectrum_floating_bus();
+    test_spectrum_floating_bus_program_if_present();
     test_spectrum_rzx_gyroscope_if_present();
     test_nes_apu_status();
     test_nes_ppu_sprites_and_palette();
@@ -11425,10 +11502,7 @@ int main() {
     test_brkthru_if_present();
     test_btime_if_present();
     test_cabal_if_present();
-<<<<<<< HEAD
     test_opwolf_if_present();
-=======
->>>>>>> 9b2384d263e32bcaee700e2e2a031fa21089ea6d
     test_centipede_if_present();
     test_millipede_if_present();
     test_chinagate_if_present();

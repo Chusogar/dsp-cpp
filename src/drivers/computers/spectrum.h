@@ -67,6 +67,8 @@ public:
     uint8_t io_in(uint16_t port);
     void io_out(uint16_t port, uint8_t value);
     void on_cycles(int cycles);
+    // Fuse-accurate floating bus at absolute frame T-state `t` (for tests).
+    uint8_t debug_floating_bus(int t) const { return floating_bus(t); }
 
 private:
     void build_contention();
@@ -76,6 +78,8 @@ private:
     // Apply ULA wait states as real elapsed T-states (paint border / advance beam).
     void contend(int extra);
     void apply_port_contention(uint16_t port);
+    // Fuse spectrum_unattached_port for the 48K at absolute frame T-state `t`.
+    uint8_t floating_bus(int t) const;
     void render_line(int line);
     // Latch pixel+attribute at ULA fetch time (multicolor / 8×1 colour).
     void ula_latch_column(int col);
