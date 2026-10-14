@@ -33,6 +33,12 @@ public:
     // Called immediately before the next opcode fetch (PC still points at the opcode).
     void set_instruction_hook(InstructionHook handler) { instruction_hook_ = std::move(handler); }
     void set_m1_handler(M1Handler handler) { m1_handler_ = std::move(handler); }
+    // Internal (no MREQ) T-states that still put an address on the bus: the
+    // ZX Spectrum ULA contends them when that address is in $4000-$7FFF. The
+    // handler is called once per such T-state with the address, at the right
+    // point of the instruction (Fuse contend_read_no_mreq). Off by default.
+    using InternalHandler = std::function<void(uint16_t)>;
+    void set_internal_handler(InternalHandler handler) { internal_handler_ = std::move(handler); }
     // Base T-states elapsed inside the current instruction (before cycle_handler
     // flushes them). Spectrum ULA contention looks up at frame_t + this value so
     // mid-instruction memory/IO sees the correct beam position.
@@ -171,6 +177,15 @@ private:
     M1Handler m1_handler_;
     IrqAckHandler irq_ack_;
     mutable int t_in_instr_ = 0;
+    InternalHandler internal_handler_;
+    void internal(uint16_t address, int count) {
+        if (!internal_handler_) return;
+        for (int k = 0; k < count; ++k) {
+            internal_handler_(address);
+            ++t_in_instr_;
+        }
+    }
+    uint16_t ir() const { return uint16_t((i << 8) | r); }
     void bump_r_m1() {
         r = uint8_t(((r + 1) & 0x7f) | (r & 0x80));
         if (m1_handler_) m1_handler_();

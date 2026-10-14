@@ -155,6 +155,17 @@ bool Spectrum48k::init(const std::string& rom_path, std::string* error) {
     cpu_.set_m1_handler([this]() {
         if (rzx_.playing()) rzx_.on_m1();
     });
+    // Internal T-states that keep an address on the bus (JR offset, INC rr
+    // with IR, DJNZ...) are contended too; loops synced to the beam through
+    // the floating bus (Top Gun, Arkanoid, Cobra) depend on them.
+    cpu_.set_internal_handler([this](uint16_t addr) {
+        if (model_ == Model::Spec16k) addr = uint16_t(addr & 0x7fff);
+        const int t = ula_time();
+        if ((addr & 0xc000) == 0x4000 && t >= 0 && t < int(contention_.size())) {
+            const uint8_t extra = contention_[size_t(t)];
+            if (extra) contend(extra);
+        }
+    });
 
     build_contention();
     reset();
@@ -259,11 +270,9 @@ void Spectrum48k::apply_keyboard(const MachineInputs& in) {
 }
 
 void Spectrum48k::contend(int extra) {
-    // Contended accesses retire wait+2 T beyond the ULA slot table.  The extra
-    // covers IR/bus settle between mid-instruction accesses that our Z80 still
-    // retires in bulk; Aquaplane's cyan/blue border then meets the sea within
-    // ~1 scanline (left lags right by one line — real ULA geometry).
-    if (extra > 0) on_cycles(extra + 2);
+    // Wait states only — internal (no-MREQ) T-states are contended via the
+    // Z80 internal_handler, so the old +2 fudge is no longer needed.
+    if (extra > 0) on_cycles(extra);
 }
 
 int Spectrum48k::ula_time() {
@@ -334,8 +343,40 @@ void Spectrum48k::apply_port_contention(uint16_t port) {
     if (extra > 0) contend(extra);
 }
 
+// Value left on the data bus by the ULA when an unattached port is read (the
+// "floating bus", Fuse spectrum_unattached_port for the 48K). `t` is the
+// T-state of the read as Fuse counts it (start of the I/O cycle + wait states
+// + 3). During each 8 T-state cell of a paper line the ULA fetches bitmap,
+// attribute, bitmap and attribute on phases 2-5 and leaves $FF on the bus
+// otherwise, so the first bitmap byte ($4000) is seen at T 14338.
+// Games that sync to the beam by polling port $FF (Top Gun, Arkanoid,
+// Cobra, Sidewize...) wait for a given attribute byte to come round.
+uint8_t Spectrum48k::floating_bus(int t) const {
+    // Line 0's "through" counter starts 24 T-states before the first paper
+    // fetch so through==24 is the first idle slot of the paper window and
+    // through==26 (T 14338) is the first bitmap fetch.
+    constexpr int kLine0 = 14312;
+    if (t < kLine0) return 0xff;
+    const int rel = t - kLine0;
+    const int line = rel / kTstatesPerLine;
+    const int through = rel % kTstatesPerLine;
+    if (line < 0 || line >= 192) return 0xff;
+    if (through < 24 || through >= 24 + 128) return 0xff;
+    int column = ((through - 24) / 8) * 2;
+    switch (through % 8) {
+        case 4: ++column; [[fallthrough]];
+        case 2: return mem_[size_t(0x4000 + kScrTable[line] + column)];
+        case 5: ++column; [[fallthrough]];
+        case 3: return mem_[size_t(0x5800 + ((line >> 3) << 5) + column)];
+        default: return 0xff;
+    }
+}
+
 uint8_t Spectrum48k::io_in(uint16_t port) {
+    // Fuse (readport) samples the bus three T-states into the I/O cycle, after
+    // every wait state of the port contention pattern.
     apply_port_contention(port);
+    const int read_t = ula_time() + 3;
     // RZX playback supplies every IN result from the recording log.
     if (rzx_.playing()) return rzx_.next_in();
     uint8_t result = 0xff;
@@ -355,10 +396,13 @@ uint8_t Spectrum48k::io_in(uint16_t port) {
         result = uint8_t((keys & 0x1f) | 0xa0 | ear_ | speaker_);
         result = uint8_t(result & 0xbf);  // clear bit6 then OR ear
         result = uint8_t(result | ear_ | speaker_);
+    } else {
+        result = floating_bus(read_t);
     }
 
-    // Kempston joystick (port with A5=0, common $1F)
-    if ((port & 0x20) == 0) {
+    // Kempston joystick — classic $1F decode so floating-bus polls on $xxFF
+    // (Top Gun's $28FF) are not stolen.
+    if ((port & 0xff) == 0x1f) {
         result = joy_;
     }
 
@@ -368,18 +412,6 @@ uint8_t Spectrum48k::io_in(uint16_t port) {
             result = ulaplus_.pal[ulaplus_.last_reg & 63];
         } else if (ulaplus_.mode == 1) {
             result = ulaplus_.active ? 1 : 0;
-        }
-    }
-
-    // Floating bus (simplified): attribute byte when in display area
-    if ((port & 1) != 0) {
-        if (line_ >= 64 && line_ <= 255) {
-            const int y = line_ - 64;
-            const int x = (t_in_line_ - 24) / 4;  // rough
-            if (x >= 0 && x < 32 && y >= 0 && y < 192) {
-                const int attr = 0x5800 + ((y >> 3) << 5) + x;
-                result = mem_[attr];
-            }
         }
     }
 

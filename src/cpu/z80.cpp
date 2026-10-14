@@ -349,6 +349,7 @@ void Z80::daa() {
 
 void Z80::rrd() {
     uint8_t value = rd(hl());
+    internal(hl(), 4);
     wr(hl(), uint8_t((value >> 4) | (a << 4)));
     a = uint8_t((a & 0xf0) | (value & 0x0f));
     wz = uint16_t(hl() + 1);
@@ -357,6 +358,7 @@ void Z80::rrd() {
 
 void Z80::rld() {
     uint8_t value = rd(hl());
+    internal(hl(), 4);
     wr(hl(), uint8_t((value << 4) | (a & 0x0f)));
     a = uint8_t((a & 0xf0) | (value >> 4));
     wz = uint16_t(hl() + 1);
@@ -427,6 +429,7 @@ void Z80::bit(uint8_t index, uint8_t value, uint8_t xy_source) {
 void Z80::block_ld(int delta, bool repeat) {
     uint8_t value = rd(hl());
     wr(de(), value);
+    internal(de(), 2);
     set_hl(uint16_t(hl() + delta));
     set_de(uint16_t(de() + delta));
     set_bc(uint16_t(bc() - 1));
@@ -434,6 +437,7 @@ void Z80::block_ld(int delta, bool repeat) {
     f = uint8_t((f & (SF | ZF | CF)) | ((n & 0x02) ? YF : 0) | ((n & 0x08) ? XF : 0) |
                 (bc() != 0 ? PF : 0));
     if (repeat && bc() != 0) {
+        internal(uint16_t(de() - delta), 5);
         pc_ = uint16_t(pc_ - 2);
         wz = uint16_t(pc_ + 1);
         cycles_ += t_extra_[delta > 0 ? 0xb0 : 0xb8];
@@ -442,6 +446,7 @@ void Z80::block_ld(int delta, bool repeat) {
 
 void Z80::block_cp(int delta, bool repeat) {
     uint8_t value = rd(hl());
+    internal(hl(), 5);
     uint8_t result = uint8_t(a - value);
     uint8_t half = uint8_t(((a ^ value ^ result) & HF) ? HF : 0);
     set_hl(uint16_t(hl() + delta));
@@ -451,6 +456,7 @@ void Z80::block_cp(int delta, bool repeat) {
                 ((n & 0x02) ? YF : 0) | ((n & 0x08) ? XF : 0) | (bc() != 0 ? PF : 0));
     wz = uint16_t(wz + delta);
     if (repeat && bc() != 0 && result != 0) {
+        internal(uint16_t(hl() - delta), 5);
         pc_ = uint16_t(pc_ - 2);
         wz = uint16_t(pc_ + 1);
         cycles_ += t_extra_[delta > 0 ? 0xb1 : 0xb9];
@@ -458,7 +464,9 @@ void Z80::block_cp(int delta, bool repeat) {
 }
 
 void Z80::block_in(int delta, bool repeat) {
+    internal(ir(), 1);
     uint8_t value = in_(bc());
+    if (internal_handler_) t_in_instr_ += 4;
     wr(hl(), value);
     wz = uint16_t(bc() + delta);
     b = uint8_t(b - 1);
@@ -467,21 +475,25 @@ void Z80::block_in(int delta, bool repeat) {
     f = uint8_t(sz53(b) | ((value & 0x80) ? NF : 0) | ((sum > 0xff) ? (HF | CF) : 0) |
                 kParity[(sum & 7) ^ b]);
     if (repeat && b != 0) {
+        internal(uint16_t(hl() - delta), 5);
         pc_ = uint16_t(pc_ - 2);
         cycles_ += t_extra_[delta > 0 ? 0xb2 : 0xba];
     }
 }
 
 void Z80::block_out(int delta, bool repeat) {
+    internal(ir(), 1);
     uint8_t value = rd(hl());
     b = uint8_t(b - 1);
     wz = uint16_t(bc() + delta);
     out_(bc(), value);
+    if (internal_handler_) t_in_instr_ += 4;
     set_hl(uint16_t(hl() + delta));
     unsigned sum = unsigned(value) + l;
     f = uint8_t(sz53(b) | ((value & 0x80) ? NF : 0) | ((sum > 0xff) ? (HF | CF) : 0) |
                 kParity[(sum & 7) ^ b]);
     if (repeat && b != 0) {
+        internal(bc(), 5);
         pc_ = uint16_t(pc_ - 2);
         cycles_ += t_extra_[delta > 0 ? 0xb3 : 0xbb];
     }
@@ -586,7 +598,7 @@ int Z80::run(int cycles) {
             case 0x00: break;  // nop
             case 0x01: set_bc(fetch16()); break;
             case 0x02: wr(bc(), a); wz = uint16_t(((bc() + 1) & 0xff) | (a << 8)); break;
-            case 0x03: set_bc(uint16_t(bc() + 1)); break;
+            case 0x03: internal(ir(), 2); set_bc(uint16_t(bc() + 1)); break;
             case 0x04: b = inc8(b); break;
             case 0x05: b = dec8(b); break;
             case 0x06: b = fetch(); break;
@@ -599,9 +611,9 @@ int Z80::run(int cycles) {
                 std::swap(a, a2);
                 std::swap(f, f2);
                 break;
-            case 0x09: set_hl(add16(hl(), bc())); break;
+            case 0x09: internal(ir(), 7); set_hl(add16(hl(), bc())); break;
             case 0x0a: a = rd(bc()); wz = uint16_t(bc() + 1); break;
-            case 0x0b: set_bc(uint16_t(bc() - 1)); break;
+            case 0x0b: internal(ir(), 2); set_bc(uint16_t(bc() - 1)); break;
             case 0x0c: c = inc8(c); break;
             case 0x0d: c = dec8(c); break;
             case 0x0e: c = fetch(); break;
@@ -611,9 +623,11 @@ int Z80::run(int cycles) {
                 f = uint8_t(f | (a & (YF | XF)));
                 break;
             case 0x10: {  // djnz
+                internal(ir(), 1);
                 int8_t offset = int8_t(fetch());
                 b = uint8_t(b - 1);
                 if (b != 0) {
+                    internal(uint16_t(pc_ - 1), 5);
                     pc_ = uint16_t(pc_ + offset);
                     wz = pc_;
                     cycles_ += t_extra_[opcode];
@@ -622,7 +636,7 @@ int Z80::run(int cycles) {
             }
             case 0x11: set_de(fetch16()); break;
             case 0x12: wr(de(), a); wz = uint16_t(((de() + 1) & 0xff) | (a << 8)); break;
-            case 0x13: set_de(uint16_t(de() + 1)); break;
+            case 0x13: internal(ir(), 2); set_de(uint16_t(de() + 1)); break;
             case 0x14: d = inc8(d); break;
             case 0x15: d = dec8(d); break;
             case 0x16: d = fetch(); break;
@@ -634,13 +648,14 @@ int Z80::run(int cycles) {
             }
             case 0x18: {  // jr
                 int8_t offset = int8_t(fetch());
+                internal(uint16_t(pc_ - 1), 5);
                 pc_ = uint16_t(pc_ + offset);
                 wz = pc_;
                 break;
             }
-            case 0x19: set_hl(add16(hl(), de())); break;
+            case 0x19: internal(ir(), 7); set_hl(add16(hl(), de())); break;
             case 0x1a: a = rd(de()); wz = uint16_t(de() + 1); break;
-            case 0x1b: set_de(uint16_t(de() - 1)); break;
+            case 0x1b: internal(ir(), 2); set_de(uint16_t(de() - 1)); break;
             case 0x1c: e = inc8(e); break;
             case 0x1d: e = dec8(e); break;
             case 0x1e: e = fetch(); break;
@@ -663,6 +678,7 @@ int Z80::run(int cycles) {
                     default: taken = (f & CF) != 0; break;
                 }
                 if (taken) {
+                    internal(uint16_t(pc_ - 1), 5);
                     pc_ = uint16_t(pc_ + offset);
                     wz = pc_;
                     cycles_ += t_extra_[opcode];
@@ -677,12 +693,12 @@ int Z80::run(int cycles) {
                 wz = uint16_t(addr + 1);
                 break;
             }
-            case 0x23: set_hl(uint16_t(hl() + 1)); break;
+            case 0x23: internal(ir(), 2); set_hl(uint16_t(hl() + 1)); break;
             case 0x24: h = inc8(h); break;
             case 0x25: h = dec8(h); break;
             case 0x26: h = fetch(); break;
             case 0x27: daa(); break;
-            case 0x29: set_hl(add16(hl(), hl())); break;
+            case 0x29: internal(ir(), 7); set_hl(add16(hl(), hl())); break;
             case 0x2a: {
                 uint16_t addr = fetch16();
                 l = rd(addr);
@@ -690,7 +706,7 @@ int Z80::run(int cycles) {
                 wz = uint16_t(addr + 1);
                 break;
             }
-            case 0x2b: set_hl(uint16_t(hl() - 1)); break;
+            case 0x2b: internal(ir(), 2); set_hl(uint16_t(hl() - 1)); break;
             case 0x2c: l = inc8(l); break;
             case 0x2d: l = dec8(l); break;
             case 0x2e: l = fetch(); break;
@@ -705,21 +721,31 @@ int Z80::run(int cycles) {
                 wz = uint16_t(((addr + 1) & 0xff) | (a << 8));
                 break;
             }
-            case 0x33: sp = uint16_t(sp + 1); break;
-            case 0x34: wr(hl(), inc8(rd(hl()))); break;
-            case 0x35: wr(hl(), dec8(rd(hl()))); break;
+            case 0x33: internal(ir(), 2); sp = uint16_t(sp + 1); break;
+            case 0x34: {
+                const uint8_t value = rd(hl());
+                internal(hl(), 1);
+                wr(hl(), inc8(value));
+                break;
+            }
+            case 0x35: {
+                const uint8_t value = rd(hl());
+                internal(hl(), 1);
+                wr(hl(), dec8(value));
+                break;
+            }
             case 0x36: wr(hl(), fetch()); break;
             case 0x37:  // scf
                 f = uint8_t((f & (SF | ZF | PF)) | CF | (a & (YF | XF)));
                 break;
-            case 0x39: set_hl(add16(hl(), sp)); break;
+            case 0x39: internal(ir(), 7); set_hl(add16(hl(), sp)); break;
             case 0x3a: {
                 uint16_t addr = fetch16();
                 a = rd(addr);
                 wz = uint16_t(addr + 1);
                 break;
             }
-            case 0x3b: sp = uint16_t(sp - 1); break;
+            case 0x3b: internal(ir(), 2); sp = uint16_t(sp - 1); break;
             case 0x3c: a = inc8(a); break;
             case 0x3d: a = dec8(a); break;
             case 0x3e: a = fetch(); break;
@@ -764,6 +790,7 @@ int Z80::run(int cycles) {
                         case 0xe8:
                         case 0xf0:
                         case 0xf8: {  // ret cc
+                            internal(ir(), 1);
                             bool taken = false;
                             switch ((opcode >> 3) & 7) {
                                 case 0: taken = !(f & ZF); break;
@@ -786,10 +813,10 @@ int Z80::run(int cycles) {
                         case 0xd1: set_de(pop()); break;
                         case 0xe1: set_hl(pop()); break;
                         case 0xf1: set_af(pop()); break;
-                        case 0xc5: push(bc()); break;
-                        case 0xd5: push(de()); break;
-                        case 0xe5: push(hl()); break;
-                        case 0xf5: push(af()); break;
+                        case 0xc5: internal(ir(), 1); push(bc()); break;
+                        case 0xd5: internal(ir(), 1); push(de()); break;
+                        case 0xe5: internal(ir(), 1); push(hl()); break;
+                        case 0xf5: internal(ir(), 1); push(af()); break;
                         case 0xc2:
                         case 0xca:
                         case 0xd2:
@@ -837,6 +864,7 @@ int Z80::run(int cycles) {
                                 default: taken = (f & SF) != 0; break;
                             }
                             if (taken) {
+                                internal(uint16_t(pc_ - 1), 1);
                                 push(pc_);
                                 pc_ = addr;
                                 cycles_ += t_extra_[opcode];
@@ -859,6 +887,7 @@ int Z80::run(int cycles) {
                         case 0xef:
                         case 0xf7:
                         case 0xff:  // rst
+                            internal(ir(), 1);
                             push(pc_);
                             pc_ = uint16_t(opcode & 0x38);
                             wz = pc_;
@@ -867,6 +896,7 @@ int Z80::run(int cycles) {
                         case 0xcb: exec_cb(); break;
                         case 0xcd: {
                             uint16_t addr = fetch16();
+                            internal(uint16_t(pc_ - 1), 1);
                             push(pc_);
                             pc_ = addr;
                             wz = pc_;
@@ -890,14 +920,17 @@ int Z80::run(int cycles) {
                             uint8_t port = fetch();
                             uint16_t addr = uint16_t((a << 8) | port);
                             a = in_(addr);
+                            if (internal_handler_) t_in_instr_ += 4;
                             wz = uint16_t(addr + 1);
                             break;
                         }
                         case 0xdd: exec_index(&ix); break;
                         case 0xe3: {  // ex (sp),hl
                             uint16_t value = rd(sp) | uint16_t(rd(uint16_t(sp + 1)) << 8);
-                            wr(sp, l);
+                            internal(uint16_t(sp + 1), 1);
                             wr(uint16_t(sp + 1), h);
+                            wr(sp, l);
+                            internal(sp, 2);
                             set_hl(value);
                             wz = value;
                             break;
@@ -909,7 +942,7 @@ int Z80::run(int cycles) {
                             break;
                         case 0xed: exec_ed(); break;
                         case 0xf3: iff1 = iff2 = false; break;
-                        case 0xf9: sp = hl(); break;
+                        case 0xf9: internal(ir(), 2); sp = hl(); break;
                         case 0xfb:
                             iff1 = iff2 = true;
                             after_ei_ = true;
@@ -938,6 +971,7 @@ void Z80::exec_cb() {
                                           &Z80::h, &Z80::l, nullptr, &Z80::a};
     uint8_t index = uint8_t(opcode & 7);
     uint8_t value = (index == 6) ? rd(hl()) : this->*regs[index];
+    if (index == 6) internal(hl(), 1);
     uint8_t op = uint8_t(opcode >> 6);
     uint8_t bit_index = uint8_t((opcode >> 3) & 7);
 
@@ -1008,6 +1042,7 @@ void Z80::exec_ed() {
                 case 2: value = hl(); break;
                 default: value = sp; break;
             }
+            internal(ir(), 7);
             sbc_hl(value);
             break;
         }
@@ -1019,6 +1054,7 @@ void Z80::exec_ed() {
                 case 2: value = hl(); break;
                 default: value = sp; break;
             }
+            internal(ir(), 7);
             adc_hl(value);
             break;
         }
@@ -1073,13 +1109,15 @@ void Z80::exec_ed() {
         case 0x46: case 0x4e: case 0x66: case 0x6e: im = 0; break;
         case 0x56: case 0x76: im = 1; break;
         case 0x5e: case 0x7e: im = 2; break;
-        case 0x47: i = a; break;
-        case 0x4f: r = a; break;
+        case 0x47: internal(ir(), 1); i = a; break;
+        case 0x4f: internal(ir(), 1); r = a; break;
         case 0x57:
+            internal(ir(), 1);
             a = i;
             f = uint8_t((f & CF) | sz53(a) | (iff2 ? PF : 0));
             break;
         case 0x5f:
+            internal(ir(), 1);
             a = r;
             f = uint8_t((f & CF) | sz53(a) | (iff2 ? PF : 0));
             break;
@@ -1263,6 +1301,7 @@ void Z80::exec_index(uint16_t* index_reg) {
     auto set_index = [&](uint8_t hi, uint8_t lo) { *index_reg = uint16_t((hi << 8) | lo); };
     auto ea = [&]() {
         int8_t offset = int8_t(fetch());
+        internal(uint16_t(pc_ - 1), 5);
         wz = uint16_t(*index_reg + offset);
         return wz;
     };
@@ -1271,8 +1310,8 @@ void Z80::exec_index(uint16_t* index_reg) {
                                           &Z80::h, &Z80::l, nullptr, &Z80::a};
 
     switch (opcode) {
-        case 0x09: *index_reg = add16(*index_reg, bc()); break;
-        case 0x19: *index_reg = add16(*index_reg, de()); break;
+        case 0x09: internal(ir(), 7); *index_reg = add16(*index_reg, bc()); break;
+        case 0x19: internal(ir(), 7); *index_reg = add16(*index_reg, de()); break;
         case 0x21: *index_reg = fetch16(); break;
         case 0x22: {
             uint16_t addr = fetch16();
@@ -1281,50 +1320,60 @@ void Z80::exec_index(uint16_t* index_reg) {
             wz = uint16_t(addr + 1);
             break;
         }
-        case 0x23: *index_reg = uint16_t(*index_reg + 1); break;
+        case 0x23: internal(ir(), 2); *index_reg = uint16_t(*index_reg + 1); break;
         case 0x24: set_index(inc8(index_high), index_low); break;
         case 0x25: set_index(dec8(index_high), index_low); break;
         case 0x26: set_index(fetch(), index_low); break;
-        case 0x29: *index_reg = add16(*index_reg, *index_reg); break;
+        case 0x29: internal(ir(), 7); *index_reg = add16(*index_reg, *index_reg); break;
         case 0x2a: {
             uint16_t addr = fetch16();
             *index_reg = uint16_t(rd(addr) | (rd(uint16_t(addr + 1)) << 8));
             wz = uint16_t(addr + 1);
             break;
         }
-        case 0x2b: *index_reg = uint16_t(*index_reg - 1); break;
+        case 0x2b: internal(ir(), 2); *index_reg = uint16_t(*index_reg - 1); break;
         case 0x2c: set_index(index_high, inc8(index_low)); break;
         case 0x2d: set_index(index_high, dec8(index_low)); break;
         case 0x2e: set_index(index_high, fetch()); break;
         case 0x34: {
             uint16_t addr = ea();
-            wr(addr, inc8(rd(addr)));
+            const uint8_t value = rd(addr);
+            internal(addr, 1);
+            wr(addr, inc8(value));
             break;
         }
         case 0x35: {
             uint16_t addr = ea();
-            wr(addr, dec8(rd(addr)));
+            const uint8_t value = rd(addr);
+            internal(addr, 1);
+            wr(addr, dec8(value));
             break;
         }
-        case 0x36: {
-            uint16_t addr = ea();
-            wr(addr, fetch());
+        case 0x36: {  // ld (ix+d),n: d and n, then 2 internal T-states
+            int8_t offset = int8_t(fetch());
+            uint16_t addr = uint16_t(*index_reg + offset);
+            wz = addr;
+            const uint8_t value = fetch();
+            internal(uint16_t(pc_ - 1), 2);
+            wr(addr, value);
             break;
         }
-        case 0x39: *index_reg = add16(*index_reg, sp); break;
+        case 0x39: internal(ir(), 7); *index_reg = add16(*index_reg, sp); break;
         case 0xcb: exec_index_cb(index_reg); break;
         case 0xe1: *index_reg = pop(); break;
         case 0xe3: {
             uint16_t value = rd(sp) | uint16_t(rd(uint16_t(sp + 1)) << 8);
-            wr(sp, index_low);
+            internal(uint16_t(sp + 1), 1);
             wr(uint16_t(sp + 1), index_high);
+            wr(sp, index_low);
+            internal(sp, 2);
             *index_reg = value;
             wz = value;
             break;
         }
-        case 0xe5: push(*index_reg); break;
+        case 0xe5: internal(ir(), 1); push(*index_reg); break;
         case 0xe9: pc_ = *index_reg; break;
-        case 0xf9: sp = *index_reg; break;
+        case 0xf9: internal(ir(), 2); sp = *index_reg; break;
         default:
             if (opcode >= 0x40 && opcode <= 0x7f && opcode != 0x76) {  // ld with index regs
                 uint8_t dst = uint8_t((opcode >> 3) & 7);
@@ -1386,11 +1435,13 @@ void Z80::exec_index(uint16_t* index_reg) {
 void Z80::exec_index_cb(uint16_t* index_reg) {
     int8_t offset = int8_t(fetch());
     uint8_t opcode = fetch();
+    internal(uint16_t(pc_ - 1), 2);
     cycles_ += t_index_cb_[opcode];
 
     uint16_t addr = uint16_t(*index_reg + offset);
     wz = addr;
     uint8_t value = rd(addr);
+    internal(addr, 1);
     uint8_t op = uint8_t(opcode >> 6);
     uint8_t bit_index = uint8_t((opcode >> 3) & 7);
 
