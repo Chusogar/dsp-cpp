@@ -30,7 +30,8 @@ const std::vector<RomEntry> kMillipedeChars = {
     {"136013-106.p5", 0x800, 0x0800, 0xf4468045},
 };
 
-// convert_gfx(..., flipx=false, flipy=true): reverse Y.
+// Graphics in the board's native orientation (MAME charlayout and
+// spritelayout); the picture is turned 270 degrees at the end.
 GfxLayout char_layout() {
     GfxLayout l;
     l.width = l.height = 8;
@@ -39,7 +40,7 @@ GfxLayout char_layout() {
     l.char_increment = 8 * 8;
     l.plane_offsets = {0x100 * 8 * 8, 0};
     for (int i = 0; i < 8; ++i) l.x_offsets.push_back(i);
-    for (int i = 7; i >= 0; --i) l.y_offsets.push_back(i * 8);
+    for (int i = 0; i < 8; ++i) l.y_offsets.push_back(i * 8);
     return l;
 }
 
@@ -52,7 +53,7 @@ GfxLayout sprite_layout() {
     l.char_increment = 16 * 8;
     l.plane_offsets = {0x80 * 16 * 8, 0};
     for (int i = 0; i < 8; ++i) l.x_offsets.push_back(i);
-    for (int i = 15; i >= 0; --i) l.y_offsets.push_back(i * 8);
+    for (int i = 0; i < 16; ++i) l.y_offsets.push_back(i * 8);
     return l;
 }
 
@@ -287,7 +288,7 @@ void Centipede::on_cycles(int cycles) {
         audio_accum_ -= int64_t(kCpuClock);
         int32_t s = pokey0_.update();
         if (game_ == Game::Millipede) s += pokey1_.update();
-        audio_.push_back(int16_t(std::clamp(s, -32768, 32767)));
+        audio_.push_back(int16_t(std::clamp<int32_t>(s, -32768, 32767)));
     }
 }
 
@@ -299,21 +300,23 @@ void Centipede::drain_audio(std::vector<int16_t>& out) {
 // ---------------------------------------------------------------------------
 // Video
 
+// Drawing happens on the native 256x240 picture (rows 0-239 of screen_), as
+// in MAME; update_video() turns it 270 degrees for the vertical monitor.
 void Centipede::draw_sprites() {
     const int spr_base = game_ == Game::Millipede ? 0x13c0 : 0x7c0;
     for (int f = 0; f < 0x10; ++f) {
-        const int y = 255 - memory_[size_t(spr_base + 0x20 + f)];
-        if (y <= 7) continue;
         const uint8_t atrib = memory_[size_t(spr_base + f)];
         const int nchar = ((atrib & 0x3e) >> 1) | ((atrib & 1) << 6);
         const int color = memory_[size_t(spr_base + 0x30 + f)] << 2;
-        const int x = 240 - memory_[size_t(spr_base + 0x10 + f)];
-        const bool flip_x = (atrib & 0x80) != 0;
-        const bool flip_y = game_ == Game::Centipede && (atrib & 0x40) != 0;
+        const int x = memory_[size_t(spr_base + 0x20 + f)];
+        const int y = 240 - memory_[size_t(spr_base + 0x10 + f)];
+        // Centipede: bit 6 flips X, bit 7 flips Y. Millipede: bit 7 flips Y.
+        const bool flip_x = game_ == Game::Centipede && (atrib & 0x40) != 0;
+        const bool flip_y = (atrib & 0x80) != 0;
         const uint8_t* g = sprites_.element(nchar);
         for (int r = 0; r < 16; ++r) {
-            const int py = (y - 7) + r;
-            if (py < 0 || py >= 256) continue;
+            const int py = y + r;
+            if (py < 0 || py >= kNativeHeight) continue;
             const uint8_t* row = g + (flip_y ? 15 - r : r) * 8;
             uint32_t* out = &screen_[size_t(py) * 256];
             for (int c = 0; c < 8; ++c) {
@@ -329,11 +332,11 @@ void Centipede::draw_sprites() {
 }
 
 void Centipede::update_video() {
-    std::fill(screen_.begin(), screen_.end(), palette_[0]);
     const int tile_base = game_ == Game::Millipede ? 0x1000 : 0x400;
-    for (int f = 0; f < 0x400; ++f) {
-        const int tx = f / 32;
-        const int ty = 31 - (f % 32);
+    // 32x30 visible characters, row by row.
+    for (int f = 0; f < 32 * 30; ++f) {
+        const int tx = f % 32;
+        const int ty = f / 32;
         const uint8_t atrib = memory_[size_t(tile_base + f)];
         int nchar;
         int color_base;
@@ -349,27 +352,21 @@ void Centipede::update_video() {
         }
         const uint8_t* g = chars_.element(nchar);
         for (int r = 0; r < 8; ++r) {
-            const int py = ty * 8 + r;
             const uint8_t* row = g + (flip_y ? 7 - r : r) * 8;
-            uint32_t* out = &screen_[size_t(py) * 256];
-            for (int c = 0; c < 8; ++c) {
-                const int px = tx * 8 + c;
-                const int pen = row[flip_x ? 7 - c : c];
-                out[px] = palette_[size_t(color_base + pen) & 0x1f];
-            }
+            uint32_t* out = &screen_[size_t(ty * 8 + r) * 256 + size_t(tx * 8)];
+            for (int c = 0; c < 8; ++c) out[c] = palette_[size_t(color_base + row[flip_x ? 7 - c : c]) & 0x1f];
         }
     }
     draw_sprites();
 
-    // Crop left 240 columns; cocktail mode flips both axes.
+    // ROT270: the native top-right corner becomes the top-left one. The
+    // cocktail flip turns the picture by 180 degrees on top of that.
     for (int y = 0; y < kHeight; ++y) {
-        const int sy = flip_screen_ ? (kHeight - 1 - y) : y;
-        const uint32_t* src = &screen_[size_t(sy) * 256];
         uint32_t* dst = &framebuffer_[size_t(y) * kWidth];
-        if (flip_screen_) {
-            for (int x = 0; x < kWidth; ++x) dst[x] = src[kWidth - 1 - x];
-        } else {
-            std::memcpy(dst, src, size_t(kWidth) * sizeof(uint32_t));
+        for (int x = 0; x < kWidth; ++x) {
+            const int ox = flip_screen_ ? kWidth - 1 - x : x;
+            const int oy = flip_screen_ ? kHeight - 1 - y : y;
+            dst[x] = screen_[size_t(ox) * 256 + size_t(255 - oy)];
         }
     }
 }
