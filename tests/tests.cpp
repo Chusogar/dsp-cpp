@@ -10759,6 +10759,28 @@ void test_millipede_if_present() {
         audio.clear();
         m.drain_audio(audio);
         for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+        if (f == 450) {
+            // Attract screen: the red captions (DRAGONFLY, MOSQUITO...) must
+            // read left to right on the vertical monitor, so some row holds
+            // far more red pixels than any column does.
+            const int w = m.screen_width(), h = m.screen_height();
+            auto red = [&](int x, int y) {
+                const uint32_t p = m.framebuffer()[y * w + x];
+                return ((p >> 16) & 0xff) > 150 && ((p >> 8) & 0xff) < 80 && (p & 0xff) < 80;
+            };
+            int best_row = 0, best_col = 0;
+            for (int y = 0; y < h; ++y) {
+                int n = 0;
+                for (int x = 0; x < w; ++x) n += red(x, y);
+                best_row = std::max(best_row, n);
+            }
+            for (int x = 0; x < w; ++x) {
+                int n = 0;
+                for (int y = 0; y < h; ++y) n += red(x, y);
+                best_col = std::max(best_col, n);
+            }
+            check(best_row > 2 * best_col, "Millipede text reads horizontally (ROT270 picture)");
+        }
     }
     std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
     check(c.size() >= 4, "Millipede draws the playfield");

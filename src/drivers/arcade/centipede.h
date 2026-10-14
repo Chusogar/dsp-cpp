@@ -29,6 +29,7 @@ public:
     static constexpr double kFramesPerSecond = 60.0;
     static constexpr int kWidth = 240;
     static constexpr int kHeight = 256;
+    static constexpr int kNativeHeight = 240;  // the board draws 256x240
     static constexpr int kSampleRate = 44100;
 
     explicit Centipede(Game game = Game::Centipede);
