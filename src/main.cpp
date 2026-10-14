@@ -68,7 +68,7 @@ void print_supported_emulators() {
 		"    shadoww, gaiden, ninjagaiden\n"
 		"    actfancer, actfancr\n"
 		"    ajax, typhoon, simpsons\n"
-		"    ambush, arabian, bionicc, blktiger, blockout, bloodbros, skysmash, blueprnt, saturnzi, grasspin, bombjack, calorie, boogwing, brkthru, darwin, btime, lnc, mmonkey, cabal, cninja, shaolins, tehkanwc, appoooh, robowres, arkanoid, renegade\n"
+		"    ambush, arabian, bionicc, blktiger, blockout, bloodbros, skysmash, blueprnt, saturnzi, grasspin, bombjack, calorie, boogwing, brkthru, darwin, btime, lnc, mmonkey, cabal, cninja, robocop2, shaolins, tehkanwc, appoooh, robowres, arkanoid, renegade\n"
 		"    retofinv, slapfight, tigerheli,\n"
 		"    baraduke, metrocrs, bankp, combh\n"
 		"    defender, mayday, colony7, joust, robotron, stargate\n"

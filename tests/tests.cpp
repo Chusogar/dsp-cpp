@@ -10712,7 +10712,7 @@ void test_cninja_if_present() {
         std::printf("skip test_cninja_if_present (no %s)\n", path);
         return;
     }
-    dsp::CavemanNinja m;
+    dsp::CavemanNinja m(dsp::CavemanNinja::Game::Cninja);
     std::string err;
     check(m.init(path, &err), "Caveman Ninja ROMs load");
     if (!err.empty()) std::printf("cninja init: %s\n", err.c_str());
@@ -10733,6 +10733,35 @@ void test_cninja_if_present() {
     std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
     check(c.size() >= 16, "Caveman Ninja draws tilemaps / sprites");
     check(peak < 32767, "Caveman Ninja audio does not clip");
+}
+
+void test_robocop2_if_present() {
+    const char* path = "/tmp/roms/arcade/robocop2.zip";
+    if (!std::filesystem::exists(path)) {
+        std::printf("skip test_robocop2_if_present (no %s)\n", path);
+        return;
+    }
+    dsp::CavemanNinja m(dsp::CavemanNinja::Game::Robocop2);
+    std::string err;
+    check(m.init(path, &err), "Robocop 2 ROMs load");
+    if (!err.empty()) std::printf("robocop2 init: %s\n", err.c_str());
+    check(m.screen_width() == 320 && m.screen_height() == 240, "Robocop 2 screen is 320x240");
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int f = 1; f <= 1800; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 1200 && f < 1206;
+        in.player1.start = f >= 1260 && f < 1266;
+        in.player1.button1 = f > 1400 && (f % 20) < 10;
+        m.set_inputs(in);
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        for (int16_t s : audio) peak = std::max(peak, std::abs(int(s)));
+    }
+    std::set<uint32_t> c(m.framebuffer(), m.framebuffer() + m.screen_width() * m.screen_height());
+    check(c.size() >= 16, "Robocop 2 draws tilemaps / sprites");
+    check(peak < 32767, "Robocop 2 audio does not clip");
 }
 
 void test_blktiger_if_present() {
@@ -11205,6 +11234,7 @@ int main() {
     test_btime_if_present();
     test_cabal_if_present();
     test_cninja_if_present();
+    test_robocop2_if_present();
     test_blockout_if_present();
     if (failures == 0) {
         std::printf("all tests passed\n");
