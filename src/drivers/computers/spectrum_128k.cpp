@@ -712,6 +712,7 @@ void Spectrum128k::run_rzx_frame() {
     if (line_ < kLinesPerFrame) {
         while (line_ < kLinesPerFrame) {
             render_line(line_);
+            latch_mask_ = 0;  // latches belong to the line the beam stopped in
             ++line_;
         }
     }
@@ -756,6 +757,7 @@ void Spectrum128k::run_frame() {
     if (line_ < kLinesPerFrame) {
         while (line_ < kLinesPerFrame) {
             render_line(line_);
+            latch_mask_ = 0;  // latches belong to the line the beam stopped in
             ++line_;
         }
     }

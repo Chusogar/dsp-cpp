@@ -691,7 +691,7 @@ void Spectrum3::run_rzx_frame() {
         if (frame_t_ >= 32) cpu_.set_irq(IrqLine::Clear);
     }
     if (line_ < kLinesPerFrame) {
-        while (line_ < kLinesPerFrame) { render_line(line_); ++line_; }
+        while (line_ < kLinesPerFrame) { render_line(line_); latch_mask_ = 0; ++line_; }
     }
     line_ = 0; t_in_line_ = 0; border_pos_ = 0; frame_t_ = 0;
     flash_count_ = (flash_count_ + 1) & 0x0f;
@@ -730,6 +730,7 @@ void Spectrum3::run_frame() {
     if (line_ < kLinesPerFrame) {
         while (line_ < kLinesPerFrame) {
             render_line(line_);
+            latch_mask_ = 0;  // latches belong to the line the beam stopped in
             ++line_;
         }
     }

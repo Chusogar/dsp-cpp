@@ -1673,6 +1673,44 @@ void test_spectrum_tzx() {
     check(tape_pulses(loop, 6 * 100).size() == 6, "the loop plays its body three times");
 }
 
+// Gyroscope RZX (SPIN recording): many frames end halted before the beam
+// reaches the bottom; the rest of the picture is drawn from screen memory and
+// must not repeat the cells latched on the line where the beam stopped.
+void test_spectrum_rzx_gyroscope_if_present() {
+    const char* rom = "/tmp/roms/zx48";
+    const char* rzx = "/tmp/roms/zx48/gyroscope.rzx";
+    if (!std::filesystem::exists(rzx)) {
+        std::printf("skip test_spectrum_rzx_gyroscope_if_present (no %s)\n", rzx);
+        return;
+    }
+    dsp::Spectrum48k m;
+    std::string err;
+    check(m.init(rom, &err), "Spectrum 48K ROM loads for the Gyroscope RZX");
+    check(m.load_media(rzx, &err), "Gyroscope RZX loads");
+    std::vector<int16_t> audio;
+    int worst = 0;
+    for (int f = 1; f <= 1031; ++f) {
+        m.set_inputs(dsp::MachineInputs{});
+        m.run_frame();
+        audio.clear();
+        m.drain_audio(audio);
+        if (f < 1001) continue;
+        // In play the lower playfield is a white grid with thin diagonal
+        // lines: no screen column is black all the way down its last 40 rows.
+        const uint32_t* fb = m.framebuffer();
+        const int w = m.screen_width();
+        int columns = 0;
+        for (int x = 48; x < 304; ++x) {
+            bool black = true;
+            for (int y = 200; y < 240 && black; ++y) black = (fb[y * w + x] & 0xffffff) == 0;
+            columns += black;
+        }
+        worst = std::max(worst, columns);
+    }
+    check(m.rzx_playing(), "Gyroscope RZX still playing after 1031 frames");
+    check(worst <= 2, "Gyroscope: no vertical stripes at the bottom of the playfield");
+}
+
 void test_spectrum_ula() {
     dsp::Spectrum48k spectrum;
     dsp::MachineInputs inputs;
@@ -11169,6 +11207,7 @@ int main() {
     test_spectrum_tape();
     test_spectrum_tzx();
     test_spectrum_ula();
+    test_spectrum_rzx_gyroscope_if_present();
     test_nes_apu_status();
     test_nes_ppu_sprites_and_palette();
     test_nes_smb_if_present();
