@@ -530,8 +530,8 @@ int16_t Tms5220::last_sample() const {
 
 int16_t Tms5220::update() {
     update_cycle_acc_ += clock_;
-    const uint32_t cycles = update_cycle_acc_ / kSampleRate;
-    update_cycle_acc_ %= kSampleRate;
+    const uint32_t cycles = update_cycle_acc_ / output_rate_;
+    update_cycle_acc_ %= output_rate_;
     tick(int(cycles));
     return last_sample();
 }

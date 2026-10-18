@@ -12,10 +12,14 @@ class AvgStarwars {
 public:
     using ReadByte = std::function<uint8_t(uint16_t)>;
 
+    // ARGB of a 3-bit vector colour: bit 2 red, bit 1 green, bit 0 blue.
+    static uint32_t color111(int color);
+
+    // A drawn vector, in whole beam positions (the 16.16 positions >> 16).
     struct Line {
-        int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
-        uint32_t color = 0;
-        int intensity = 0;
+        int16_t x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+        uint8_t color = 0;      // 3 bits, see color111()
+        uint8_t intensity = 0;  // 1..223
     };
 
     static constexpr int kVisWidth = 250;
@@ -30,18 +34,14 @@ public:
     bool done() const { return sync_halt_ != 0; }
 
     const std::vector<Line>& lines() const { return display_; }
+    // Each line handed over as the list runs instead of kept for lines()
+    // (no memory for the list; lines() stays empty).
+    void set_line_sink(std::function<void(const Line&)> sink) { sink_ = std::move(sink); }
 
 private:
     static constexpr int kMaxVect = 10000;
     static constexpr int kVgSlice = 10000;
     static constexpr uint32_t kMasterClock = 12096000;
-
-    struct Vect {
-        int status = 0;
-        int x = 0, y = 0;
-        uint32_t color = 0;
-        int intensity = 0;
-    };
 
     uint8_t op0() const { return uint8_t(op_ & 1); }
     uint8_t op1() const { return uint8_t((op_ >> 1) & 1); }
@@ -53,7 +53,7 @@ private:
     void vggo();
     void vgrst();
     void vg_set_halt(int value);
-    void vg_add_point(int x, int y, uint32_t color, int intensity);
+    void vg_add_point(int x, int y, int color, int intensity);
     void vg_flush();
     void run_state_machine();
 
@@ -69,7 +69,6 @@ private:
     int common_strobe2();
     int common_strobe3();
 
-    static uint32_t color111(int color);
 
     ReadByte read_;
     std::array<uint8_t, 256> prom_{};
@@ -97,9 +96,13 @@ private:
     uint16_t xdac_xor_ = 0x200;
     uint16_t ydac_xor_ = 0x200;
 
+    // Points of the list being run (MAME keeps up to kMaxVect of them and
+    // makes a line from each to the next); here each becomes a line at once.
     int nvect_ = 0;
-    std::array<Vect, kMaxVect> vectbuf_{};
-    std::vector<Line> display_;
+    int last_x_ = 0, last_y_ = 0;
+    std::vector<Line> pending_;   // lines of the list being run
+    std::vector<Line> display_;   // lines of the last list run
+    std::function<void(const Line&)> sink_;
 };
 
 }  // namespace dsp

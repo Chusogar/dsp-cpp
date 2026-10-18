@@ -1028,6 +1028,9 @@ void AtariSystem1::on_sound_cycles(int cycles) {
                                ? tms_clocks_[size_t(cycles)]
                                : int((int64_t(cycles) * int64_t(tms_.clock()) + (kSoundClock / 2)) / kSoundClock);
     tms_.tick(tms_clocks);
+    // No sound wanted: the YM2151 timers, the POKEY (run when read or
+    // written) and the speech chip's status still run; no samples.
+    if (!audio_enabled_) return;
     audio_accumulator_ += int64_t(cycles) * sample_rate_;
     if (audio_accumulator_ >= kSoundClock) sync_pokey();
     while (audio_accumulator_ >= kSoundClock) {

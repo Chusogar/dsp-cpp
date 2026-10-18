@@ -31,6 +31,9 @@ Options:
   -b, --build-dir DIR   build folder (default: ports/BOARD/build)
   -j N             parallel jobs (boards built with CMake, and desktop)
   -p, --port DEV   ESP32 boards: upload to this serial port after building
+  --no-sound       a firmware without sound: drivers skip making it (the
+                   emulation runs faster) and the board sets up no audio
+                   output (less RAM); desktop: starts muted
   --package        also make a zip with the firmware and a README.txt
   --lang es        the package's text in Spanish (LEEME.txt)
   --dry-run        check everything and show what would be built
@@ -118,7 +121,7 @@ class Game:
 
 def parse(argv):
     opts = {"board": None, "out": None, "build": None, "jobs": None, "port": None,
-            "package": False, "dry_run": False, "lang": "en", "extra": []}
+            "package": False, "dry_run": False, "lang": "en", "sound": True, "extra": []}
     games = []
     i = 0
 
@@ -171,6 +174,8 @@ def parse(argv):
             opts["lang"] = value(a)
             if opts["lang"] not in ("en", "es"):
                 die("--lang is en or es")
+        elif a == "--no-sound":
+            opts["sound"] = False
         elif a == "--package":
             opts["package"] = True
         elif a == "--dry-run":
@@ -349,6 +354,7 @@ def build_board(opts, drivers, entries, build, out, stem):
         run(["cmake", "-S", REPO, "-B", build, "-DCMAKE_BUILD_TYPE=Release",
              "-DDSP_DRIVERS=" + ";".join(drivers), "-DDSP_PER_DRIVER_TARGETS=OFF",
              "-DDSP_EMBED_C=" + c_file] + opts["extra"])
+        # (no sound: each entry gets --mute, see main())
         run(["cmake", "--build", build, "--target", "dsp", "-j", opts["jobs"] or str(os.cpu_count() or 2)])
         exe = os.path.join(build, "dsp.exe" if os.name == "nt" else "dsp")
         result = os.path.join(out, stem + (".exe" if os.name == "nt" else ""))
@@ -363,11 +369,13 @@ def build_board(opts, drivers, entries, build, out, stem):
         if info["cmake"]:
             die("--port is for the ESP32 boards; flash a %s by copying the .uf2" % board)
         cmd += ["-p", opts["port"]]
-    if opts["extra"]:
-        if info["cmake"]:
-            cmd += ["--"] + opts["extra"]
-        else:
-            cmd += opts["extra"]
+    if info["cmake"]:
+        # Always given: the CMake cache would keep an earlier build's choice.
+        cmd += ["--", "-DDSP_NO_SOUND=" + ("OFF" if opts["sound"] else "ON")] + opts["extra"]
+    else:
+        if not opts["sound"]:
+            cmd += ["--no-sound"]
+        cmd += opts["extra"]
     run(cmd)
     result = os.path.join(out, stem + info["ext"])
     if info["cmake"]:
@@ -386,7 +394,7 @@ FLASH_ES = {
 }
 
 
-def readme(board, games, staged, result, lang="en"):
+def readme(board, games, staged, result, lang="en", sound=True):
     es = lang == "es"
     flash = (FLASH_ES[board] if es else BOARDS[board]["flash"]).replace("FILE", os.path.basename(result))
     lines = [("dsp-cpp para %s" if es else "dsp-cpp firmware for %s") % board, BOARDS[board]["what"], "",
@@ -401,6 +409,9 @@ def readme(board, games, staged, result, lang="en"):
             lines.append("      %s %s" % (option[2:], os.path.basename(m)))
         if g.args:
             lines.append("      args: %s" % " ".join(g.args))
+    if not sound:
+        lines += ["", "Sin sonido (--no-sound): la emulacion va mas rapida." if es else
+                  "No sound (--no-sound): the emulation runs faster."]
     if board != "desktop" and es:
         lines += ["", "En el menu: flechas y Enter. 5 = moneda, 1 = empezar.",
                   "F12 pulsar y soltar = turbo si/no; F12 mantener = volver al menu.",
@@ -429,6 +440,11 @@ def main(argv):
         if g.group not in drivers:
             drivers.append(g.group)
     stem = "dsp-%s-%s" % (board, "-".join(g.name for g in games))
+    if not opts["sound"]:
+        stem += "-nosound"
+        if board == "desktop":
+            for g in games:
+                g.args.append("--mute")
 
     if opts["dry_run"]:
         print("make_firmware: board %s, drivers %s" % (board, ";".join(drivers)))
@@ -438,6 +454,8 @@ def main(argv):
                 "".join(" %s %s" % (o, m) for o, m in g.media), (" " + " ".join(g.args)) if g.args else ""))
         if opts["extra"]:
             print("make_firmware: build options: %s" % " ".join(opts["extra"]))
+        if not opts["sound"]:
+            print("make_firmware: without sound")
         print("make_firmware: would build in %s and write %s/%s%s" % (build, out, stem, BOARDS[board]["ext"]))
         return
 
@@ -446,8 +464,9 @@ def main(argv):
     staged = [stage(g, build) for g in games]
     entries = [entry(g, rom, media) for g, (rom, media) in zip(games, staged)]
     total = sum(size_of(rom) + sum(size_of(m) for _, m in media) for rom, media in staged)
-    print("make_firmware: board %s; drivers %s; %d game(s), %d KB of ROMs and media"
-          % (board, ";".join(drivers), len(games), (total + 1023) // 1024))
+    print("make_firmware: board %s; drivers %s; %d game(s), %d KB of ROMs and media%s"
+          % (board, ";".join(drivers), len(games), (total + 1023) // 1024,
+             "" if opts["sound"] else "; without sound"))
     for e in entries:
         print("make_firmware:   " + e)
 
@@ -459,7 +478,7 @@ def main(argv):
         with zipfile.ZipFile(package, "w", zipfile.ZIP_DEFLATED) as z:
             z.write(result, os.path.basename(result))
             z.writestr("LEEME.txt" if opts["lang"] == "es" else "README.txt",
-                       readme(board, games, staged, result, opts["lang"]))
+                       readme(board, games, staged, result, opts["lang"], opts["sound"]))
         print("make_firmware: package %s" % package)
 
 

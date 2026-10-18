@@ -42,6 +42,18 @@ def add_options(p):
     p.add_argument("--touch-debug", action="store_true", help="print raw touch readings on the serial port")
     p.add_argument("--buttons", default="0,-1,-1,-1",
                    help="GPIOs of buttons A,B,START,SELECT to ground, -1 = none (default 0,-1,-1,-1: BOOT is A)")
+    p.add_argument("--nunchuk", nargs="?", const="22,27", default=None, metavar="SDA,SCL",
+                   help="Wii Nunchuk on I2C (default pins 22,27: the CN1 connector, as galagino)")
+    p.add_argument("--nunchuk-threshold", type=int, default=30,
+                   help="stick dead zone around the centre, 0-127 (default 30, as galagino)")
+    p.add_argument("--boot-coin-start", action="store_true",
+                   help="BOOT inserts a coin then presses START, held = menu (galagino's button)")
+    p.add_argument("--galagino", dest="galagino", action="store_true", default=True,
+                   help="galagino's CYD controls (the default): --nunchuk 22,27 --boot-coin-start, BOOT no longer A")
+    p.add_argument("--no-galagino", dest="galagino", action="store_false",
+                   help="no nunchuk; BOOT is button A (the touch zones as the only pad)")
+    p.add_argument("--no-sound", action="store_true",
+                   help="no sound: drivers skip making it (faster), no I2S/DAC buffers")
     p.add_argument("--sd-pins", default="19,23,18,5", help="micro-SD MISO,MOSI,CLK,CS (default 19,23,18,5)")
 
 
@@ -54,6 +66,15 @@ def config(args):
     bgr = not args.swap_colours
     x0, x1, y0, y1 = (int(v) for v in args.touch_cal.split(","))
     a, b, start, select = (int(v) for v in args.buttons.split(","))
+    nunchuk = args.nunchuk
+    boot_coin = args.boot_coin_start
+    if args.galagino:
+        nunchuk = nunchuk or "22,27"
+        boot_coin = True
+    if boot_coin:
+        # BOOT is GPIO0: not also a plain button.
+        a, b, start, select = (-1 if v == 0 else v for v in (a, b, start, select))
+    sda, scl = (int(v) for v in (nunchuk or "-1,-1").split(","))
     miso, mosi, clk, cs = (int(v) for v in args.sd_pins.split(","))
     flip_x = args.touch_flip_x != args.flip
     flip_y = args.touch_flip_y != args.flip
@@ -71,6 +92,10 @@ def config(args):
         f"#define DSP_BTN_START {start}", f"#define DSP_BTN_SELECT {select}",
         f"#define DSP_SD_MISO {miso}", f"#define DSP_SD_MOSI {mosi}", f"#define DSP_SD_CLK {clk}",
         f"#define DSP_SD_CS {cs}",
+        f"#define DSP_NUNCHUK {b01(nunchuk)}", f"#define DSP_NUNCHUK_SDA {sda}",
+        f"#define DSP_NUNCHUK_SCL {scl}", f"#define DSP_NUNCHUK_THRESHOLD {args.nunchuk_threshold}",
+        f"#define DSP_BOOT_COIN_START {b01(boot_coin)}",
+        f"#define DSP_NO_SOUND {b01(args.no_sound)}",
         "#define DSP_LOOP_STACK_BYTES (16 * 1024)",
     ]
 

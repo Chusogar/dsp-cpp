@@ -23,7 +23,7 @@ ARGS=(--board "$BOARD")
 while [ $# -gt 0 ]; do
   case "$1" in
     -o|--out|-b|--build-dir|-j|-p|--port) ARGS+=("$1" "$2"); shift 2 ;;
-    --package|--dry-run) ARGS+=("$1"); shift ;;
+    --package|--dry-run|--no-sound) ARGS+=("$1"); shift ;;
     --lang) ARGS+=("$1" "$2"); shift 2 ;;
     -h|--help) usage ;;
     *) break ;;

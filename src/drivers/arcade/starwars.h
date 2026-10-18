@@ -17,6 +17,11 @@
 namespace dsp {
 
 // Atari Star Wars (1983): dual 6809, AVG vector display, mathbox, 4×POKEY + TMS5220.
+//
+// Small enough for boards without PSRAM: the ROMs are read in place when the
+// board maps them, and with a picture limit (set_picture_limit) the vectors
+// are drawn scaled into an 8-bit picture of that size (3-bit colour and 5-bit
+// brightness a pixel) instead of the 400x300 32-bit one.
 class StarWars : public Machine {
 public:
     MachineType machine_type() const override { return MachineType::Arcade; }
@@ -42,13 +47,26 @@ public:
     void set_inputs(const MachineInputs& inputs) override;
     void set_dip_switch(int bank, uint8_t value) override;
 
-    const uint32_t* framebuffer() const override { return framebuffer_.data(); }
-    int screen_width() const override { return kScreenWidth; }
-    int screen_height() const override { return kScreenHeight; }
+    const uint32_t* framebuffer() const override;
+    const uint8_t* indexed_framebuffer() const override { return small_ ? picture_.data() : nullptr; }
+    const uint32_t* indexed_palette() const override { return small_ ? palette_.data() : nullptr; }
+    void set_picture_limit(int width, int height) override;
+    int screen_width() const override { return width_; }
+    int screen_height() const override { return height_; }
     double frames_per_second() const override { return kFramesPerSecond; }
 
     void drain_audio(std::vector<int16_t>& out) override;
-    int sample_rate() const override { return kSampleRate; }
+    int sample_rate() const override { return int(sample_rate_); }
+    void set_sample_rate_limit(int rate) override {
+        if (rate > 0 && rate < kSampleRate) {
+            sample_rate_ = uint32_t(rate);
+            tms_.set_sample_rate(sample_rate_);
+        }
+    }
+    void set_draw_enabled(bool enabled) override { draw_enabled_ = enabled; }
+    // Off: the POKEYs are not run (the program never reads them) and the
+    // speech chip only runs for its status lines.
+    void set_audio_enabled(bool enabled) override { audio_enabled_ = enabled; }
 
     const char* title() const override {
         return game_ == Game::Esb ? "The Empire Strikes Back" : "Star Wars";
@@ -77,6 +95,12 @@ private:
     void set_sound_pending(bool pending);
     void update_video();
     void draw_line(int x0, int y0, int x1, int y1, uint32_t color, int intensity);
+    void draw_line_small(int x0, int y0, int x1, int y1, int color, int intensity);
+    void decay_small();
+    uint8_t rom_byte(uint32_t offset) const {
+        const uint8_t* page = main_pages_[(offset >> 13) % main_pages_.size()];
+        return page ? page[offset & 0x1fff] : 0;
+    }
     uint8_t avg_read(uint16_t address) const;
     uint8_t adc_channel(int channel) const;
 
@@ -92,15 +116,29 @@ private:
     StarwarsMath math_;
     AvgStarwars avg_;
 
-    std::array<uint8_t, 0x22000> main_rom_{};
-    std::array<uint8_t, 0x1000> vector_rom_{};
+    // Main program: 8 KB pages of the 0x22000-byte image the memory map uses
+    // (null: reads as 0); sound program: 8 KB pages of its 64 KB space.
+    std::array<const uint8_t*, 0x11> main_pages_{};
+    std::array<const uint8_t*, 8> sound_pages_{};
+    const uint8_t* vector_rom_ = nullptr;  // 4 KB
+    std::vector<std::vector<uint8_t>> owned_roms_;  // the ROMs the board does not map
     std::array<uint8_t, 0x3000> vector_ram_{};
     std::array<uint8_t, 0x800> work_ram_{};
     std::array<uint8_t, 0x800> sound_ram_{};
-    std::array<uint8_t, 0x10000> sound_rom_{};
     std::array<uint8_t, 0x100> nvram_{};
 
-    std::vector<uint32_t> framebuffer_;
+    // Picture: 32-bit at 400x300, or (small_) 8-bit at width_ x height_.
+    int width_ = kScreenWidth, height_ = kScreenHeight;
+    bool small_ = false;
+    int scale_ = 1 << 16;  // small_: picture pixels per screen pixel, 16.16
+    mutable std::vector<uint32_t> framebuffer_;
+    mutable bool framebuffer_stale_ = false;
+    std::vector<uint8_t> picture_;          // colour << 5 | brightness 0..31
+    std::array<uint32_t, 256> palette_{};
+    std::array<uint8_t, 256> decay_{};      // a pixel one frame later
+    uint32_t sample_rate_ = kSampleRate;
+    bool draw_enabled_ = true;
+    bool audio_enabled_ = true;
     std::vector<int16_t> audio_;
 
     uint8_t in0_ = 0xff;
@@ -128,6 +166,13 @@ private:
     int64_t audio_accumulator_ = 0;
     int64_t pokey_sum_ = 0;
     int64_t pokey_cycles_ = 0;
+    // Below 44.1 kHz (a board): the POKEYs run in batches, when written and
+    // twice an output sample, and those two readings make the sample.
+    void sync_pokeys();
+    void emit_sample(double pokeys);
+    int pokey_pending_ = 0;
+    int64_t sub_accumulator_ = 0;
+    int sub_samples_ = 0;
     double dc_in_ = 0.0;
     double dc_out_ = 0.0;
     uint8_t riot_pa_out_ = 0xff;

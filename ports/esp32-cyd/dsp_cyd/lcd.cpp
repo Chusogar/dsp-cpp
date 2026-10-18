@@ -170,7 +170,18 @@ void lcd_wait() {
     }
 }
 
-uint16_t* lcd_band(int index) { return g_band[index & 1]; }
+uint16_t* lcd_band(int index) {
+    // The buffers are used in turn: with both in flight, the older one is
+    // this buffer, and the DMA may still be reading it. Wait for it before
+    // it is filled again (filling it early sent the next band's rows in
+    // place of the end of this one).
+    if (g_in_flight == 2) {
+        spi_transaction_t* done;
+        spi_device_get_trans_result(g_dev, &done, portMAX_DELAY);
+        --g_in_flight;
+    }
+    return g_band[index & 1];
+}
 
 void lcd_fill(int x, int y, int w, int h, uint16_t rgb565) {
     if (w <= 0 || h <= 0) return;

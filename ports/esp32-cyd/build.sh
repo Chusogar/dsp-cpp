@@ -8,6 +8,8 @@
 #   ./build.sh --psram                           board with PSRAM (e.g. WROVER module fitted)
 #   ./build.sh -d "c64;spectrum" --embed-entry "C64=--game c64 $HOME/roms/c64" \
 #              --embed-entry "Spectrum=--game spectrum48 $HOME/roms/zx48"   several built-in games
+#   ./build.sh --no-galagino                     without galagino's controls (default: Wii Nunchuk on CN1, BOOT = coin/start)
+#   ./build.sh --no-sound                        without sound (the emulation runs faster)
 #   ./build.sh -p /dev/ttyUSB0                   build and upload
 # Panel, touch and pin options are passed to prepare.py (see its --help).
 #
@@ -20,7 +22,7 @@ PSRAM=disabled
 BUILD="$HERE/build"
 PORT=""
 PREP=()
-usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 while [ $# -gt 0 ]; do
   case "$1" in
     -d|--drivers) PREP+=(--drivers "$2"); shift 2 ;;
@@ -28,9 +30,12 @@ while [ $# -gt 0 ]; do
     -b|--build-dir) BUILD="$2"; shift 2 ;;
     --psram) PSRAM=enabled; shift ;;
     --embed-game|--embed-rom|--embed-tape|--embed-disk|--embed-cart|--embed-arg|--embed-entry|--panel|--lcd-mhz|\
-    --touch-cal|--buttons|--sd-pins)
+    --touch-cal|--buttons|--sd-pins|--nunchuk-threshold)
       PREP+=("$1" "$2"); shift 2 ;;
-    --invert|--no-invert|--swap-colours|--flip|--touch-swap|--touch-flip-x|--touch-flip-y|--touch-debug)
+    --nunchuk)
+      if [ $# -gt 1 ] && [[ "$2" =~ ^[0-9]+,[0-9]+$ ]]; then PREP+=("$1" "$2"); shift 2; else PREP+=("$1"); shift; fi ;;
+    --invert|--no-invert|--swap-colours|--flip|--touch-swap|--touch-flip-x|--touch-flip-y|--touch-debug|\
+    --boot-coin-start|--galagino|--no-galagino|--no-sound)
       PREP+=("$1"); shift ;;
     -h|--help) usage ;;
     *) echo "build.sh: unknown option $1" >&2; usage 1 ;;

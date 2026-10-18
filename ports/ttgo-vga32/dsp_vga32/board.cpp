@@ -119,10 +119,16 @@ public:
     }
 
     int output_rate() const override { return kAudioRate; }
+#if DSP_NO_SOUND
+    bool sound() const override { return false; }
+    void push_audio(const int16_t*, size_t) override {}
+    size_t audio_queued() const override { return 0; }
+#else
     void push_audio(const int16_t* samples, size_t count) override {
         dsp::port::esp32::audio_push(samples, count);
     }
     size_t audio_queued() const override { return dsp::port::esp32::audio_queued(); }
+#endif
 
     void poll(dsp::port::HostInput& in) override {
         in = dsp::port::HostInput();
@@ -206,7 +212,9 @@ void setup() {
     g_vga.begin();  // TTGO VGA32 pins are FabGL's defaults
     g_vga.setResolution(QVGA_320x240_60Hz);
     g_vga.enableBackgroundPrimitiveExecution(false);  // the frame buffer is written directly
+#if !DSP_NO_SOUND
     dsp::port::esp32::audio_begin(kAudioRate, 25);
+#endif
     g_hal = new Vga32Hal();
     g_hal->begin();
 }

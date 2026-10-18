@@ -63,6 +63,8 @@ public:
     void tick(int cycles);
     int16_t last_sample() const;
     int16_t update();
+    // The rate update() is called at (kSampleRate unless set).
+    void set_sample_rate(uint32_t rate) { if (rate) output_rate_ = rate; }
 
     bool talking() const { return talk_status(); }
 
@@ -146,6 +148,7 @@ private:
     float volume_ = 1.0f;
     int64_t cycle_acc_ = 0;
     uint32_t update_cycle_acc_ = 0;
+    uint32_t output_rate_ = kSampleRate;
 };
 
 } // namespace dsp

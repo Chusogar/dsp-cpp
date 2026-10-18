@@ -103,7 +103,9 @@ ports/
   Per game: `--rom` (repeatable: the sets are merged into one folder),
   `--tape`/`--snap`, `--disk`, `--cart`, `--media`, `--name`, `--dip
   BANK:VALUE`, `--arg`. Also `--list-boards`, `--list-games [TEXT]`,
-  `--dry-run`, `-o`, `-b`, `-j`, `-p PORT` (ESP32 upload), `--package` (zip
+  `--dry-run`, `-o`, `-b`, `-j`, `-p PORT` (ESP32 upload), `--no-sound` (no
+  sound: drivers that support it skip making it, so the emulation runs
+  faster, and the board sets up no audio output), `--package` (zip
   with a README; `--lang es` for a LEEME). Files whose path has a space are
   copied into the build folder first.
 * **Keys.** As on the desktop: arrows, Ctrl/Space and Z/X/C for the buttons,

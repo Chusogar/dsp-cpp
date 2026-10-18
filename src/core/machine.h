@@ -142,6 +142,10 @@ public:
     // samples per second, so a driver may make fewer (sample_rate() then
     // says how many). Boards without an FPU save the work of the rest.
     virtual void set_sample_rate_limit(int rate) { (void)rate; }
+    // false (before init()): nothing will be played, so a driver may skip
+    // making the sound (the chips' state that the program reads still runs).
+    // drain_audio() may then return nothing.
+    virtual void set_audio_enabled(bool enabled) { (void)enabled; }
     // Optional, for boards with no room for any picture buffer: one row of the
     // picture as three 1-bit planes (red, green, blue), screen_width() / 8
     // bytes each, the leftmost pixel in bit 0 of the first byte. Machines

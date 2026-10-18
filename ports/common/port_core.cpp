@@ -536,6 +536,8 @@ int Port::play(const std::vector<std::string>& args, int max_frames, std::string
     }
     if (hal_.crops_picture()) machine->set_picture_limit(hal_.screen_width(), hal_.screen_height());
     machine->set_sample_rate_limit(hal_.output_rate());
+    const bool sound = hal_.sound();
+    if (!sound) machine->set_audio_enabled(false);
     if (!machine->init(rom, error)) return -1;
     for (const std::string& m : media)
         if (!machine->load_media(m, error)) {
@@ -596,10 +598,12 @@ int Port::play(const std::vector<std::string>& args, int max_frames, std::string
 
         samples.clear();
         machine->drain_audio(samples);
-        resampled.clear();
-        resampler.process(samples, resampled);
-        if (!turbo && !resampled.empty() && hal_.audio_queued() < max_queue)
-            hal_.push_audio(resampled.data(), resampled.size());
+        if (sound) {
+            resampled.clear();
+            resampler.process(samples, resampled);
+            if (!turbo && !resampled.empty() && hal_.audio_queued() < max_queue)
+                hal_.push_audio(resampled.data(), resampled.size());
+        }
 
         next += period;
         if (skip_frame) {

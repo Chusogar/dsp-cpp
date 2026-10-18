@@ -97,6 +97,9 @@ public:
     virtual int output_rate() const = 0;
     virtual void push_audio(const int16_t* samples, size_t count) = 0;
     virtual size_t audio_queued() const = 0;
+    // false: a firmware built without sound (DSP_NO_SOUND): drivers are told
+    // not to make any, and nothing is pushed.
+    virtual bool sound() const { return true; }
 
     virtual void poll(HostInput& input) = 0;
     virtual uint64_t micros() = 0;

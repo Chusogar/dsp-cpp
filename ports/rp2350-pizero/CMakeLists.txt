@@ -34,6 +34,7 @@ set(DSP_EMBED_ARGS "" CACHE STRING "Embedded media: extra arguments (';' separat
 set(DSP_EMBED_C "" CACHE FILEPATH "Embedded media: C file written by tools/embed_media.py")
 set(DSP_EMBED_ENTRIES "" CACHE STRING "Several built-in games: LABEL=COMMAND LINE, ';' separated")
 set(DSP_AUDIO_PIN 18 CACHE STRING "GPIO of the PWM sound output")
+option(DSP_NO_SOUND "No sound: drivers skip making it (faster), no PWM audio" OFF)
 
 include(${DSP_PICO_DIR}/../common/dsp_port.cmake)
 
@@ -73,6 +74,9 @@ dsp_port_add_sources(dsp_pizero DRIVERS ${DSP_PORT_DRIVERS} EMBED "${embedded_c}
 # <dirent.h> of include/ before newlib's (which has none).
 target_include_directories(dsp_pizero BEFORE PRIVATE ${DSP_PICO_DIR}/include)
 target_include_directories(dsp_pizero PRIVATE ${DSP_PICO_DIR}/src ${fatfs_dir})
+if(DSP_NO_SOUND)
+  target_compile_definitions(dsp_pizero PRIVATE DSP_NO_SOUND=1)
+endif()
 target_compile_definitions(dsp_pizero PRIVATE
   PICO_PIO_USE_GPIO_BASE=1
   PICO_MALLOC_PANIC=1

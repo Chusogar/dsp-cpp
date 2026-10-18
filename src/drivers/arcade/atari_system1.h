@@ -71,6 +71,7 @@ public:
     void drain_audio(std::vector<int16_t>& out) override;
     int sample_rate() const override { return int(sample_rate_); }
     void set_sample_rate_limit(int rate) override;
+    void set_audio_enabled(bool enabled) override { audio_enabled_ = enabled; }
 
     const char* title() const override;
 
@@ -217,6 +218,7 @@ private:
 
     int64_t audio_accumulator_ = 0;
     uint32_t sample_rate_ = YM2151::kSampleRate;
+    bool audio_enabled_ = true;
     int pokey_pending_ = 0;  // 6502 cycles the POKEY has still to run
     uint32_t tms_table_clock_ = 0;
     std::array<uint16_t, 16> tms_clocks_{};  // TMS5220 clocks in n 6502 cycles

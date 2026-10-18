@@ -4,12 +4,6 @@
 #include <cstring>
 
 namespace dsp {
-namespace {
-
-constexpr int kVgVector = 0;
-
-}  // namespace
-
 void AvgStarwars::set_prom(const uint8_t* data, size_t size) {
     prom_.fill(0);
     if (data == nullptr || size == 0) return;
@@ -19,6 +13,7 @@ void AvgStarwars::set_prom(const uint8_t* data, size_t size) {
 void AvgStarwars::reset() {
     vg_reset();
     nvect_ = 0;
+    pending_.clear();
     display_.clear();
     pc_ = 0;
     sp_ = 0;
@@ -35,6 +30,7 @@ void AvgStarwars::reset() {
 void AvgStarwars::go() {
     vggo();
     nvect_ = 0;
+    pending_.clear();
     vg_set_halt(0);
     run_state_machine();
     vg_flush();
@@ -68,44 +64,37 @@ void AvgStarwars::vg_set_halt(int value) {
     sync_halt_ = uint8_t(value);
 }
 
+// As MAME's vector_device::color111: bit 2 red, bit 1 green, bit 0 blue.
 uint32_t AvgStarwars::color111(int color) {
-    const uint8_t r = (color & 1) ? 0xff : 0;
+    const uint8_t r = (color & 4) ? 0xff : 0;
     const uint8_t g = (color & 2) ? 0xff : 0;
-    const uint8_t b = (color & 4) ? 0xff : 0;
+    const uint8_t b = (color & 1) ? 0xff : 0;
     return 0xff000000u | (uint32_t(r) << 16) | (uint32_t(g) << 8) | b;
 }
 
-void AvgStarwars::vg_add_point(int x, int y, uint32_t color, int intensity) {
+void AvgStarwars::vg_add_point(int x, int y, int color, int intensity) {
     if (nvect_ >= kMaxVect) return;
-    vectbuf_[size_t(nvect_)].status = kVgVector;
-    vectbuf_[size_t(nvect_)].x = x;
-    vectbuf_[size_t(nvect_)].y = y;
-    vectbuf_[size_t(nvect_)].color = color;
-    vectbuf_[size_t(nvect_)].intensity = intensity;
+    // The first point of a list is a line from itself (a dot when lit).
+    if (nvect_ == 0) last_x_ = x, last_y_ = y;
+    if (intensity > 0) {
+        Line line;
+        line.x0 = int16_t(last_x_ >> 16);
+        line.y0 = int16_t(last_y_ >> 16);
+        line.x1 = int16_t(x >> 16);
+        line.y1 = int16_t(y >> 16);
+        line.color = uint8_t(color & 7);
+        line.intensity = uint8_t(std::min(intensity, 255));
+        if (sink_) sink_(line);
+        else pending_.push_back(line);
+    }
+    last_x_ = x;
+    last_y_ = y;
     nvect_++;
 }
 
 void AvgStarwars::vg_flush() {
-    display_.clear();
-    if (nvect_ <= 0) return;
-    int xs = vectbuf_[0].x;
-    int ys = vectbuf_[0].y;
-    for (int i = 0; i < nvect_; i++) {
-        const int xe = vectbuf_[size_t(i)].x;
-        const int ye = vectbuf_[size_t(i)].y;
-        if (vectbuf_[size_t(i)].intensity > 0) {
-            Line line;
-            line.x0 = xs;
-            line.y0 = ys;
-            line.x1 = xe;
-            line.y1 = ye;
-            line.color = vectbuf_[size_t(i)].color;
-            line.intensity = vectbuf_[size_t(i)].intensity;
-            display_.push_back(line);
-        }
-        xs = xe;
-        ys = ye;
-    }
+    display_.swap(pending_);
+    pending_.clear();
     nvect_ = 0;
 }
 
@@ -247,7 +236,7 @@ int AvgStarwars::common_strobe3() {
 int AvgStarwars::handler_7() {
     const int cycles = common_strobe3();
     if (!op0() && !op2()) {
-        vg_add_point(int(xpos_), int(ypos_), color111(color_),
+        vg_add_point(int(xpos_), int(ypos_), color_,
                      ((int(int_latch_) >> 1) * int(intensity_)) >> 3);
     }
     return cycles;

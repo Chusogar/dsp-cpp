@@ -24,6 +24,7 @@ while [ $# -gt 0 ]; do
     -b|--build-dir) BUILD="$2"; shift 2 ;;
     --embed-game|--embed-rom|--embed-tape|--embed-disk|--embed-cart|--embed-arg|--embed-entry|--sd-pins)
       PREP+=("$1" "$2"); shift 2 ;;
+    --no-sound) PREP+=("$1"); shift ;;
     -h|--help) usage ;;
     *) echo "build.sh: unknown option $1" >&2; usage 1 ;;
   esac

@@ -21,13 +21,16 @@ import arduino_prepare  # noqa: E402
 
 
 def add_options(p):
+    p.add_argument("--no-sound", action="store_true",
+                   help="no sound: drivers skip making it (faster), no I2S/DAC buffers")
     p.add_argument("--sd-pins", default="2,12,14,13", help="micro-SD MISO,MOSI,CLK,CS (default 2,12,14,13)")
 
 
 def config(args):
     miso, mosi, clk, cs = (int(x) for x in args.sd_pins.split(","))
     return [f"#define DSP_SD_MISO {miso}", f"#define DSP_SD_MOSI {mosi}", f"#define DSP_SD_CLK {clk}",
-            f"#define DSP_SD_CS {cs}", "#define DSP_LOOP_STACK_BYTES (32 * 1024)"]
+            f"#define DSP_SD_CS {cs}", "#define DSP_LOOP_STACK_BYTES (32 * 1024)",
+            f"#define DSP_NO_SOUND {1 if args.no_sound else 0}"]
 
 
 if __name__ == "__main__":

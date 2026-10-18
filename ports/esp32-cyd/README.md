@@ -41,15 +41,16 @@ buffer); that is a change to the drivers, not to this port.
 |---|---|---|
 | Display | HSPI: SCK 14, MOSI 13, CS 15, DC 2, backlight 21 | ILI9341 (default) or ST7789 (`--panel st7789`), landscape, 40 MHz SPI with DMA |
 | Touch | XPT2046: CLK 25, MOSI 32, MISO 39, CS 33, IRQ 36 | read by bit-banging; calibration with `--touch-cal` |
-| Buttons | BOOT (GPIO0) = A | more with `--buttons A,B,START,SELECT` (e.g. GPIO22 and 27 on the CN1/P3 connectors; wire to ground) |
+| Nunchuk | CN1: SDA 22, SCL 27 (default; `--no-galagino` leaves it out) | I2C 400 kHz, address 0x52 |
+| Buttons | BOOT (GPIO0) = coin, then START; held = menu (with `--no-galagino`: A) | more with `--buttons A,B,START,SELECT` (e.g. GPIO22 and 27 on the CN1/P3 connectors; wire to ground) |
 | Sound | speaker connector (amplifier on GPIO26, DAC2) | I2S0 built-in DAC, 22050 Hz mono |
 | micro-SD | VSPI: SCK 18, MISO 19, MOSI 23, CS 5 | FAT32, mounted at `/sd` |
 | RGB LED | 4, 16, 17 | switched off |
 
 ## Controls
 
-The touch screen is a game pad (the XPT2046 only senses one finger, so press
-the BOOT button to fire while moving):
+The nunchuk (below) is the controller. The touch screen also works as a
+game pad (the XPT2046 only senses one finger at a time):
 
 ```
 +------------+------------+------------+
@@ -66,6 +67,24 @@ the BOOT button to fire while moving):
 
 In the menu, the d-pad moves and A (or START) starts. Holding MENU half a
 second leaves the game.
+
+### Galagino's controller (the default)
+
+Every CYD build uses it (`--no-galagino` leaves it out). The same as [galagino](https://github.com/harbaum/galagino) on the CYD: a Wii
+Nunchuk (or clone) on the **CN1** connector, I2C on GPIO22 (SDA) and GPIO27
+(SCL), plus 3.3 V and ground, and the BOOT button:
+
+| Input | Does |
+|---|---|
+| Nunchuk stick | d-pad (dead zone 30 around the centre, `--nunchuk-threshold`) |
+| Z | A (fire) |
+| C | B (second button, e.g. jump) |
+| BOOT tap | a coin, then START (in the menu: starts the game) |
+| BOOT held 1.5 s | back to the menu |
+
+The touch zones keep working. The parts can be had separately:
+`--nunchuk [SDA,SCL]` (default 22,27) and `--boot-coin-start`. The nunchuk can
+be plugged in at any time; the serial log says when it is found or lost.
 
 ## Building with arduino-cli (`build.sh`)
 

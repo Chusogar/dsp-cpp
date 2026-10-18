@@ -132,6 +132,7 @@
 #include "machine/trdos_disk.h"
 #include "machine/wd1793.h"
 #include "machine/starwars_math.h"
+#include "video/avg_starwars.h"
 #include "machine/sega_315_5195.h"
 #include "sound/ay8910.h"
 #include "sound/msm5205.h"
@@ -4086,6 +4087,42 @@ void test_mos6532_decode_and_pa7_edge() {
     check(riot.io_read(0x0a) == 0x60 && riot.io_read(0x12) == 0x60, "6532 port B mirrors across A3/A4");
 }
 
+void test_starwars_small_picture_if_present() {
+    if (!std::filesystem::exists("/tmp/roms/starwars.zip")) {
+        std::printf("skip test_starwars_small_picture_if_present\n");
+        return;
+    }
+    dsp::StarWars full, small;
+    small.set_picture_limit(320, 240);
+    small.set_sample_rate_limit(22050);
+    std::string error;
+    check(full.init("/tmp/roms/starwars.zip", &error) && small.init("/tmp/roms/starwars.zip", &error),
+          "Star Wars boots for the small picture test");
+    size_t samples = 0;
+    std::vector<int16_t> audio;
+    for (int f = 0; f < 300; ++f) {
+        full.run_frame();
+        small.run_frame();
+        audio.clear();
+        small.drain_audio(audio);
+        samples += audio.size();
+    }
+    check(small.screen_width() == 320 && small.screen_height() == 240 && small.indexed_framebuffer() != nullptr,
+          "the limited Star Wars picture is 320x240, 8-bit");
+    check(full.indexed_framebuffer() == nullptr && full.screen_width() == 400, "the desktop picture stays 400x300");
+    // The same scene: lit pixels in both, in the same proportion (the
+    // vectors scaled by 0.8 in each direction).
+    size_t lit_small = 0, lit_full = 0;
+    for (int i = 0; i < 320 * 240; ++i) lit_small += small.indexed_framebuffer()[i] != 0;
+    for (int i = 0; i < 400 * 300; ++i) lit_full += (full.framebuffer()[i] & 0xffffff) != 0;
+    check(lit_small > 500 && lit_small * 10 > lit_full * 4 && lit_small * 10 < lit_full * 10,
+          "the small Star Wars picture shows the vectors");
+    check(small.framebuffer()[0] == small.indexed_palette()[small.indexed_framebuffer()[0]],
+          "the small Star Wars framebuffer comes from the palette");
+    const double expect = 300 * 22050.0 / dsp::StarWars::kFramesPerSecond;
+    check(samples > expect * 0.98 && samples < expect * 1.02, "Star Wars makes 22050 samples a second when asked");
+}
+
 void test_starwars_sound_and_esb_slapstic_if_present() {
     namespace fs = std::filesystem;
     if (fs::exists("/tmp/roms/starwars.zip")) {
@@ -4263,6 +4300,9 @@ void test_punchout_if_present() {
 }
 
 void test_starwars_missing_roms() {
+    check(dsp::AvgStarwars::color111(4) == 0xffff0000u && dsp::AvgStarwars::color111(2) == 0xff00ff00u &&
+              dsp::AvgStarwars::color111(1) == 0xff0000ffu && dsp::AvgStarwars::color111(6) == 0xffffff00u,
+          "Star Wars vector colours: bit 2 red, bit 1 green, bit 0 blue");
     dsp::StarWars machine;
     check(std::strcmp(machine.title(), "Star Wars") == 0, "Star Wars title");
     check(machine.screen_width() == 400 && machine.screen_height() == 300,
@@ -11568,6 +11608,7 @@ int main() {
     test_vicdual_games_if_present();
     test_mos6532_decode_and_pa7_edge();
     test_starwars_sound_and_esb_slapstic_if_present();
+    test_starwars_small_picture_if_present();
     test_polepos_driver();
     test_atari_system1_missing_roms();
     test_t11_reset_and_moves();

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <new>
 
 #include "core/rom_loader.h"
 
@@ -89,7 +90,7 @@ StarWars::StarWars(Game game)
       pokey2_(kCpuClock, 0.20f),
       pokey3_(kCpuClock, 0.20f),
       tms_(kMasterClock / 2 / 9) {
-    framebuffer_.assign(size_t(kScreenWidth) * kScreenHeight, 0xff000000u);
+    // The picture is made by init(), at the size set_picture_limit() asks.
 
     main_cpu_.set_memory_handlers([this](uint16_t a) { return main_read(a); },
                                   [this](uint16_t a, uint8_t v) { main_write(a, v); });
@@ -128,79 +129,139 @@ bool StarWars::init(const std::string& rom_path, std::string* error) {
     RomLoader loader;
     if (!loader.open(rom_path, error)) return false;
 
-    auto load_at = [&](const RomEntry& entry, std::vector<uint8_t>& dest) -> bool {
-        dest.assign(entry.length, 0);
-        RomEntry single{entry.name, entry.length, 0, entry.crc};
-        return loader.load({single}, dest, error);
+    // A ROM in place when the board maps it, otherwise a copy of its own.
+    owned_roms_.clear();
+    auto rom = [&](const RomEntry& entry) -> const uint8_t* {
+        const RomEntry single{entry.name, entry.length, 0, entry.crc};
+        if (const uint8_t* data = loader.map(single)) return data;
+        std::vector<uint8_t> data(entry.length, 0);
+        if (!loader.load({single}, data, error)) return nullptr;
+        owned_roms_.push_back(std::move(data));
+        return owned_roms_.back().data();
     };
-
-    std::fill(main_rom_.begin(), main_rom_.end(), 0);
+    main_pages_.fill(nullptr);
+    sound_pages_.fill(nullptr);
     if (game_ == Game::Esb) {
         // Each 16K ROM splits across the fixed map and the second bank.
         static const uint32_t hi[4] = {0x10000, 0x1c000, 0x1e000, 0x20000};
         for (size_t i = 0; i < kEsbMainRoms.size(); i++) {
-            std::vector<uint8_t> chunk;
-            if (!load_at(kEsbMainRoms[i], chunk)) return false;
-            std::memcpy(main_rom_.data() + kEsbMainRoms[i].offset, chunk.data(), 0x2000);
-            std::memcpy(main_rom_.data() + hi[i], chunk.data() + 0x2000, 0x2000);
+            const uint8_t* data = rom(kEsbMainRoms[i]);
+            if (!data) return false;
+            main_pages_[kEsbMainRoms[i].offset >> 13] = data;
+            main_pages_[hi[i] >> 13] = data + 0x2000;
         }
         for (const auto& e : kEsbSlapsticRoms) {
-            std::vector<uint8_t> chunk;
-            if (!load_at(e, chunk)) return false;
-            std::memcpy(main_rom_.data() + e.offset, chunk.data(), chunk.size());
+            const uint8_t* data = rom(e);
+            if (!data) return false;
+            main_pages_[e.offset >> 13] = data;
+            main_pages_[(e.offset >> 13) + 1] = data + 0x2000;
         }
-        std::vector<uint8_t> vec;
-        if (!load_at(kEsbVectorRom[0], vec)) return false;
-        std::copy(vec.begin(), vec.end(), vector_rom_.begin());
-        std::vector<uint8_t> snd(0x10000, 0);
+        if (!(vector_rom_ = rom(kEsbVectorRom[0]))) return false;
+        // 16K each: the low half at $4000/$6000, the high one at $C000/$E000.
         for (const auto& e : kEsbSoundRoms) {
-            std::vector<uint8_t> chunk;
-            if (!load_at(e, chunk)) return false;
-            std::memcpy(snd.data() + e.offset, chunk.data(), 0x2000);
-            std::memcpy(snd.data() + e.offset + 0x8000, chunk.data() + 0x2000, 0x2000);
+            const uint8_t* data = rom(e);
+            if (!data) return false;
+            sound_pages_[e.offset >> 13] = data;
+            sound_pages_[(e.offset >> 13) + 4] = data + 0x2000;
         }
-        std::copy(snd.begin(), snd.end(), sound_rom_.begin());
         std::vector<uint8_t> avg_prom;
-        if (!load_at(kAvgProm[0], avg_prom)) return false;
+        avg_prom.assign(kAvgProm[0].length, 0);
+        if (!loader.load(kAvgProm, avg_prom, error)) return false;
         avg_.set_prom(avg_prom.data(), avg_prom.size());
         std::vector<uint8_t> mp(0x1000, 0);
         if (!loader.load(kEsbMathProms, mp, error)) return false;
         math_.init(mp.data());
-        warnings_ = loader.warnings();
-        reset();
-        return true;
+    } else {
+        // 136021.214 (16K): low half at $6000 (bank 0), high half in bank 1.
+        const uint8_t* rom0 = rom(kMainRoms[0]);
+        if (!rom0) return false;
+        main_pages_[0x6000 >> 13] = rom0;
+        main_pages_[0x10000 >> 13] = rom0 + 0x2000;
+        for (size_t i = 1; i < kMainRoms.size(); i++) {
+            const uint8_t* data = rom(kMainRoms[i]);
+            if (!data) return false;
+            main_pages_[kMainRoms[i].offset >> 13] = data;
+        }
+        if (!(vector_rom_ = rom(kVectorRom[0]))) return false;
+        // 8K each at $4000/$6000, mirrored at $C000/$E000.
+        for (const auto& e : kSoundRoms) {
+            const uint8_t* data = rom(e);
+            if (!data) return false;
+            sound_pages_[e.offset >> 13] = data;
+            sound_pages_[(e.offset >> 13) + 4] = data;
+        }
+        std::vector<uint8_t> avg_prom(kAvgProm[0].length, 0);
+        if (!loader.load(kAvgProm, avg_prom, error)) return false;
+        avg_.set_prom(avg_prom.data(), avg_prom.size());
+        std::vector<uint8_t> math_prom(0x1000, 0);
+        if (!loader.load(kMathProms, math_prom, error)) return false;
+        math_.init(math_prom.data());
     }
-    std::vector<uint8_t> rom0;
-    if (!load_at(kMainRoms[0], rom0)) return false;
-    std::memcpy(main_rom_.data() + 0x6000, rom0.data(), 0x2000);
-    std::memcpy(main_rom_.data() + 0x10000, rom0.data() + 0x2000, 0x2000);
-    for (size_t i = 1; i < kMainRoms.size(); i++) {
-        std::vector<uint8_t> chunk;
-        if (!load_at(kMainRoms[i], chunk)) return false;
-        std::memcpy(main_rom_.data() + kMainRoms[i].offset, chunk.data(), chunk.size());
+
+    // The picture last, after the ROM copies (if any).
+    if (small_) {
+        // If the heap has no block that large, a smaller picture (scaled
+        // further) rather than no game.
+        for (;;) {
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+            try {
+                picture_.assign(size_t(width_) * size_t(height_), 0);
+                break;
+            } catch (const std::bad_alloc&) {
+                if (scale_ <= (1 << 15)) throw;  // not below half size
+                scale_ -= 1 << 12;
+                width_ = (kScreenWidth * scale_) >> 16;
+                height_ = (kScreenHeight * scale_) >> 16;
+            }
+#else
+            picture_.assign(size_t(width_) * size_t(height_), 0);
+            break;
+#endif
+        }
+    } else {
+        framebuffer_.assign(size_t(kScreenWidth) * kScreenHeight, 0xff000000u);
     }
-
-    std::vector<uint8_t> vec;
-    if (!load_at(kVectorRom[0], vec)) return false;
-    std::copy(vec.begin(), vec.end(), vector_rom_.begin());
-
-    std::vector<uint8_t> sound(0x10000, 0);
-    if (!loader.load(kSoundRoms, sound, error)) return false;
-    std::copy(sound.begin(), sound.end(), sound_rom_.begin());
-    std::memcpy(sound_rom_.data() + 0xc000, sound_rom_.data() + 0x4000, 0x2000);
-    std::memcpy(sound_rom_.data() + 0xe000, sound_rom_.data() + 0x6000, 0x2000);
-
-    std::vector<uint8_t> avg_prom;
-    if (!load_at(kAvgProm[0], avg_prom)) return false;
-    avg_.set_prom(avg_prom.data(), avg_prom.size());
-
-    std::vector<uint8_t> math_prom(0x1000, 0);
-    if (!loader.load(kMathProms, math_prom, error)) return false;
-    math_.init(math_prom.data());
-
     warnings_ = loader.warnings();
     reset();
     return true;
+}
+
+void StarWars::set_picture_limit(int width, int height) {
+    // The whole 400x300 screen scaled down to fit (vectors are not cropped).
+    const int w = std::min(std::max(width, 1), kScreenWidth);
+    const int h = std::min(std::max(height, 1), kScreenHeight);
+    if (w == kScreenWidth && h == kScreenHeight) return;
+    scale_ = std::min(((w << 16) + kScreenWidth - 1) / kScreenWidth, ((h << 16) + kScreenHeight - 1) / kScreenHeight);
+    width_ = std::min(w, (kScreenWidth * scale_) >> 16);
+    height_ = std::min(h, (kScreenHeight * scale_) >> 16);
+    small_ = true;
+    std::vector<uint32_t>().swap(framebuffer_);
+    // No list kept: each vector list is drawn as the AVG runs it, over the
+    // previous one dimmed (as update_video() does once a frame otherwise).
+    avg_.set_line_sink([this](const AvgStarwars::Line& line) {
+        const int xoff = (kScreenWidth - AvgStarwars::kVisWidth) / 2;
+        const int yoff = (kScreenHeight - AvgStarwars::kVisHeight) / 2;
+        if (draw_enabled_ && !picture_.empty())
+            draw_line_small(((line.x0 + xoff) * scale_) >> 16, ((line.y0 + yoff) * scale_) >> 16,
+                            ((line.x1 + xoff) * scale_) >> 16, ((line.y1 + yoff) * scale_) >> 16, line.color,
+                            line.intensity);
+    });
+    // Colour (3 bits) times brightness (5 bits); a frame later 6/10 as bright.
+    for (int i = 0; i < 256; ++i) {
+        const uint32_t c = AvgStarwars::color111(i >> 5);
+        const int level = i & 31;
+        const auto ch = [&](int shift) { return ((int((c >> shift) & 0xff) * level / 31) & 0xff) << shift; };
+        palette_[size_t(i)] = 0xff000000u | uint32_t(ch(16) | ch(8) | ch(0));
+        const int next = level * 6 / 10;
+        decay_[size_t(i)] = uint8_t(next ? ((i & 0xe0) | next) : 0);
+    }
+}
+
+const uint32_t* StarWars::framebuffer() const {
+    if (!small_) return framebuffer_.data();
+    if (framebuffer_.size() != picture_.size()) framebuffer_.assign(picture_.size(), 0xff000000u);
+    for (size_t i = 0; i < picture_.size(); ++i) framebuffer_[i] = palette_[picture_[i]];
+    return framebuffer_.data();
 }
 
 void StarWars::reset() {
@@ -234,6 +295,9 @@ void StarWars::reset() {
     audio_accumulator_ = 0;
     pokey_sum_ = 0;
     pokey_cycles_ = 0;
+    pokey_pending_ = 0;
+    sub_accumulator_ = 0;
+    sub_samples_ = 0;
     dc_in_ = dc_out_ = 0.0;
     audio_.clear();
     in0_ = 0xff;
@@ -241,11 +305,12 @@ void StarWars::reset() {
     riot_pa_out_ = 0xff;
     tms_.strobe_ws_rs(0x03);
     std::fill(framebuffer_.begin(), framebuffer_.end(), 0xff000000u);
+    std::fill(picture_.begin(), picture_.end(), uint8_t(0));
 }
 
 uint8_t StarWars::avg_read(uint16_t address) const {
     if (address < 0x3000) return vector_ram_[address];
-    if (address < 0x4000) return vector_rom_[address - 0x3000];
+    if (address < 0x4000) return vector_rom_ ? vector_rom_[address - 0x3000] : 0;
     return 0;
 }
 
@@ -257,8 +322,10 @@ uint8_t StarWars::main_read(uint16_t address) {
 }
 
 uint8_t StarWars::main_read_raw(uint16_t address) {
+    // The program first: most reads are opcodes and operands.
+    if (address >= 0x8000 && game_ != Game::Esb) return rom_byte(address);
     if (address < 0x3000) return vector_ram_[address];
-    if (address < 0x4000) return vector_rom_[address - 0x3000];
+    if (address < 0x4000) return vector_rom_ ? vector_rom_[address - 0x3000] : 0;
     if (address >= 0x4300 && address <= 0x431f) return in0_;
     if (address >= 0x4320 && address <= 0x433f) {
         uint8_t value = uint8_t(in1_ & 0x3f);
@@ -284,18 +351,18 @@ uint8_t StarWars::main_read_raw(uint16_t address) {
     if (address >= 0x5000 && address <= 0x5fff) return math_.ram()[address & 0xfff];
     if (address >= 0x6000 && address <= 0x7fff) {
         const uint32_t base = bank_ ? 0x10000u : 0x6000u;
-        return main_rom_[base + (address & 0x1fff)];
+        return rom_byte(base + (address & 0x1fff));
     }
     if (game_ == Game::Esb) {
         if (address >= 0x8000 && address <= 0x9fff) {
-            return main_rom_[0x14000u + uint32_t(slapstic_bank_) * 0x2000u + (address & 0x1fff)];
+            return rom_byte(0x14000u + uint32_t(slapstic_bank_) * 0x2000u + (address & 0x1fff));
         }
         if (address >= 0xa000) {
             const uint32_t base = bank_ ? 0x1c000u : 0xa000u;
-            return main_rom_[base + (address - 0xa000)];
+            return rom_byte(base + (address - 0xa000));
         }
     }
-    if (address >= 0x8000) return main_rom_[address];
+    if (address >= 0x8000) return rom_byte(address);
     return 0xff;
 }
 
@@ -315,6 +382,7 @@ void StarWars::main_write(uint16_t address, uint8_t value) {
         return;
     }
     if (address >= 0x4600 && address <= 0x461f) {
+        if (small_ && draw_enabled_) decay_small();
         avg_.go();
         return;
     }
@@ -369,6 +437,10 @@ void StarWars::outlatch_w(int bit, bool value) {
 }
 
 uint8_t StarWars::sound_read(uint16_t address) {
+    if (address >= 0x4000) {
+        const uint8_t* page = sound_pages_[address >> 13];
+        return page ? page[address & 0x1fff] : 0;
+    }
     if (address >= 0x0800 && address <= 0x0fff) {
         set_sound_pending(false);
         return sound_latch_;
@@ -376,7 +448,6 @@ uint8_t StarWars::sound_read(uint16_t address) {
     if (address >= 0x1000 && address <= 0x107f) return riot_.ram_read(uint8_t(address));
     if (address >= 0x1080 && address <= 0x109f) return riot_.io_read(uint8_t(address));
     if (address >= 0x2000 && address <= 0x27ff) return sound_ram_[address & 0x7ff];
-    if (address >= 0x4000) return sound_rom_[address];
     return 0xff;
 }
 
@@ -402,6 +473,7 @@ void StarWars::sound_write(uint16_t address, uint8_t value) {
 }
 
 void StarWars::quad_pokey_w(uint16_t offset, uint8_t data) {
+    sync_pokeys();
     const int off = int(offset) & 0x3f;
     const int pokey_num = (off >> 3) & ~0x04;
     const int control = (off & 0x20) >> 2;
@@ -420,7 +492,48 @@ void StarWars::on_main_cycles(int cycles) {
     prng_ = ((prng_ << 1) | (1u ^ (((prng_ >> 22) ^ (prng_ >> 4)) & 1u))) & 0x7fffffu;
 }
 
+void StarWars::sync_pokeys() {
+    if (!audio_enabled_) {
+        pokey_pending_ = 0;
+        return;
+    }
+    if (pokey_pending_ > 0) {
+        pokey0_.run(pokey_pending_);
+        pokey1_.run(pokey_pending_);
+        pokey2_.run(pokey_pending_);
+        pokey3_.run(pokey_pending_);
+        pokey_pending_ = 0;
+    }
+}
+
 void StarWars::on_sound_cycles(int cycles) {
+    if (!audio_enabled_) {
+        // Only the TMS5220's state (its READY line is polled), a few
+        // thousand times a second.
+        riot_.tick(cycles);
+        sub_accumulator_ += int64_t(cycles) * sample_rate_;
+        while (sub_accumulator_ >= int64_t(kCpuClock)) {
+            sub_accumulator_ -= int64_t(kCpuClock);
+            tms_.update();
+        }
+        return;
+    }
+    if (sample_rate_ != uint32_t(kSampleRate)) {
+        riot_.tick(cycles);
+        pokey_pending_ += cycles;
+        sub_accumulator_ += int64_t(cycles) * sample_rate_ * 2;
+        while (sub_accumulator_ >= int64_t(kCpuClock)) {
+            sub_accumulator_ -= int64_t(kCpuClock);
+            sync_pokeys();
+            pokey_sum_ += pokey0_.update() + pokey1_.update() + pokey2_.update() + pokey3_.update();
+            if (++sub_samples_ == 2) {
+                emit_sample(double(pokey_sum_) / 2.0);
+                pokey_sum_ = 0;
+                sub_samples_ = 0;
+            }
+        }
+        return;
+    }
     pokey0_.run(cycles);
     pokey1_.run(cycles);
     pokey2_.run(cycles);
@@ -431,12 +544,18 @@ void StarWars::on_sound_cycles(int cycles) {
     // alias badly otherwise.
     pokey_sum_ += int64_t(pokey0_.update() + pokey1_.update() + pokey2_.update() + pokey3_.update()) * cycles;
     pokey_cycles_ += cycles;
-    audio_accumulator_ += int64_t(cycles) * kSampleRate;
+    audio_accumulator_ += int64_t(cycles) * sample_rate_;
     while (audio_accumulator_ >= kCpuClock) {
         audio_accumulator_ -= kCpuClock;
         const double pokeys = pokey_cycles_ ? double(pokey_sum_) / double(pokey_cycles_) : 0.0;
         pokey_sum_ = 0;
         pokey_cycles_ = 0;
+        emit_sample(pokeys);
+    }
+}
+
+void StarWars::emit_sample(double pokeys) {
+    {
         // MAME mix: each POKEY at 0.20 (applied in the chip), TMS5220 at 0.50.
         const double mix = pokeys + 0.5 * double(tms_.update());
         // The POKEY outputs are unipolar: remove the DC like the board's
@@ -449,6 +568,7 @@ void StarWars::on_sound_cycles(int cycles) {
 }
 
 void StarWars::run_frame() {
+    sync_pokeys();
     // The two CPUs talk through latches; MAME interleaves them every 100 us
     // while a command is pending, so run both in short slices (~100 us).
     constexpr int kSlice = 152;
@@ -465,6 +585,9 @@ void StarWars::run_frame() {
 }
 
 void StarWars::update_video() {
+    const int xoff = (kScreenWidth - AvgStarwars::kVisWidth) / 2;
+    const int yoff = (kScreenHeight - AvgStarwars::kVisHeight) / 2;
+    if (small_) return;  // drawn as the AVG runs (set_picture_limit)
     // Phosphor decay: dim the previous frame instead of wiping to black.
     for (uint32_t& pixel : framebuffer_) {
         const int r = int((pixel >> 16) & 0xff) * 6 / 10;
@@ -473,14 +596,69 @@ void StarWars::update_video() {
         pixel = 0xff000000u | (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b);
     }
 
-    const int xoff = (kScreenWidth - AvgStarwars::kVisWidth) / 2;
-    const int yoff = (kScreenHeight - AvgStarwars::kVisHeight) / 2;
     for (const AvgStarwars::Line& line : avg_.lines()) {
-        const int x0 = (line.x0 >> 16) + xoff;
-        const int y0 = (line.y0 >> 16) + yoff;
-        const int x1 = (line.x1 >> 16) + xoff;
-        const int y1 = (line.y1 >> 16) + yoff;
-        draw_line(x0, y0, x1, y1, line.color, line.intensity);
+        draw_line(line.x0 + xoff, line.y0 + yoff, line.x1 + xoff, line.y1 + yoff,
+                  AvgStarwars::color111(line.color), line.intensity);
+    }
+}
+
+void StarWars::decay_small() {
+    if (picture_.empty()) return;
+    // Mostly black: four pixels at a time where all four are.
+    uint8_t* p = picture_.data();
+    const size_t n = picture_.size();
+    size_t i = 0;
+    for (; i + 4 <= n; i += 4) {
+        uint32_t four;
+        std::memcpy(&four, p + i, 4);
+        if (four == 0) continue;
+        p[i] = decay_[p[i]];
+        p[i + 1] = decay_[p[i + 1]];
+        p[i + 2] = decay_[p[i + 2]];
+        p[i + 3] = decay_[p[i + 3]];
+    }
+    for (; i < n; ++i) p[i] = decay_[p[i]];
+}
+
+// The same as draw_line() into the 8-bit picture: a pixel takes the new
+// colour when that is brighter (the 32-bit picture keeps each channel's
+// brightest instead).
+void StarWars::draw_line_small(int x0, int y0, int x1, int y1, int color, int intensity) {
+    const int w = width_, h = height_;
+    uint8_t* pic = picture_.data();
+    const int top = color << 5;
+    auto plot = [&](int x, int y, int i) {
+        if (x < 0 || x >= w || y < 0 || y >= h) return;
+        const int level = (std::min(i, 255) * 31 + 127) / 255;
+        uint8_t& p = pic[size_t(y) * size_t(w) + size_t(x)];
+        if (level > (p & 31)) p = uint8_t(top | level);
+    };
+    int dx = std::abs(x1 - x0);
+    int sx = x0 < x1 ? 1 : -1;
+    int dy = -std::abs(y1 - y0);
+    int sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+    int x = x0;
+    int y = y0;
+    const int glow = intensity / 3;
+    while (true) {
+        plot(x, y, intensity);
+        if (glow > 0) {
+            plot(x - 1, y, glow);
+            plot(x + 1, y, glow);
+            plot(x, y - 1, glow);
+            plot(x, y + 1, glow);
+        }
+        if (x == x1 && y == y1) break;
+        const int e2 = 2 * err;
+        if (e2 >= dy) {
+            err += dy;
+            x += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y += sy;
+        }
     }
 }
 
@@ -647,10 +825,10 @@ void StarWars::set_inputs(const MachineInputs& inputs) {
             int scaled = value * 255 / (span - 1);
             return uint8_t(std::clamp(scaled, 0, 255));
         };
-        analog_x_ = map(inputs.pointer_x, kScreenWidth);
+        analog_x_ = map(inputs.pointer_x, width_);
         // Vertical axis inverted: pushing the mouse forward (towards the
         // top of the screen) pulls the nose up, the way a real yoke works.
-        analog_y_ = uint8_t(255 - map(inputs.pointer_y, kScreenHeight));
+        analog_y_ = uint8_t(255 - map(inputs.pointer_y, height_));
         return;
     }
 

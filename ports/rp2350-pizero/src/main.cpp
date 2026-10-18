@@ -53,7 +53,12 @@ public:
     }
 
     int output_rate() const override { return audio_pwm_rate(); }
+#ifdef DSP_NO_SOUND
+    bool sound() const override { return false; }
+    void push_audio(const int16_t*, size_t) override {}
+#else
     void push_audio(const int16_t* samples, size_t count) override { audio_pwm_push(samples, count); }
+#endif
     size_t audio_queued() const override { return audio_pwm_queued(); }
 
     void poll(dsp::port::HostInput& input) override {
@@ -124,7 +129,9 @@ int main() {
 
     usb_input_init();  // before the video: PIO0 + DMA channel 0
     video_init();
+#ifndef DSP_NO_SOUND
     audio_pwm_init();
+#endif
     std::printf("SD card: %s\n", dsp_sd_mount() ? "mounted" : "not found");
 
     // The SDK's core 0 stack is 2 KB in SCRATCH_Y, right above core 1's: far

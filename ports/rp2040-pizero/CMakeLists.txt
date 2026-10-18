@@ -36,6 +36,7 @@ set(DSP_EMBED_ARGS "" CACHE STRING "Embedded media: extra arguments (';' separat
 set(DSP_EMBED_C "" CACHE FILEPATH "Embedded media: C file written by tools/embed_media.py")
 set(DSP_EMBED_ENTRIES "" CACHE STRING "Several built-in games: LABEL=COMMAND LINE, ';' separated")
 set(DSP_AUDIO_PIN 4 CACHE STRING "GPIO of the PWM sound output")
+option(DSP_NO_SOUND "No sound: drivers skip making it (faster), no PWM audio" OFF)
 # Video: OFF = 320x240 doubled, the driver's 256 colours (Elevator Action);
 # ON = 640x480 at full resolution in 8 colours, rows read from the machine
 # (the Sinclair QL's 512x256).
@@ -87,6 +88,9 @@ dsp_port_add_sources(dsp_pizero2040 DRIVERS ${DSP_PORT_DRIVERS} EMBED "${embedde
 # before newlib's.
 target_include_directories(dsp_pizero2040 BEFORE PRIVATE ${DSP_PICO_DIR}/src ${DSP_PICO2_DIR}/include)
 target_include_directories(dsp_pizero2040 PRIVATE ${DSP_PICO2_DIR}/src ${fatfs_dir})
+if(DSP_NO_SOUND)
+  target_compile_definitions(dsp_pizero2040 PRIVATE DSP_NO_SOUND=1)
+endif()
 target_compile_definitions(dsp_pizero2040 PRIVATE
   PICO_MALLOC_PANIC=0
   DSP_AUDIO_PIN=${DSP_AUDIO_PIN}
