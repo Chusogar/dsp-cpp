@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <bitset>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -24,6 +25,13 @@ namespace dsp {
 // POKEY and, on Indy/Road Runner, a TMS5220C behind a 6522 VIA. Playfield/MO
 // banks are selected by a pair of colour PROMs the same way convert_back does
 // in the Pascal driver.
+//
+// Small enough for boards without PSRAM: every ROM is read in place when the
+// board maps it (the 68000 program straight from its even/odd chip pairs),
+// the tiles are decoded from the graphics ROMs as the picture is drawn, a
+// band of 8 lines at a time, and the picture is 8-bit: the up to 1024
+// palette entries a frame uses are given 256 slots that stay put from frame
+// to frame. The 32-bit framebuffer is only built when asked for.
 class AtariSystem1 : public Machine {
 public:
     MachineType machine_type() const override { return MachineType::Arcade; }
@@ -51,13 +59,18 @@ public:
     void set_inputs(const MachineInputs& inputs) override;
     void set_dip_switch(int bank, uint8_t value) override;
 
-    const uint32_t* framebuffer() const override { return framebuffer_.data(); }
-    int screen_width() const override { return kScreenWidth; }
-    int screen_height() const override { return kScreenHeight; }
+    const uint32_t* framebuffer() const override;
+    const uint8_t* indexed_framebuffer() const override { return screen_.data(); }
+    const uint32_t* indexed_palette() const override { return slot_palette_.data(); }
+    void set_draw_enabled(bool enabled) override { draw_enabled_ = enabled; }
+    void set_picture_limit(int width, int height) override;
+    int screen_width() const override { return width_; }
+    int screen_height() const override { return height_; }
     double frames_per_second() const override { return kFramesPerSecond; }
 
     void drain_audio(std::vector<int16_t>& out) override;
-    int sample_rate() const override { return YM2151::kSampleRate; }
+    int sample_rate() const override { return int(sample_rate_); }
+    void set_sample_rate_limit(int rate) override;
 
     const char* title() const override;
 
@@ -66,7 +79,9 @@ public:
     bool debug_sound_halted() const { return sound_cpu_halted_; }
     uint16_t debug_bankselect() const { return bankselect_; }
     uint8_t debug_in2() const { return in2_; }
-    uint8_t debug_sound_ram(uint16_t address) const { return sound_memory_[address]; }
+    uint8_t debug_sound_ram(uint16_t address) const { return sound_ram_[address & 0x0fff]; }
+    // Every tile row decoded straight from the ROMs equals the GfxSet decode.
+    bool debug_tiles_match() const;
 
 private:
     uint16_t main_read(uint32_t address);
@@ -74,6 +89,7 @@ private:
     uint8_t sound_read(uint16_t address);
     void sound_write(uint16_t address, uint8_t value);
     void on_sound_cycles(int cycles);
+    void sync_pokey();
     void set_sound_reset(bool running);
     bool has_speech() const;
     bool has_adc() const;
@@ -83,14 +99,22 @@ private:
     bool via_selected(uint16_t address) const;
 
     bool load_roms(const std::string& rom_path, std::string* error);
-    void convert_background(std::vector<uint8_t>& gfx_rom, const std::vector<uint8_t>& proms);
-    uint8_t decode_bank(uint8_t prom1, uint8_t prom2, int bpp, const std::vector<uint8_t>& gfx_rom);
+    void convert_background(const std::vector<uint8_t>& proms);
+    uint8_t decode_bank(uint8_t prom1, uint8_t prom2, int bpp);
     void set_palette(int index, uint16_t value);
     void update_video();
-    void draw_alpha_tile(int offset);
-    void draw_playfield_tile(int offset);
-    void mix_motion_object_pixel(int x, int y, uint16_t mo);
+    // One band of lines [y0, y1): playfield, motion objects, alphanumerics.
+    // False when the palette slots ran out.
+    bool compose_band(int y0, int y1);
+    void mix_motion_object_pixel(uint16_t& pf, uint16_t mo);
+    void draw_motion_tile(int code, int color, bool hflip, bool vflip, int x, int y, int gfx,
+                          int priority);
+    // Pens of one 8-pixel row of a tile of graphics set `gfx` (0 = the
+    // 2bpp alphanumerics), as the GfxSet decode of the ROMs would give.
+    void tile_row(int gfx, int code, int row, uint8_t* pens) const;
+    bool gfx_valid(int gfx) const { return gfx == 0 || (gfx < next_gfx_index_ && gfx_bank_[size_t(gfx)] != 0); }
     void reschedule_int3(int scanline);
+    uint16_t rom_word(uint32_t address) const;
 
     static constexpr int16_t kTransparent = -1;
 
@@ -103,16 +127,36 @@ private:
     Tms5220 tms_;
     Slapstic slapstic_;
 
-    std::array<uint16_t, 0x40000> rom_{};
-    std::array<std::array<uint16_t, 0x1000>, 4> slapstic_rom_{};
-    std::array<uint16_t, 0x1000> ram_{};
-    std::array<uint16_t, 0x80000> ram2_{};
-    std::array<uint16_t, 0x2000> ram3_{};
-    std::array<uint8_t, 0x800> eeprom_{};
-    std::array<uint8_t, 0x10000> sound_memory_{};
+    // 68000 program: 4 KB pages of $00000-$87FFF (the last 8 are the four
+    // slapstic banks, $2000 bytes each), the high and the low bytes from a
+    // pair of byte-wide ROMs (2 KB of each); null: reads as 0.
+    struct RomPair {
+        const uint8_t* even = nullptr;
+        const uint8_t* odd = nullptr;
+    };
+    std::array<RomPair, 0x80> main_pages_{};
+    std::array<RomPair, 8> slapstic_pages_{};
+    std::vector<std::vector<uint8_t>> owned_roms_;  // ROMs the board does not map
+    // The RAMs are blocks of their own: a small board's heap has room for
+    // several mid-sized blocks more easily than for one large object.
+    std::vector<uint16_t> ram_;  // 0x1000 words
+    // $900000-$9FFFF RAM: 4 KB pages made when first written (no game here
+    // uses it; it reads as 0 until then).
+    std::vector<std::unique_ptr<std::array<uint16_t, 0x800>>> ram2_;
+    std::vector<uint16_t> ram3_;      // 0x2000 words
+    std::vector<uint8_t> eeprom_;     // 0x800
+    std::vector<uint8_t> sound_ram_;  // 0x1000
+    std::array<const uint8_t*, 4> sound_rom_{};  // 16 KB pages of the 6502 space
 
-    GfxSet chars_;
-    std::array<GfxSet, 16> gfx_{};
+    const uint8_t* char_rom_ = nullptr;  // 8 KB, 0x200 2bpp alphanumerics
+    // Graphics ROM image (bit-inverted when read): 16 KB chunks, null = $FF.
+    std::vector<const uint8_t*> gfx_chunks_;
+    uint32_t gfx_bytes_ = 0;
+    // Graphics sets 1..15: the 512 KB bank of the image they come from and
+    // their planes (bit k of a pen from bank + k * $10000).
+    std::array<uint8_t, 16> gfx_bank_{};
+    std::array<uint8_t, 16> gfx_bpp_{};
+    std::array<std::array<std::array<const uint8_t*, 2>, 8>, 16> gfx_planes_{};
     std::array<uint8_t, 16> bank_color_shift_{};
     std::array<std::array<uint8_t, 8>, 3> bank_gfx_{};
     uint8_t next_gfx_index_ = 1;
@@ -121,15 +165,25 @@ private:
 
     std::unique_ptr<AtariMotionObjects> motion_objects_;
 
-    std::array<uint16_t, 0x400> palette_ram_{};
-    std::array<uint32_t, 0x400> palette_{};
+    std::vector<uint16_t> palette_ram_;  // 0x400
+    std::bitset<0x400> palette_set_;  // entries set_palette() has written
+    uint32_t palette_colour(int index) const;
 
-    std::vector<int16_t> alpha_;
-    std::vector<int16_t> playfield_;
-    std::vector<uint16_t> pf_index_;
-    std::vector<uint32_t> framebuffer_;
-    std::array<bool, 0x800> alpha_dirty_{};
-    std::array<bool, 0x1000> playfield_dirty_{};
+    // The picture: slot numbers; slot_index_ gives the palette entry of each
+    // slot and slot_palette_ its colour when the picture was drawn.
+    static constexpr int kBandLines = 8;
+    std::vector<uint8_t> screen_;
+    int width_ = kScreenWidth, height_ = kScreenHeight;
+    int crop_x_ = 0, crop_y_ = 0;
+    std::vector<uint16_t> band_;  // kBandLines x kScreenWidth palette entries
+    int band_y0_ = 0, band_y1_ = 0;
+    std::array<uint16_t, 0x400> slot_of_{};     // palette entry -> slot + 1 (0: none)
+    std::array<uint16_t, 256> slot_index_{};
+    int slots_used_ = 0;
+    std::array<uint32_t, 256> slot_palette_{};
+    mutable std::vector<uint32_t> framebuffer_;
+    mutable bool framebuffer_stale_ = true;
+    bool draw_enabled_ = true;
 
     uint8_t rom_bank_ = 0;
     uint16_t scroll_x_ = 0;
@@ -162,6 +216,10 @@ private:
     int line_ = 0;
 
     int64_t audio_accumulator_ = 0;
+    uint32_t sample_rate_ = YM2151::kSampleRate;
+    int pokey_pending_ = 0;  // 6502 cycles the POKEY has still to run
+    uint32_t tms_table_clock_ = 0;
+    std::array<uint16_t, 16> tms_clocks_{};  // TMS5220 clocks in n 6502 cycles
     std::vector<int16_t> audio_;
 };
 

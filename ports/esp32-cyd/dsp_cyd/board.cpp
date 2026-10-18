@@ -70,6 +70,7 @@ public:
 
     void present(const uint32_t* argb, int width, int height, int display_width,
                  int display_height) override {
+        wait_present();
         if (map_.update(width, height, display_width, display_height, kWidth, kHeight)) {
             cyd::lcd_fill(0, 0, kWidth, kHeight, 0);
         }
@@ -90,7 +91,31 @@ public:
         cyd::lcd_wait();
     }
 
+    // The 8-bit picture goes to the LCD from core 0 (present_task) while the
+    // emulation carries on on core 1: at 40 MHz the SPI needs ~30 ms for a
+    // frame, two frames' worth of time the emulation used to wait for. A
+    // frame that comes while the previous one is still being sent is dropped;
+    // the pixels are read as they are sent (a row can show the next frame).
+    bool present_indexed(const uint8_t* pens, const uint32_t* palette, int width, int height,
+                         int display_width, int display_height) override {
+        if (job_busy_) return true;  // core 0 still on the previous frame
+        if (present_task_ == nullptr) {
+            xTaskCreatePinnedToCore(present_task, "dsp-lcd", 3072, this, 2, &present_task_, 0);
+        }
+        Job& j = job_;
+        for (int i = 0; i < 256; ++i) j.lut[i] = cyd::to565be(palette[i]);
+        j.pens = pens;
+        j.width = width;
+        j.height = height;
+        j.display_width = display_width;
+        j.display_height = display_height;
+        job_busy_ = true;
+        xTaskNotifyGive(present_task_);
+        return true;
+    }
+
     void draw_rows(int y, int rows, const uint32_t* argb) override {
+        wait_present();
         cyd::lcd_window(0, y, kWidth - 1, y + rows - 1);
         int band = 0;
         for (int r0 = 0; r0 < rows; r0 += cyd::kBandRows) {
@@ -163,6 +188,50 @@ public:
     }
 
 private:
+    struct Job {
+        const uint8_t* pens = nullptr;
+        int width = 0, height = 0, display_width = 0, display_height = 0;
+        uint16_t lut[256];
+    };
+
+    void wait_present() {
+        while (job_busy_) vTaskDelay(1);
+    }
+
+    static void present_task(void* self) {
+        CydHal* hal = static_cast<CydHal*>(self);
+        for (;;) {
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            hal->send_job();
+            hal->job_busy_ = false;
+        }
+    }
+
+    void send_job() {
+        const Job& j = job_;
+        if (map_.update(j.width, j.height, j.display_width, j.display_height, kWidth, kHeight)) {
+            cyd::lcd_fill(0, 0, kWidth, kHeight, 0);
+        }
+        cyd::lcd_window(map_.dst_x, map_.dst_y, map_.dst_x + map_.dst_w - 1, map_.dst_y + map_.dst_h - 1);
+        const uint16_t* xs = map_.xs.data();
+        int band = 0;
+        for (int y0 = 0; y0 < map_.dst_h; y0 += cyd::kBandRows) {
+            const int rows = std::min(cyd::kBandRows, map_.dst_h - y0);
+            uint16_t* out = cyd::lcd_band(band);
+            for (int r = 0; r < rows; ++r) {
+                const uint8_t* src = j.pens + size_t(map_.ys[size_t(y0 + r)]) * size_t(j.width);
+                uint16_t* dst = out + r * map_.dst_w;
+                for (int x = 0; x < map_.dst_w; ++x) dst[x] = j.lut[src[xs[x]]];
+            }
+            cyd::lcd_push(out, rows * map_.dst_w);  // converts the next band meanwhile
+            band ^= 1;
+        }
+        cyd::lcd_wait();
+    }
+
+    Job job_;
+    volatile bool job_busy_ = false;
+    TaskHandle_t present_task_ = nullptr;
     dsp::port::ScaleMap map_;
     bool sd_mounted_ = false;
 };
@@ -189,6 +258,8 @@ void setup() {
     lcd.mhz = DSP_LCD_MHZ;
     if (!cyd::lcd_begin(lcd)) Serial.println("display initialisation failed");
 
+    dsp::port::esp32::audio_begin(kAudioRate, 26);
+    // After the audio: its DAC setup touches GPIO25, the touch clock.
     cyd::TouchCalibration cal;
     cal.x_min = DSP_TOUCH_X_MIN;
     cal.x_max = DSP_TOUCH_X_MAX;
@@ -198,8 +269,6 @@ void setup() {
     cal.flip_x = DSP_TOUCH_FLIP_X;
     cal.flip_y = DSP_TOUCH_FLIP_Y;
     cyd::touch_begin(cal);
-
-    dsp::port::esp32::audio_begin(kAudioRate, 26);
     g_hal = new CydHal();
     Serial.printf("dsp-cpp ESP32 CYD: heap %u KB free, largest block %u KB, PSRAM %u KB\n",
                   unsigned(heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024),

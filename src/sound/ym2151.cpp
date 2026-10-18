@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <memory>
 
 namespace dsp {
 namespace {
@@ -163,8 +164,11 @@ const uint8_t kLfoNoiseWaveform[256] = {
     0xE2, 0x4D, 0x8A, 0xA6, 0x46, 0x95, 0x0F, 0x8F, 0xF5, 0x15, 0x97, 0x32, 0xD4, 0x28, 0x1E, 0x55,
 };
 
+// tl[] of MAME's engine holds 13 copies of its first 2 * kTlResLen entries,
+// each shifted right once more, with every odd entry the negative of the
+// even one before it; only the first kTlResLen values are kept (tl_value()).
 struct WaveTables {
-    int16_t tl[kTlTabLen];
+    int16_t tl[kTlResLen];
     uint16_t sin[kSinLen];
     uint32_t d1l[16];
 };
@@ -177,12 +181,7 @@ WaveTables make_wave_tables() {
         n = sshr(n, 4);
         n = (n & 1) ? sshr(n, 1) + 1 : sshr(n, 1);
         n *= 4;
-        t.tl[x * 2 + 0] = int16_t(n);
-        t.tl[x * 2 + 1] = int16_t(-n);
-        for (int i = 1; i <= 12; ++i) {
-            t.tl[x * 2 + 0 + i * 2 * kTlResLen] = int16_t(sshr(int(t.tl[x * 2 + 0]), i));
-            t.tl[x * 2 + 1 + i * 2 * kTlResLen] = int16_t(-t.tl[x * 2 + 0 + i * 2 * kTlResLen]);
-        }
+        t.tl[x] = int16_t(n);
     }
     for (int i = 0; i < kSinLen; ++i) {
         const double m = std::sin(((i * 2) + 1) * M_PI / kSinLen);
@@ -200,10 +199,24 @@ WaveTables make_wave_tables() {
     return t;
 }
 
-const WaveTables kWaves = make_wave_tables();
+// Built on first use (2.5 KB of static storage, not a heap block left in
+// the middle of a small board's heap).
+const WaveTables& waves() {
+    static const WaveTables tables = make_wave_tables();
+    return tables;
+}
+
+inline int32_t tl_value(const WaveTables& w, uint32_t p) {
+    const int32_t v = sshr(int(w.tl[(p & (2 * kTlResLen - 1)) >> 1]), int(p / (2 * kTlResLen)));
+    return (p & 1) ? -v : v;
+}
+
+// The tables op_calc reads (set by the first YM2151 built; static functions).
+const WaveTables* g_waves = nullptr;
 
 }  // namespace
 YM2151::YM2151(uint32_t clock, float amplitude) : clock_(clock), amplitude_(amplitude) {
+    g_waves = &waves();
     init_chip_tables();
     lfo_timer_add_ = uint32_t((1 << kLfoSh) * (clock_ / 64.0) / sample_rate_);
     eg_timer_add_ = uint32_t((1 << kEgSh) * (clock_ / 64.0) / sample_rate_);
@@ -211,22 +224,21 @@ YM2151::YM2151(uint32_t clock, float amplitude) : clock_(clock), amplitude_(ampl
     reset();
 }
 
+void YM2151::set_sample_rate(uint32_t rate) {
+    if (rate == 0 || rate == sample_rate_) return;
+    sample_rate_ = rate;
+    init_chip_tables();
+    lfo_timer_add_ = uint32_t((1 << kLfoSh) * (clock_ / 64.0) / sample_rate_);
+    eg_timer_add_ = uint32_t((1 << kEgSh) * (clock_ / 64.0) / sample_rate_);
+}
+
 void YM2151::init_chip_tables() {
     const double scaler = (clock_ / 64.0) / sample_rate_;
     double mult = 1 << (kFreqSh - 10);
+    // Octave 2 of the frequency table; the others are shifts of it (freq()).
     for (int i = 0; i < 768; ++i) {
         const double phaseinc = kPhaseIncRom[i] * scaler;
-        freq_[768 + 2 * 768 + i] = uint32_t(phaseinc * mult) & 0xffffffc0u;
-        for (int j = 0; j <= 1; ++j) {
-            freq_[768 + j * 768 + i] = (freq_[768 + 2 * 768 + i] >> (2 - j)) & 0xffffffc0u;
-        }
-        for (int j = 3; j <= 7; ++j) {
-            freq_[768 + j * 768 + i] = freq_[768 + 2 * 768 + i] << (j - 2);
-        }
-    }
-    for (int i = 0; i < 768; ++i) freq_[i] = freq_[1 * 768];
-    for (int j = 8; j <= 9; ++j) {
-        for (int i = 0; i < 768; ++i) freq_[768 + j * 768 + i] = freq_[768 + 8 * 768 - 1];
+        freq_base_[i] = uint32_t(phaseinc * mult) & 0xffffffc0u;
     }
 
     mult = 1 << kFreqSh;
@@ -510,13 +522,13 @@ void YM2151::write_reg(uint8_t r, uint8_t v) {
                         op4.kc_i = kc_channel;
                         const uint32_t kc = value >> 2;
                         op->dt1 = dt1_freq_[(op->dt1_i + kc) & 0xff];
-                        op->freq = ((freq_[kc_channel + op->dt2] + uint32_t(op->dt1)) * op->mul) >> 1;
+                        op->freq = ((freq(kc_channel + op->dt2) + uint32_t(op->dt1)) * op->mul) >> 1;
                         op2.dt1 = dt1_freq_[(op2.dt1_i + kc) & 0xff];
-                        op2.freq = ((freq_[kc_channel + op2.dt2] + uint32_t(op2.dt1)) * op2.mul) >> 1;
+                        op2.freq = ((freq(kc_channel + op2.dt2) + uint32_t(op2.dt1)) * op2.mul) >> 1;
                         op3.dt1 = dt1_freq_[(op3.dt1_i + kc) & 0xff];
-                        op3.freq = ((freq_[kc_channel + op3.dt2] + uint32_t(op3.dt1)) * op3.mul) >> 1;
+                        op3.freq = ((freq(kc_channel + op3.dt2) + uint32_t(op3.dt1)) * op3.mul) >> 1;
                         op4.dt1 = dt1_freq_[(op4.dt1_i + kc) & 0xff];
-                        op4.freq = ((freq_[kc_channel + op4.dt2] + uint32_t(op4.dt1)) * op4.mul) >> 1;
+                        op4.freq = ((freq(kc_channel + op4.dt2) + uint32_t(op4.dt1)) * op4.mul) >> 1;
                         refresh_eg(op_index);
                     }
                     break;
@@ -529,10 +541,10 @@ void YM2151::write_reg(uint8_t r, uint8_t v) {
                         op2.kc_i = kc_channel;
                         op3.kc_i = kc_channel;
                         op4.kc_i = kc_channel;
-                        op->freq = ((freq_[kc_channel + op->dt2] + uint32_t(op->dt1)) * op->mul) >> 1;
-                        op2.freq = ((freq_[kc_channel + op2.dt2] + uint32_t(op2.dt1)) * op2.mul) >> 1;
-                        op3.freq = ((freq_[kc_channel + op3.dt2] + uint32_t(op3.dt1)) * op3.mul) >> 1;
-                        op4.freq = ((freq_[kc_channel + op4.dt2] + uint32_t(op4.dt1)) * op4.mul) >> 1;
+                        op->freq = ((freq(kc_channel + op->dt2) + uint32_t(op->dt1)) * op->mul) >> 1;
+                        op2.freq = ((freq(kc_channel + op2.dt2) + uint32_t(op2.dt1)) * op2.mul) >> 1;
+                        op3.freq = ((freq(kc_channel + op3.dt2) + uint32_t(op3.dt1)) * op3.mul) >> 1;
+                        op4.freq = ((freq(kc_channel + op4.dt2) + uint32_t(op4.dt1)) * op4.mul) >> 1;
                     }
                     break;
                 }
@@ -550,7 +562,7 @@ void YM2151::write_reg(uint8_t r, uint8_t v) {
             op->mul = (v & 0x0f) ? uint32_t((v & 0x0f) << 1) : 1;
             if (olddt1_i != op->dt1_i) op->dt1 = dt1_freq_[(op->dt1_i + (op->kc >> 2)) & 0xff];
             if (olddt1_i != op->dt1_i || oldmul != op->mul) {
-                op->freq = ((freq_[op->kc_i + op->dt2] + uint32_t(op->dt1)) * op->mul) >> 1;
+                op->freq = ((freq(op->kc_i + op->dt2) + uint32_t(op->dt1)) * op->mul) >> 1;
             }
             break;
         }
@@ -591,7 +603,7 @@ void YM2151::write_reg(uint8_t r, uint8_t v) {
             const uint32_t olddt2 = op->dt2;
             op->dt2 = kDt2Tab[(v >> 6) & 3];
             if (op->dt2 != olddt2) {
-                op->freq = ((freq_[op->kc_i + op->dt2] + uint32_t(op->dt1)) * op->mul) >> 1;
+                op->freq = ((freq(op->kc_i + op->dt2) + uint32_t(op->dt1)) * op->mul) >> 1;
             }
             op->d2r = (v & 0x1f) ? uint32_t(32 + ((v & 0x1f) << 1)) : 0;
             op->eg_sh_d2r = kRates.shift[(op->d2r + (op->kc >> op->ks)) & 0x7f];
@@ -599,7 +611,7 @@ void YM2151::write_reg(uint8_t r, uint8_t v) {
             break;
         }
         default:  // 0xe0: D1L, RR
-            op->d1l = kWaves.d1l[(v >> 4) & 0x0f];
+            op->d1l = waves().d1l[(v >> 4) & 0x0f];
             op->rr = uint32_t(34 + ((v & 0x0f) << 2));
             op->eg_sh_rr = kRates.shift[(op->rr + (op->kc >> op->ks)) & 0x7f];
             op->eg_sel_rr = kRates.select[(op->rr + (op->kc >> op->ks)) & 0x7f];
@@ -641,14 +653,16 @@ void YM2151::run_timers(int cycles) {
 
 int32_t YM2151::op_calc(const Operator& op, uint32_t env, int32_t pm) {
     const int64_t tmp = int64_t(int32_t(op.phase & ~kFreqMask)) + (int64_t(pm) << 15);
-    const uint32_t p = (env << 3) + kWaves.sin[sshr(tmp, kFreqSh) & kSinMask];
-    return (p >= kTlTabLen) ? 0 : kWaves.tl[p];
+    const WaveTables& w = *g_waves;
+    const uint32_t p = (env << 3) + w.sin[sshr(tmp, kFreqSh) & kSinMask];
+    return (p >= kTlTabLen) ? 0 : tl_value(w, p);
 }
 
 int32_t YM2151::op_calc1(const Operator& op, uint32_t env, int32_t pm) {
     const int32_t i = int32_t(op.phase & ~kFreqMask) + pm;
-    const uint32_t p = (env << 3) + kWaves.sin[sshr(i, kFreqSh) & kSinMask];
-    return (p >= kTlTabLen) ? 0 : kWaves.tl[p];
+    const WaveTables& w = *g_waves;
+    const uint32_t p = (env << 3) + w.sin[sshr(i, kFreqSh) & kSinMask];
+    return (p >= kTlTabLen) ? 0 : tl_value(w, p);
 }
 
 uint32_t YM2151::volume_calc(const Operator& op, uint32_t am) {
@@ -859,10 +873,10 @@ void YM2151::advance() {
         }
         if (op.pms != 0 && mod_ind != 0) {
             const uint32_t kc_channel = op.kc_i + uint32_t(mod_ind);
-            op.phase += sshr(int32_t((freq_[kc_channel + op.dt2] + uint32_t(op.dt1)) * op.mul), 1);
-            op2.phase += sshr(int32_t((freq_[kc_channel + op2.dt2] + uint32_t(op2.dt1)) * op2.mul), 1);
-            op3.phase += sshr(int32_t((freq_[kc_channel + op3.dt2] + uint32_t(op3.dt1)) * op3.mul), 1);
-            op4.phase += sshr(int32_t((freq_[kc_channel + op4.dt2] + uint32_t(op4.dt1)) * op4.mul), 1);
+            op.phase += sshr(int32_t((freq(kc_channel + op.dt2) + uint32_t(op.dt1)) * op.mul), 1);
+            op2.phase += sshr(int32_t((freq(kc_channel + op2.dt2) + uint32_t(op2.dt1)) * op2.mul), 1);
+            op3.phase += sshr(int32_t((freq(kc_channel + op3.dt2) + uint32_t(op3.dt1)) * op3.mul), 1);
+            op4.phase += sshr(int32_t((freq(kc_channel + op4.dt2) + uint32_t(op4.dt1)) * op4.mul), 1);
         } else {
             op.phase += op.freq;
             op2.phase += op2.freq;
@@ -901,7 +915,9 @@ int32_t YM2151::update() {
     out_right_ = outr;
     advance();
 
-    const int32_t mono = int32_t((outl + outr) * amplitude_);
+    // At amplitude 1 the float product is the integer itself (well inside
+    // 24 bits): no float operation per sample for FPU-less boards.
+    const int32_t mono = amplitude_ == 1.0f ? int32_t(outl + outr) : int32_t((outl + outr) * amplitude_);
     return std::min<int32_t>(std::max<int32_t>(mono, -32767), 32767);
 }
 

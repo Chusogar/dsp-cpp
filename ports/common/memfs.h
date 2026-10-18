@@ -33,6 +33,10 @@ long lseek(int fd, long offset, int whence);
 int fstat(int fd, struct stat* st);
 int stat(const char* rel, struct stat* st);
 
+// The bytes of the file at absolute `path` ("/embedded/rom/x.bin") in place,
+// with its size; nullptr when the path is not an embedded file.
+const uint8_t* map(const char* path, size_t* size);
+
 // Directory listing: opendir(), readdir() until it returns false, closedir().
 int opendir(const char* rel);  // handle >= 0
 bool readdir(int handle, const char** name, bool* is_dir);

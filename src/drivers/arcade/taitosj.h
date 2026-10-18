@@ -6,16 +6,22 @@
 #include <vector>
 
 #include "core/machine.h"
+#include "core/rom_loader.h"
 #include "cpu/m6805.h"
 #include "cpu/z80.h"
 #include "sound/ay8910.h"
-#include "video/gfx.h"
 
 namespace dsp {
 
 // Taito SJ hardware, ported from taitosj_hw.pas.
 // Main Z80 at 4 MHz, sound Z80 at 3 MHz with four AY-3-8910 and a DAC, plus a
 // MC68705 protection MCU on Elevator Action.
+//
+// Written to run on an ESP32 without PSRAM (about 200 KB of heap, no block
+// over ~100 KB): the tile layers and sprites are drawn straight from the
+// character RAM into an 8-bit picture, with no decoded graphics and no
+// 256x256 layer bitmaps, and the 32-bit framebuffer is only built when asked
+// for (indexed_framebuffer() is what the small boards show).
 class TaitoSJ : public Machine {
 public:
     MachineType machine_type() const override { return MachineType::Arcade; }
@@ -41,7 +47,10 @@ public:
     void set_inputs(const MachineInputs& inputs) override;
     void set_dip_switch(int bank, uint8_t value) override;
 
-    const uint32_t* framebuffer() const override { return framebuffer_.data(); }
+    const uint32_t* framebuffer() const override;
+    const uint8_t* indexed_framebuffer() const override { return screen_.data(); }
+    const uint32_t* indexed_palette() const override { return palette_.data(); }
+    void set_draw_enabled(bool enabled) override { draw_enabled_ = enabled; }
     int screen_width() const override { return kScreenWidth; }
     int screen_height() const override { return kScreenHeight; }
     double frames_per_second() const override { return kFramesPerSecond; }
@@ -65,11 +74,25 @@ private:
     void on_sound_cycles(int cycles);
 
     void set_palette_entry(int index);
-    void decode_chars(int bank);
+    uint8_t bus_peek(uint16_t address) const;  // what the MCU sees on the Z80 bus
+    uint8_t main_rom(size_t offset) const { return main_pages_[offset >> 12][offset & 0xfff]; }
+    struct LayerFrame {
+        const uint8_t* chars = nullptr;
+        const uint8_t* map = nullptr;
+        uint16_t scroll_x = 0;
+        uint8_t color = 0;
+        std::array<int, 32> offset_y{};  // per 8-pixel group of the screen
+    };
+    struct SpriteFrame {
+        const uint8_t* pixels;
+        uint8_t sx, sy, color;
+        bool flip_x, flip_y;
+    };
     void update_video();
-    void draw_layer(int layer);
-    void draw_sprites();
-    void blit_layer(int layer, uint16_t scroll_x, uint8_t scroll_y, int column_base);
+    LayerFrame layer_frame(int layer, uint16_t scroll_x, uint8_t scroll_y, int column_base) const;
+    static void blit_layer_row(const LayerFrame& f, int y, uint8_t* line);
+    int sprite_frame(std::array<SpriteFrame, 32>& out) const;
+    static void draw_sprites_row(const SpriteFrame* sprites, int count, int y, uint8_t* line);
     void dac_update();
 
     Variant variant_;
@@ -81,24 +104,21 @@ private:
     AY8910 ay2_;  // writes the extra input port
     AY8910 ay3_;  // sound NMI enable
 
-    std::array<uint8_t, 0x10000> memory_{};
-    std::array<std::array<uint8_t, 0x2000>, 2> rom_banks_{};
-    std::array<uint8_t, 0x4400> sound_memory_{};
-    std::array<uint8_t, 0x8000> gfx_rom_{};
+    // ROMs: main $0000-$5fff, then the two $6000-$7fff banks from $6000 and
+    // $8000 of the image; sound $0000-$3fff; graphics read through $d404.
+    std::array<const uint8_t*, 9> main_pages_{};
+    std::array<const uint8_t*, 4> sound_pages_{};
+    std::array<const uint8_t*, 8> gfx_pages_{};
+    std::vector<uint8_t> main_rom_, sound_rom_, gfx_rom_;  // when not read in place
+    std::vector<uint8_t> ram_;  // $8000-$d1ff: work RAM, character RAM, tile maps, sprites
+    std::array<uint8_t, 0x400> sound_ram_{};
     std::array<uint8_t, 0x800> mcu_memory_{};
     std::array<std::array<uint8_t, 4>, 32> draw_order_{};
 
-    // gfx 0/2: 8x8 characters of both character RAM banks.
-    // gfx 1/3: 16x16 sprites built from the same character RAM.
-    std::array<GfxSet, 2> chars_;
-    std::array<GfxSet, 2> sprites_;
-
     std::array<uint8_t, 0x80> palette_ram_{};
-    std::array<uint32_t, 64> palette_{};
-    // Tile layers and the composed screen, all 256x256 with kTransparent pens.
-    std::array<std::array<uint8_t, 256 * 256>, 3> layers_{};
-    std::array<uint8_t, 256 * 256> screen_{};
-    std::vector<uint32_t> framebuffer_;
+    std::array<uint32_t, 256> palette_{};  // 64 used; 256 for indexed_palette()
+    std::vector<uint8_t> screen_;  // 256x224 pens into palette_
+    mutable std::vector<uint32_t> framebuffer_;  // built by framebuffer()
 
     std::array<uint8_t, 4> collision_{};
     std::array<uint8_t, 6> scroll_{};
@@ -113,9 +133,10 @@ private:
     uint8_t dac_out_ = 0;
     uint8_t dac_vol_ = 0;
     int16_t dac_sample_ = 0;
+    int32_t dac_mixed_ = 0;  // dac_sample_ at its mixing level
+    bool draw_enabled_ = true;
     bool sound_semaphore_ = false;
     std::array<bool, 2> sound_nmi_{};
-    std::array<bool, 2> rechars_{};
 
     // MCU handshake.
     uint8_t mcu_to_z80_ = 0;

@@ -3,6 +3,7 @@
 #include "machine/spectrum_snap.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -19,7 +20,7 @@ public:
     bool ok() const { return !frames_.empty() && snap_ok_; }
     bool playing() const { return playing_; }
     bool finished() const { return finished_; }
-    const SpectrumSnap& snap() const { return snap_; }
+    const SpectrumSnap& snap() const { return *snap_; }
     uint32_t start_tstates() const { return start_tstates_; }
 
     // Begin playback after the host has applied snap().
@@ -49,7 +50,7 @@ private:
     static bool inflate(const uint8_t* src, size_t src_len, size_t expected, std::vector<uint8_t>& out,
                         std::string* error);
 
-    SpectrumSnap snap_{};
+    std::unique_ptr<SpectrumSnap> snap_;  // ~180 KB: only while a recording is loaded
     bool snap_ok_ = false;
     uint32_t start_tstates_ = 0;
     std::vector<Frame> frames_;

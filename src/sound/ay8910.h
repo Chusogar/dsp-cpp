@@ -45,6 +45,11 @@ private:
     uint8_t latch_ = 0;
     uint32_t clock_;
     float amplitude_;
+    // amplitude_ as amp_mantissa_ * 2^amp_exponent_ (exact for any float), so
+    // update() mixes in integers: no double arithmetic per sample, which a
+    // microcontroller without a double FPU (RP2040, ESP32) does in software.
+    int64_t amp_mantissa_ = 0;
+    int amp_exponent_ = 0;
 
     PortRead port_a_read_, port_b_read_;
     PortWrite port_a_write_, port_b_write_;

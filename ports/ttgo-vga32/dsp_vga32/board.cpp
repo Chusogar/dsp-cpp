@@ -87,6 +87,7 @@ public:
     }
 
     const char* board_name() const override { return "TTGO VGA32"; }
+    bool turbo_on_f12() const override { return true; }  // PS/2 keyboard: F12 tap = turbo
     int screen_width() const override { return kWidth; }
     int screen_height() const override { return kHeight; }
 

@@ -13,7 +13,10 @@
 #include "hardware/irq.h"
 #include "hardware/pwm.h"
 
-#define RING_SIZE 8192u  // samples, power of two
+#ifndef DSP_AUDIO_RING
+#define DSP_AUDIO_RING 8192u  // samples, power of two
+#endif
+#define RING_SIZE DSP_AUDIO_RING
 #define DMA_SAMPLES 256u
 #define PWM_WRAP 1023u
 

@@ -38,8 +38,68 @@ bool read_whole_file(const std::string& path, std::vector<uint8_t>& out) {
 
 }  // namespace
 
+static RomLoader::FileMapper g_file_mapper = nullptr;
+
 uint32_t crc32_of(const uint8_t* data, size_t length) {
     return uint32_t(crc32(crc32(0, nullptr, 0), data, uInt(length)));
+}
+
+void RomLoader::set_file_mapper(FileMapper mapper) { g_file_mapper = mapper; }
+
+const uint8_t* RomLoader::map(const RomEntry& entry) {
+    if (is_zip_ || g_file_mapper == nullptr || entry.name == nullptr) return nullptr;
+    const std::string names(entry.name);
+    for (size_t start = 0; start <= names.size();) {
+        size_t separator = names.find('|', start);
+        if (separator == std::string::npos) separator = names.size();
+        const std::string candidate = names.substr(start, separator - start);
+        start = separator + 1;
+        if (candidate.empty()) continue;
+        size_t size = 0;
+        const uint8_t* data = g_file_mapper(path_ + "/" + candidate, &size);
+        if (data == nullptr || size != entry.length) continue;
+        if (entry.crc != 0 && crc32_of(data, size) != entry.crc) {
+            char buffer[128];
+            std::snprintf(buffer, sizeof(buffer), "%s: CRC mismatch (expected %08x, got %08x)",
+                          candidate.c_str(), entry.crc, crc32_of(data, size));
+            warnings_.emplace_back(buffer);
+        }
+        return data;
+    }
+    return nullptr;
+}
+
+const uint8_t* RomLoader::map_file(const std::string& path, size_t* size) {
+    size_t ignored = 0;
+    return g_file_mapper ? g_file_mapper(path, size ? size : &ignored) : nullptr;
+}
+
+bool RomLoader::load_pages(const std::vector<RomEntry>& entries, size_t size, std::vector<uint8_t>& owned,
+                           const uint8_t** pages, size_t page_count, std::string* error) {
+    static const uint8_t kZeroPage[kPageSize] = {};
+    const size_t count = std::min(page_count, (size + kPageSize - 1) / kPageSize);
+    for (size_t i = 0; i < page_count; ++i) pages[i] = kZeroPage;
+    bool mapped = true;
+    for (const RomEntry& entry : entries) {
+        const bool fits = ((entry.offset | entry.length) % kPageSize) == 0 &&
+                          entry.offset + entry.length <= count * kPageSize;
+        const uint8_t* data = fits ? map(entry) : nullptr;
+        if (data == nullptr) {
+            mapped = false;
+            break;
+        }
+        for (size_t k = 0; k < entry.length / kPageSize; ++k) pages[entry.offset / kPageSize + k] = data + k * kPageSize;
+    }
+    if (mapped) {
+        owned.clear();
+        owned.shrink_to_fit();
+        return true;
+    }
+    for (size_t i = 0; i < page_count; ++i) pages[i] = kZeroPage;
+    owned.assign(count * kPageSize, 0);
+    if (!load(entries, owned, error)) return false;
+    for (size_t i = 0; i < count; ++i) pages[i] = owned.data() + i * kPageSize;
+    return true;
 }
 
 bool RomLoader::open(const std::string& path, std::string* error) {

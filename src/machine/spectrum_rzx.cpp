@@ -126,7 +126,8 @@ bool SpectrumRzx::parse(const uint8_t* data, size_t size, std::string* error) {
                 use = decoded.data();
                 use_len = decoded.size();
             }
-            if (!spectrum_snap_from_bytes(use, use_len, ext, snap_, error)) return false;
+            if (!snap_) snap_ = std::make_unique<SpectrumSnap>();
+            if (!spectrum_snap_from_bytes(use, use_len, ext, *snap_, error)) return false;
             snap_ok_ = true;
         } else if (id == 0x80) {
             if (blen < 18) {

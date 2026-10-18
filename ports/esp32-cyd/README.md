@@ -82,8 +82,8 @@ Options (all go to `prepare.py`, see `python3 prepare.py --help`):
 
 ```sh
 ./build.sh --psram                              # board with PSRAM
-./build.sh --panel st7789                       # CYD2USB; inversion on by default
-./build.sh --no-invert --swap-colours           # if the colours look wrong
+./build.sh --panel st7789                       # CYD with 2 USB ports (ESP32-2432S028 USB-C + micro-USB)
+./build.sh --invert / --swap-colours            # if the colours look wrong (negative / red-blue)
 ./build.sh --flip                               # picture turned 180 degrees
 ./build.sh --touch-debug                        # raw touch readings on the serial port
 ./build.sh --touch-cal 300,3800,200,3700        # raw values at left,right,top,bottom

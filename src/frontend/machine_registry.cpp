@@ -5,6 +5,7 @@
 
 #include <cstdio>
 #include <map>
+#include <new>
 #include <set>
 #include <typeinfo>
 
@@ -1247,7 +1248,20 @@ const std::vector<DriverInfo>& list_drivers() {
     std::set<std::string> seen;
     for (const std::string& name : names) {
         if (!seen.insert(name).second) continue;
-        std::unique_ptr<dsp::Machine> machine = create_machine(name);
+        std::unique_ptr<dsp::Machine> machine;
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+        try {
+            machine = create_machine(name);
+        } catch (const std::bad_alloc&) {
+            // Small boards (an ESP32 without PSRAM): the driver's arrays do
+            // not fit. List it under its own name; starting it reports the
+            // lack of memory instead of the listing aborting.
+            drivers.push_back(DriverInfo{name, {}, name, MachineType::Arcade});
+            continue;
+        }
+#else
+        machine = create_machine(name);
+#endif
         if (machine == nullptr) continue;
         const dsp::Machine& m = *machine;
         const std::string key = class_key(m) + "|" + m.title();

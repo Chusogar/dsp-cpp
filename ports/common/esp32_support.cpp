@@ -2,7 +2,9 @@
 #include "esp32_support.h"
 
 #include <dirent.h>
+#include <driver/dac.h>
 #include <driver/i2s.h>
+#include <driver/rtc_io.h>
 #include <esp_vfs.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -10,6 +12,7 @@
 
 #include <cstring>
 
+#include "core/rom_loader.h"
 #include "memfs.h"
 
 namespace dsp {
@@ -97,8 +100,15 @@ void audio_begin(int rate, int dac_gpio) {
     cfg.dma_buf_len = 256;
     cfg.use_apll = false;  // the APLL belongs to FabGL's VGA output on the TTGO
     i2s_driver_install(I2S_NUM_0, &cfg, 0, nullptr);
-    i2s_set_pin(I2S_NUM_0, nullptr);
+    i2s_set_pin(I2S_NUM_0, nullptr);  // enables BOTH built-in DACs (GPIO25 and 26)
     i2s_set_dac_mode(g_dac2 ? I2S_DAC_CHANNEL_LEFT_EN : I2S_DAC_CHANNEL_RIGHT_EN);
+    // Give the other DAC pin back to the GPIO matrix: on the CYD GPIO25 is the
+    // touch controller's clock, which the DAC otherwise holds as an analog
+    // output (the screen then never sees a touch).
+    if (g_dac2) {
+        dac_output_disable(DAC_CHANNEL_1);
+        rtc_gpio_deinit(GPIO_NUM_25);
+    }
     xTaskCreatePinnedToCore(audio_task, "dsp-audio", 3072, nullptr, 5, nullptr, 0);
 }
 
@@ -112,6 +122,8 @@ size_t audio_queued() { return size_t(g_write - g_read); }
 
 bool mount_embedded(const DspEmbeddedFile* files, size_t count, const char* prefix) {
     memfs::mount(files, count, prefix);
+    // Drivers that can read their ROMs in place get them straight from flash.
+    RomLoader::set_file_mapper([](const std::string& path, size_t* size) { return memfs::map(path.c_str(), size); });
     esp_vfs_t vfs = {};
     vfs.flags = ESP_VFS_FLAG_DEFAULT;
     vfs.open = vfs_open;

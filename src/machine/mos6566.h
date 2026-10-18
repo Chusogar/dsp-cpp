@@ -39,7 +39,8 @@ public:
     void changed_va(uint16_t va14_15);
 
     // Render one raster line (0..311). Returns cycles stolen for badline (0 or 40).
-    int update_line(int line, uint32_t* fb_row /*kScreenWidth pixels or null*/);
+    // `fb_row` gets kPalette indices (0-15), kScreenWidth of them.
+    int update_line(int line, uint8_t* fb_row /*kScreenWidth pixels or null*/);
 
     uint16_t raster_line() const { return linea_; }
     uint8_t border_color() const { return ec_; }

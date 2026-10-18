@@ -9,8 +9,109 @@
 #include <string>
 #include <vector>
 
+#include <new>
+
 #include "core/fs_compat.h"
+#include "core/rom_loader.h"
+#include "memfs.h"
 #include "port.h"
+
+// --board-memory BYTES: a heap that small, as on a board without PSRAM:
+// first fit over an address-ordered free list (like newlib's nano malloc),
+// so a block left in the middle splits it as it would on the board.
+// operator new throws when no free block is big enough; the peak and the
+// largest free block are reported.
+static size_t g_heap_limit = 0, g_heap_used = 0, g_heap_peak = 0;
+static bool g_heap_flash = false;  // allocations standing for the board's flash
+namespace arena {
+struct Free {
+    size_t size;  // bytes, header included
+    Free* next;
+};
+static unsigned char* base = nullptr;
+static Free* free_list = nullptr;
+constexpr size_t kHeader = 16;
+inline bool owns(void* p) {
+    return base && static_cast<unsigned char*>(p) >= base && static_cast<unsigned char*>(p) < base + g_heap_limit;
+}
+void* alloc(size_t n) {
+    if (!base) {
+        base = static_cast<unsigned char*>(std::malloc(g_heap_limit));
+        free_list = reinterpret_cast<Free*>(base);
+        free_list->size = g_heap_limit;
+        free_list->next = nullptr;
+    }
+    const size_t need = (n + kHeader + 15) & ~size_t(15);
+    for (Free** link = &free_list; *link; link = &(*link)->next) {
+        Free* f = *link;
+        if (f->size < need) continue;
+        if (f->size - need >= 32) {
+            Free* rest = reinterpret_cast<Free*>(reinterpret_cast<unsigned char*>(f) + need);
+            rest->size = f->size - need;
+            rest->next = f->next;
+            *link = rest;
+            f->size = need;
+        } else {
+            *link = f->next;
+        }
+        *reinterpret_cast<size_t*>(f) = f->size;
+        return reinterpret_cast<unsigned char*>(f) + kHeader;
+    }
+    return nullptr;
+}
+size_t release(void* p) {
+    Free* f = reinterpret_cast<Free*>(static_cast<unsigned char*>(p) - kHeader);
+    const size_t size = *reinterpret_cast<size_t*>(f);
+    f->size = size;
+    Free** link = &free_list;
+    while (*link && *link < f) link = &(*link)->next;
+    f->next = *link;
+    *link = f;
+    if (f->next && reinterpret_cast<unsigned char*>(f) + f->size == reinterpret_cast<unsigned char*>(f->next)) {
+        f->size += f->next->size;
+        f->next = f->next->next;
+    }
+    // Merge with the block before.
+    for (Free* q = free_list; q && q != f; q = q->next)
+        if (q->next == f && reinterpret_cast<unsigned char*>(q) + q->size == reinterpret_cast<unsigned char*>(f)) {
+            q->size += f->size;
+            q->next = f->next;
+            break;
+        }
+    return size;
+}
+size_t largest() {
+    size_t best = 0;
+    for (Free* f = free_list; f; f = f->next) best = std::max(best, f->size);
+    return best > kHeader ? best - kHeader : 0;
+}
+}  // namespace arena
+
+void* operator new(size_t n) {
+    if (g_heap_limit && !g_heap_flash) {
+        void* p = arena::alloc(n);
+        if (!p) {
+            std::fprintf(stderr, "[host] no block of %zu bytes (largest free %zu)\n", n, arena::largest());
+            throw std::bad_alloc();
+        }
+        g_heap_used += *reinterpret_cast<size_t*>(static_cast<unsigned char*>(p) - arena::kHeader);
+        g_heap_peak = std::max(g_heap_peak, g_heap_used);
+        if (std::getenv("DSP_HOST_BIG") && n > size_t(std::atoi(std::getenv("DSP_HOST_BIG")))) std::fprintf(stderr, "[host] new %zu (used %zu)\n", n, g_heap_used);
+        return p;
+    }
+    void* p = std::malloc(n ? n : 1);
+    if (!p) throw std::bad_alloc();
+    return p;
+}
+void operator delete(void* p) noexcept {
+    if (!p) return;
+    if (arena::owns(p)) {
+        g_heap_used -= arena::release(p);
+        return;
+    }
+    std::free(p);
+}
+void operator delete(void* p, size_t) noexcept { operator delete(p); }
 
 namespace {
 
@@ -54,7 +155,13 @@ public:
         if (!menu_out.empty() && presents == 1) save(menu_out);
     }
 
+    // --board-memory: the RP2040 keeps a menu screen as 4-bit pixels (38 KB)
+    // until a game picture or release_menu().
+    std::vector<uint8_t> board_menu;
+    void release_menu() override { std::vector<uint8_t>().swap(board_menu); }
+
     void draw_rows(int y, int rows, const uint32_t* argb) override {
+        if (board_like && board_menu.empty()) board_menu.assign(320 * 240 / 2, 0);
         std::copy(argb, argb + size_t(rows) * 320, screen_.begin() + size_t(y) * 320);
         map_.invalidate();
         if (y + rows >= 240) {  // a whole menu screen
@@ -76,8 +183,66 @@ public:
     void sleep_us(uint32_t us) override { clock_ += us; }
 
     std::string storage_root() override { return root; }
+    bool board_like = false;  // --board-memory: embedded media in place, cropped picture
+    bool crops_picture() const override { return board_like; }
+    bool present_indexed(const uint8_t* pens, const uint32_t* palette, int width, int height, int dw,
+                         int dh) override {
+        if (!board_like) return false;
+        release_menu();
+        // The board's own screen memory: not counted against --board-memory.
+        g_heap_flash = true;
+        static std::vector<uint32_t> argb;
+        argb.resize(size_t(width) * size_t(height));
+        g_heap_flash = false;
+        for (size_t i = 0; i < argb.size(); ++i) argb[i] = palette[pens[i]];
+        present(argb.data(), width, height, dw, dh);
+        return true;
+    }
+    bool present_indexed4(const uint8_t* pens, const uint32_t* palette, int width, int height, int dw,
+                          int dh) override {
+        if (!board_like) return false;
+        release_menu();
+        g_heap_flash = true;
+        static std::vector<uint32_t> argb;
+        argb.resize(size_t(width) * size_t(height));
+        g_heap_flash = false;
+        const size_t stride = size_t((width + 1) / 2);
+        for (int y = 0; y < height; ++y)
+            for (int x = 0; x < width; ++x) {
+                const uint8_t byte = pens[size_t(y) * stride + size_t(x / 2)];
+                argb[size_t(y) * size_t(width) + size_t(x)] = palette[(x & 1) ? (byte >> 4) : (byte & 15)];
+            }
+        present(argb.data(), width, height, dw, dh);
+        return true;
+    }
     bool mount_embedded(const DspEmbeddedFile* files, size_t count, std::string* dir,
                         std::string* error) override {
+        if (board_like) {
+            // The files are read as if from flash: in place, not on the heap.
+            dsp::RomLoader::set_file_mapper([](const std::string& path, size_t* size) -> const uint8_t* {
+                static std::vector<std::pair<std::string, std::vector<uint8_t>>>* files = nullptr;
+                g_heap_flash = true;
+                if (!files) files = new std::vector<std::pair<std::string, std::vector<uint8_t>>>;
+                std::string p = path;
+                for (size_t k; (k = p.find("//")) != std::string::npos;) p.erase(k, 1);
+                const uint8_t* data = nullptr;
+                for (auto& f : *files)
+                    if (f.first == p) data = f.second.data(), *size = f.second.size();
+                if (!data) {
+                    if (FILE* fp = std::fopen(p.c_str(), "rb")) {
+                        std::vector<uint8_t> bytes;
+                        int c;
+                        while ((c = std::fgetc(fp)) != EOF) bytes.push_back(uint8_t(c));
+                        std::fclose(fp);
+                        files->emplace_back(p, std::move(bytes));
+                        data = files->back().second.data();
+                        *size = files->back().second.size();
+                    }
+                }
+                g_heap_flash = false;
+                return data;
+            });
+        }
         char tmpl[] = "/tmp/dsp-port-host-XXXXXX";
         if (!mkdtemp(tmpl)) {
             *error = "mkdtemp failed";
@@ -121,6 +286,9 @@ int main(int argc, char** argv) {
             frames = std::atoi(argv[++i]);
         } else if (a == "--out" && v) {
             hal.out = argv[++i];
+        } else if (a == "--board-memory" && v) {
+            g_heap_limit = size_t(std::strtoul(argv[++i], nullptr, 0));
+            hal.board_like = true;
         } else if (a == "--menu-out" && v) {
             hal.menu_out = argv[++i];
         } else if (a == "--keys" && v) {
@@ -150,9 +318,20 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+    // DSP_HOST_FRAGMENT: a 38 KB block freed under a small one that stays,
+    // as a board's boot can leave its heap.
+    static std::vector<uint8_t>* keep = nullptr;
+    if (g_heap_limit && std::getenv("DSP_HOST_FRAGMENT")) {
+        auto* big = new std::vector<uint8_t>(38400);
+        keep = new std::vector<uint8_t>(2048);
+        delete big;
+    }
     const int r = dsp::port::run(hal, frames);
     if (!hal.out.empty()) hal.save(hal.out);
     std::fprintf(stderr, "[host] result %d, %d pictures, %zu audio samples at 22050 Hz\n", r,
                  hal.presents, hal.audio_samples);
+    if (g_heap_limit)
+        std::fprintf(stderr, "[host] heap peak %zu bytes (limit %zu), largest free block now %zu\n", g_heap_peak,
+                     g_heap_limit, arena::largest());
     return r;
 }

@@ -6,6 +6,8 @@
 #include <fstream>
 #include <zlib.h>
 
+#include "core/rom_loader.h"
+
 namespace dsp {
 namespace {
 
@@ -415,15 +417,7 @@ bool qlpak_to_qlay(const std::vector<uint8_t>& zip, std::vector<uint8_t>& qlay, 
 
 QlMicrodrive::QlMicrodrive() { reset(); }
 
-void QlMicrodrive::ensure_tape() {
-    if (!left_.empty()) return;
-    left_.assign(kMdvTapePairs, 0);
-    right_.assign(kMdvTapePairs, 0);
-    erased_.assign(kMdvTapePairs, 1);
-}
-
 void QlMicrodrive::reset() {
-    ensure_tape();
     clk_ = false;
     comms_in_ = false;
     comms_out_ = false;
@@ -432,31 +426,33 @@ void QlMicrodrive::reset() {
     motor_ = false;
 }
 
-void QlMicrodrive::tape_from_qlay(const uint8_t* image) {
-    left_.assign(kMdvTapePairs, 0);
-    right_.assign(kMdvTapePairs, 0);
-    erased_.assign(kMdvTapePairs, 1);
-    for (int sector = 0; sector < kMdvSectors; sector++) {
-        const uint8_t* sec = image + sector * kMdvSectorBytes;
-        const int base = sector * kMdvPairsPerSector;
-        if (sec[10] != 0xff || sec[11] != 0xff) continue;
-        int pos = base;
-        for (int i = 0; i < kMdvPairsHeader; i++, pos++) {
-            left_[size_t(pos)] = sec[2 * i];
-            right_[size_t(pos)] = sec[2 * i + 1];
-            erased_[size_t(pos)] = 0;
-        }
-        if (sec[kBlockPreamble + 10] != 0xff || sec[kBlockPreamble + 11] != 0xff) continue;
-        pos = base + kMdvPairsHeader + kMdvPairsBlockGap;
-        for (int i = 0; i < kMdvPairsBlock; i++, pos++) {
-            left_[size_t(pos)] = sec[kBlockPreamble + 2 * i];
-            right_[size_t(pos)] = sec[kBlockPreamble + 2 * i + 1];
-            erased_[size_t(pos)] = 0;
-        }
+// What the tape holds at `pair`: a sector's 14 header pairs (when its preamble
+// is valid) and, after a gap, its 269 block pairs (when the header and the
+// block preamble are valid); erased elsewhere.
+QlMicrodrive::Pair QlMicrodrive::pair_at(int pair) const {
+    const int sector = pair / kMdvPairsPerSector;
+    const int offset = pair % kMdvPairsPerSector;
+    if (!written_.empty() && !written_[size_t(sector)].empty()) return written_[size_t(sector)][size_t(offset)];
+    if (image_ == nullptr) return {0, 0, 1};
+    const uint8_t* sec = image_ + size_t(sector) * kMdvSectorBytes;
+    if (sec[10] != 0xff || sec[11] != 0xff) return {0, 0, 1};
+    if (offset < kMdvPairsHeader) return {sec[2 * offset], sec[2 * offset + 1], 0};
+    const int block = offset - kMdvPairsHeader - kMdvPairsBlockGap;
+    if (block < 0 || block >= kMdvPairsBlock) return {0, 0, 1};
+    if (sec[kBlockPreamble + 10] != 0xff || sec[kBlockPreamble + 11] != 0xff) return {0, 0, 1};
+    return {sec[kBlockPreamble + 2 * block], sec[kBlockPreamble + 2 * block + 1], 0};
+}
+
+QlMicrodrive::Pair& QlMicrodrive::written_pair(int pair) {
+    const int sector = pair / kMdvPairsPerSector;
+    if (written_.empty()) written_.resize(kMdvSectors);
+    std::vector<Pair>& copy = written_[size_t(sector)];
+    if (copy.empty()) {
+        std::vector<Pair> tape(kMdvPairsPerSector);
+        for (int i = 0; i < kMdvPairsPerSector; i++) tape[size_t(i)] = pair_at(sector * kMdvPairsPerSector + i);
+        copy = std::move(tape);
     }
-    loaded_ = true;
-    bit_ = 0;
-    pair_ = 0;
+    return copy[size_t(pair % kMdvPairsPerSector)];
 }
 
 bool QlMicrodrive::load_image(const std::vector<uint8_t>& qlay, std::string* error) {
@@ -464,11 +460,29 @@ bool QlMicrodrive::load_image(const std::vector<uint8_t>& qlay, std::string* err
         if (error) *error = "microdrive image is not a 174930-byte QLAY cartridge";
         return false;
     }
-    tape_from_qlay(qlay.data());
+    image_owned_.assign(qlay.begin(), qlay.begin() + kMdvImageBytes);
+    image_ = image_owned_.data();
+    written_.clear();
+    loaded_ = true;
+    bit_ = 0;
+    pair_ = 0;
     return true;
 }
 
 bool QlMicrodrive::load_file(const std::string& path, std::string* error) {
+    // A plain .mdv the board holds in memory is read where it is.
+    size_t size = 0;
+    if (const uint8_t* mapped = RomLoader::map_file(path, &size);
+        mapped != nullptr && size >= size_t(kMdvImageBytes) && size % kMdvSectorBytes == 0) {
+        image_owned_.clear();
+        image_owned_.shrink_to_fit();
+        image_ = mapped;
+        written_.clear();
+        loaded_ = true;
+        bit_ = 0;
+        pair_ = 0;
+        return true;
+    }
     std::vector<uint8_t> qlay;
     if (!load_ql_cartridge(path, qlay, error)) return false;
     return load_image(qlay, error);
@@ -488,14 +502,10 @@ void QlMicrodrive::tick_bit() {
     if (write_) {
         if (bit_ == 0) {
             const uint16_t pair = tx_pop_cb_ ? tx_pop_cb_() : uint16_t(0);
-            left_[size_t(pair_)] = uint8_t(pair >> 8);
-            right_[size_t(pair_)] = uint8_t(pair);
-            erased_[size_t(pair_)] = 0;
+            written_pair(pair_) = {uint8_t(pair >> 8), uint8_t(pair), 0};
         }
     } else if (erase_) {
-        erased_[size_t(pair_)] = 1;
-        left_[size_t(pair_)] = 0;
-        right_[size_t(pair_)] = 0;
+        written_pair(pair_) = {0, 0, 1};
     }
     bit_++;
     if (bit_ == 8) {
@@ -506,19 +516,21 @@ void QlMicrodrive::tick_bit() {
 }
 
 int QlMicrodrive::data1() const {
-    if (!comms_out_ || write_ || erased_[size_t(pair_)]) return 0;
-    return (left_[size_t(pair_)] >> (7 - bit_)) & 1;
+    if (!comms_out_ || write_) return 0;
+    const Pair p = pair_at(pair_);
+    return p.erased ? 0 : (p.left >> (7 - bit_)) & 1;
 }
 
 int QlMicrodrive::data2() const {
-    if (!comms_out_ || write_ || erased_[size_t(pair_)]) return 0;
-    return (right_[size_t(pair_)] >> (7 - bit_)) & 1;
+    if (!comms_out_ || write_) return 0;
+    const Pair p = pair_at(pair_);
+    return p.erased ? 0 : (p.right >> (7 - bit_)) & 1;
 }
 
 int QlMicrodrive::gap() const {
     if (!comms_out_) return 1;
     if (!loaded_) return 1;
-    return erased_[size_t(pair_)] ? 1 : 0;
+    return pair_at(pair_).erased ? 1 : 0;
 }
 
 bool load_ql_cartridge(const std::string& path, std::vector<uint8_t>& qlay, std::string* error) {

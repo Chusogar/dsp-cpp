@@ -35,7 +35,10 @@ public:
     void run_frame() override;
     void set_inputs(const MachineInputs& inputs) override;
     void set_dip_switch(int bank, uint8_t value) override;
-    const uint32_t* framebuffer() const override { return framebuffer_.data(); }
+    // Built from the screen RAM when asked for: boards that take the picture
+    // a row at a time (render_row_rgb1) never allocate it (512 KB).
+    const uint32_t* framebuffer() const override;
+    Rgb1Rows rgb1_rows() const override { return {&Zx8301::row_rgb1, &video_}; }
     int screen_width() const override { return kWidth; }
     int screen_height() const override { return kHeight; }
     double frames_per_second() const override { return kFps; }
@@ -94,8 +97,12 @@ private:
     QlMicrodrive mdv2_;
     QlWin win_;
 
-    std::array<uint8_t, 0x10000> rom_{};
-    std::array<uint32_t, kWidth * kHeight> framebuffer_{};
+    // $0000-$FFFF in 4 KB pages: the 48 KB firmware (read in place on boards
+    // that map their files, else in firmware_), then the WIN plug-in ROM.
+    std::array<const uint8_t*, 16> rom_pages_{};
+    std::vector<uint8_t> firmware_;
+    std::vector<uint8_t> plugin_rom_;  // one page
+    mutable std::vector<uint32_t> framebuffer_;
     std::array<uint8_t, 8> keys_{};
     VirtualKeyboard vkb_;
     MachineInputs inputs_{};

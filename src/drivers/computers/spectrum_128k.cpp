@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <memory>
 #include <fstream>
 #include "core/fs_compat.h"
 
@@ -820,9 +821,10 @@ bool Spectrum128k::load_sna(const std::string& path, std::string* error) {
         if (error) *error = "cannot open SNA";
         return false;
     }
-    SpectrumSnap snap;
-    if (!spectrum_snap_from_sna(buf.data(), buf.size(), snap, error)) return false;
-    apply_snap(snap);
+    // On the heap: ~180 KB is more stack than the small boards have.
+    auto snap = std::make_unique<SpectrumSnap>();
+    if (!spectrum_snap_from_sna(buf.data(), buf.size(), *snap, error)) return false;
+    apply_snap(*snap);
     return true;
 }
 

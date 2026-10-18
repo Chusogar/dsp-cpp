@@ -176,57 +176,69 @@ bool read_text(const std::string& path, std::string* text) {
 constexpr uint32_t kBack = 0xff101820, kText = 0xffd8d8d8, kDim = 0xff8090a0;
 constexpr uint32_t kBar = 0xff203850, kSelect = 0xff3070b0, kTitle = 0xffffd060, kError = 0xffff7060;
 
-// Menu screen: one byte per pixel (an index into a few colours), so a
-// 320x240 menu takes 75 KB, which a board without PSRAM can still spare. It is
-// sent to the board a few rows at a time (Hal::draw_rows).
+// Menu screen, kept as a list of rectangles and strings and drawn a few rows
+// at a time when shown (Hal::draw_rows): a full 320x240 picture would take
+// 75 KB, which a board without PSRAM cannot spare beside a running driver
+// (the "Loading" screen is drawn after the driver is built).
 class Canvas {
 public:
-    Canvas(int w, int h) : w_(w), h_(h), px_(size_t(w) * size_t(h), 0) { palette_.push_back(kBack); }
+    Canvas(int w, int h) : w_(w), h_(h) {}
     int width() const { return w_; }
     int height() const { return h_; }
-    void clear(uint32_t c) { std::fill(px_.begin(), px_.end(), index(c)); }
-    void rect(int x, int y, int w, int h, uint32_t c) {
-        const uint8_t i = index(c);
-        for (int j = std::max(0, y); j < std::min(h_, y + h); ++j)
-            for (int k = std::max(0, x); k < std::min(w_, x + w); ++k) px_[size_t(j) * w_ + k] = i;
+    void clear(uint32_t c) {
+        ops_.clear();
+        background_ = c;
     }
+    void rect(int x, int y, int w, int h, uint32_t c) { ops_.push_back(Op{x, y, w, h, c, {}}); }
     // Draws up to `max_chars` characters; returns the x after the text.
     int text(int x, int y, const std::string& s, uint32_t c, size_t max_chars = 1000) {
-        const uint8_t i = index(c);
-        for (size_t n = 0; n < s.size() && n < max_chars; ++n, x += 8) {
-            const unsigned char ch = static_cast<unsigned char>(s[n]);
-            const uint8_t* g = kFont8x8[(ch >= 0x20 && ch < 0x7f) ? ch - 0x20 : '?' - 0x20];
-            for (int row = 0; row < 8; ++row)
-                for (int col = 0; col < 8; ++col)
-                    if ((g[row] >> col) & 1) {
-                        const int px = x + col, py = y + row;
-                        if (px >= 0 && px < w_ && py >= 0 && py < h_) px_[size_t(py) * w_ + px] = i;
-                    }
-        }
-        return x;
+        const std::string shown = s.substr(0, std::min(s.size(), max_chars));
+        ops_.push_back(Op{x, y, -1, 8, c, shown});
+        return x + 8 * int(shown.size());
     }
     void show(Hal& hal) const {
         constexpr int kBand = 8;
         std::vector<uint32_t> rows(size_t(w_) * kBand);
-        for (int y = 0; y < h_; y += kBand) {
-            const int n = std::min(kBand, h_ - y);
-            const uint8_t* src = &px_[size_t(y) * w_];
-            for (size_t k = 0; k < size_t(w_) * size_t(n); ++k) rows[k] = palette_[src[k]];
-            hal.draw_rows(y, n, rows.data());
+        for (int y0 = 0; y0 < h_; y0 += kBand) {
+            const int n = std::min(kBand, h_ - y0);
+            std::fill(rows.begin(), rows.end(), background_);
+            for (const Op& op : ops_) {
+                if (op.y >= y0 + n || op.y + op.h <= y0) continue;
+                if (op.w >= 0) {  // rectangle
+                    for (int j = std::max(y0, op.y); j < std::min(y0 + n, op.y + op.h); ++j)
+                        for (int k = std::max(0, op.x); k < std::min(w_, op.x + op.w); ++k)
+                            rows[size_t(j - y0) * w_ + k] = op.color;
+                    continue;
+                }
+                int x = op.x;
+                for (const char raw : op.text) {
+                    const unsigned char ch = static_cast<unsigned char>(raw);
+                    const uint8_t* g = kFont8x8[(ch >= 0x20 && ch < 0x7f) ? ch - 0x20 : '?' - 0x20];
+                    for (int row = 0; row < 8; ++row) {
+                        const int py = op.y + row;
+                        if (py < y0 || py >= y0 + n || py >= h_) continue;
+                        for (int col = 0; col < 8; ++col) {
+                            const int px = x + col;
+                            if (((g[row] >> col) & 1) && px >= 0 && px < w_)
+                                rows[size_t(py - y0) * w_ + px] = op.color;
+                        }
+                    }
+                    x += 8;
+                }
+            }
+            hal.draw_rows(y0, n, rows.data());
         }
     }
 
 private:
-    uint8_t index(uint32_t c) {
-        for (size_t i = 0; i < palette_.size(); ++i)
-            if (palette_[i] == c) return uint8_t(i);
-        if (palette_.size() >= 255) return 0;
-        palette_.push_back(c);
-        return uint8_t(palette_.size() - 1);
-    }
+    struct Op {
+        int x, y, w, h;  // w < 0: text
+        uint32_t color;
+        std::string text;
+    };
     int w_, h_;
-    std::vector<uint8_t> px_;
-    std::vector<uint32_t> palette_;
+    uint32_t background_ = kBack;
+    std::vector<Op> ops_;
 };
 
 // Word-wraps `text` to `cols` characters a line.
@@ -366,11 +378,12 @@ void Port::message(const std::string& title, const std::string& text, bool wait)
 // (or folder) for each built-in driver name or alias.
 std::vector<MenuEntry> Port::scan_entries(std::string* note) {
     std::vector<MenuEntry> entries = embedded_;
-    const auto& drivers = list_drivers();
     if (root_.empty()) {
         if (entries.empty()) *note = "No SD card.";
         return entries;
     }
+    // Only needed to match ROM sets on the card (it builds every driver once).
+    const auto& drivers = list_drivers();
     std::error_code ec;
     std::vector<std::string> names;
     for (const auto& item : fs::directory_iterator(fs::path(root_) / "dsp", ec)) {
@@ -511,12 +524,18 @@ int Port::play(const std::vector<std::string>& args, int max_frames, std::string
         *error = "the command line needs --game NAME and a ROM path";
         return -1;
     }
+    // The message first: a board may keep the screen in RAM, which goes
+    // (release_menu) before the driver takes its big blocks, so they are not
+    // laid out around it.
+    message("Loading", game, false);
+    hal_.release_menu();
     std::unique_ptr<Machine> machine = create_machine(game);
     if (!machine) {
         *error = "driver '" + game + "' is not built into this firmware";
         return -1;
     }
-    message("Loading", machine->title(), false);
+    if (hal_.crops_picture()) machine->set_picture_limit(hal_.screen_width(), hal_.screen_height());
+    machine->set_sample_rate_limit(hal_.output_rate());
     if (!machine->init(rom, error)) return -1;
     for (const std::string& m : media)
         if (!machine->load_media(m, error)) {
@@ -525,56 +544,96 @@ int Port::play(const std::vector<std::string>& args, int max_frames, std::string
         }
     for (const auto& d : dips) machine->set_dip_switch(d.first, d.second);
     for (const std::string& w : machine->warnings()) hal_.log(("warning: " + w).c_str());
+    // A board that reads the rows itself stops before the machine goes.
+    struct RowsGuard {
+        Hal& hal;
+        bool on;
+        ~RowsGuard() {
+            if (on) hal.show_rgb1_rows(nullptr);
+        }
+    } rows{hal_, machine->has_rgb1_rows() && hal_.show_rgb1_rows(machine.get())};
 
     wait_release();
     Resampler resampler;
     const int out_rate = hal_.output_rate();
     resampler.reset(machine->sample_rate(), out_rate);
     std::vector<int16_t> samples, resampled;
-    samples.reserve(4096);
-    resampled.reserve(4096);
+    // A frame's worth (~735 samples at 44.1 kHz); they grow if ever needed.
+    samples.reserve(1024);
+    resampled.reserve(1024);
     const double fps = machine->frames_per_second() > 1 ? machine->frames_per_second() : 60.0;
     const uint64_t period = uint64_t(1000000.0 / fps);
     const size_t max_queue = size_t(out_rate) / 6;  // ~170 ms of sound
     uint64_t next = hal_.micros();
     uint64_t exit_hold = 0;
     int frames = 0, skipped = 0;
+    bool skip_frame = false;  // late: neither draw nor show the next frame
+    bool turbo = false;       // F12 tapped (turbo_on_f12 boards): as fast as it goes
+    bool f12_was_down = false;
     uint64_t stats_start = next;
     int stats_frames = 0;
     HostInput in;
     for (;;) {
         hal_.poll(in);
-        const bool exit_combo = in.key(Key::F12) || (in.pad_start && in.pad_select);
+        const bool f12 = in.key(Key::F12);
+        const bool exit_combo = f12 || (in.pad_start && in.pad_select);
         if (exit_combo) {
             if (exit_hold == 0) exit_hold = hal_.micros();
             else if (hal_.micros() - exit_hold > 500000) break;
         } else {
+            // Released before the half second that means "menu": a tap.
+            if (f12_was_down && hal_.turbo_on_f12()) {
+                turbo = !turbo;
+                hal_.log(turbo ? "turbo on" : "turbo off");
+                next = hal_.micros();
+            }
             exit_hold = 0;
         }
+        f12_was_down = f12;
         machine->set_inputs(map_inputs(in, *machine));
+        machine->set_draw_enabled(!skip_frame);
         machine->run_frame();
 
         samples.clear();
         machine->drain_audio(samples);
         resampled.clear();
         resampler.process(samples, resampled);
-        if (!resampled.empty() && hal_.audio_queued() < max_queue)
+        if (!turbo && !resampled.empty() && hal_.audio_queued() < max_queue)
             hal_.push_audio(resampled.data(), resampled.size());
 
         next += period;
-        const uint64_t now = hal_.micros();
-        // Late by more than a frame: skip drawing (up to 3 in a row) so the
-        // emulation keeps its speed if the board can manage the CPU part.
-        if (now > next + period && skipped < 3) {
-            ++skipped;
+        if (skip_frame) {
+            if (!turbo) ++skipped;
+        } else if (rows.on) {
+            skipped = 0;  // the board shows the rows as they are
         } else {
             skipped = 0;
-            hal_.present(machine->framebuffer(), machine->screen_width(), machine->screen_height(),
-                         machine->display_width(), machine->display_height());
+            const uint8_t* pens = machine->indexed_framebuffer();
+            const bool packed = machine->indexed_bits() == 4;
+            if (pens == nullptr ||
+                !(packed ? hal_.present_indexed4(pens, machine->indexed_palette(), machine->screen_width(),
+                                                 machine->screen_height(), machine->display_width(),
+                                                 machine->display_height())
+                         : hal_.present_indexed(pens, machine->indexed_palette(), machine->screen_width(),
+                                                machine->screen_height(), machine->display_width(),
+                                                machine->display_height()))) {
+                hal_.present(machine->framebuffer(), machine->screen_width(), machine->screen_height(),
+                             machine->display_width(), machine->display_height());
+            }
         }
         const uint64_t after = hal_.micros();
-        if (after < next) hal_.sleep_us(uint32_t(next - after));
-        else if (after > next + 8 * period) next = after;  // far behind: start again from now
+        if (turbo) {
+            next = after;  // no pacing
+            hal_.idle();
+            skip_frame = (frames & 7) != 6;  // one frame in 8 composed and shown
+        } else {
+            if (after < next) hal_.sleep_us(uint32_t(next - after));
+            else if (after > next + 8 * period) next = after;  // far behind: start again from now
+            // Late by more than a frame: skip drawing the next one (up to 3 in a
+            // row; the driver need not even compose it) so the emulation keeps its
+            // speed if the board can manage the CPU part.
+            skip_frame = after > next + period && skipped < 3;
+        }
         ++frames;
         ++stats_frames;
         if (after - stats_start >= 5000000) {
@@ -609,14 +668,16 @@ int Port::run(int max_frames) {
                 }
                 return out;
             };
-            const size_t count = &dsp_embedded_entry_count ? dsp_embedded_entry_count : 0;
-            if (count > 1 && &dsp_embedded_entries) {
-                // Several games: they head the menu instead of starting.
-                for (size_t i = 0; i < count; ++i)
-                    embedded_.push_back(MenuEntry{std::string(dsp_embedded_entries[i].label) + " (built in)",
-                                                  expand(dsp_embedded_entries[i].args)});
-            } else {
-                args = expand(dsp_embedded_args);
+            const size_t count =
+                &dsp_embedded_entry_count && &dsp_embedded_entries ? dsp_embedded_entry_count : 0;
+            // Built-in games head the menu, so they can be started again after
+            // leaving one (or after it failed to start).
+            for (size_t i = 0; i < count; ++i)
+                embedded_.push_back(MenuEntry{std::string(dsp_embedded_entries[i].label) + " (built in)",
+                                              expand(dsp_embedded_entries[i].args)});
+            if (count == 0) embedded_.push_back(MenuEntry{"Built-in game", expand(dsp_embedded_args)});
+            if (embedded_.size() == 1) {  // a single game starts straight away
+                args = embedded_.front().args;
                 from_start = true;
             }
         }
@@ -639,6 +700,8 @@ int Port::run(int max_frames) {
         } catch (const std::bad_alloc&) {
             // Boards without PSRAM: the driver's RAM/ROM arrays did not fit.
             error = "not enough memory for this driver on this board";
+            const std::string note = hal_.memory_note();
+            if (!note.empty()) error += " (" + note + ")";
             r = -1;
         }
 #else

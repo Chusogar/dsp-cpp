@@ -38,6 +38,10 @@ public:
 
     void reset();
     int run(int cycles);
+    // `count` instructions, as `count` calls of run(1) would run them (an
+    // instruction each), without the per-call set-up: for machines that step
+    // the MCU in lockstep with another CPU.
+    void run_instructions(int count);
 
     void set_irq(IrqLine state) { irq_ = state; }
     void set_reset_line(IrqLine state) { reset_ = state; }
@@ -88,6 +92,7 @@ private:
     void push_pc_psw();
     int check_irqs();
     void burn_cycles(uint8_t count);
+    int step();  // one instruction; returns its cycles
     uint8_t p2_mask() const;
     void add(uint8_t value);
     void addc(uint8_t value);

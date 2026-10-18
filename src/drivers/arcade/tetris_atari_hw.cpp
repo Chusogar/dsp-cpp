@@ -27,7 +27,8 @@ AtariTetris::AtariTetris()
       slapstic_(101, nullptr),
       pokey0_(kCpuClock),
       pokey1_(kCpuClock) {
-    framebuffer_.assign(size_t(kScreenWidth) * size_t(kScreenHeight), 0xff000000u);
+    screen_.assign(size_t(kScreenWidth) * size_t(kScreenHeight), 0);
+    shown_palette_.fill(0xff000000u);
 
     cpu_.set_memory_handlers([this](uint16_t address) { return main_read(address); },
                              [this](uint16_t address, uint8_t value) {
@@ -45,27 +46,22 @@ bool AtariTetris::init(const std::string& rom_path, std::string* error) {
 
     // Main program: 64 KB split into bank 0 (0x0000-0x3fff), bank 1
     // (0x4000-0x7fff) and the fixed 32 KB tail (0x8000-0xffff).
-    std::vector<uint8_t> main_rom(0x10000, 0);
-    if (!loader.load({kMainRom}, main_rom, error)) return false;
-    std::copy(main_rom.begin(), main_rom.begin() + 0x4000, rom_mem_[0].begin());
-    std::copy(main_rom.begin() + 0x4000, main_rom.begin() + 0x8000, rom_mem_[1].begin());
-    std::copy(main_rom.begin() + 0x8000, main_rom.end(), memoria_.begin() + 0x8000);
-
-    // Character graphics: 0x800 8x8 tiles, 4bpp.
-    std::vector<uint8_t> char_rom(0x10000, 0);
-    if (!loader.load({kCharRom}, char_rom, error)) return false;
-    {
-        GfxLayout layout;
-        layout.width = 8;
-        layout.height = 8;
-        layout.total = 0x800;
-        layout.planes = 4;
-        layout.char_increment = 8 * 8 * 4;
-        layout.plane_offsets = {0, 1, 2, 3};
-        layout.x_offsets = {0, 4, 8, 12, 16, 20, 24, 28};
-        layout.y_offsets = {0, 32, 64, 96, 128, 160, 192, 224};
-        chars_.decode(layout, char_rom);
-    }
+    // Character graphics: 0x800 8x8 tiles, 4bpp, a nibble per pixel.
+    // Both are read in place when the board maps them.
+    auto load = [&](const RomEntry& entry, std::vector<uint8_t>& owned, const uint8_t*& rom) {
+        rom = loader.map(entry);
+        if (rom != nullptr) {
+            owned.clear();
+            owned.shrink_to_fit();
+            return true;
+        }
+        owned.assign(0x10000, 0);
+        if (!loader.load({entry}, owned, error)) return false;
+        rom = owned.data();
+        return true;
+    };
+    if (!load(kMainRom, main_rom_owned_, main_rom_)) return false;
+    if (!load(kCharRom, char_rom_owned_, char_rom_)) return false;
 
     nv_ram_.fill(0xff);
     for (const std::string& warning : loader.warnings()) warnings_.push_back(warning);
@@ -80,14 +76,24 @@ void AtariTetris::reset() {
     cpu_.reset();
     pokey0_.reset();
     pokey1_.reset();
+    pokey_pending_ = 0;
     in0_ = 0x40;
     in1_ = 0;
-    std::copy(rom_mem_[rom_bank_ & 1].begin(), rom_mem_[rom_bank_ & 1].end(),
-              memoria_.begin() + 0x4000);
     nvram_write_enable_ = false;
-    framebuffer_.assign(size_t(kScreenWidth) * size_t(kScreenHeight), 0xff000000u);
+    std::fill(screen_.begin(), screen_.end(), uint8_t(0));
+    shown_palette_.fill(0xff000000u);
+    framebuffer_stale_ = true;
     audio_accumulator_ = 0;
     audio_.clear();
+}
+
+const uint32_t* AtariTetris::framebuffer() const {
+    if (framebuffer_stale_) {
+        framebuffer_.resize(screen_.size());
+        for (size_t i = 0; i < screen_.size(); ++i) framebuffer_[i] = shown_palette_[screen_[i]];
+        framebuffer_stale_ = false;
+    }
+    return framebuffer_.data();
 }
 
 void AtariTetris::set_palette(int index, uint8_t value) {
@@ -99,35 +105,32 @@ void AtariTetris::set_palette(int index, uint8_t value) {
 }
 
 uint8_t AtariTetris::main_read(uint16_t address) {
-    if (address <= 0x1fff) return memoria_[address];
+    if (address <= 0x1fff) return ram_[address];
     if (address >= 0x2000 && address <= 0x23ff) return buffer_paleta_[address & 0xff];
     if (address >= 0x2400 && address <= 0x27ff) return nv_ram_[address & 0x1ff];
     if (address >= 0x2800 && address <= 0x2bff) {
+        sync_pokeys();
         if ((address & 0x1f) < 0x10) return pokey0_.read(address & 0x0f);
         return pokey1_.read(address & 0x0f);
     }
-    if (address >= 0x4000 && address <= 0x5fff) return memoria_[address];
+    if (address >= 0x4000 && address <= 0x5fff)
+        return main_rom_[size_t(rom_bank_ & 1) * 0x4000 + (address & 0x3fff)];
     if (address >= 0x6000 && address <= 0x7fff) {
-        const uint8_t result = memoria_[address];
-        const uint8_t new_bank = uint8_t(slapstic_.tweak(address & 0x1fff) & 1);
-        if (new_bank != rom_bank_) {
-            rom_bank_ = new_bank;
-            std::copy(rom_mem_[rom_bank_ & 1].begin(), rom_mem_[rom_bank_ & 1].end(),
-                      memoria_.begin() + 0x4000);
-        }
+        const uint8_t result = main_rom_[size_t(rom_bank_ & 1) * 0x4000 + (address & 0x3fff)];
+        rom_bank_ = uint8_t(slapstic_.tweak(address & 0x1fff) & 1);
         return result;
     }
-    if (address >= 0x8000) return memoria_[address];
+    if (address >= 0x8000) return main_rom_[address];
     return 0;
 }
 
 void AtariTetris::main_write(uint16_t address, uint8_t value) {
     if (address <= 0x0fff) {
-        memoria_[address] = value;
+        ram_[address] = value;
         return;
     }
     if (address >= 0x1000 && address <= 0x1fff) {
-        memoria_[address] = value;  // tile attribute memory, redrawn each frame
+        ram_[address] = value;  // tile attribute memory, redrawn each frame
         return;
     }
     if (address >= 0x2000 && address <= 0x23ff) {
@@ -144,6 +147,7 @@ void AtariTetris::main_write(uint16_t address, uint8_t value) {
         return;
     }
     if (address >= 0x2800 && address <= 0x2bff) {
+        sync_pokeys();
         if ((address & 0x1f) < 0x10) pokey0_.write(address & 0x0f, value);
         else pokey1_.write(address & 0x0f, value);
         return;
@@ -161,10 +165,21 @@ void AtariTetris::main_write(uint16_t address, uint8_t value) {
     // $4000-$ffff is ROM, writes ignored.
 }
 
+// The POKEYs run in batches: up to the CPU's next access to them, or to the
+// end of the instruction on which a sound sample is due (they have no
+// interrupt line wired here, so nothing else sees them in between).
+void AtariTetris::sync_pokeys() {
+    if (pokey_pending_ > 0) {
+        pokey0_.run(pokey_pending_);
+        pokey1_.run(pokey_pending_);
+        pokey_pending_ = 0;
+    }
+}
+
 void AtariTetris::on_sound_cycles(int cycles) {
-    pokey0_.run(cycles);
-    pokey1_.run(cycles);
-    audio_accumulator_ += int64_t(cycles) * kSampleRate;
+    pokey_pending_ += cycles;
+    audio_accumulator_ += int64_t(cycles) * sample_rate_;
+    if (audio_accumulator_ >= int64_t(kCpuClock)) sync_pokeys();
     while (audio_accumulator_ >= int64_t(kCpuClock)) {
         audio_accumulator_ -= int64_t(kCpuClock);
         const int32_t sample = pokey0_.update() + pokey1_.update();
@@ -173,25 +188,24 @@ void AtariTetris::on_sound_cycles(int cycles) {
 }
 
 void AtariTetris::update_video() {
-    // Redraw the 64x32 tilemap (opaque put_gfx) into the framebuffer.
-    for (int f = 0; f < 0x800; f++) {
-        const uint8_t atrib = memoria_[0x1001 + size_t(f) * 2];
-        const int color = atrib >> 4;
-        const uint16_t nchar =
-            uint16_t(memoria_[0x1000 + size_t(f) * 2] + uint16_t((atrib & 7) << 8));
-        const int x = f % 64;
-        const int y = f / 64;
-        const uint8_t* pixels = chars_.element(nchar);
-        const int base = color << 4;
-        for (int row = 0; row < 8; row++) {
-            const int dest_y = y * 8 + row;
-            if (dest_y >= kScreenHeight) break;
-            const size_t line = size_t(dest_y) * kScreenWidth;
-            for (int column = 0; column < 8; column++) {
-                const int dest_x = x * 8 + column;
-                if (dest_x >= kScreenWidth) break;
-                const uint8_t pen = pixels[size_t(row * 8 + column)];
-                framebuffer_[line + size_t(dest_x)] = palette_[size_t(base + pen)];
+    // The 64x32 tilemap (opaque), drawn a whole row at a time: 42 columns of
+    // 8x8 characters fill the 336 pixels, 30 rows the 240 lines. A character
+    // row is 4 bytes of the ROM, two pixels each (high nibble first).
+    shown_palette_ = palette_;
+    framebuffer_stale_ = true;
+    constexpr int kColumns = kScreenWidth / 8;
+    for (int dest_y = 0; dest_y < kScreenHeight; ++dest_y) {
+        const int row = dest_y & 7;
+        const uint8_t* tiles = ram_.data() + 0x1000 + size_t(dest_y >> 3) * 64 * 2;
+        uint8_t* dst = screen_.data() + size_t(dest_y) * kScreenWidth;
+        for (int x = 0; x < kColumns; ++x, dst += 8) {
+            const uint8_t atrib = tiles[x * 2 + 1];
+            const unsigned nchar = unsigned(tiles[x * 2]) | (unsigned(atrib & 7) << 8);
+            const uint8_t base = uint8_t((atrib >> 4) << 4);
+            const uint8_t* bits = char_rom_ + nchar * 32 + row * 4;
+            for (int i = 0; i < 4; ++i) {
+                dst[i * 2] = uint8_t(base | (bits[i] >> 4));
+                dst[i * 2 + 1] = uint8_t(base | (bits[i] & 0x0f));
             }
         }
     }
@@ -206,7 +220,7 @@ void AtariTetris::run_frame() {
             case 112:
             case 176: cpu_.set_irq(IrqLine::Assert); break;
             case 240:
-                update_video();
+                if (draw_enabled_) update_video();
                 in0_ = uint8_t(in0_ & ~0x40);
                 cpu_.set_irq(IrqLine::Assert);
                 break;

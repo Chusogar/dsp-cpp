@@ -5,8 +5,10 @@
 
 #include "hardware/clocks.h"
 #include "hid.h"
-#include "pio_usb.h"
 #include "tusb.h"
+#if CFG_TUH_RPI_PIO_USB
+#include "pio_usb.h"
+#endif
 
 namespace hid = dsp::port::hid;
 
@@ -31,6 +33,7 @@ Device* find(uint8_t dev, uint8_t instance) {
 }  // namespace
 
 void usb_input_init() {
+#if CFG_TUH_RPI_PIO_USB
     pio_usb_configuration_t cfg = PIO_USB_DEFAULT_CONFIG;
     cfg.pin_dp = DSP_USB_DP_PIN;
     // PIO0, state machines 0-2 and DMA channel 0 (claimed by PIO-USB):
@@ -38,6 +41,8 @@ void usb_input_init() {
     cfg.pio_tx_num = 0;
     cfg.pio_rx_num = 0;
     tuh_configure(BOARD_TUH_RHPORT, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &cfg);
+#endif
+    // Without PIO-USB (RP2040-PiZero): host mode on the native USB port.
     tuh_init(BOARD_TUH_RHPORT);
 }
 

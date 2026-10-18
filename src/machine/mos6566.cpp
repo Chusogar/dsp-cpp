@@ -155,7 +155,7 @@ void Mos6566::write(uint8_t reg, uint8_t value) {
     }
 }
 
-int Mos6566::update_line(int line, uint32_t* fb_row) {
+int Mos6566::update_line(int line, uint8_t* fb_row) {
     linea_ = uint16_t(line & 0x1FF);
     if (linea_ == irq_raster_) raster_irq();
 
@@ -187,7 +187,7 @@ int Mos6566::update_line(int line, uint32_t* fb_row) {
 
     if (!fb_row || vis_y < 0 || vis_y >= kScreenHeight) return stolen;
 
-    const uint32_t border = kPalette[ec_ & 15];
+    const uint8_t border = uint8_t(ec_ & 15);
     for (int x = 0; x < kScreenWidth; ++x) fb_row[x] = border;
     if (!den) return stolen;
 
@@ -251,14 +251,13 @@ int Mos6566::update_line(int line, uint32_t* fb_row) {
             } else if (pixels & (0x80 >> px)) {
                 color = colc;
             }
-            fb_row[sx] = kPalette[color & 15];
+            fb_row[sx] = uint8_t(color & 15);
         }
     }
 
     spr_coll_.fill(0);
     for (int x = 0; x < kScreenWidth; ++x) {
-        fore_mask_[x] = (fb_row[x] != border &&
-                         fb_row[x] != kPalette[b0c_ & 15]) ? 1 : 0;
+        fore_mask_[x] = (fb_row[x] != border && fb_row[x] != (b0c_ & 15)) ? 1 : 0;
     }
 
     for (int s = 7; s >= 0; --s) {
@@ -317,7 +316,7 @@ int Mos6566::update_line(int line, uint32_t* fb_row) {
                         }
                     }
                     if (behind && fore_mask_[sx]) continue;
-                    fb_row[sx] = kPalette[color & 15];
+                    fb_row[sx] = uint8_t(color & 15);
                 }
             }
         }

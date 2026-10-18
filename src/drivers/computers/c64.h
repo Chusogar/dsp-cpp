@@ -22,6 +22,11 @@ namespace dsp {
 //
 // Chips: M6502 (6510 port @ $00/$01), MOS 6569 VIC-II, MOS 6581 SID,
 // dual MOS 6526 CIA. PLA banking matches the Pascal actualiza_mem table.
+//
+// Small enough for boards without PSRAM: the ROMs are read in place when the
+// board maps them, the 64 KB of RAM is its own allocation, and the picture
+// is 4-bit (two pixels a byte), only its centre when the front end shows no
+// more (set_picture_limit); the 32-bit framebuffer is built when asked for.
 class C64 : public Machine {
 public:
     MachineType machine_type() const override { return MachineType::Computer; }
@@ -43,13 +48,23 @@ public:
     void set_inputs(const MachineInputs& inputs) override;
     void set_dip_switch(int bank, uint8_t value) override;
 
-    const uint32_t* framebuffer() const override { return framebuffer_.data(); }
-    int screen_width() const override { return kScreenWidth; }
-    int screen_height() const override { return kScreenHeight; }
+    const uint32_t* framebuffer() const override;
+    const uint8_t* indexed_framebuffer() const override { return screen_.data(); }
+    const uint32_t* indexed_palette() const override { return palette_.data(); }
+    int indexed_bits() const override { return 4; }
+    void set_picture_limit(int width, int height) override;
+    int screen_width() const override { return width_; }
+    int screen_height() const override { return height_; }
     double frames_per_second() const override { return kFramesPerSecond; }
 
     void drain_audio(std::vector<int16_t>& out) override;
-    int sample_rate() const override { return kSampleRate; }
+    int sample_rate() const override { return int(sample_rate_); }
+    void set_sample_rate_limit(int rate) override {
+        if (rate > 0 && rate < kSampleRate) {
+            sample_rate_ = uint32_t(rate);
+            sid_.set_sample_rate(sample_rate_);
+        }
+    }
 
     const char* title() const override { return "Commodore 64"; }
     MachineOverlay screen_overlay() const override;
@@ -112,10 +127,12 @@ private:
     Mos6526 cia1_;
     Mos6526 cia2_;
 
-    std::array<uint8_t, 0x10000> ram_{};
-    std::array<uint8_t, 0x2000> kernel_rom_{};
-    std::array<uint8_t, 0x2000> basic_rom_{};
-    std::array<uint8_t, 0x1000> char_rom_{};
+    std::vector<uint8_t> ram_;  // 64 KB
+    // In place when the board maps them, else in roms_owned_.
+    const uint8_t* kernel_rom_ = nullptr;  // 8 KB
+    const uint8_t* basic_rom_ = nullptr;   // 8 KB
+    const uint8_t* char_rom_ = nullptr;    // 4 KB
+    std::vector<uint8_t> roms_owned_;
     std::array<uint8_t, 0x400> color_ram_{};
 
     // 6510 on-chip I/O
@@ -171,7 +188,16 @@ private:
     int cpu_cycle_debt_ = 0;
 
     int64_t audio_acc_ = 0;
-    std::vector<uint32_t> framebuffer_;
+    uint32_t sample_rate_ = kSampleRate;
+    // The picture: Mos6566::kPalette indices, two a byte (low nibble left),
+    // width_ x height_ out of the VIC's 384x270 from (crop_x_, crop_y_).
+    std::vector<uint8_t> screen_;
+    int width_ = kScreenWidth, height_ = kScreenHeight;
+    int crop_x_ = 0, crop_y_ = 0;
+    std::array<uint8_t, kScreenWidth> line_pixels_{};
+    std::array<uint32_t, 256> palette_{};
+    mutable std::vector<uint32_t> framebuffer_;
+    mutable bool framebuffer_stale_ = true;
     std::vector<int16_t> audio_;
 };
 

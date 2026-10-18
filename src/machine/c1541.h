@@ -86,7 +86,7 @@ private:
     Via6522 via2_;
 
     std::array<uint8_t, 0x800> ram_{};
-    std::array<uint8_t, 0x4000> rom_{};
+    std::vector<uint8_t> rom_;  // 16 KB once a DOS ROM is loaded
 
     bool rom_loaded_ = false;
 

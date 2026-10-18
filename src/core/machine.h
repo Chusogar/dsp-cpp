@@ -119,6 +119,49 @@ public:
 
     // ARGB8888 framebuffer, screen_width() * screen_height() pixels.
     virtual const uint32_t* framebuffer() const = 0;
+    // Optional 8-bit picture of the same size with its 256-entry ARGB palette, for
+    // boards short of RAM: a driver that offers it builds the ARGB
+    // framebuffer only when framebuffer() is called, so a front end that
+    // shows the indexed picture never pays for the 32-bit copy.
+    virtual const uint8_t* indexed_framebuffer() const { return nullptr; }
+    virtual const uint32_t* indexed_palette() const { return nullptr; }
+    // Bits per pixel of indexed_framebuffer(): 8, or 4 for a 16-colour
+    // machine that packs two pixels a byte (low nibble = left pixel, rows of
+    // (screen_width() + 1) / 2 bytes).
+    virtual int indexed_bits() const { return 8; }
+    // False: the front end will not show the next frames (it is skipping
+    // frames to keep up), so a driver may leave its picture as it is instead
+    // of composing it. Emulated state must advance the same either way.
+    virtual void set_draw_enabled(bool enabled) { (void)enabled; }
+    // Before init(): the front end only shows the centre `width` x `height`
+    // of the picture, so a driver whose picture is larger (a computer with
+    // its border) may keep just that part, and screen_width() /
+    // screen_height() then give the smaller size.
+    virtual void set_picture_limit(int width, int height) { (void)width, (void)height; }
+    // Before init(): the front end plays sound at no more than `rate`
+    // samples per second, so a driver may make fewer (sample_rate() then
+    // says how many). Boards without an FPU save the work of the rest.
+    virtual void set_sample_rate_limit(int rate) { (void)rate; }
+    // Optional, for boards with no room for any picture buffer: one row of the
+    // picture as three 1-bit planes (red, green, blue), screen_width() / 8
+    // bytes each, the leftmost pixel in bit 0 of the first byte. Machines
+    // with digital RGB video (the QL) offer it as a plain function and its
+    // argument, so a board can call it from another core (while run_frame()
+    // runs; it only reads state) without going through the machine object's
+    // code, e.g. from RAM while the other core runs from flash.
+    using Rgb1RowFn = void (*)(const void* source, int y, uint8_t* red, uint8_t* green, uint8_t* blue);
+    struct Rgb1Rows {
+        Rgb1RowFn fn = nullptr;
+        const void* source = nullptr;
+    };
+    virtual Rgb1Rows rgb1_rows() const { return {}; }
+    bool has_rgb1_rows() const { return rgb1_rows().fn != nullptr; }
+    bool render_row_rgb1(int y, uint8_t* red, uint8_t* green, uint8_t* blue) const {
+        const Rgb1Rows rows = rgb1_rows();
+        if (rows.fn == nullptr) return false;
+        rows.fn(rows.source, y, red, green, blue);
+        return true;
+    }
     virtual int screen_width() const = 0;
     virtual int screen_height() const = 0;
     // Size the picture should be shown at on the host (window and aspect

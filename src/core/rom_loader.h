@@ -46,6 +46,24 @@ public:
 
     bool is_zip() const { return is_zip_; }
 
+    // Boards that hold ROM files in memory (the microcontroller ports keep
+    // embedded media in flash) give the bytes of a file in place, so a driver
+    // short of RAM can read its ROMs there instead of copying them.
+    using FileMapper = const uint8_t* (*)(const std::string& path, size_t* size);
+    static void set_file_mapper(FileMapper mapper);
+    // `entry` in place (from a directory on such a board, with the right size
+    // and CRC); nullptr when it is not mapped, and load() must be used.
+    const uint8_t* map(const RomEntry& entry);
+    // Any file by its full path through the board's mapper (nullptr: not mapped).
+    static const uint8_t* map_file(const std::string& path, size_t* size);
+
+    // A ROM region of `size` bytes as 4 KB pages (`pages`, `page_count` of
+    // them): read in place when every entry is mapped and page aligned, else
+    // loaded into `owned`. Pages no entry covers read as zeros.
+    static constexpr size_t kPageSize = 0x1000;
+    bool load_pages(const std::vector<RomEntry>& entries, size_t size, std::vector<uint8_t>& owned,
+                    const uint8_t** pages, size_t page_count, std::string* error);
+
     // MAME keeps some ROMs in device zips next to the machine's own (e.g.
     // nb_mdc824.zip, betadisk.zip). Opens `zip_name` from the directory of
     // `path` when `path` is a zip, or from `path` when it is a directory.

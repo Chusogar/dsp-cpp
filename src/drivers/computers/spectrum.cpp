@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <memory>
 #include <fstream>
 #include "core/fs_compat.h"
 
@@ -22,13 +23,8 @@ const uint32_t kPalette[16] = {
     0x000000, 0xFF0000, 0x0000FF, 0xFF00FF, 0x00FF00, 0xFFFF00, 0x00FFFF, 0xFFFFFF,
 };
 
-// Contention pattern for 128 T-states of pixel display (cmemory in spectrum_misc.pas).
-const uint8_t kCmemory[128] = {
-    6, 5, 4, 3, 2, 1, 0, 0, 6, 5, 4, 3, 2, 1, 0, 0, 6, 5, 4, 3, 2, 1, 0, 0, 6, 5, 4, 3, 2, 1, 0, 0,
-    6, 5, 4, 3, 2, 1, 0, 0, 6, 5, 4, 3, 2, 1, 0, 0, 6, 5, 4, 3, 2, 1, 0, 0, 6, 5, 4, 3, 2, 1, 0, 0,
-    6, 5, 4, 3, 2, 1, 0, 0, 6, 5, 4, 3, 2, 1, 0, 0, 6, 5, 4, 3, 2, 1, 0, 0, 6, 5, 4, 3, 2, 1, 0, 0,
-    6, 5, 4, 3, 2, 1, 0, 0, 6, 5, 4, 3, 2, 1, 0, 0, 6, 5, 4, 3, 2, 1, 0, 0, 6, 5, 4, 3, 2, 1, 0, 0,
-};
+// Read before init() loads the ROM.
+const uint8_t kNoRom[0x4000] = {};
 
 // Keyboard matrix: half-row → 5 keys (A8..A15 of port $FE).
 const Key kMatrix[8][5] = {
@@ -80,7 +76,66 @@ Spectrum48k::Spectrum48k(Model model)
         palette_[i] = cto_argb(kPalette[i] | 0xff000000);
         palette_ext_[i] = palette_[i];
     }
-    for (int i = 16; i < 80; ++i) palette_ext_[i] = 0xff000000;
+    for (int i = 16; i < 256; ++i) palette_ext_[i] = 0xff000000;
+    rom_ = kNoRom;
+    ram_.assign(0xc000, 0);
+    // The picture is made by init(), at the size set_picture_limit() asks.
+}
+
+void Spectrum48k::set_picture_limit(int width, int height) {
+    width_ = std::min(std::max(width, 1), int(kScreenWidth));
+    height_ = std::min(std::max(height, 1), int(kScreenHeight));
+    crop_x_ = (kScreenWidth - width_) / 2;
+    crop_y_ = (kScreenHeight - height_) / 2;
+    packed_ = true;
+    // The full-size picture goes; init() makes the smaller one (now if
+    // init() has been).
+    screen_.clear();
+    screen_.shrink_to_fit();
+    if (rom_ != kNoRom) {
+        screen_.assign(screen_bytes(), 0);
+        clear_screen(border_index());
+    }
+    framebuffer_.clear();
+    framebuffer_.shrink_to_fit();
+}
+
+const uint32_t* Spectrum48k::framebuffer() const {
+    // The first call converts the indexed picture; from then on render_line
+    // writes both, resolving colours when each line is drawn.
+    if (framebuffer_.empty()) {
+        framebuffer_.resize(size_t(width_) * size_t(height_));
+        if (packed_) {
+            const uint32_t* pal = indexed_palette();
+            const size_t stride = size_t((width_ + 1) / 2);
+            for (int y = 0; y < height_; ++y)
+                for (int x = 0; x < width_; ++x) {
+                    const uint8_t b = screen_[size_t(y) * stride + size_t(x / 2)];
+                    framebuffer_[size_t(y) * size_t(width_) + size_t(x)] = pal[(x & 1) ? (b >> 4) : (b & 15)];
+                }
+        } else {
+            for (size_t i = 0; i < screen_.size(); ++i) framebuffer_[i] = palette_ext_[screen_[i]];
+        }
+    }
+    return framebuffer_.data();
+}
+
+void Spectrum48k::clear_screen(uint8_t index) {
+    if (packed_) index = uint8_t((index & 15) * 0x11);
+    std::fill(screen_.begin(), screen_.end(), index);
+}
+
+void Spectrum48k::start_border_frame() {
+    // Seed the line with the current colour (Pascal leaves previous frame
+    // data; we start clean so every T-state has a defined colour until the
+    // next OUT).
+    border_seed_ = border_index();
+    std::memset(border_cur_, border_seed_, kTstatesPerLine);
+}
+
+void Spectrum48k::next_border_line() {
+    std::swap(border_cur_, border_prev_);
+    std::memset(border_cur_, border_seed_, kTstatesPerLine);
 }
 
 uint32_t Spectrum48k::ulaplus_decode(uint8_t value) const {
@@ -116,7 +171,7 @@ void Spectrum48k::border_fill_to(int /*abs_t*/) {
 }
 
 void Spectrum48k::border_on_out() {
-    // Colour changes immediately; on_cycles paints border_buf_ every T-state
+    // Colour changes immediately; on_cycles paints the border row every T-state
     // with the current border_index().  No deferred fill needed.
 }
 
@@ -129,21 +184,42 @@ const char* Spectrum48k::title() const {
 }
 
 bool Spectrum48k::init(const std::string& rom_path, std::string* error) {
+    if (screen_.empty()) {
+        screen_.assign(screen_bytes(), 0);
+        clear_screen(7);
+    }
     // A zip (MAME spectrum.zip or any zip with the ROM), a directory, or the
     // 16K ROM image itself. Matched by name or, failing that, by CRC.
+    // Boards that keep the ROM in flash give it in place.
     std::vector<uint8_t> rom;
     RomLoader loader;
     std::string ignored;
-    bool ok = loader.open(rom_path, &ignored) &&
-              loader.find("spectrum.rom|48.rom|48k.rom|zx48.rom|48e.rom", {0xddee531f, 0xf051746e},
-                          0x4000, rom);
+    const bool opened = loader.open(rom_path, &ignored);
+    const uint8_t* mapped =
+        opened ? loader.map({"spectrum.rom|48.rom|48k.rom|zx48.rom|48e.rom", 0x4000, 0, 0}) : nullptr;
+    if (mapped == nullptr && !opened) {
+        size_t size = 0;
+        mapped = RomLoader::map_file(rom_path, &size);
+        if (size < 0x4000) mapped = nullptr;
+    }
+    bool ok = mapped != nullptr ||
+              (opened && loader.find("spectrum.rom|48.rom|48k.rom|zx48.rom|48e.rom",
+                                     {0xddee531f, 0xf051746e}, 0x4000, rom));
     if (!ok && read_plain_rom(rom_path, rom) && rom.size() >= 0x4000) ok = true;
     if (!ok) {
         if (error) *error = "spectrum.rom (16 KB) not found in " + rom_path;
         return false;
     }
     warnings_ = loader.warnings();
-    std::memcpy(rom_.data(), rom.data(), 0x4000);
+    if (mapped != nullptr) {
+        rom_owned_.clear();
+        rom_owned_.shrink_to_fit();
+        rom_ = mapped;
+    } else {
+        rom.resize(0x4000);
+        rom_owned_ = std::move(rom);
+        rom_ = rom_owned_.data();
+    }
 
     cpu_.set_memory_handlers(
         [this](uint16_t a) { return mem_read(a); },
@@ -161,36 +237,24 @@ bool Spectrum48k::init(const std::string& rom_path, std::string* error) {
     cpu_.set_internal_handler([this](uint16_t addr) {
         if (model_ == Model::Spec16k) addr = uint16_t(addr & 0x7fff);
         const int t = ula_time();
-        if ((addr & 0xc000) == 0x4000 && t >= 0 && t < int(contention_.size())) {
-            const uint8_t extra = contention_[size_t(t)];
+        if ((addr & 0xc000) == 0x4000) {
+            const int extra = contention_at(t);
             if (extra) contend(extra);
         }
     });
 
-    build_contention();
     reset();
     return true;
 }
 
-void Spectrum48k::build_contention() {
-    contention_.fill(0);
-    // First contended T-state of line 0 is 14335 from frame start (after top border).
-    int f = 14335;
-    for (int h = 0; h < 192; ++h) {
-        for (int i = 0; i < 128; ++i) {
-            if (f + i < int(contention_.size())) contention_[size_t(f + i)] = kCmemory[i];
-        }
-        f += kTstatesPerLine;
-    }
-}
-
 void Spectrum48k::reset() {
-    std::memset(mem_.data(), 0, mem_.size());
-    std::memcpy(mem_.data(), rom_.data(), 0x4000);
+    std::fill(ram_.begin(), ram_.end(), uint8_t(0));
     cpu_.reset();
     border_ = 7;
     border_pos_ = 0;
-    for (auto& row : border_buf_) row.fill(7);
+    border_rows_[0].fill(7);
+    border_rows_[1].fill(7);
+    border_seed_ = 7;
     speaker_ = 0;
     ear_ = 0;
     keys_.fill(0xff);
@@ -211,6 +275,7 @@ void Spectrum48k::reset() {
     ulaplus_.pal.fill(0);
     for (int i = 0; i < 16; ++i) palette_ext_[i] = palette_[i];
     for (int i = 16; i < 80; ++i) palette_ext_[i] = 0xff000000;
+    clear_screen(border_index());
     std::fill(framebuffer_.begin(), framebuffer_.end(), border_colour());
 }
 
@@ -296,33 +361,30 @@ void Spectrum48k::on_insn_cycles(int cycles) {
 uint8_t Spectrum48k::mem_read(uint16_t addr) {
     if (model_ == Model::Spec16k) addr = uint16_t(addr & 0x7fff);
     // Contention on $4000-$7FFF during pixel display — must advance the ULA
-    // beam (and paint border_buf_) for the wait states, not just bump counters.
+    // beam (and paint the border row) for the wait states, not just bump counters.
     const int t = ula_time();
-    if ((addr & 0xc000) == 0x4000 && t >= 0 && t < int(contention_.size())) {
-        const uint8_t extra = contention_[size_t(t)];
+    if ((addr & 0xc000) == 0x4000) {
+        const int extra = contention_at(t);
         if (extra) contend(extra);
     }
-    return mem_[addr];
+    return peek(addr);
 }
 
 void Spectrum48k::mem_write(uint16_t addr, uint8_t value) {
     if (model_ == Model::Spec16k) addr = uint16_t(addr & 0x7fff);
     if (addr < 0x4000) return;  // ROM
     const int t = ula_time();
-    if ((addr & 0xc000) == 0x4000 && t >= 0 && t < int(contention_.size())) {
-        const uint8_t extra = contention_[size_t(t)];
+    if ((addr & 0xc000) == 0x4000) {
+        const int extra = contention_at(t);
         if (extra) contend(extra);
     }
-    mem_[addr] = value;
+    ram_[addr - 0x4000u] = value;
 }
 
 void Spectrum48k::apply_port_contention(uint16_t port) {
     // Wait states only — Z80 already charges the base I/O T-states.
     const int pos = ula_time();
-    auto delay_at = [&](int p) -> int {
-        if (p >= 0 && p < int(contention_.size())) return contention_[size_t(p)];
-        return 0;
-    };
+    auto delay_at = [](int p) -> int { return contention_at(p); };
     int extra = 0;
     if ((port & 0xc000) == 0x4000) {
         if (port & 1) {
@@ -365,9 +427,9 @@ uint8_t Spectrum48k::floating_bus(int t) const {
     int column = ((through - 24) / 8) * 2;
     switch (through % 8) {
         case 4: ++column; [[fallthrough]];
-        case 2: return mem_[size_t(0x4000 + kScrTable[line] + column)];
+        case 2: return ram_[size_t(kScrTable[line] + column)];
         case 5: ++column; [[fallthrough]];
-        case 3: return mem_[size_t(0x5800 + ((line >> 3) << 5) + column)];
+        case 3: return ram_[size_t(0x1800 + ((line >> 3) << 5) + column)];
         default: return 0xff;
     }
 }
@@ -455,8 +517,8 @@ void Spectrum48k::ula_latch_column(int col) {
     const int y = line_ - 64;
     const uint16_t pix_base = kScrTable[y];
     const int attr_row = (y >> 3) << 5;
-    latch_pix_[size_t(col)] = mem_[0x4000 + pix_base + col];
-    latch_attr_[size_t(col)] = mem_[0x5800 + attr_row + col];
+    latch_pix_[size_t(col)] = ram_[size_t(pix_base + col)];
+    latch_attr_[size_t(col)] = ram_[size_t(0x1800 + attr_row + col)];
     latch_mask_ |= (1u << col);
 }
 
@@ -466,27 +528,29 @@ void Spectrum48k::on_cycles(int cycles) {
     // consecutive T-states keep the colour that was current when they executed.
     // Contended wait states also call here, so the beam can reach kTstatesPerFrame
     // before the Z80 base-cycle budget — do not wrap into the next frame.
-    for (int n = 0; n < cycles; ++n) {
+    // Runs of T-states up to the end of the scanline at a time.
+    for (int left = cycles; left > 0;) {
         if (frame_t_ >= kTstatesPerFrame) {
-            ++frame_t_;
-            continue;
+            frame_t_ += left;
+            break;
         }
+        const int n = std::min(left, kTstatesPerLine - t_in_line_);
+        const int end = t_in_line_ + n;
         // ULA fetches one bitmap + attribute pair every 4 T-states of paper.
-        if (line_ >= 64 && line_ <= 255 && t_in_line_ >= 0 && t_in_line_ < 128 &&
-            (t_in_line_ & 3) == 0) {
-            ula_latch_column(t_in_line_ >> 2);
+        if (line_ >= 64 && line_ <= 255 && t_in_line_ < 128) {
+            const int stop = std::min(end, 128);
+            for (int t = (t_in_line_ + 3) & ~3; t < stop; t += 4) ula_latch_column(t >> 2);
         }
-        if (line_ >= 0 && line_ < kLinesPerFrame &&
-            t_in_line_ >= 0 && t_in_line_ < kTstatesPerLine) {
-            border_buf_[size_t(line_)][size_t(t_in_line_)] = border_index();
-        }
-        ++t_in_line_;
-        ++frame_t_;
+        std::memset(border_cur_ + t_in_line_, border_index(), size_t(n));
+        t_in_line_ = end;
+        frame_t_ += n;
+        left -= n;
         if (t_in_line_ >= kTstatesPerLine) {
             t_in_line_ -= kTstatesPerLine;
             render_line(line_);
             latch_mask_ = 0;
             ++line_;
+            next_border_line();
         }
     }
 
@@ -507,94 +571,90 @@ void Spectrum48k::on_cycles(int cycles) {
 
 void Spectrum48k::render_line(int line) {
     // Pascal borde_48_full (spectrum_48k.pas):
-    //   fill buffer[line*224 + pos .. contador) with current colour
     //   left:  T 200..223 of previous line → 48 px at X=0,  Y=line-16
     //   right: T 128..151 of current line  → 48 px at X=304
     //   centre (top/bottom only): T 0..127 → 256 px at X=48
     //   paper lines 64..255: video48k draws bitmap; no centre border
-    // Finish border buffer up to the end of this scanline (absolute T).
-        // Pascal sets posicion := contador - 224 after processing; next line starts at 0.
-    // border_pos_ already advanced to absolute end of this line.
-
+    // Colours are palette_ext_ indices, resolved now for the 32-bit picture.
     if (line < 15 || line > 296) return;
     if (line == 15) return;  // only buffered; drawn as left of line 16
 
-    const int sy = line - 16;
-    if (sy < 0 || sy >= kScreenHeight) return;
+    const int sy = line - 16 - crop_y_;
+    if (sy < 0 || sy >= height_ || screen_.empty()) return;
 
-    uint32_t* dst = framebuffer_.data() + size_t(sy) * kScreenWidth;
-    const auto& brow = border_buf_[size_t(line % kLinesPerFrame)];
-
-    auto col_at = [&](uint8_t idx) -> uint32_t {
-        if (idx < 16) return palette_[idx];
-        if (idx < 80) return palette_ext_[idx];
-        return palette_[0];
-    };
+    uint8_t* dst = line_pixels_.data();
+    const uint8_t* brow = border_cur_;
 
     // Left border from previous line (T 200..223)
-    if (line > 15) {
-        const auto& prev = border_buf_[size_t((line - 1) % kLinesPerFrame)];
-        for (int f = 200; f <= 223; ++f) {
-            const uint32_t c = col_at(prev[size_t(f)]);
-            const int px = (f - 200) * 2;
-            dst[px] = c;
-            dst[px + 1] = c;
-        }
-    } else {
-        const uint32_t c = col_at(border_index());
-        for (int x = 0; x < 48; ++x) dst[x] = c;
-    }
-
-    if (line >= 296) return;
-
-    // Right border T 128..151
-    for (int f = 128; f <= 151; ++f) {
-        const uint32_t c = col_at(brow[size_t(f)]);
-        const int px = 304 + (f - 128) * 2;
+    for (int f = 200; f <= 223; ++f) {
+        const uint8_t c = border_prev_[f];
+        const int px = (f - 200) * 2;
         dst[px] = c;
         dst[px + 1] = c;
     }
 
-    // Paper / centre — prefer ULA latches (fetch-time attrs) for multicolour.
-    if (line >= 64 && line <= 255) {
-        const int y = line - 64;
-        const uint16_t pix_base = kScrTable[y];
-        const int attr_row = (y >> 3) << 5;
-        const bool uplus = ulaplus_.active && ulaplus_.enabled;
-        for (int col = 0; col < 32; ++col) {
-            const uint8_t attrib = (latch_mask_ & (1u << col))
-                                       ? latch_attr_[size_t(col)]
-                                       : mem_[0x5800 + attr_row + col];
-            const uint8_t pixels = (latch_mask_ & (1u << col))
-                                       ? latch_pix_[size_t(col)]
-                                       : mem_[0x4000 + pix_base + col];
-            uint32_t c_ink, c_paper;
-            if (uplus) {
-                const int bank = ((((attrib & 0x80) >> 6) + ((attrib & 0x40) >> 6)) << 4) + 16;
-                c_ink = palette_ext_[bank + (attrib & 7)];
-                c_paper = palette_ext_[bank + ((attrib >> 3) & 7) + 8];
-            } else {
-                int ink = attrib & 7;
-                int paper = (attrib >> 3) & 7;
-                if (attrib & 0x40) { ink += 8; paper += 8; }
-                if ((attrib & 0x80) && flash_) std::swap(ink, paper);
-                c_ink = palette_[ink];
-                c_paper = palette_[paper];
-            }
-            uint8_t pix = pixels;
-            for (int b = 0; b < 8; ++b) {
-                dst[48 + col * 8 + b] = (pix & 0x80) ? c_ink : c_paper;
-                pix = uint8_t(pix << 1);
-            }
-        }
-    } else {
-        // Top/bottom border centre T 0..127
-        for (int f = 0; f <= 127; ++f) {
-            const uint32_t c = col_at(brow[size_t(f)]);
-            const int px = 48 + f * 2;
+    if (line < 296) {
+        // Right border T 128..151
+        for (int f = 128; f <= 151; ++f) {
+            const uint8_t c = brow[f];
+            const int px = 304 + (f - 128) * 2;
             dst[px] = c;
             dst[px + 1] = c;
         }
+
+        // Paper / centre — prefer ULA latches (fetch-time attrs) for multicolour.
+        if (line >= 64 && line <= 255) {
+            const int y = line - 64;
+            const uint16_t pix_base = kScrTable[y];
+            const int attr_row = (y >> 3) << 5;
+            const bool uplus = ulaplus_.active && ulaplus_.enabled;
+            for (int col = 0; col < 32; ++col) {
+                const bool latched = (latch_mask_ & (1u << col)) != 0;
+                const uint8_t attrib =
+                    latched ? latch_attr_[size_t(col)] : ram_[size_t(0x1800 + attr_row + col)];
+                const uint8_t pixels = latched ? latch_pix_[size_t(col)] : ram_[size_t(pix_base + col)];
+                uint8_t c_ink, c_paper;
+                if (uplus) {
+                    const int bank = ((((attrib & 0x80) >> 6) + ((attrib & 0x40) >> 6)) << 4) + 16;
+                    c_ink = uint8_t(bank + (attrib & 7));
+                    c_paper = uint8_t(bank + ((attrib >> 3) & 7) + 8);
+                } else {
+                    int ink = attrib & 7;
+                    int paper = (attrib >> 3) & 7;
+                    if (attrib & 0x40) { ink += 8; paper += 8; }
+                    if ((attrib & 0x80) && flash_) std::swap(ink, paper);
+                    c_ink = uint8_t(ink);
+                    c_paper = uint8_t(paper);
+                }
+                uint8_t* cell = dst + 48 + col * 8;
+                uint8_t pix = pixels;
+                for (int b = 0; b < 8; ++b) {
+                    cell[b] = (pix & 0x80) ? c_ink : c_paper;
+                    pix = uint8_t(pix << 1);
+                }
+            }
+        } else {
+            // Top/bottom border centre T 0..127
+            for (int f = 0; f <= 127; ++f) {
+                const uint8_t c = brow[f];
+                const int px = 48 + f * 2;
+                dst[px] = c;
+                dst[px + 1] = c;
+            }
+        }
+    }
+
+    const uint8_t* src = dst + crop_x_;
+    if (packed_) {
+        uint8_t* row = screen_.data() + size_t(sy) * size_t((width_ + 1) / 2);
+        for (int x = 0; x + 1 < width_; x += 2) row[x / 2] = uint8_t((src[x] & 15) | (src[x + 1] << 4));
+        if (width_ & 1) row[width_ / 2] = uint8_t(src[width_ - 1] & 15);
+    } else {
+        std::memcpy(screen_.data() + size_t(sy) * size_t(width_), src, size_t(width_));
+    }
+    if (!framebuffer_.empty()) {
+        uint32_t* argb = framebuffer_.data() + size_t(sy) * size_t(width_);
+        for (int x = 0; x < width_; ++x) argb[x] = palette_ext_[src[x]];
     }
 }
 
@@ -625,7 +685,7 @@ void Spectrum48k::apply_snap(const SpectrumSnap& snap) {
     cpu_.iff2 = snap.iff2;
     cpu_.set_pc(snap.pc);
     border_ = snap.border & 7;
-    std::memcpy(mem_.data() + 0x4000, snap.ram48.data(), 0xc000);
+    std::memcpy(ram_.data(), snap.ram48.data(), 0xc000);
     cpu_.set_irq(IrqLine::Clear);
     cpu_.halted = false;
 }
@@ -638,10 +698,7 @@ void Spectrum48k::run_rzx_frame() {
     frame_t_ = 0;
     instr_t_flushed_ = 0;
     latch_mask_ = 0;
-    {
-        const uint8_t col = border_index();
-        for (auto& row : border_buf_) row.fill(col);
-    }
+    start_border_frame();
     cpu_.set_irq(IrqLine::Hold);
     // Run until the RZX fetch budget is exhausted (one interrupt per RZX frame).
     int safety = kTstatesPerFrame * 4;
@@ -658,6 +715,7 @@ void Spectrum48k::run_rzx_frame() {
             // cells repeat down the rest of the picture as vertical stripes.
             latch_mask_ = 0;
             ++line_;
+            next_border_line();
         }
     }
     line_ = 0;
@@ -679,12 +737,7 @@ void Spectrum48k::run_frame() {
     border_pos_ = 0;  // absolute T within frame
     frame_t_ = 0;
     instr_t_flushed_ = 0;
-    // Seed buffer with current colour (Pascal leaves previous frame data; we
-    // start clean so every T-state has a defined colour until the next OUT).
-    {
-        const uint8_t col = border_index();
-        for (auto& row : border_buf_) row.fill(col);
-    }
+    start_border_frame();
 
     latch_mask_ = 0;
     // IRQ at start of frame.  Drive the frame by ULA time (frame_t_), not by
@@ -709,6 +762,7 @@ void Spectrum48k::run_frame() {
             // cells repeat down the rest of the picture as vertical stripes.
             latch_mask_ = 0;
             ++line_;
+            next_border_line();
         }
     }
     line_ = 0;
@@ -780,9 +834,10 @@ bool Spectrum48k::load_sna(const std::string& path, std::string* error) {
         if (error) *error = "cannot open SNA: " + path;
         return false;
     }
-    SpectrumSnap snap;
-    if (!spectrum_snap_from_sna(buf.data(), buf.size(), snap, error)) return false;
-    apply_snap(snap);
+    // On the heap: ~180 KB is more stack than the small boards have.
+    auto snap = std::make_unique<SpectrumSnap>();
+    if (!spectrum_snap_from_sna(buf.data(), buf.size(), *snap, error)) return false;
+    apply_snap(*snap);
     return true;
 }
 

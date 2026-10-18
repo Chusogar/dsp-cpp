@@ -172,12 +172,13 @@ bool C1541::load_rom(const std::string& path, std::string* error) {
 }
 
 bool C1541::load_rom(const uint8_t* data, size_t size) {
-    rom_.fill(0xFF);
-
     if (!data || size == 0) {
+        rom_.clear();
+        rom_.shrink_to_fit();
         rom_loaded_ = false;
         return false;
     }
+    rom_.assign(0x4000, 0xFF);
 
     if (size >= rom_.size()) {
         std::memcpy(rom_.data(), data, rom_.size());

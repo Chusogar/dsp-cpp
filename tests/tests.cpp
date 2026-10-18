@@ -115,6 +115,7 @@
 #include "drivers/arcade/armedf_hw.h"
 #include "drivers/arcade/cps1.h"
 #include "drivers/arcade/system16.h"
+#include "drivers/arcade/taitosj.h"
 #include "machine/fd1089.h"
 #include "machine/bagman_pal.h"
 #include "machine/beta128.h"
@@ -1677,6 +1678,67 @@ void test_spectrum_tzx() {
 // Gyroscope RZX (SPIN recording): many frames end halted before the beam
 // reaches the bottom; the rest of the picture is drawn from screen memory and
 // must not repeat the cells latched on the line where the beam stopped.
+// ROM files a board keeps in memory are handed to drivers in place.
+void test_rom_loader_map() {
+    static const uint8_t kData[0x1000] = {1, 2, 3};
+    const std::string dir = (std::filesystem::temp_directory_path() / "dsp-rom-map").string();
+    std::filesystem::create_directories(dir);
+    dsp::RomLoader::set_file_mapper([](const std::string& path, size_t* size) -> const uint8_t* {
+        if (path.size() < 6 || path.compare(path.size() - 6, 6, "/a.bin") != 0) return nullptr;
+        *size = sizeof kData;
+        return kData;
+    });
+    dsp::RomLoader loader;
+    std::string err;
+    check(loader.open(dir, &err), "a directory opens for mapping");
+    check(loader.map({"a.bin", 0x1000, 0, 0}) == kData, "a mapped ROM file is read in place");
+    check(loader.map({"x.bin|a.bin", 0x1000, 0, 0}) == kData, "mapping tries every alternative name");
+    check(loader.map({"a.bin", 0x800, 0, 0}) == nullptr, "a mapped file of the wrong size is not used");
+    check(loader.map({"b.bin", 0x1000, 0, 0}) == nullptr, "a file that is not mapped is loaded instead");
+    dsp::RomLoader::set_file_mapper(nullptr);
+    check(loader.map({"a.bin", 0x1000, 0, 0}) == nullptr, "no mapper, no mapping");
+}
+
+// Elevator Action, drawn straight from character RAM into an 8-bit picture
+// (the low-memory rewrite for the ESP32 CYD): the frame after a coin, start
+// and some play must be the one the old layer-bitmap renderer produced.
+void test_taitosj_elevator_if_present() {
+    const char* rom = "/tmp/roms/arcade/elevator.zip";
+    if (!std::filesystem::exists(rom)) {
+        std::printf("skip test_taitosj_elevator_if_present (no %s)\n", rom);
+        return;
+    }
+    dsp::TaitoSJ m(dsp::TaitoSJ::Variant::ElevatorAction);
+    std::string err;
+    check(m.init(rom, &err), "Elevator Action ROMs load");
+    for (int f = 0; f < 1500; ++f) {
+        dsp::MachineInputs in;
+        in.coin1 = f >= 600 && f < 610;
+        in.player1.start = f >= 700 && f < 710;
+        in.player1.left = (f >= 900 && f < 1300) || (f >= 2000 && f < 2200);
+        in.player1.right = f >= 1300 && f < 1600;
+        in.player1.down = f >= 1600 && f < 1700;
+        in.player1.button1 = (f % 40) < 3 && f > 1000;
+        in.player1.button2 = (f % 90) < 3 && f > 1100;
+        m.set_inputs(in);
+        m.run_frame();
+        std::vector<int16_t> audio;
+        m.drain_audio(audio);
+    }
+    uint64_t hash = 1469598103934665603ull;
+    const uint32_t* fb = m.framebuffer();
+    for (int i = 0; i < m.screen_width() * m.screen_height(); ++i) {
+        hash ^= fb[i];
+        hash *= 1099511628211ull;
+    }
+    check(hash == 0x2393e718d4fe624full, "Elevator Action frame 1500 matches the layer renderer");
+    const uint8_t* pens = m.indexed_framebuffer();
+    bool same = pens != nullptr;
+    for (int i = 0; same && i < m.screen_width() * m.screen_height(); ++i)
+        same = m.indexed_palette()[pens[i]] == fb[i];
+    check(same, "Elevator Action indexed picture and palette give the ARGB framebuffer");
+}
+
 void test_spectrum_rzx_gyroscope_if_present() {
     const char* rom = "/tmp/roms/zx48";
     const char* rzx = "/tmp/roms/zx48/gyroscope.rzx";
@@ -1743,6 +1805,36 @@ void test_spectrum_floating_bus() {
 // the attribute $42 goes past on the floating bus. It only ever samples the
 // right phase of the ULA fetch if the internal T-states of JR are contended
 // and the bus is read where Fuse reads it.
+// A board that shows only 320x240 gets the centre of the 352x280 picture.
+void test_spectrum_picture_limit_if_present() {
+    const char* rom = "/tmp/roms/zx48";
+    if (!std::filesystem::exists(rom)) {
+        std::printf("skip test_spectrum_picture_limit_if_present (no %s)\n", rom);
+        return;
+    }
+    dsp::Spectrum48k full, cropped;
+    cropped.set_picture_limit(320, 240);
+    std::string err;
+    check(full.init(rom, &err) && cropped.init(rom, &err), "Spectrum 48K boots for the picture limit test");
+    for (int f = 0; f < 120; ++f) {
+        full.run_frame();
+        cropped.run_frame();
+    }
+    check(cropped.screen_width() == 320 && cropped.screen_height() == 240, "the limited picture is 320x240");
+    check(cropped.indexed_bits() == 4, "the limited picture is 4 bits a pixel");
+    bool same = true;
+    const uint8_t* packed = cropped.indexed_framebuffer();
+    for (int y = 0; y < 240 && same; ++y)
+        for (int x = 0; x < 320 && same; ++x) {
+            const uint8_t b = packed[y * 160 + x / 2];
+            same = ((x & 1) ? (b >> 4) : (b & 15)) == (full.indexed_framebuffer()[(y + 20) * 352 + 16 + x] & 15);
+        }
+    const uint32_t* argb = cropped.framebuffer();
+    for (int y = 0; y < 240 && same; ++y)
+        same = std::memcmp(argb + y * 320, full.framebuffer() + (y + 20) * 352 + 16, 320 * 4) == 0;
+    check(same, "the limited picture is the centre of the full one");
+}
+
 void test_spectrum_floating_bus_program_if_present() {
     const char* rom = "/tmp/roms/zx48";
     if (!std::filesystem::exists(rom)) {
@@ -3125,13 +3217,10 @@ void test_mos6566_bank_and_multicolor_bitmap() {
     color[0] = 0x05;             // 11 -> green
     ram[0xE000] = 0x1B;          // pairs: 00 01 10 11
 
-    std::array<uint32_t, dsp::Mos6566::kScreenWidth> row{};
+    std::array<uint8_t, dsp::Mos6566::kScreenWidth> row{};  // palette indices
     vic.update_line(51, row.data());
     const int x = dsp::Mos6566::kVisibleX;
-    check(row[x + 0] == dsp::Mos6566::kPalette[6] &&
-              row[x + 2] == dsp::Mos6566::kPalette[1] &&
-              row[x + 4] == dsp::Mos6566::kPalette[7] &&
-              row[x + 6] == dsp::Mos6566::kPalette[5],
+    check(row[x + 0] == 6 && row[x + 2] == 1 && row[x + 4] == 7 && row[x + 6] == 5,
           "multicolor bitmap mode decodes the bit pairs");
     check(row[x + 1] == row[x + 0] && row[x + 3] == row[x + 2],
           "multicolor pixels are two hires pixels wide");
@@ -3140,7 +3229,7 @@ void test_mos6566_bank_and_multicolor_bitmap() {
     // fetch must reach RAM: pin the bank back to 0 and the picture changes.
     ram[0xE000] = 0x00;
     vic.update_line(51, row.data());
-    check(row[x + 2] == dsp::Mos6566::kPalette[6],
+    check(row[x + 2] == 6,
           "the bitmap is fetched from the bank selected by CIA2");
 }
 
@@ -5763,6 +5852,67 @@ void test_sega_roms_if_present() {
     }
 }
 
+// A silent POKEY is jumped forward over its channels' repeating pattern;
+// the result must be the same as running every clock.
+void test_pokey_fast_forward() {
+    uint32_t seed = 12345;
+    auto rnd = [&seed]() {
+        seed = seed * 1103515245u + 12345u;
+        return (seed >> 8) & 0xffffff;
+    };
+    bool same = true;
+    for (int trial = 0; trial < 60 && same; ++trial) {
+        dsp::Pokey fast(1789772), slow(1789772);
+        slow.set_fast_forward(false);
+        std::vector<int32_t> out_fast, out_slow;
+        for (int step = 0; step < 40; ++step) {
+            // Mostly the silent all-joined 1.79 MHz set-up, sometimes sound.
+            std::vector<std::pair<int, int>> writes;
+            const uint32_t r = rnd();
+            writes.push_back({8, (r & 7) == 0 ? int(rnd() & 0xff) : 0x78 | int(rnd() & 0x87)});
+            writes.push_back({15, 3});
+            for (int ch = 0; ch < 4; ++ch) {
+                writes.push_back({ch * 2, (rnd() & 3) == 0 ? int(rnd() & 0xff) : int(rnd() & 7)});
+                const bool audible = (rnd() % 6) == 0;
+                writes.push_back({ch * 2 + 1, int(rnd() & 0xc0) | (audible ? int(rnd() & 0x3f) : 0)});
+            }
+            if ((rnd() & 15) == 0) writes.push_back({9, 0});  // STIMER
+            for (auto [reg, value] : writes) {
+                if ((rnd() & 1) == 0) continue;
+                fast.write(uint16_t(reg), uint8_t(value));
+                slow.write(uint16_t(reg), uint8_t(value));
+            }
+            const int chunks = 1 + int(rnd() % 30);
+            for (int c = 0; c < chunks; ++c) {
+                const int clocks = 1 + int(rnd() % ((rnd() & 3) == 0 ? 3000 : 60));
+                fast.run(clocks);
+                slow.run(clocks);
+                out_fast.push_back(fast.update());
+                out_slow.push_back(slow.update());
+            }
+            if ((rnd() & 3) == 0) {
+                out_fast.push_back(fast.read(10));  // RANDOM
+                out_slow.push_back(slow.read(10));
+            }
+            // Turn every channel up to hear the outputs and filters.
+            if ((rnd() & 3) == 0) {
+                for (int ch = 0; ch < 4; ++ch) {
+                    fast.write(uint16_t(ch * 2 + 1), uint8_t(0x0f | (ch << 6)));
+                    slow.write(uint16_t(ch * 2 + 1), uint8_t(0x0f | (ch << 6)));
+                }
+                out_fast.push_back(fast.update());
+                out_slow.push_back(slow.update());
+                fast.run(1);
+                slow.run(1);
+                out_fast.push_back(fast.update());
+                out_slow.push_back(slow.update());
+            }
+        }
+        same = out_fast == out_slow;
+    }
+    check(same, "a silent POKEY jumped forward matches one run clock by clock");
+}
+
 void test_indy_coin_if_present() {
     const char* rom = "/tmp/roms/indytemp.zip";
     std::ifstream probe(rom);
@@ -5772,6 +5922,7 @@ void test_indy_coin_if_present() {
     dsp::AtariSystem1 machine(dsp::AtariSystem1::Game::Indy);
     std::string error;
     check(machine.init(rom, &error), "Indiana Jones ROM set loads for the coin test");
+    check(machine.debug_tiles_match(), "System 1 tiles drawn from the ROMs match the GfxSet decode");
     bool armed = false;
     for (int i = 0; i < 600; i++) {
         machine.run_frame();
@@ -6970,6 +7121,37 @@ void test_ql_roms_if_present() {
     check(count_lit_pixels(boot) > 80, "QL attract/copyright paints the ZX8301 screen");
     check(boot.peek(0xc000) == 0x4a && boot.peek(0xc001) == 0xfb,
           "QL maps the WIN plug-in ROM at $C000");
+}
+
+// The QL's rows as 1-bit RGB planes (boards that build their video a line at
+// a time read these) must match the 32-bit framebuffer.
+void test_ql_rgb1_rows_if_present() {
+    const char* rom = "/tmp/roms/ql.zip";
+    if (!std::filesystem::exists(rom)) return;
+    dsp::SinclairQl ql;
+    std::string error;
+    check(ql.init(rom, &error), "QL ROMs load for the RGB rows test");
+    check(ql.has_rgb1_rows(), "the QL offers its picture as RGB rows");
+    bool same = true;
+    for (int f = 0; f < 400 && same; f++) {
+        dsp::MachineInputs in;
+        in.keys[size_t(dsp::Key::F1)] = f >= 150 && f < 160;  // monitor mode (mode 4 screen)
+        ql.set_inputs(in);
+        ql.run_frame();
+        if (f % 50 != 49) continue;
+        const uint32_t* fb = ql.framebuffer();
+        for (int y = 0; y < 256 && same; y++) {
+            uint8_t r[64], g[64], b[64];
+            ql.render_row_rgb1(y, r, g, b);
+            for (int x = 0; x < 512; x++) {
+                const int bit = x & 7, byte = x >> 3;
+                const uint32_t rgb = 0xff000000u | (((r[byte] >> bit) & 1) ? 0xff0000u : 0) |
+                                     (((g[byte] >> bit) & 1) ? 0xff00u : 0) | (((b[byte] >> bit) & 1) ? 0xffu : 0);
+                if (rgb != fb[y * 512 + x]) same = false;
+            }
+        }
+    }
+    check(same, "QL RGB rows match the framebuffer");
 }
 
 bool write_bytes(const std::string& path, const uint8_t* data, size_t size) {
@@ -11324,7 +11506,11 @@ int main() {
     test_spectrum_ula();
     test_spectrum_floating_bus();
     test_spectrum_floating_bus_program_if_present();
+    test_spectrum_picture_limit_if_present();
     test_spectrum_rzx_gyroscope_if_present();
+    test_taitosj_elevator_if_present();
+    test_rom_loader_map();
+    test_ql_rgb1_rows_if_present();
     test_nes_apu_status();
     test_nes_ppu_sprites_and_palette();
     test_nes_smb_if_present();
@@ -11412,6 +11598,7 @@ int main() {
     test_sega16_palette_banks();
     test_sega_roms_if_present();
     test_indy_coin_if_present();
+    test_pokey_fast_forward();
     test_ym2612();
     test_sh2_core();
     test_sega32x_registers();

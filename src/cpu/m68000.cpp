@@ -92,7 +92,10 @@ void M68000::set_memory_handlers(ReadWordHandler read, WriteWordHandler write) {
 }
 
 void M68000::set_irq(int level, IrqLine state) {
-    if (level >= 0 && level < 8) irq_[size_t(level)] = state;
+    if (level < 0 || level >= 8) return;
+    irq_[size_t(level)] = state;
+    if (state == IrqLine::Clear) irq_lines_ = uint8_t(irq_lines_ & ~(1u << level));
+    else irq_lines_ = uint8_t(irq_lines_ | (1u << level));
 }
 
 void M68000::reset() {
@@ -108,6 +111,7 @@ void M68000::reset() {
     pc_.set_wl(getword(6));
     opcode_ = false;
     irq_.fill(IrqLine::Clear);
+    irq_lines_ = 0;
     halt_request_ = IrqLine::Clear;
     reset_request_ = IrqLine::Clear;
     halted_ = false;
@@ -122,6 +126,13 @@ uint8_t M68000::getbyte(uint32_t address) {
     // away first made every byte read see address&1==0 and always return
     // the high byte, corrupting all odd-address byte access.
     address &= (address_mask_ | 1u);
+    if (address < kDirectSpan) {
+        if (const uint8_t* page = direct_read_[address >> 12]) {
+            if (const uint8_t* odd = direct_odd_[address >> 12])
+                return ((address & 1) ? odd : page)[(address & 0xfff) >> 1];
+            return page[address & 0xfff];
+        }
+    }
     if (read_byte_) return read_byte_(address);
     uint16_t value = getword(address);
     return (address & 1) ? uint8_t(value & 0xff) : uint8_t(value >> 8);
@@ -129,6 +140,12 @@ uint8_t M68000::getbyte(uint32_t address) {
 
 void M68000::putbyte(uint32_t address, uint8_t value) {
     address &= (address_mask_ | 1u);  // see getbyte's comment
+    if (address < kDirectSpan) {
+        if (uint8_t* page = direct_write_[address >> 12]) {
+            page[address & 0xfff] = value;
+            return;
+        }
+    }
     if (write_byte_) {
         write_byte_(address, value);
         return;
@@ -2772,7 +2789,23 @@ void M68000::group_f(uint16_t instruction) {
     exception(11, 34);
 }
 
+void M68000::set_direct_page(uint32_t page, const uint8_t* read, uint8_t* write) {
+    if (page >= kDirectPages) return;
+    direct_read_[page] = read;
+    direct_write_[page] = write;
+    direct_odd_[page] = nullptr;
+}
+
+void M68000::set_direct_page_pair(uint32_t page, const uint8_t* even, const uint8_t* odd) {
+    if (page >= kDirectPages) return;
+    direct_read_[page] = even;
+    direct_write_[page] = nullptr;
+    direct_odd_[page] = (even != nullptr) ? odd : nullptr;
+}
+
 bool M68000::take_irq() {
+    // Before every instruction: nothing asserted above the mask, nothing to do.
+    if ((irq_lines_ >> (cc.im + 1)) == 0) return false;
     for (int level = 7; level >= 1; --level) {
         if (cc.im >= level || irq_[size_t(level)] == IrqLine::Clear) continue;
         halted_ = false;
@@ -2797,7 +2830,10 @@ bool M68000::take_irq() {
         }
         pc_.set_wh(getword(vbr_ + vec_addr));
         pc_.set_wl(getword(vbr_ + vec_addr + 2));
-        if (irq_[size_t(level)] == IrqLine::Hold) irq_[size_t(level)] = IrqLine::Clear;
+        if (irq_[size_t(level)] == IrqLine::Hold) {
+            irq_[size_t(level)] = IrqLine::Clear;
+            irq_lines_ = uint8_t(irq_lines_ & ~(1u << level));
+        }
         cc.im = uint8_t(level);
         return true;
     }
@@ -2821,7 +2857,7 @@ int M68000::run(int cycles) {
         }
 
         const int start = cycles_;
-        take_irq();
+        if ((irq_lines_ >> (cc.im + 1)) != 0) take_irq();
         if (halted_) {  // stopped by the stop instruction until an interrupt arrives
             cycles_ += 4;
             if (cycle_handler_) cycle_handler_(4);

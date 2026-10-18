@@ -524,8 +524,8 @@ void Tms5220::tick(int cycles) {
 }
 
 int16_t Tms5220::last_sample() const {
-    return int16_t(std::clamp(int32_t(float(out_sample_) * volume_), int32_t(-32768),
-                              int32_t(32767)));
+    const int32_t v = volume_ == 1.0f ? int32_t(out_sample_) : int32_t(float(out_sample_) * volume_);
+    return int16_t(std::clamp(v, int32_t(-32768), int32_t(32767)));
 }
 
 int16_t Tms5220::update() {

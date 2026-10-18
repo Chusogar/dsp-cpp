@@ -61,6 +61,18 @@ public:
         irq_ack_ = std::move(handler);
     }
     void set_address_mask(uint32_t mask) { address_mask_ = mask & ~1u; }
+    // Optional: 4 KB pages of the first megabyte (after the address mask)
+    // that are plain memory, big-endian bytes, which the core then reads
+    // (`read`) and writes (`write`) itself instead of calling the handlers;
+    // null = through the handlers. Only for memory without side effects, as
+    // the handlers would do exactly the same: it saves a std::function call
+    // per access (the instruction fetches above all).
+    static constexpr uint32_t kDirectPages = 256;
+    static constexpr uint32_t kDirectSpan = kDirectPages << 12;
+    void set_direct_page(uint32_t page, const uint8_t* read, uint8_t* write);
+    // A read-only page held in two byte-wide ROMs, as most 68000 boards
+    // have: `even` gives the high bytes, `odd` the low bytes (2 KB each).
+    void set_direct_page_pair(uint32_t page, const uint8_t* even, const uint8_t* odd);
     // Model the 68000's two-word prefetch queue: instruction words already
     // fetched are not re-read when the program overwrites them. Self-
     // modifying copy protections (Atari ST loaders) depend on it.
@@ -110,8 +122,30 @@ public:
     Flags cc;
 
 private:
-    uint16_t getword(uint32_t address) { return read_(address & address_mask_); }
-    void putword(uint32_t address, uint16_t value) { write_(address & address_mask_, value); }
+    uint16_t getword(uint32_t address) {
+        address &= address_mask_;
+        if (address < kDirectSpan) {
+            if (const uint8_t* page = direct_read_[address >> 12]) {
+                const uint32_t o = address & 0xfff;  // even: a word never crosses a page
+                if (const uint8_t* odd = direct_odd_[address >> 12])
+                    return uint16_t((uint16_t(page[o >> 1]) << 8) | odd[o >> 1]);
+                return uint16_t((uint16_t(page[o]) << 8) | page[o + 1]);
+            }
+        }
+        return read_(address);
+    }
+    void putword(uint32_t address, uint16_t value) {
+        address &= address_mask_;
+        if (address < kDirectSpan) {
+            if (uint8_t* page = direct_write_[address >> 12]) {
+                const uint32_t o = address & 0xfff;
+                page[o] = uint8_t(value >> 8);
+                page[o + 1] = uint8_t(value);
+                return;
+            }
+        }
+        write_(address, value);
+    }
     uint8_t getbyte(uint32_t address);
     void putbyte(uint32_t address, uint8_t value);
 
@@ -185,6 +219,10 @@ private:
     bool halted_ = false;
     bool stopped_ = false;
     std::array<IrqLine, 8> irq_{};
+    uint8_t irq_lines_ = 0;  // bit n: irq_[n] is not Clear (take_irq's quick test)
+    std::array<const uint8_t*, kDirectPages> direct_read_{};
+    std::array<uint8_t*, kDirectPages> direct_write_{};
+    std::array<const uint8_t*, kDirectPages> direct_odd_{};  // pair pages: the low bytes
     IrqLine reset_request_ = IrqLine::Clear;
     IrqLine halt_request_ = IrqLine::Clear;
     int cycles_ = 0;

@@ -83,6 +83,17 @@ const char* relative(const char* path) {
 
 bool owns(const char* path) { return relative(path) != nullptr; }
 
+const uint8_t* map(const char* path, size_t* size) {
+    const char* rel = relative(path);
+    if (rel == nullptr) return nullptr;
+    std::string r = clean(rel);
+    for (size_t at; (at = r.find("//")) != std::string::npos;) r.erase(at, 1);
+    const DspEmbeddedFile* f = find_file(r);
+    if (f == nullptr) return nullptr;
+    if (size) *size = f->size;
+    return f->data;
+}
+
 int open(const char* rel, int flags) {
     if ((flags & O_ACCMODE) != O_RDONLY || (flags & (O_CREAT | O_TRUNC))) {
         errno = EROFS;

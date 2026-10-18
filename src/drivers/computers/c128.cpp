@@ -402,7 +402,10 @@ void C128::run_frame() {
         uint32_t* row = (vis_y >= 0 && vis_y < kScreenHeight)
                             ? framebuffer_.data() + size_t(vis_y) * kScreenWidth
                             : nullptr;
-        const int stolen = vic_.update_line(line, row);
+        uint8_t pens[kScreenWidth];
+        const int stolen = vic_.update_line(line, row ? pens : nullptr);
+        if (row)
+            for (int x = 0; x < kScreenWidth; ++x) row[x] = Mos6566::kPalette[pens[x]];
         cpu_cycles -= stolen;
         if (cpu_cycles < 0) cpu_cycles = 0;
 

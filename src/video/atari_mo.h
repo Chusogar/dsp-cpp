@@ -43,6 +43,9 @@ public:
         Entry absolute_entry{};
         Entry special_entry{};
         uint16_t specialvalue = 0;
+        // False: no code lookup table (64K entries for a 16-bit code); the
+        // driver gives code_lookup_fn instead.
+        bool code_lookup_table = true;
     };
 
     // Called once per 8x8 (or tile sized) piece of a motion object.
@@ -70,6 +73,14 @@ public:
 
     // Lookup tables, exposed so drivers can apply their own code/colour mangling.
     std::vector<uint16_t>& code_lookup() { return code_lookup_; }
+    // In place of the table (Config::code_lookup_table false): raw code ->
+    // looked-up code.
+    void set_code_lookup_fn(std::function<int(int)> fn) { code_lookup_fn_ = std::move(fn); }
+    // The x position a neighbour object follows is carried from one draw()
+    // to the next; a driver that draws a frame in several passes (a band of
+    // lines each) puts it back before each pass.
+    uint32_t last_xpos() const { return last_xpos_; }
+    void set_last_xpos(uint32_t xpos) { last_xpos_ = xpos; }
     std::vector<uint16_t>& color_lookup() { return color_lookup_; }
     std::vector<uint8_t>& gfx_lookup() { return gfx_lookup_; }
 
@@ -126,6 +137,8 @@ private:
     int sliprammask_ = 0;
 
     std::vector<uint16_t> code_lookup_, color_lookup_;
+    std::function<int(int)> code_lookup_fn_;
+    size_t code_count_ = 0;
     std::vector<uint8_t> gfx_lookup_;
     std::vector<uint16_t> active_list_;
     size_t active_last_ = 0;

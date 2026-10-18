@@ -1,5 +1,7 @@
 #include "video/atari_mo.h"
 
+#include <bitset>
+
 namespace dsp {
 namespace {
 
@@ -93,20 +95,24 @@ AtariMotionObjects::AtariMotionObjects(const Config& config, const uint16_t* sli
     sliprammask_ = (bitmapheight >> slipshift_) - 1;
     if (config_.maxperline == 0) config_.maxperline = kMaxPerBank;
 
-    code_lookup_.resize(size_t(round_to_powerof2(codemask_.mask())));
-    for (size_t i = 0; i < code_lookup_.size(); ++i) code_lookup_[i] = uint16_t(i);
+    code_count_ = size_t(round_to_powerof2(codemask_.mask()));
+    if (config_.code_lookup_table) {
+        code_lookup_.resize(code_count_);
+        for (size_t i = 0; i < code_lookup_.size(); ++i) code_lookup_[i] = uint16_t(i);
+    }
     color_lookup_.resize(size_t(round_to_powerof2(colormask_.mask())));
     for (size_t i = 0; i < color_lookup_.size(); ++i) color_lookup_[i] = uint16_t(i);
     // Pascal: gfxsize := codesize div 256, filled with config.gfxindex.
-    gfx_lookup_.assign(std::max<size_t>(1, code_lookup_.size() / 256), 0);
+    gfx_lookup_.assign(std::max<size_t>(1, code_count_ / 256), 0);
 
-    active_list_.resize(size_t(kMaxPerBank) * 40);
+    // Four words for each object of a line's list.
+    active_list_.resize(size_t(config_.maxperline) * 4);
 }
 
 void AtariMotionObjects::build_active_list(uint16_t link) {
     const uint16_t* bankbase = sprite_ram_ + (size_t(bank_) << (entrybits_ + 2));
     size_t current = 0;
-    std::vector<bool> visited(size_t(kMaxPerBank), false);
+    std::bitset<kMaxPerBank> visited;
 
     for (int f = 0; f < config_.maxperline; ++f) {
         const size_t entry_start = current;
@@ -162,7 +168,7 @@ void AtariMotionObjects::render_object(const uint16_t* entry, int xscroll, int y
     if (priority != prio && prio != -1) return;
 
     const uint16_t rawcode = codemask_.extract(entry);
-    int code = code_lookup_[rawcode];
+    int code = code_lookup_fn_ ? code_lookup_fn_(rawcode) : code_lookup_[rawcode];
     int color = color_lookup_[colormask_.extract(entry)] << 4;
     int gfx = 0;
     if (!gfx_lookup_.empty()) gfx = gfx_lookup_[(rawcode >> 8) % gfx_lookup_.size()];

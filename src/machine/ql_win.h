@@ -48,5 +48,7 @@ private:
 
 bool is_ql_win_file(const std::string& path);
 void install_ql_win_rom(uint8_t* dest);
+// Bytes install_ql_win_rom() writes.
+size_t ql_win_rom_size();
 
 }  // namespace dsp

@@ -10,6 +10,11 @@ namespace dsp {
 class Sid6581 {
 public:
     static constexpr int kSampleRate = 44100;
+    // Samples per second update() makes (kSampleRate unless set).
+    void set_sample_rate(uint32_t rate) {
+        if (rate) sample_rate_ = rate;
+        filter_key_ = -1;
+    }
     enum class Model { Mos6581, Mos8580 };
 
     explicit Sid6581(uint32_t clock = 985248, Model model = Model::Mos6581);
@@ -52,6 +57,9 @@ private:
     uint8_t res_filt_ = 0;
     uint8_t mode_vol_ = 0;
     float vlp_ = 0, vbp_ = 0, vhp_ = 0;
+    uint32_t sample_rate_ = kSampleRate;
+    int filter_key_ = -1;  // fc_, resonance and model the two below are for
+    float filter_q_ = 0, filter_w0_ = 0;
 };
 
 }  // namespace dsp

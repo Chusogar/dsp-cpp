@@ -52,6 +52,42 @@ public:
     virtual int screen_height() const = 0;
     virtual void present(const uint32_t* argb, int width, int height, int display_width,
                          int display_height) = 0;
+    // Same for a driver's 8-bit picture (`pens` index the 256 ARGB `palette`). A board
+    // that implements it saves the driver its 32-bit framebuffer; false: not
+    // supported, present() is used.
+    virtual bool present_indexed(const uint8_t* pens, const uint32_t* palette, int width, int height,
+                                 int display_width, int display_height) {
+        (void)pens, (void)palette, (void)width, (void)height, (void)display_width, (void)display_height;
+        return false;
+    }
+    // Boards that build their video signal a line at a time can show a
+    // machine with Machine::has_rgb1_rows() straight from its state, with no
+    // picture buffer: from this call on they read its rows themselves
+    // (present() is then not called), until show_rgb1_rows(nullptr), which
+    // comes before the machine is destroyed. false: not supported.
+    virtual bool show_rgb1_rows(const Machine* machine) {
+        (void)machine;
+        return false;
+    }
+    // True: a short press of F12 during a game switches turbo on and off (no
+    // frame pacing, sound off, one frame in 8 drawn); holding F12 still goes
+    // back to the menu. Boards with a keyboard enable it.
+    virtual bool turbo_on_f12() const { return false; }
+    // True: a picture larger than screen_width() x screen_height() is shown
+    // cropped around its centre, so drivers are told to keep only that part.
+    virtual bool crops_picture() const { return false; }
+    // Called just before a driver is made: a board that keeps the menu
+    // screen in RAM frees it (the screen may go blank while it loads).
+    virtual void release_menu() {}
+    // Added to "not enough memory" (e.g. what was asked for, what is free).
+    virtual std::string memory_note() { return std::string(); }
+    // The same for a 4-bit picture (Machine::indexed_bits() == 4: two pixels
+    // a byte, low nibble first); false: not supported, present() is used.
+    virtual bool present_indexed4(const uint8_t* pens, const uint32_t* palette, int width, int height,
+                                  int display_width, int display_height) {
+        (void)pens, (void)palette, (void)width, (void)height, (void)display_width, (void)display_height;
+        return false;
+    }
     // Menu screens: `rows` full-width rows (screen_width() pixels each, ARGB)
     // drawn unscaled from row `y`. The next present() must redraw its borders.
     virtual void draw_rows(int y, int rows, const uint32_t* argb) = 0;

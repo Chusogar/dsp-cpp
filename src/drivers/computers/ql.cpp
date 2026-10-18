@@ -63,15 +63,15 @@ const KeyMap kKeyMap[] = {
     {Key::N, 7, 0x40},       {Key::Comma, 7, 0x80},
 };
 
-bool load_pair(RomLoader& loader, const std::vector<RomEntry>& low,
-               const std::vector<RomEntry>& high, std::vector<uint8_t>& dest) {
-    std::string ignored;
-    dest.assign(0xc000, 0);
-    if (!loader.load(low, dest, &ignored)) return false;
-    return loader.load(high, dest, &ignored);
+std::vector<RomEntry> join(const std::vector<RomEntry>& low, const std::vector<RomEntry>& high) {
+    std::vector<RomEntry> all = low;
+    all.insert(all.end(), high.begin(), high.end());
+    return all;
 }
 
 constexpr uint32_t kWinTrapPort = 0x1bf00;
+
+const uint8_t kZeroPage[RomLoader::kPageSize] = {};
 
 constexpr int kErrBo = -5;
 constexpr int kErrNf = -7;
@@ -94,6 +94,7 @@ SinclairQl::SinclairQl()
       ipc_(kIpcClock, Mcs48::Chip::I8749),
       vkb_(kQlVkbJpeg, sizeof(kQlVkbJpeg), kQlVkbWidth, kQlVkbHeight, kQlVkbKeys,
            int(sizeof(kQlVkbKeys) / sizeof(kQlVkbKeys[0])), VirtualKeyboard::Format::Jpeg) {
+    rom_pages_.fill(kZeroPage);  // no ROM until init()
     vkb_.set_travel(3);  // the QL's buttons sit low on their tiles
     vkb_.set_photo_crop(kQlVkbCropX, kQlVkbCropY, true);
     cpu_.set_memory_handlers([this](uint32_t a) { return read_word(a); },
@@ -142,19 +143,23 @@ bool SinclairQl::init(const std::string& rom_path, std::string* error) {
     RomLoader loader;
     if (!loader.open(rom_path, error)) return false;
 
-    std::vector<uint8_t> firmware;
     std::string ignored;
-    if (!load_pair(loader, kJsLow, kJsHigh, firmware) &&
-        !load_pair(loader, kJmLow, kJmHigh, firmware)) {
-        firmware.clear();
-        if (!loader.load(kMinerva, firmware, &ignored) || firmware.size() < 0xc000) {
-            if (error) *error = "QL ROM (JS/JM/Minerva) not found in " + rom_path;
-            return false;
-        }
+    if (!loader.load_pages(join(kJsLow, kJsHigh), 0xc000, firmware_, rom_pages_.data(), 12, &ignored) &&
+        !loader.load_pages(join(kJmLow, kJmHigh), 0xc000, firmware_, rom_pages_.data(), 12, &ignored) &&
+        !loader.load_pages(kMinerva, 0xc000, firmware_, rom_pages_.data(), 12, &ignored)) {
+        if (error) *error = "QL ROM (JS/JM/Minerva) not found in " + rom_path;
+        return false;
     }
-    rom_.fill(0);
-    std::memcpy(rom_.data(), firmware.data(), std::min(firmware.size(), size_t(0xc000)));
-    install_ql_win_rom(rom_.data() + 0xc000);
+    plugin_rom_.assign(RomLoader::kPageSize, 0);
+    install_ql_win_rom(plugin_rom_.data());
+    rom_pages_[12] = plugin_rom_.data();
+    for (size_t page = 13; page < rom_pages_.size(); ++page) rom_pages_[page] = kZeroPage;
+    // The 68008 reads ROM and RAM itself (writes to ROM are ignored, as here).
+    for (uint32_t page = 0; page < 16; ++page) cpu_.set_direct_page(page, rom_pages_[page], nullptr);
+    for (uint32_t page = 0; page < Zx8301::kRamSize >> 12; ++page) {
+        uint8_t* ram = video_.ram() + (page << 12);
+        cpu_.set_direct_page(0x20 + page, ram, ram);
+    }
 
     std::vector<uint8_t> ipc;
     if (!loader.load(kIpcRom, ipc, &ignored) || ipc.size() < 0x800) {
@@ -198,7 +203,6 @@ void SinclairQl::run_frame() {
     const int cycles = int(double(kCpuClock) / kFps);
     cpu_.run(cycles);
     zx8302_.vsync_w(1);
-    video_.render(framebuffer_.data());
 
     if (++rtc_frames_ >= int(kFps + 0.5)) {
         rtc_frames_ = 0;
@@ -247,6 +251,12 @@ bool SinclairQl::load_media(const std::string& path, std::string* error) {
     return false;
 }
 
+const uint32_t* SinclairQl::framebuffer() const {
+    framebuffer_.resize(size_t(kWidth) * kHeight);
+    video_.render(framebuffer_.data());
+    return framebuffer_.data();
+}
+
 void SinclairQl::drain_audio(std::vector<int16_t>& out) {
     out.insert(out.end(), audio_.begin(), audio_.end());
     audio_.clear();
@@ -269,7 +279,7 @@ uint8_t SinclairQl::keyboard_rows() const {
 
 uint8_t SinclairQl::read_byte(uint32_t address) {
     address &= 0xfffff;
-    if (address < 0x10000) return rom_[address];
+    if (address < 0x10000) return rom_pages_[address >> 12][address & 0xfff];
     if (address >= 0x18000 && address <= 0x18003) return zx8302_.rtc_r(address & 3);
     if (address == 0x18020) return zx8302_.status_r();
     if (address == 0x18021) return zx8302_.irq_status_r();
@@ -317,6 +327,15 @@ void SinclairQl::write_byte(uint32_t address, uint8_t value) {
 }
 
 uint16_t SinclairQl::read_word(uint32_t address) {
+    // ROM and RAM directly (most of the reads); the rest byte by byte.
+    const uint32_t a = address & 0xfffff;
+    if (a < 0xffff) {
+        const uint8_t* page = rom_pages_[a >> 12];
+        const uint32_t o = a & 0xfff;
+        if (o != 0xfff) return uint16_t((uint16_t(page[o]) << 8) | page[o + 1]);
+    } else if (a >= 0x20000 && a < 0x3ffff) {
+        return uint16_t((uint16_t(video_.ram_r(a - 0x20000)) << 8) | video_.ram_r(a - 0x1ffff));
+    }
     return uint16_t((uint16_t(read_byte(address)) << 8) | read_byte(address + 1));
 }
 
@@ -326,26 +345,59 @@ void SinclairQl::write_word(uint32_t address, uint16_t value) {
         win_trap(value);
         return;
     }
+    if (address >= 0x20000 && address < 0x3ffff) {  // RAM, the common case
+        video_.ram_w(address - 0x20000, uint8_t(value >> 8));
+        video_.ram_w(address - 0x1ffff, uint8_t(value));
+        return;
+    }
     write_byte(address, uint8_t(value >> 8));
     write_byte(address + 1, uint8_t(value));
 }
 
 void SinclairQl::on_cpu_cycles(int cycles) {
+    // Called for every 68008 instruction: kept to 32-bit arithmetic (a
+    // Cortex-M0+ multiplies 64-bit numbers in software) while that is exact,
+    // i.e. while cycles * 11 MHz fits in 32 bits; the IPC's share of the
+    // cycles runs in one go, an instruction per IPC cycle as before.
+    constexpr uint32_t cpu_clock = kCpuClock;
+    if (cycles >= 0 && cycles < 256) {
+        uint32_t acc = uint32_t(ipc_cycle_acc_) + uint32_t(cycles) * ipc_.clock();
+        int steps = 0;
+        while (acc >= cpu_clock) {
+            acc -= cpu_clock;
+            ++steps;
+        }
+        ipc_cycle_acc_ = acc;
+        if (steps > 0) ipc_.run_instructions(steps);
+        // Default 9600 baud × 4 until SuperBASIC programs the TCR.
+        uint32_t baud = uint32_t(baud_acc_) + uint32_t(cycles) * 38400u;
+        while (baud >= cpu_clock) {
+            baud -= cpu_clock;
+            zx8302_.tick_baudx4();
+        }
+        baud_acc_ = baud;
+        uint32_t mdv = uint32_t(mdv_acc_) + uint32_t(cycles) * uint32_t(kMdvBitRate);
+        while (mdv >= cpu_clock) {
+            mdv -= cpu_clock;
+            tick_mdv_bits();
+        }
+        mdv_acc_ = mdv;
+        return;
+    }
     ipc_cycle_acc_ += int64_t(cycles) * int64_t(ipc_.clock());
-    const int64_t cpu_clock = int64_t(kCpuClock);
-    while (ipc_cycle_acc_ >= cpu_clock) {
-        ipc_cycle_acc_ -= cpu_clock;
+    const int64_t clock64 = int64_t(kCpuClock);
+    while (ipc_cycle_acc_ >= clock64) {
+        ipc_cycle_acc_ -= clock64;
         run_ipc(1);
     }
-    // Default 9600 baud × 4 until SuperBASIC programs the TCR.
     baud_acc_ += int64_t(cycles) * 38400;
-    while (baud_acc_ >= cpu_clock) {
-        baud_acc_ -= cpu_clock;
+    while (baud_acc_ >= clock64) {
+        baud_acc_ -= clock64;
         zx8302_.tick_baudx4();
     }
     mdv_acc_ += int64_t(cycles) * int64_t(kMdvBitRate);
-    while (mdv_acc_ >= cpu_clock) {
-        mdv_acc_ -= cpu_clock;
+    while (mdv_acc_ >= clock64) {
+        mdv_acc_ -= clock64;
         tick_mdv_bits();
     }
 }

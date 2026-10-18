@@ -16,6 +16,12 @@ namespace dsp {
 // ZX Spectrum 48K (and 16K variant), ported from spectrum_48k.pas + spectrum_misc.pas.
 // Independent of any pre-existing Spectrum driver in dsp-cpp.
 // Chips: Z80 @ 3.5 MHz, ULA (border/beeper/keyboard/EAR), TapeTzx.
+//
+// Small enough for boards without PSRAM: the ROM is read in place when the
+// board maps it, the 48 KB of RAM is its own allocation, the picture is
+// 8-bit (palette indices) and the 32-bit framebuffer is only kept once a
+// front end asks for it; the border is held for two scanlines, not a frame,
+// and the contention pattern is computed instead of tabled.
 class Spectrum48k : public Machine {
 public:
     MachineType machine_type() const override { return MachineType::Computer; }
@@ -37,9 +43,17 @@ public:
     void run_frame() override;
     void set_inputs(const MachineInputs& inputs) override;
     void set_dip_switch(int bank, uint8_t value) override;
-    const uint32_t* framebuffer() const override { return framebuffer_.data(); }
-    int screen_width() const override { return kScreenWidth; }
-    int screen_height() const override { return kScreenHeight; }
+    const uint32_t* framebuffer() const override;
+    const uint8_t* indexed_framebuffer() const override { return screen_.data(); }
+    // With a picture limit (a small board) the picture is 4 bits a pixel;
+    // ULA+ colours then show as those of its first 16-colour bank.
+    const uint32_t* indexed_palette() const override {
+        return packed_ && ulaplus_.active && ulaplus_.enabled ? palette_ext_.data() + 16 : palette_ext_.data();
+    }
+    int indexed_bits() const override { return packed_ ? 4 : 8; }
+    int screen_width() const override { return width_; }
+    int screen_height() const override { return height_; }
+    void set_picture_limit(int width, int height) override;
     double frames_per_second() const override { return kFps; }
     void drain_audio(std::vector<int16_t>& out) override;
     int sample_rate() const override { return kSampleRate; }
@@ -71,7 +85,18 @@ public:
     uint8_t debug_floating_bus(int t) const { return floating_bus(t); }
 
 private:
-    void build_contention();
+    // ULA wait states for a contended access at absolute frame T-state `t`.
+    static int contention_at(int t) {
+        t -= 14335;  // first contended T-state of the first paper line
+        if (t < 0) return 0;
+        const unsigned line = unsigned(t) / unsigned(kTstatesPerLine);
+        if (line >= 192) return 0;
+        const int phase = t - int(line) * kTstatesPerLine;
+        if (phase >= 128) return 0;
+        const int p = phase & 7;
+        return p < 6 ? 6 - p : 0;
+    }
+    uint8_t peek(uint16_t addr) const { return addr < 0x4000 ? rom_[addr] : ram_[addr - 0x4000u]; }
     // Sync ULA beam to mid-instruction T-state, then return absolute ULA time.
     int ula_time();
     void on_insn_cycles(int cycles);
@@ -96,16 +121,36 @@ private:
     TapeTzx tape_;
     SpectrumRzx rzx_;
 
-    std::array<uint8_t, 0x10000> mem_{};
-    std::array<uint8_t, 0x4000> rom_{};
-    std::array<uint32_t, kScreenWidth * kScreenHeight> framebuffer_{};
+    const uint8_t* rom_ = nullptr;     // 16 KB, in place or rom_owned_
+    std::vector<uint8_t> rom_owned_;
+    std::vector<uint8_t> ram_;         // $4000-$FFFF
+    std::vector<uint8_t> screen_;      // palette_ext_ indices, width_ x height_
+    bool packed_ = false;              // screen_ as nibbles (low one left), indices & 15
+    void clear_screen(uint8_t index);
+    size_t screen_bytes() const {
+        return packed_ ? size_t((width_ + 1) / 2) * size_t(height_) : size_t(width_) * size_t(height_);
+    }
+    // The picture kept: all of the 352x280, or its centre when the front end
+    // shows no more (set_picture_limit).
+    int width_ = kScreenWidth, height_ = kScreenHeight;
+    int crop_x_ = 0, crop_y_ = 0;
+    std::array<uint8_t, kScreenWidth> line_pixels_{};  // the scanline being drawn
+    mutable std::vector<uint32_t> framebuffer_;  // once framebuffer() is used
     std::array<uint32_t, 16> palette_{};
 
     // ULA state
     uint8_t border_ = 7;
     int border_pos_ = 0;  // absolute T-state in frame of last border change
-    // Per-T border colour index (ULA classic 0-15 or ULA+ 16-23)
-    std::array<std::array<uint8_t, kTstatesPerLine>, kLinesPerFrame> border_buf_{};
+    // Per-T border colour index (ULA classic 0-15 or ULA+ 16-23) of the
+    // scanline the beam is on and the one before (its last T-states are the
+    // left border of the next line). Lines the beam does not reach in a frame
+    // keep the colour the frame started with.
+    std::array<std::array<uint8_t, kTstatesPerLine>, 2> border_rows_{};
+    uint8_t* border_cur_ = border_rows_[0].data();
+    uint8_t* border_prev_ = border_rows_[1].data();
+    uint8_t border_seed_ = 7;
+    void start_border_frame();
+    void next_border_line();
     uint8_t speaker_ = 0;   // bit 4 of port $FE → 0x00 / 0x10
     uint8_t ear_ = 0;       // tape level 0x00 / 0x40
     std::array<uint8_t, 8> keys_{};
@@ -122,8 +167,8 @@ private:
         uint8_t last_reg = 0;  // 0..63
         std::array<uint8_t, 64> pal{};  // raw GRB bytes
     } ulaplus_;
-    // Runtime ARGB colours: [0..15] classic, [16..79] ULA+
-    std::array<uint32_t, 80> palette_ext_{};
+    // Runtime ARGB colours: [0..15] classic, [16..79] ULA+ (256 for indexed_palette())
+    std::array<uint32_t, 256> palette_ext_{};
     void ulaplus_set_entry(uint8_t index, uint8_t value);
     uint32_t ulaplus_decode(uint8_t value) const;
     uint32_t border_colour() const;
@@ -135,7 +180,6 @@ private:
     // Base T-states of the current insn already advanced on the ULA beam
     // (via ula_time mid-access flushes). on_insn_cycles charges the remainder.
     int instr_t_flushed_ = 0;
-    std::array<uint8_t, 71000> contention_{};
 
     // ULA paper latches for the current scanline (one byte pair per 8-pixel cell).
     // Sampled every 4 T-states during the 128 T paper window so multicolour

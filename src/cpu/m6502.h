@@ -1,7 +1,9 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <utility>
 
 #include "cpu/irq_line.h"
@@ -32,6 +34,14 @@ public:
     // Optional reader for opcode bytes only (the SYNC cycle), for boards
     // that decrypt or alter the instruction stream.
     void set_opcode_read(ReadHandler handler) { opcode_read_ = std::move(handler); }
+    // Optional: 256-byte pages of plain memory (RAM or ROM with no side
+    // effects) the core reads (`read`) and writes (`write`) itself instead
+    // of calling the handlers; null = through the handlers.
+    void set_direct_page(uint8_t page, const uint8_t* read, uint8_t* write) {
+        if (!pages_) pages_.reset(new Pages());
+        pages_->read[page] = read;
+        pages_->write[page] = write;
+    }
 
     // WDC/GTE 65C02 (and the Lynx G65SC02) extra opcodes: BRA, STZ, PHX/PHY,
     // TRB/TSB, BIT imm/zp,x/abs,x, INC/DEC A, JMP (abs,X), (zp) and the CMOS
@@ -61,8 +71,24 @@ public:
     Flags p;
 
 private:
-    uint8_t read(uint16_t address) { return read_(address); }
-    void write(uint16_t address, uint8_t value) { write_(address, value); }
+    uint8_t read(uint16_t address) {
+        if (pages_)
+            if (const uint8_t* page = pages_->read[address >> 8]) return page[address & 0xff];
+        return read_(address);
+    }
+    void write(uint16_t address, uint8_t value) {
+        if (pages_)
+            if (uint8_t* page = pages_->write[address >> 8]) {
+                page[address & 0xff] = value;
+                return;
+            }
+        write_(address, value);
+    }
+    struct Pages {
+        std::array<const uint8_t*, 256> read{};
+        std::array<uint8_t*, 256> write{};
+    };
+    std::unique_ptr<Pages> pages_;
     uint8_t fetch() { return read(pc_++); }
 
     uint8_t get_flags() const;

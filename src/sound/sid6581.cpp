@@ -104,7 +104,7 @@ uint8_t Sid6581::read(uint8_t reg) {
 
 void Sid6581::tick_envelope(Voice& v) {
     // Scale rate from PHI clock domain to sample domain.
-    const int steps = std::max(1, int(clock_ / kSampleRate / 8));
+    const int steps = std::max(1, int(clock_ / sample_rate_ / 8));
     for (int s = 0; s < steps; s++) {
         if (v.env_rate <= 0) continue;
         if (++v.env_cnt < v.env_rate) continue;
@@ -199,13 +199,20 @@ int Sid6581::wave_output(Voice& v, Voice& mod_source) {
 }
 
 int Sid6581::apply_filter(int input) {
-    // Cutoff: FC 0..2047 → ~30 Hz .. 12 kHz
-    const float fc =
-        30.f + (float(fc_) / 2047.f) * (model_ == Model::Mos6581 ? 10000.f : 12000.f);
-    const float res = float((res_filt_ >> 4) & 0x0F) / 15.f;
-    const float q = 0.707f + res * 1.5f;
-    const float w0 = 2.f * 3.14159265f * fc / float(kSampleRate);
-    const float a = std::sin(w0) / (2.f * q);
+    // Cutoff: FC 0..2047 → ~30 Hz .. 12 kHz. The coefficients only change
+    // with the registers, so they are worked out again only then (boards
+    // without an FPU pay dearly for every float operation).
+    const int key = int(fc_) | (((res_filt_ >> 4) & 0x0F) << 11) | (model_ == Model::Mos6581 ? 0 : 1 << 15);
+    if (key != filter_key_) {
+        filter_key_ = key;
+        const float fc =
+            30.f + (float(fc_) / 2047.f) * (model_ == Model::Mos6581 ? 10000.f : 12000.f);
+        const float res = float((res_filt_ >> 4) & 0x0F) / 15.f;
+        filter_q_ = 0.707f + res * 1.5f;
+        filter_w0_ = 2.f * 3.14159265f * fc / float(sample_rate_);
+    }
+    const float q = filter_q_;
+    const float w0 = filter_w0_;
     // One-pole state-variable filter
     vhp_ = float(input) - vlp_ - q * vbp_;
     vbp_ += w0 * vhp_;
@@ -227,7 +234,7 @@ int32_t Sid6581::update() {
         Voice& mod = voice_[(i + 2) % 3];  // previous voice modulates
         v.prev_acc = v.acc;
         // Batch PHI2 advances for one output sample: Δacc = freq * (clock/sample_rate)
-        const uint32_t phi_per_sample = clock_ / kSampleRate;
+        const uint32_t phi_per_sample = clock_ / sample_rate_;
         v.acc = (v.acc + v.freq * phi_per_sample) & 0xFFFFFF;
 
         tick_envelope(v);

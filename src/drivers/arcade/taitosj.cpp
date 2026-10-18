@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "core/rom_loader.h"
+#include "video/gfx.h"
 
 namespace dsp {
 namespace {
@@ -56,41 +57,25 @@ const std::vector<RomEntry> kPriorityProm = {
     {"eb16.22|eb16.ic22", 0x100, 0x0000, 0xb833b5ea},
 };
 
-constexpr uint8_t kTransparent = 0xff;
 
-// Both character banks hold three bit planes of 0x800 bytes at $9000 and $a800.
-const std::vector<int>& char_x_offsets() {
-    static const std::vector<int> offsets = {7, 6, 5, 4, 3, 2, 1, 0};
-    return offsets;
-}
+// Character RAM banks at $9000 and $a800: three bit planes of $800 bytes
+// ($1000: pen bit 2, $800: bit 1, $000: bit 0), the leftmost pixel in bit 0.
+// 8x8 characters take 8 bytes (one per row); 16x16 sprites take 32 bytes,
+// rows 0-7 of the left half, then the right half, then rows 8-15 likewise.
+constexpr size_t kRamBase = 0x8000;
+constexpr size_t kRamSize = 0xd200 - kRamBase;
+constexpr size_t kCharBanks[2] = {0x9000 - kRamBase, 0xa800 - kRamBase};
+constexpr int kScreenTop = 16;  // first of the 224 lines shown, of 256
 
-GfxLayout char_layout() {
-    GfxLayout layout;
-    layout.width = 8;
-    layout.height = 8;
-    layout.total = 256;
-    layout.planes = 3;
-    layout.char_increment = 8 * 8;
-    layout.plane_offsets = {512 * 8 * 8, 256 * 8 * 8, 0};
-    layout.x_offsets = char_x_offsets();
-    layout.y_offsets = {0 * 8, 1 * 8, 2 * 8, 3 * 8, 4 * 8, 5 * 8, 6 * 8, 7 * 8};
-    return layout;
-}
+// Bit n of a nibble moved to bit 0 of byte n.
+constexpr uint32_t kSpread[16] = {
+    0x00000000, 0x00000001, 0x00000100, 0x00000101, 0x00010000, 0x00010001, 0x00010100, 0x00010101,
+    0x01000000, 0x01000001, 0x01000100, 0x01000101, 0x01010000, 0x01010001, 0x01010100, 0x01010101,
+};
 
-GfxLayout sprite_layout() {
-    GfxLayout layout;
-    layout.width = 16;
-    layout.height = 16;
-    layout.total = 64;
-    layout.planes = 3;
-    layout.char_increment = 32 * 8;
-    layout.plane_offsets = {128 * 16 * 16, 64 * 16 * 16, 0};
-    layout.x_offsets = {7,         6,         5,         4,         3,         2,
-                        1,         0,         8 * 8 + 7, 8 * 8 + 6, 8 * 8 + 5, 8 * 8 + 4,
-                        8 * 8 + 3, 8 * 8 + 2, 8 * 8 + 1, 8 * 8 + 0};
-    layout.y_offsets = {0 * 8,  1 * 8,  2 * 8,  3 * 8,  4 * 8,  5 * 8,  6 * 8,  7 * 8,
-                        16 * 8, 17 * 8, 18 * 8, 19 * 8, 20 * 8, 21 * 8, 22 * 8, 23 * 8};
-    return layout;
+inline uint8_t char_pen(const uint8_t* bank, size_t byte, int bit) {
+    return uint8_t((((bank[byte + 0x1000] >> bit) & 1) << 2) | (((bank[byte + 0x800] >> bit) & 1) << 1) |
+                   ((bank[byte] >> bit) & 1));
 }
 
 // Volume table of the DAC, ay1_portb_write() in taitosj_hw.pas.
@@ -124,7 +109,8 @@ TaitoSJ::TaitoSJ(Variant variant)
       ay1_(kAyClock, 1.0f),
       ay2_(kAyClock, 1.0f),
       ay3_(kAyClock, 2.0f) {
-    framebuffer_.assign(size_t(kScreenWidth) * kScreenHeight, 0xff000000u);
+    ram_.assign(kRamSize, 0);
+    screen_.assign(size_t(kScreenWidth) * kScreenHeight, 0);
 
     main_cpu_.set_memory_handlers(
         [this](uint16_t address) { return main_read(address); },
@@ -161,20 +147,15 @@ bool TaitoSJ::init(const std::string& rom_path, std::string* error) {
     if (!loader.open(rom_path, error)) return false;
 
     const bool elevator = variant_ == Variant::ElevatorAction;
-    std::vector<uint8_t> main_rom(0x9000, 0);
-    if (!loader.load(elevator ? kElevatorMain : kJunglekMain, main_rom, error)) return false;
-    std::copy_n(main_rom.begin(), 0x6000, memory_.begin());
-    std::copy_n(main_rom.begin() + 0x6000, 0x2000, rom_banks_[0].begin());
-    std::copy_n(main_rom.begin() + 0x6000, 0x1000, rom_banks_[1].begin());
-    std::copy_n(main_rom.begin() + 0x8000, 0x1000, rom_banks_[1].begin() + 0x1000);
-
-    std::vector<uint8_t> sound_rom(0x4000, 0);
-    if (!loader.load(elevator ? kElevatorSound : kJunglekSound, sound_rom, error)) return false;
-    std::copy(sound_rom.begin(), sound_rom.end(), sound_memory_.begin());
-
-    std::vector<uint8_t> gfx_rom(0x8000, 0);
-    if (!loader.load(elevator ? kElevatorChars : kJunglekChars, gfx_rom, error)) return false;
-    std::copy(gfx_rom.begin(), gfx_rom.end(), gfx_rom_.begin());
+    // Only as much as each set has: RAM is short on the small boards.
+    if (!loader.load_pages(elevator ? kElevatorMain : kJunglekMain, elevator ? 0x8000 : 0x9000,
+                     main_rom_, main_pages_.data(), main_pages_.size(), error) ||
+        !loader.load_pages(elevator ? kElevatorSound : kJunglekSound, elevator ? 0x2000 : 0x3000,
+                     sound_rom_, sound_pages_.data(), sound_pages_.size(), error) ||
+        !loader.load_pages(elevator ? kElevatorChars : kJunglekChars, 0x8000, gfx_rom_,
+                     gfx_pages_.data(), gfx_pages_.size(), error)) {
+        return false;
+    }
 
     if (elevator) {
         std::vector<uint8_t> mcu_rom(0x800, 0);
@@ -205,9 +186,6 @@ bool TaitoSJ::init(const std::string& rom_path, std::string* error) {
     dsw_b_ = 0x00;
     dsw_c_ = 0xff;
 
-    for (GfxSet& set : chars_) set.create(8, 8, 256);
-    for (GfxSet& set : sprites_) set.create(16, 16, 64);
-
     warnings_ = loader.warnings();
     reset();
     return true;
@@ -236,10 +214,10 @@ void TaitoSJ::reset() {
     dac_out_ = 0;
     dac_vol_ = 0;
     dac_sample_ = 0;
+    dac_mixed_ = 0;
     sound_latch_ = 0;
     sound_semaphore_ = false;
     sound_nmi_ = {false, false};
-    rechars_ = {true, true};
 
     mcu_zaccept_ = true;
     mcu_zready_ = false;
@@ -253,14 +231,18 @@ void TaitoSJ::reset() {
     sound_irq_counter_ = 0;
     audio_accumulator_ = 0;
     audio_.clear();
-    for (auto& layer : layers_) layer.fill(kTransparent);
-    screen_.fill(0);
+    std::fill(screen_.begin(), screen_.end(), uint8_t(0));
 }
 
 uint8_t TaitoSJ::main_read(uint16_t address) {
-    if (address < 0x6000) return memory_[address];
-    if (address < 0x8000) return rom_banks_[rom_bank_][address & 0x1fff];
-    if (address < 0x8800) return memory_[address];
+    if (address < 0x6000) return main_rom(address);
+    if (address < 0x8000) {
+        // Bank 0: $6000-$7fff of the image; bank 1: $6000-$6fff then $8000-$8fff.
+        const size_t offset = address & 0x1fff;
+        if (rom_bank_ == 0 || offset < 0x1000) return main_rom(0x6000 + offset);
+        return main_rom(0x8000 + offset - 0x1000);
+    }
+    if (address < 0x8800) return ram_[address - kRamBase];
     if (address < 0x9000) {
         if (!uses_mcu()) return 0;  // sets without MCU read an empty bus
         if ((address & 1) == 0) {
@@ -269,8 +251,7 @@ uint8_t TaitoSJ::main_read(uint16_t address) {
         }
         return uint8_t(~((mcu_zready_ ? 1 : 0) | (mcu_zaccept_ ? 2 : 0)));
     }
-    if (address < 0xc000) return memory_[address];
-    if (address < 0xd000) return memory_[address];
+    if (address < 0xd000) return ram_[address - kRamBase];
     if (address < 0xd060) return uint8_t(scroll_y_[address & 0x7f]);
     if (address >= 0xd200 && address < 0xd300) return palette_ram_[address & 0x7f];
     if (address >= 0xd400 && address < 0xd500) {
@@ -278,7 +259,7 @@ uint8_t TaitoSJ::main_read(uint16_t address) {
             case 0x0: case 0x1: case 0x2: case 0x3:
                 return collision_[address & 3];
             case 0x4: case 0x5: case 0x6: case 0x7: {
-                const uint8_t value = gfx_pos_ < 0x8000 ? gfx_rom_[gfx_pos_] : uint8_t(0);
+                const uint8_t value = gfx_pos_ < 0x8000 ? gfx_pages_[gfx_pos_ >> 12][gfx_pos_ & 0xfff] : uint8_t(0);
                 gfx_pos_ = uint16_t(gfx_pos_ + 1);
                 return value;
             }
@@ -292,14 +273,19 @@ uint8_t TaitoSJ::main_read(uint16_t address) {
             default: return 0;
         }
     }
-    if (address >= 0xe000) return memory_[address];
+    return 0;
+}
+
+uint8_t TaitoSJ::bus_peek(uint16_t address) const {
+    if (address < 0x6000) return main_rom(address);
+    if (address >= kRamBase && address < kRamBase + kRamSize) return ram_[address - kRamBase];
     return 0;
 }
 
 void TaitoSJ::main_write(uint16_t address, uint8_t value) {
     if (address < 0x8000) return;  // ROM
     if (address < 0x8800) {
-        memory_[address] = value;
+        ram_[address - kRamBase] = value;
         return;
     }
     if (address < 0x9000) {
@@ -310,22 +296,8 @@ void TaitoSJ::main_write(uint16_t address, uint8_t value) {
         }
         return;
     }
-    if (address < 0xa800) {  // character RAM bank 0
-        if (memory_[address] != value) {
-            memory_[address] = value;
-            rechars_[0] = true;
-        }
-        return;
-    }
-    if (address < 0xc000) {  // character RAM bank 1
-        if (memory_[address] != value) {
-            memory_[address] = value;
-            rechars_[1] = true;
-        }
-        return;
-    }
-    if (address < 0xd000) {  // the three tile maps
-        memory_[address] = value;
+    if (address < 0xd000) {  // character RAM banks and the three tile maps
+        ram_[address - kRamBase] = value;
         return;
     }
     if (address < 0xd060) {
@@ -333,7 +305,7 @@ void TaitoSJ::main_write(uint16_t address, uint8_t value) {
         return;
     }
     if (address >= 0xd100 && address < 0xd200) {  // sprite RAM
-        memory_[address] = value;
+        ram_[address - kRamBase] = value;
         return;
     }
     if (address >= 0xd200 && address < 0xd300) {
@@ -382,7 +354,8 @@ void TaitoSJ::main_write(uint16_t address, uint8_t value) {
 }
 
 uint8_t TaitoSJ::sound_read(uint16_t address) {
-    if (address <= 0x43ff) return sound_memory_[address];
+    if (address < 0x4000) return sound_pages_[address >> 12][address & 0xfff];
+    if (address <= 0x43ff) return sound_ram_[address & 0x3ff];
     switch (address) {
         case 0x4801: return ay1_.read();
         case 0x4803: return ay2_.read();
@@ -398,7 +371,7 @@ uint8_t TaitoSJ::sound_read(uint16_t address) {
 
 void TaitoSJ::sound_write(uint16_t address, uint8_t value) {
     if (address >= 0x4000 && address <= 0x43ff) {
-        sound_memory_[address] = value;
+        sound_ram_[address & 0x3ff] = value;
         return;
     }
     switch (address) {
@@ -444,11 +417,12 @@ void TaitoSJ::mcu_write(uint16_t address, uint8_t value) {
             mcu_zaccept_ = false;
         }
         if ((~value & 0x10) != 0) {
-            memory_[mcu_address_] = mcu_port_a_out_;
+            if (mcu_address_ >= kRamBase && mcu_address_ < kRamBase + kRamSize)
+                ram_[mcu_address_ - kRamBase] = mcu_port_a_out_;
             // The low byte of the latched address increments, for burst writes.
             mcu_address_ = uint16_t((mcu_address_ & 0xff00) | ((mcu_address_ + 1) & 0xff));
         }
-        if ((~value & 0x20) != 0) mcu_port_a_in_ = memory_[mcu_address_];
+        if ((~value & 0x20) != 0) mcu_port_a_in_ = bus_peek(mcu_address_);
         if ((~value & 0x40) != 0) {
             mcu_address_ = uint16_t((mcu_address_ & 0xff00) | mcu_port_a_out_);
         }
@@ -462,6 +436,7 @@ void TaitoSJ::mcu_write(uint16_t address, uint8_t value) {
 
 void TaitoSJ::dac_update() {
     dac_sample_ = int16_t(int(dac_out_) * int(dac_vol_) - 0x8000);
+    dac_mixed_ = int32_t(dac_sample_ * 0.30f);  // here, not per sample: no FPU on small boards
 }
 
 void TaitoSJ::on_sound_cycles(int cycles) {
@@ -475,7 +450,7 @@ void TaitoSJ::on_sound_cycles(int cycles) {
     while (audio_accumulator_ >= kSoundClock) {
         audio_accumulator_ -= kSoundClock;
         int32_t sample = ay0_.update() + ay1_.update() + ay2_.update() + ay3_.update();
-        sample += int32_t(dac_sample_ * 0.30f);
+        sample += dac_mixed_;
         audio_.push_back(int16_t(std::clamp<int32_t>(sample, -32768, 32767)));
     }
 }
@@ -495,138 +470,161 @@ void TaitoSJ::set_palette_entry(int index) {
         0xff000000u | (uint32_t(red) << 16) | (uint32_t(green) << 8) | uint32_t(blue);
 }
 
-void TaitoSJ::decode_chars(int bank) {
-    const size_t base = bank == 0 ? 0x9000 : 0xa800;
-    const std::vector<uint8_t> ram(memory_.begin() + long(base), memory_.begin() + long(base) + 0x1800);
-    chars_[size_t(bank)].decode(char_layout(), ram);
-    sprites_[size_t(bank)].decode(sprite_layout(), ram);
-}
+// The picture is composed one row at a time into a line buffer, then copied
+// into screen_ in one go: boards that show screen_ while the next frame is
+// being drawn (the RP2040 builds its HDMI lines straight from it) never catch
+// a row with only the background in it. Per pixel the result is the same as
+// drawing each layer and the sprites over the whole screen in turn.
 
-void TaitoSJ::draw_layer(int layer) {
-    static constexpr uint16_t kBases[3] = {0xc400, 0xc800, 0xcc00};
-    const uint8_t color = layer == 2 ? uint8_t((colorbank_[1] & 0x07) << 3)
-                          : layer == 1 ? uint8_t(((colorbank_[0] >> 4) & 0x07) << 3)
-                                       : uint8_t((colorbank_[0] & 0x07) << 3);
+// Tile layer parameters for one frame: pen 0 transparent; each 8-pixel column
+// of the screen has its own vertical scroll (from the scroll_y_ table).
+TaitoSJ::LayerFrame TaitoSJ::layer_frame(int layer, uint16_t scroll_x, uint8_t scroll_y,
+                                         int column_base) const {
+    static constexpr size_t kMaps[3] = {0xc400 - kRamBase, 0xc800 - kRamBase, 0xcc00 - kRamBase};
+    LayerFrame f;
+    f.color = layer == 2   ? uint8_t((colorbank_[1] & 0x07) << 3)
+              : layer == 1 ? uint8_t(((colorbank_[0] >> 4) & 0x07) << 3)
+                           : uint8_t((colorbank_[0] & 0x07) << 3);
     const int bank = layer == 2   ? (colorbank_[1] & 0x08) >> 3
                      : layer == 1 ? (colorbank_[0] & 0x80) >> 7
                                   : (colorbank_[0] & 0x08) >> 3;
-    auto& target = layers_[size_t(layer)];
-    for (int offset = 0; offset < 0x400; offset++) {
-        const int tile_x = (offset % 32) * 8;
-        const int tile_y = (offset / 32) * 8;
-        const uint8_t code = memory_[kBases[layer] + offset];
-        const uint8_t* pixels = chars_[size_t(bank)].element(code);
-        for (int y = 0; y < 8; y++) {
-            for (int x = 0; x < 8; x++) {
-                const uint8_t pen = pixels[y * 8 + x];
-                target[size_t((tile_y + y) * 256 + tile_x + x)] =
-                    pen == 0 ? kTransparent : uint8_t(color + pen);
+    f.chars = ram_.data() + kCharBanks[bank];
+    f.map = ram_.data() + kMaps[layer];
+    f.scroll_x = scroll_x;
+    for (int group = 0; group < 32; group++) {
+        const int column = (group + scroll_x / 8) & 0x1f;
+        f.offset_y[size_t(group)] = scroll_y_[size_t(column_base + column)] + scroll_y;
+    }
+    return f;
+}
+
+// Eight screen pixels share a column (so a vertical scroll); they span at
+// most two tiles, whose plane bytes are joined and shifted into place.
+void TaitoSJ::blit_layer_row(const LayerFrame& f, int y, uint8_t* line) {
+    for (int x0 = 0; x0 < 256; x0 += 8) {
+        const int first_x = (x0 + f.scroll_x) & 0xff;
+        const int tile0 = first_x >> 3, tile1 = (tile0 + 1) & 0x1f, shift = first_x & 7;
+        const int source_y = (y + kScreenTop + f.offset_y[size_t(x0 >> 3)]) & 0xff;
+        const uint8_t* row = f.map + (source_y >> 3) * 32;
+        const size_t a = size_t(row[tile0]) * 8 + size_t(source_y & 7);
+        const size_t b = size_t(row[tile1]) * 8 + size_t(source_y & 7);
+        const uint8_t* chars = f.chars;
+        const unsigned p2 = ((chars[a + 0x1000] | (chars[b + 0x1000] << 8)) >> shift) & 0xff;
+        const unsigned p1 = ((chars[a + 0x800] | (chars[b + 0x800] << 8)) >> shift) & 0xff;
+        const unsigned p0 = ((chars[a] | (chars[b] << 8)) >> shift) & 0xff;
+        const unsigned any = p0 | p1 | p2;
+        if (any == 0) continue;  // all transparent
+        // Four pixels at a time: kSpread puts bit n of a nibble in byte n.
+        for (int half = 0; half < 2; half++) {
+            const int s = half * 4;
+            const uint32_t pens = kSpread[(p0 >> s) & 15] | (kSpread[(p1 >> s) & 15] << 1) |
+                                  (kSpread[(p2 >> s) & 15] << 2);
+            uint8_t* dst = line + x0 + s;
+            if (((any >> s) & 15) == 15) {  // all four opaque
+                const uint32_t v = pens + f.color * 0x01010101u;
+                dst[0] = uint8_t(v), dst[1] = uint8_t(v >> 8), dst[2] = uint8_t(v >> 16),
+                dst[3] = uint8_t(v >> 24);
+            } else {
+                for (int x = 0; x < 4; x++) {
+                    const uint8_t pen = uint8_t(pens >> (8 * x));
+                    if (pen != 0) dst[x] = uint8_t(f.color + pen);
+                }
             }
         }
     }
 }
 
-void TaitoSJ::blit_layer(int layer, uint16_t scroll_x, uint8_t scroll_y, int column_base) {
-    const auto& source = layers_[size_t(layer)];
-    for (int x = 0; x < 256; x++) {
-        const int column = (x / 8 + scroll_x / 8) & 0x1f;
-        const int offset_y = scroll_y_[size_t(column_base + column)] + scroll_y;
-        const int source_x = (x + scroll_x) & 0xff;
-        for (int y = 0; y < 256; y++) {
-            const uint8_t pen = source[size_t(((y + offset_y) & 0xff) * 256 + source_x)];
-            if (pen != kTransparent) screen_[size_t(y * 256 + x)] = pen;
-        }
-    }
-}
-
-void TaitoSJ::draw_sprites() {
-    const uint16_t base = uint16_t(0xd100 + ((video_mode_ & 0x04) << 5));
+// The sprites of one frame, in drawing order.
+int TaitoSJ::sprite_frame(std::array<SpriteFrame, 32>& out) const {
+    const size_t base = 0xd100 - kRamBase + size_t((video_mode_ & 0x04) << 5);
+    int count = 0;
     for (int index = 0x1f; index >= 0; index--) {
         const int which = (index - 1) & 0x1f;
         if (which >= 0x10 && which <= 0x17) continue;  // no sprites here
-        const int offset = which * 4;
-        const uint8_t sx = uint8_t(memory_[base + offset + 0] + pos_x_[3]);
-        const uint8_t sy = uint8_t(240 - memory_[base + offset + 1] + pos_x_[4]);
-        if (sy >= 240) continue;
-        const uint8_t attrib = memory_[base + offset + 2];
-        const uint8_t code = uint8_t(memory_[base + offset + 3] & 0x3f);
-        const int bank = (memory_[base + offset + 3] & 0x40) != 0 ? 1 : 0;
-        const uint8_t color =
-            uint8_t((2 * ((colorbank_[1] >> 4) & 0x03) + ((attrib >> 2) & 0x01)) << 3);
-        const bool flip_x = (attrib & 0x01) != 0;
-        const bool flip_y = (attrib & 0x02) != 0;
+        const size_t offset = base + size_t(which) * 4;
+        SpriteFrame& sp = out[size_t(count)];
+        sp.sx = uint8_t(ram_[offset + 0] + pos_x_[3]);
+        sp.sy = uint8_t(240 - ram_[offset + 1] + pos_x_[4]);
+        if (sp.sy >= 240) continue;
+        const uint8_t attrib = ram_[offset + 2];
+        const size_t code = ram_[offset + 3] & 0x3f;
+        const int bank = (ram_[offset + 3] & 0x40) != 0 ? 1 : 0;
+        sp.color = uint8_t((2 * ((colorbank_[1] >> 4) & 0x03) + ((attrib >> 2) & 0x01)) << 3);
+        sp.flip_x = (attrib & 0x01) != 0;
+        sp.flip_y = (attrib & 0x02) != 0;
+        sp.pixels = ram_.data() + kCharBanks[bank] + code * 32;
+        count++;
+    }
+    return count;
+}
 
-        const uint8_t* pixels = sprites_[size_t(bank)].element(code);
-        for (int y = 0; y < 16; y++) {
-            const int source_y = flip_y ? 15 - y : y;
-            const int target_y = sy + y;
-            if (target_y >= 256) break;
-            for (int x = 0; x < 16; x++) {
-                const int source_x = flip_x ? 15 - x : x;
-                const uint8_t pen = pixels[source_y * 16 + source_x];
-                if (pen == 0) continue;
-                const int target_x = sx + x;
-                if (target_x >= 256) continue;
-                screen_[size_t(target_y * 256 + target_x)] = uint8_t(color + pen);
-            }
+void TaitoSJ::draw_sprites_row(const SpriteFrame* sprites, int count, int y, uint8_t* line) {
+    const int screen_y = y + kScreenTop;
+    for (int i = 0; i < count; i++) {
+        const SpriteFrame& sp = sprites[i];
+        const int sprite_y = screen_y - sp.sy;
+        if (sprite_y < 0 || sprite_y >= 16) continue;
+        const int source_y = sp.flip_y ? 15 - sprite_y : sprite_y;
+        const uint8_t* row = sp.pixels + (source_y < 8 ? source_y : source_y + 8);
+        for (int x = 0; x < 16; x++) {
+            const int target_x = sp.sx + x;
+            if (target_x >= 256) continue;
+            const int source_x = sp.flip_x ? 15 - x : x;
+            const uint8_t pen = char_pen(row, size_t(source_x < 8 ? 0 : 8), source_x & 7);
+            if (pen != 0) line[target_x] = uint8_t(sp.color + pen);
         }
     }
 }
 
 void TaitoSJ::update_video() {
-    for (int bank = 0; bank < 2; bank++) {
-        if (!rechars_[size_t(bank)]) continue;
-        decode_chars(bank);
-        rechars_[size_t(bank)] = false;
+    // What each of the four priority slots draws this frame.
+    LayerFrame layers[3];
+    bool layer_on[3] = {false, false, false};
+    if ((video_mode_ & 0x10) != 0) {
+        uint16_t x = scroll_[0];
+        x = uint16_t((x & 0xf8) + ((x + 3) & 7) + pos_x_[0]);
+        layers[0] = layer_frame(0, x, scroll_[1], 0);
+        layer_on[0] = true;
     }
-
-    for (int layer = 0; layer < 3; layer++) {
-        if ((video_mode_ & (0x10 << layer)) != 0) draw_layer(layer);
+    if ((video_mode_ & 0x20) != 0) {
+        uint16_t x = scroll_[2];
+        x = uint16_t((x & 0xf8) + ((x + 1) & 7) + pos_x_[1]);
+        layers[1] = layer_frame(1, x, scroll_[3], 32);
+        layer_on[1] = true;
     }
-
-    screen_.fill(uint8_t((colorbank_[1] & 0x07) << 3));
-    for (int slot = 0; slot < 4; slot++) {
-        switch (draw_order_[size_t(video_priority_ & 0x1f)][size_t(slot)]) {
-            case 0:
-                if ((video_mode_ & 0x80) != 0) draw_sprites();
-                break;
-            case 1:
-                if ((video_mode_ & 0x10) != 0) {
-                    uint16_t x = scroll_[0];
-                    x = uint16_t((x & 0xf8) + ((x + 3) & 7) + pos_x_[0]);
-                    blit_layer(0, x, scroll_[1], 0);
-                }
-                break;
-            case 2:
-                if ((video_mode_ & 0x20) != 0) {
-                    uint16_t x = scroll_[2];
-                    x = uint16_t((x & 0xf8) + ((x + 1) & 7) + pos_x_[1]);
-                    blit_layer(1, x, scroll_[3], 32);
-                }
-                break;
-            case 3:
-                if ((video_mode_ & 0x40) != 0) {
-                    uint16_t x = scroll_[4];
-                    x = uint16_t((x & 0xf8) + ((x - 1) & 7) + pos_x_[2]);
-                    blit_layer(2, x, scroll_[5], 64);
-                }
-                break;
-            default: break;
-        }
+    if ((video_mode_ & 0x40) != 0) {
+        uint16_t x = scroll_[4];
+        x = uint16_t((x & 0xf8) + ((x - 1) & 7) + pos_x_[2]);
+        layers[2] = layer_frame(2, x, scroll_[5], 64);
+        layer_on[2] = true;
     }
+    std::array<SpriteFrame, 32> sprites;
+    const int sprite_count = (video_mode_ & 0x80) != 0 ? sprite_frame(sprites) : 0;
+    const auto& order = draw_order_[size_t(video_priority_ & 0x1f)];
+    const uint8_t background = uint8_t((colorbank_[1] & 0x07) << 3);
 
     // Jungle King runs its monitor rotated 180 degrees.
     const bool rotate = variant_ == Variant::JungleKing;
     const bool flip_x = ((video_mode_ & 0x01) != 0) != rotate;
     const bool flip_y = ((video_mode_ & 0x02) != 0) != rotate;
+    uint8_t line[256];
     for (int y = 0; y < kScreenHeight; y++) {
-        for (int x = 0; x < kScreenWidth; x++) {
-            const uint8_t pen = screen_[size_t((y + 16) * 256 + x)];
-            const int target_x = flip_x ? kScreenWidth - 1 - x : x;
-            const int target_y = flip_y ? kScreenHeight - 1 - y : y;
-            framebuffer_[size_t(target_y * kScreenWidth + target_x)] = palette_[pen & 0x3f];
+        std::fill(line, line + 256, background);
+        for (int slot = 0; slot < 4; slot++) {
+            const int what = order[size_t(slot)];
+            if (what == 0) draw_sprites_row(sprites.data(), sprite_count, y, line);
+            else if (what <= 3 && layer_on[what - 1]) blit_layer_row(layers[what - 1], y, line);
         }
+        if (flip_x) std::reverse(line, line + 256);
+        const int target_y = flip_y ? kScreenHeight - 1 - y : y;
+        std::copy(line, line + 256, screen_.begin() + long(target_y) * kScreenWidth);
     }
+}
+
+const uint32_t* TaitoSJ::framebuffer() const {
+    framebuffer_.resize(screen_.size());
+    for (size_t i = 0; i < screen_.size(); ++i) framebuffer_[i] = palette_[screen_[i] & 0x3f];
+    return framebuffer_.data();
 }
 
 void TaitoSJ::run_frame() {
@@ -636,7 +634,7 @@ void TaitoSJ::run_frame() {
     for (int line = 0; line < kScanlines; line++) {
         if (line == 240) {
             main_cpu_.set_irq(IrqLine::Hold);
-            update_video();
+            if (draw_enabled_) update_video();
         }
         main_cpu_.run(main_cycles);
         sound_cpu_.run(sound_cycles);

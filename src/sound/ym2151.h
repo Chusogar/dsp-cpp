@@ -14,6 +14,10 @@ public:
     static constexpr int kSampleRate = 44100;
 
     explicit YM2151(uint32_t clock, float amplitude = 1.0f);
+    // Samples per second update() makes (kSampleRate unless set; resets the
+    // chip's rate-dependent tables).
+    void set_sample_rate(uint32_t rate);
+    uint32_t sample_rate() const { return sample_rate_; }
 
     YM2151(const YM2151&) = delete;
     YM2151& operator=(const YM2151&) = delete;
@@ -118,7 +122,21 @@ private:
     int32_t timer_a_counter_ = 0, timer_b_counter_ = 0;
     uint32_t timer_a_index_ = 0, timer_b_index_ = 0;
 
-    uint32_t freq_[11 * 768] = {};
+    // Phase increments of the 11 x 768 key codes (MAME's freq table): octave
+    // 2 is freq_base_, octaves 0-1 and 3-7 shifts of it, the ends clamped.
+    uint32_t freq_base_[768] = {};
+    uint32_t freq(uint32_t index) const {
+        // index / 768 without a division: 768 = 3 * 256.
+        static constexpr uint8_t kRow[33] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5,
+                                             5, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9, 10, 10, 10};
+        const uint32_t row = kRow[(index >> 8) < 33 ? (index >> 8) : 32];
+        const uint32_t i = index - row * 768;
+        if (row == 0) return (freq_base_[0] >> 2) & 0xffffffc0u;  // = octave 0, key 0
+        if (row >= 9) return freq_base_[767] << 5;                 // = octave 7, key 767
+        const int octave = int(row) - 1;
+        if (octave < 2) return (freq_base_[i] >> (2 - octave)) & 0xffffffc0u;
+        return freq_base_[i] << (octave - 2);
+    }
     int32_t dt1_freq_[8 * 32] = {};
     uint32_t noise_tab_[32] = {};
 

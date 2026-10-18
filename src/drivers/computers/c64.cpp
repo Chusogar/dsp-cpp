@@ -42,8 +42,16 @@ C64::C64()
       vic_(kCpuClock),
       sid_(kCpuClock),
       cia1_(kCpuClock),
-      cia2_(kCpuClock),
-      framebuffer_(size_t(kScreenWidth * kScreenHeight), 0) {
+      cia2_(kCpuClock) {
+    ram_.assign(0x10000, 0);
+    // Blank ROMs until init() loads the real ones.
+    static const uint8_t kNoRoms[0x5000] = {};
+    kernel_rom_ = kNoRoms;
+    basic_rom_ = kNoRoms + 0x2000;
+    char_rom_ = kNoRoms + 0x4000;
+    for (int i = 0; i < 16; ++i) palette_[size_t(i)] = Mos6566::kPalette[i];
+    for (int i = 16; i < 256; ++i) palette_[size_t(i)] = 0xff000000u;
+    // The picture is made by init(), at the size set_picture_limit() asks.
     cpu_.set_memory_handlers(
         [this](uint16_t a) { return read_byte(a); },
         [this](uint16_t a, uint8_t v) { write_byte(a, v); });
@@ -98,31 +106,48 @@ C64::C64()
 }
 
 bool C64::init(const std::string& rom_path, std::string* error) {
-    return load_roms(rom_path, error);
+    // The ROM search (it may read whole files) goes first, then the picture.
+    if (!load_roms(rom_path, error)) return false;
+    if (screen_.empty()) screen_.assign(size_t((width_ + 1) / 2) * size_t(height_), 0);
+    return true;
 }
 
 bool C64::load_roms(const std::string& path, std::string* error) {
     // A directory or a zip (MAME c64.zip or loose kernal/basic/chargen files);
     // files are matched by name or, failing that, by CRC.
+    // Boards that keep the ROMs in flash give them in place; otherwise they
+    // are copied into roms_owned_.
     RomLoader loader;
     if (!loader.open(path, error)) return false;
     std::vector<uint8_t> data;
-    auto need = [&](const char* names, std::initializer_list<uint32_t> crcs, size_t size,
-                    uint8_t* dst, const char* label) {
+    std::vector<uint8_t> owned;  // made only if a ROM is not mapped
+    bool all_mapped = true;
+    const uint8_t* found[3] = {};
+    auto need = [&](int slot, const char* names, std::initializer_list<uint32_t> crcs, size_t size,
+                    size_t offset, const char* label) {
+        found[slot] = loader.map({names, uint32_t(size), 0, 0});
+        if (found[slot] != nullptr) return true;
+        all_mapped = false;
         if (!loader.find(names, crcs, size, data)) {
             if (error) *error = std::string("missing C64 ROM: ") + label + " (" + names + ")";
             return false;
         }
-        std::memcpy(dst, data.data(), size);
+        if (owned.empty()) owned.assign(0x5000, 0);
+        std::memcpy(owned.data() + offset, data.data(), size);
         return true;
     };
-    if (!need("901227-03.u4|kernal.rom|kernal.bin|kernal|kernal-901227-03.bin",
-              {0xdbe3e7c7, 0xa5c687b3, 0xdce782fa}, 0x2000, kernel_rom_.data(), "KERNAL") ||
-        !need("901226-01.u3|basic.rom|basic.bin|basic|basic-901226-01.bin", {0xf833d117}, 0x2000,
-              basic_rom_.data(), "BASIC") ||
-        !need("901225-01.u5|chargen.rom|chargen.bin|chargen|characters-901225-01.bin",
-              {0xec4272ee}, 0x1000, char_rom_.data(), "CHARGEN"))
+    if (!need(0, "901227-03.u4|kernal.rom|kernal.bin|kernal|kernal-901227-03.bin",
+              {0xdbe3e7c7, 0xa5c687b3, 0xdce782fa}, 0x2000, 0, "KERNAL") ||
+        !need(1, "901226-01.u3|basic.rom|basic.bin|basic|basic-901226-01.bin", {0xf833d117}, 0x2000,
+              0x2000, "BASIC") ||
+        !need(2, "901225-01.u5|chargen.rom|chargen.bin|chargen|characters-901225-01.bin",
+              {0xec4272ee}, 0x1000, 0x4000, "CHARGEN"))
         return false;
+    (void)all_mapped;
+    roms_owned_ = std::move(owned);
+    kernel_rom_ = found[0] ? found[0] : roms_owned_.data();
+    basic_rom_ = found[1] ? found[1] : roms_owned_.data() + 0x2000;
+    char_rom_ = found[2] ? found[2] : roms_owned_.data() + 0x4000;
 
     // The 1541/1540 DOS ROM is optional: without it the drive cannot answer on
     // the serial bus and disk images fall back to direct injection.
@@ -304,7 +329,8 @@ void C64::reset() {
     if (drive_.rom_loaded()) drive_.reset();
     tape_control_ = 0x10; tape_motor_ = false; keyboard_.fill(0xFF);
     color_ram_.fill(0); audio_.clear(); audio_acc_ = 0;
-    std::fill(framebuffer_.begin(), framebuffer_.end(), Mos6566::kPalette[0]);
+    std::fill(screen_.begin(), screen_.end(), uint8_t(0));
+    framebuffer_stale_ = true;
 }
 
 uint8_t C64::cia1_portb_r() {
@@ -383,7 +409,7 @@ void C64::on_cycles(int cycles) {
     cia1_.tick(cycles);
     cia2_.tick(cycles);
     if (drive_.rom_loaded()) drive_.run(cycles);
-    audio_acc_ += int64_t(cycles) * kSampleRate;
+    audio_acc_ += int64_t(cycles) * sample_rate_;
     while (audio_acc_ >= int64_t(kCpuClock)) {
         audio_acc_ -= int64_t(kCpuClock);
         int32_t s = sid_.update();
@@ -393,17 +419,59 @@ void C64::on_cycles(int cycles) {
     }
 }
 
+void C64::set_picture_limit(int width, int height) {
+    width_ = std::min(std::max(width, 1), int(kScreenWidth));
+    height_ = std::min(std::max(height, 1), int(kScreenHeight));
+    // Centred on the 320x200 text area, which starts at (48, 35).
+    crop_x_ = std::min(std::max(48 - (width_ - 320) / 2, 0), int(kScreenWidth) - width_);
+    crop_y_ = std::min(std::max(35 - (height_ - 200) / 2, 0), int(kScreenHeight) - height_);
+    // The full-size picture goes; init() makes the smaller one after the
+    // larger blocks (RAM, ROM search).
+    screen_.clear();
+    screen_.shrink_to_fit();
+    framebuffer_.clear();
+    framebuffer_.shrink_to_fit();
+    framebuffer_stale_ = true;
+}
+
+const uint32_t* C64::framebuffer() const {
+    if (framebuffer_stale_) {
+        framebuffer_.assign(size_t(width_) * size_t(height_), palette_[0]);
+        if (screen_.empty()) {  // before init()
+            framebuffer_stale_ = false;
+            return framebuffer_.data();
+        }
+        const size_t stride = size_t((width_ + 1) / 2);
+        for (int y = 0; y < height_; ++y) {
+            const uint8_t* src = screen_.data() + size_t(y) * stride;
+            uint32_t* dst = framebuffer_.data() + size_t(y) * size_t(width_);
+            for (int x = 0; x < width_; ++x)
+                dst[x] = palette_[(src[x >> 1] >> ((x & 1) * 4)) & 15];
+        }
+        framebuffer_stale_ = false;
+    }
+    return framebuffer_.data();
+}
+
 void C64::run_frame() {
     update_pending_prg();
+    framebuffer_stale_ = true;
     // The VIC-II always advances through all 312 PAL raster lines. A badline
     // steals 40 CPU bus cycles, but those 40 cycles are still real C64 time:
     // CIA timers, SID, tape, IEC and the raster clock must advance during them.
     for (int line = 0; line < kScanlines; ++line) {
         int cpu_cycles = kCyclesPerLine;
         const int vis_y = line - 16;
-        uint32_t* row = (vis_y >= 0 && vis_y < kScreenHeight)
-                            ? framebuffer_.data() + size_t(vis_y) * kScreenWidth : nullptr;
-        const int stolen = vic_.update_line(line, row);
+        const bool shown = vis_y >= 0 && vis_y < kScreenHeight;
+        const int stolen = vic_.update_line(line, shown ? line_pixels_.data() : nullptr);
+        // The row goes into the picture whole, two pixels a byte.
+        const int y = vis_y - crop_y_;
+        if (shown && y >= 0 && y < height_ && !screen_.empty()) {
+            uint8_t* dst = screen_.data() + size_t(y) * size_t((width_ + 1) / 2);
+            const uint8_t* src = line_pixels_.data() + crop_x_;
+            for (int x = 0; x + 1 < width_; x += 2) *dst++ = uint8_t(src[x] | (src[x + 1] << 4));
+            if (width_ & 1) *dst = src[width_ - 1];
+        }
         cpu_cycles -= stolen;
         if (cpu_cycles < 0) cpu_cycles = 0;
 

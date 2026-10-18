@@ -28,7 +28,7 @@ def add_options(p):
     p.add_argument("--panel", choices=["ili9341", "st7789"], default="ili9341",
                    help="display controller: ili9341 (ESP32-2432S028R) or st7789 (CYD2USB)")
     p.add_argument("--invert", dest="invert", action="store_true", default=None,
-                   help="turn display inversion on (default: on for st7789, off for ili9341)")
+                   help="turn display inversion on (default: off)")
     p.add_argument("--no-invert", dest="invert", action="store_false")
     p.add_argument("--swap-colours", action="store_true",
                    help="swap red and blue (RGB/BGR order) when the colours look wrong")
@@ -47,9 +47,11 @@ def add_options(p):
 
 def config(args):
     st7789 = args.panel == "st7789"
-    invert = args.invert if args.invert is not None else st7789
-    # ILI9341 panels of the CYD are BGR, the ST7789 ones RGB; --swap-colours swaps them.
-    bgr = (not st7789) != args.swap_colours
+    # Inversion off and BGR order: right on the ESP32-2432S028R (ILI9341) and on
+    # a 2-USB ESP32-2432S028 tried with the st7789 set-up. Other ST7789 panels
+    # may want --invert and/or --swap-colours.
+    invert = args.invert if args.invert is not None else False
+    bgr = not args.swap_colours
     x0, x1, y0, y1 = (int(v) for v in args.touch_cal.split(","))
     a, b, start, select = (int(v) for v in args.buttons.split(","))
     miso, mosi, clk, cs = (int(v) for v in args.sd_pins.split(","))

@@ -293,6 +293,28 @@ void Via6522::tick(int cycles) {
     // Close any pulse opened during the previous cycle before advancing.
     if (ca2_pulse_restore_) { ca2_pulse_restore_ = false; output_ca2(true); }
     if (cb2_pulse_restore_) { cb2_pulse_restore_ = false; output_cb2(true); }
+    if (shift_count_ == 0) {
+        // No shift register work: run the timers in jumps up to the next
+        // cycle on which one of them reaches 0 (each cycle in order, as
+        // below: a timer at 0 acts, otherwise it counts down).
+        const bool t1_on = t1_active_;
+        const bool t2_on = t2_active_ && !t2_count_pb6(acr_);
+        while (cycles > 0) {
+            int n = cycles;
+            if (t1_on && int(t1_) < n) n = t1_;
+            if (t2_on && int(t2_) < n) n = t2_;
+            if (n == 0) {
+                tick_t1();
+                tick_t2();
+                --cycles;
+                continue;
+            }
+            if (t1_on) t1_ = uint16_t(t1_ - n);
+            if (t2_on) t2_ = uint16_t(t2_ - n);
+            cycles -= n;
+        }
+        return;
+    }
     for (int i = 0; i < cycles; i++) {
         tick_t1();
         tick_t2();

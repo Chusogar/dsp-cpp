@@ -21,6 +21,12 @@ constexpr int kMdvTapePairs = kMdvSectors * kMdvPairsPerSector;
 constexpr int kMdvBitRate = 100000;
 
 // One Sinclair Microdrive: QLAY tape timeline + daisy-chain motor select.
+//
+// The tape is worked out from the 174930-byte QLAY image as it goes past the
+// head (sector headers and blocks, erased gaps between them), not stored as a
+// tape: the image can stay where it is (read in place on boards that map
+// their files, e.g. from flash), and only the sectors the QL writes to get a
+// copy of their tape (~1 KB each).
 class QlMicrodrive {
 public:
     QlMicrodrive();
@@ -45,13 +51,16 @@ public:
     int gap() const;
 
 private:
-    void tape_from_qlay(const uint8_t* image);
-    void ensure_tape();
+    struct Pair {
+        uint8_t left, right, erased;
+    };
+    Pair pair_at(int pair) const;
+    Pair& written_pair(int pair);  // the sector's own copy, made on the first write
 
     std::function<uint16_t()> tx_pop_cb_;
-    std::vector<uint8_t> left_;
-    std::vector<uint8_t> right_;
-    std::vector<uint8_t> erased_;
+    const uint8_t* image_ = nullptr;
+    std::vector<uint8_t> image_owned_;
+    std::vector<std::vector<Pair>> written_;  // per sector, empty until written
     bool loaded_ = false;
     bool clk_ = false;
     bool comms_in_ = false;

@@ -175,6 +175,8 @@ const std::vector<RomEntry> kRoadProms = {
     {"136040-125.5a|136040.125|136040-125", 0x200, 0x200, 0xa9ca8795},
 };
 
+// The layouts the tiles used to be decoded with (GfxSet), kept to check
+// tile_row() against them (debug_tiles_match()).
 GfxLayout char_layout() {
     GfxLayout layout;
     layout.width = 8;
@@ -233,27 +235,38 @@ uint8_t pal4bit_intensity(uint16_t bits, uint16_t intensity) {
     return uint8_t((bits & 0x0f) * kTable[intensity & 0x0f]);
 }
 
-bool load_16w(RomLoader& loader, const std::vector<RomEntry>& entries, std::vector<uint16_t>& words,
-              std::string* error) {
-    uint32_t needed = 0;
-    for (const RomEntry& entry : entries) {
-        needed = std::max(needed, (entry.offset & ~1u) + entry.length * 2);
-    }
-    std::vector<uint8_t> temp(needed, 0);
-    for (const RomEntry& entry : entries) {
-        std::vector<uint8_t> data(entry.length, 0);
-        RomEntry single{entry.name, entry.length, 0, entry.crc};
-        if (!loader.load({single}, data, error)) return false;
-        for (uint32_t i = 0; i < entry.length; i++) {
-            temp[(entry.offset & ~1u) + i * 2 + (entry.offset & 1u)] = data[i];
-        }
-    }
-    words.assign(needed / 2, 0);
-    for (uint32_t i = 0; i + 1 < needed; i += 2) {
-        words[i >> 1] = uint16_t((temp[i] << 8) | temp[i + 1]);
-    }
-    return true;
+// 8 pixels of a byte, one a byte of the result (bit 7 = first pixel).
+constexpr uint64_t spread_bits(unsigned b) {
+    uint64_t r = 0;
+    for (int x = 0; x < 8; ++x) r |= uint64_t((b >> (7 - x)) & 1) << (8 * x);
+    return r;
 }
+struct SpreadTable {
+    uint64_t value[256];
+};
+constexpr SpreadTable make_spread() {
+    SpreadTable t{};
+    for (unsigned b = 0; b < 256; ++b) t.value[b] = spread_bits(b);
+    return t;
+}
+constexpr SpreadTable kSpread = make_spread();
+
+// The 2bpp alphanumerics: one ROM byte -> its 4 pens (pixel 0 in the low
+// byte): plane 0 (the pen's MSB) in the high nibble, plane 1 in the low.
+struct CharPens {
+    uint32_t value[256];
+};
+constexpr CharPens make_char_pens() {
+    CharPens t{};
+    for (unsigned b = 0; b < 256; ++b) {
+        uint32_t v = 0;
+        for (int xx = 0; xx < 4; ++xx)
+            v |= uint32_t((((b >> (7 - xx)) & 1) << 1) | ((b >> (3 - xx)) & 1)) << (8 * xx);
+        t.value[b] = v;
+    }
+    return t;
+}
+constexpr CharPens kCharPens = make_char_pens();
 
 bool try_open_loader(RomLoader& loader, const std::string& path) {
     std::string ignored;
@@ -271,10 +284,15 @@ AtariSystem1::AtariSystem1(Game game)
       via_(kSoundClock),
       tms_(kAtariClock / 2 / 11),
       slapstic_(105, &main_cpu_) {
-    alpha_.assign(size_t(kAlphaWidth) * kAlphaHeight, kTransparent);
-    playfield_.assign(size_t(kPlayfieldWidth) * kPlayfieldHeight, 0);
-    pf_index_.assign(size_t(kScreenWidth) * kScreenHeight, 0);
-    framebuffer_.assign(size_t(kScreenWidth) * kScreenHeight, 0xff000000u);
+    // The picture is made by init(), at the size set_picture_limit() asks.
+    ram_.assign(0x1000, 0);
+    ram3_.assign(0x2000, 0);
+    eeprom_.assign(0x800, 0);
+    sound_ram_.assign(0x1000, 0);
+    palette_ram_.assign(0x400, 0);
+    band_.assign(size_t(kBandLines) * kScreenWidth, 0);
+    ram2_.resize(0x100000 / 0x1000);
+    slot_palette_.fill(0xff000000u);
 
     main_cpu_.set_memory_handlers([this](uint32_t address) { return main_read(address); },
                                   [this](uint32_t address, uint16_t value) {
@@ -307,8 +325,12 @@ AtariSystem1::AtariSystem1(Game game)
             tms_.set_clock(kAtariClock / 2 / uint32_t(16 - div));
         });
 
+    AtariMotionObjects::Config mo = motion_config();
+    mo.code_lookup_table = false;  // codes come from motable_ (code_lookup_fn below)
     motion_objects_ = std::make_unique<AtariMotionObjects>(
-        motion_config(), nullptr, &ram3_[0x2000 >> 1], kScreenWidth + 8, kScreenHeight + 8);
+        mo, nullptr, &ram3_[0x2000 >> 1], kScreenWidth + 8, kScreenHeight + 8);
+    motion_objects_->set_code_lookup_fn(
+        [this](int raw) { return int((raw & 0xff) | ((motable_[size_t(raw >> 8) & 0xff] & 0xff) << 8)); });
 }
 
 const char* AtariSystem1::title() const {
@@ -332,8 +354,9 @@ bool AtariSystem1::via_selected(uint16_t address) const {
 }
 
 bool AtariSystem1::init(const std::string& rom_path, std::string* error) {
+    if (screen_.empty()) screen_.assign(size_t(width_) * size_t(height_), 0);
     if (!load_roms(rom_path, error)) return false;
-    eeprom_.fill(0xff);
+    std::fill(eeprom_.begin(), eeprom_.end(), uint8_t(0xff));
     reset();
     return true;
 }
@@ -350,29 +373,58 @@ bool AtariSystem1::load_roms(const std::string& rom_path, std::string* error) {
                                                      : fs::path("atarisy1.zip");
     if (try_open_loader(bios_loader, sibling.string())) bios_separate = true;
 
-    auto load_bytes = [&](const std::vector<RomEntry>& entries, std::vector<uint8_t>& dest) -> bool {
+    owned_roms_.clear();
+    // One ROM file, in place when the board maps it, else loaded.
+    auto rom_file = [&](const RomEntry& entry) -> const uint8_t* {
+        const RomEntry single{entry.name, entry.length, 0, entry.crc};
+        if (const uint8_t* mapped = game_loader.map(single)) return mapped;
+        if (bios_separate)
+            if (const uint8_t* mapped = bios_loader.map(single)) return mapped;
+        std::vector<uint8_t> data(entry.length, 0);
         std::string attempt;
-        if (game_loader.load(entries, dest, &attempt)) return true;
-        if (bios_separate && bios_loader.load(entries, dest, &attempt)) return true;
-        if (error) *error = attempt;
-        return false;
+        if (!game_loader.load({single}, data, &attempt) &&
+            !(bios_separate && bios_loader.load({single}, data, &attempt))) {
+            if (error) *error = attempt;
+            return nullptr;
+        }
+        owned_roms_.push_back(std::move(data));
+        return owned_roms_.back().data();
     };
-    auto load_words = [&](const std::vector<RomEntry>& entries, std::vector<uint16_t>& dest) -> bool {
-        std::string attempt;
-        if (load_16w(game_loader, entries, dest, &attempt)) return true;
-        if (bios_separate && load_16w(bios_loader, entries, dest, &attempt)) return true;
-        if (error) *error = attempt;
-        return false;
+    // 68000 code: the entries' offsets are byte addresses of the image, the
+    // low bit choosing the high (even) or low (odd) byte of each word.
+    struct Chip {
+        uint32_t base, length;
+        bool odd;
+        const uint8_t* data;
+    };
+    auto load_chips = [&](const std::vector<RomEntry>& entries, std::vector<Chip>& chips) {
+        for (const RomEntry& entry : entries) {
+            const uint8_t* data = rom_file(entry);
+            if (data == nullptr) return false;
+            chips.push_back({entry.offset & ~1u, entry.length, (entry.offset & 1u) != 0, data});
+        }
+        return true;
+    };
+    // The 4 KB page of the image at `offset`, from the chips holding it.
+    auto page_of = [](const std::vector<Chip>& chips, uint32_t offset) {
+        RomPair pair;
+        for (const Chip& c : chips) {
+            if (offset < c.base || offset + 0x1000 > c.base + c.length * 2) continue;
+            const uint8_t* p = c.data + (offset - c.base) / 2;
+            (c.odd ? pair.odd : pair.even) = p;
+        }
+        if (pair.even == nullptr || pair.odd == nullptr) return RomPair{};
+        return pair;
     };
 
-    std::vector<uint16_t> bios;
-    if (!load_words(kBiosRoms, bios)) return false;
-    for (size_t i = 0; i < bios.size() && i < rom_.size(); i++) rom_[i] = bios[i];
+    std::vector<Chip> bios;
+    if (!load_chips(kBiosRoms, bios)) return false;
+    main_pages_.fill(RomPair{});
+    for (uint32_t a = 0; a < 0x10000; a += 0x1000) main_pages_[a >> 12] = page_of(bios, a);
 
-    std::vector<uint8_t> char_rom(0x2000, 0);
-    if (!load_bytes(kCharRoms, char_rom)) return false;
-    chars_.decode(char_layout(), char_rom);
-    gfx_[0] = chars_;
+    char_rom_ = nullptr;
+    for (const RomEntry& entry : kCharRoms) char_rom_ = rom_file(entry);
+    if (char_rom_ == nullptr) return false;
 
     const std::vector<RomEntry>* program = nullptr;
     const std::vector<RomEntry>* sound = nullptr;
@@ -427,39 +479,57 @@ bool AtariSystem1::load_roms(const std::string& rom_path, std::string* error) {
             break;
     }
 
-    std::vector<uint16_t> game_words;
-    if (!load_words(*program, game_words)) return false;
+    std::vector<Chip> game;
+    if (!load_chips(*program, game)) return false;
     if (absolute_program) {
-        // Keep the System 1 BIOS at $00000; overlay cart program at MAME offsets.
-        for (size_t i = 0x10000 / 2; i < game_words.size() && i < rom_.size(); i++) {
-            rom_[i] = game_words[i];
-        }
+        // Keep the System 1 BIOS at $00000; the cart program at MAME offsets.
+        for (uint32_t a = 0x10000; a < 0x80000; a += 0x1000) main_pages_[a >> 12] = page_of(game, a);
     } else {
-        const size_t copy_words = std::min(size_t(program_bytes / 2), game_words.size());
-        for (size_t i = 0; i < copy_words; i++) rom_[(0x10000 >> 1) + i] = game_words[i];
+        for (uint32_t g = 0; g < program_bytes && 0x10000 + g < 0x80000; g += 0x1000)
+            main_pages_[(0x10000 + g) >> 12] = page_of(game, g);
     }
     slapstic_.set_type(slapstic_type);
-    for (int bank = 0; bank < 4; bank++) {
-        for (int i = 0; i < 0x1000; i++) {
-            const size_t src = size_t(slapstic_word) + size_t(bank) * 0x1000 + size_t(i);
-            slapstic_rom_[size_t(bank)][size_t(i)] = src < game_words.size() ? game_words[src] : 0;
-        }
-    }
+    for (uint32_t page = 0; page < slapstic_pages_.size(); page++)
+        slapstic_pages_[page] = page_of(game, slapstic_word * 2 + page * 0x1000);
+    // The 68000 reads the plain ROM pages itself.
+    for (uint32_t page = 0; page < main_pages_.size(); page++)
+        main_cpu_.set_direct_page_pair(page, main_pages_[page].even, main_pages_[page].odd);
 
-    std::vector<uint8_t> sound_rom(0x10000, 0);
-    if (!load_bytes(*sound, sound_rom)) return false;
-    std::copy(sound_rom.begin(), sound_rom.end(), sound_memory_.begin());
+    sound_rom_.fill(nullptr);
+    for (const RomEntry& entry : *sound) {
+        const uint8_t* data = rom_file(entry);
+        if (data == nullptr) return false;
+        sound_rom_[(entry.offset >> 14) & 3] = data;
+    }
+    // The 6502 reads its ROM and RAM ($0000-$0FFF, mirrored at $2000) itself.
+    for (int page = 0x40; page < 0x100; ++page)
+        if (const uint8_t* rom = sound_rom_[size_t(page >> 6)])
+            sound_cpu_.set_direct_page(uint8_t(page), rom + size_t(page & 0x3f) * 0x100, nullptr);
+    for (int page = 0; page < 0x10; ++page) {
+        uint8_t* ram = sound_ram_.data() + size_t(page) * 0x100;
+        sound_cpu_.set_direct_page(uint8_t(page), ram, ram);
+        sound_cpu_.set_direct_page(uint8_t(0x20 + page), ram, ram);
+    }
 
     std::vector<uint8_t> proms_data(0x400, 0);
-    if (!load_bytes(*proms, proms_data)) return false;
-    std::vector<uint8_t> gfx_rom(gfx_bytes, 0xff);
-    if (!load_bytes(*back, gfx_rom)) return false;
-    convert_background(gfx_rom, proms_data);
-
-    std::vector<uint16_t>& codes = motion_objects_->code_lookup();
-    for (size_t i = 0; i < codes.size(); i++) {
-        codes[i] = uint16_t((i & 0xff) | ((motable_[i >> 8] & 0xff) << 8));
+    {
+        std::string attempt;
+        if (!game_loader.load(*proms, proms_data, &attempt) &&
+            !(bios_separate && bios_loader.load(*proms, proms_data, &attempt))) {
+            if (error) *error = attempt;
+            return false;
+        }
     }
+    gfx_bytes_ = gfx_bytes;
+    gfx_chunks_.assign(gfx_bytes / 0x4000, nullptr);
+    for (const RomEntry& entry : *back) {
+        const uint8_t* data = rom_file(entry);
+        if (data == nullptr) return false;
+        for (uint32_t o = 0; o < entry.length; o += 0x4000)
+            if ((entry.offset + o) / 0x4000 < gfx_chunks_.size()) gfx_chunks_[(entry.offset + o) / 0x4000] = data + o;
+    }
+    convert_background(proms_data);
+
     std::vector<uint16_t>& colors = motion_objects_->color_lookup();
     std::vector<uint8_t>& gfxs = motion_objects_->gfx_lookup();
     for (size_t i = 0; i < colors.size() && i < 256; i++) {
@@ -479,8 +549,7 @@ bool AtariSystem1::load_roms(const std::string& rom_path, std::string* error) {
     return true;
 }
 
-uint8_t AtariSystem1::decode_bank(uint8_t prom1, uint8_t prom2, int bpp,
-                                  const std::vector<uint8_t>& gfx_rom) {
+uint8_t AtariSystem1::decode_bank(uint8_t prom1, uint8_t prom2, int bpp) {
     constexpr uint8_t kProm1Bank1 = 0x10;
     constexpr uint8_t kProm1Bank2 = 0x20;
     constexpr uint8_t kProm1Bank3 = 0x40;
@@ -501,26 +570,33 @@ uint8_t AtariSystem1::decode_bank(uint8_t prom1, uint8_t prom2, int bpp,
     if (bank_gfx_[size_t(bpp - 4)][size_t(bank_index)] != 0) {
         return bank_gfx_[size_t(bpp - 4)][size_t(bank_index)];
     }
-    const size_t offset = size_t(0x80000) * size_t(bank_index - 1);
-    if (offset >= gfx_rom.size()) return 0;
+    const uint32_t offset = 0x80000u * uint32_t(bank_index - 1);
+    if (offset >= gfx_bytes_) return 0;
 
     const uint8_t gfx_index = next_gfx_index_++;
-    if (gfx_index >= gfx_.size()) return 0;
-    std::vector<uint8_t> bank(0x80000, 0xff);
-    const size_t copy = std::min(bank.size(), gfx_rom.size() - offset);
-    std::memcpy(bank.data(), gfx_rom.data() + offset, copy);
-    gfx_[gfx_index].decode(bank_layout(bpp), bank);
+    if (gfx_index >= gfx_bank_.size()) return 0;
+    // Plane k (bit k of the pen) is the 64 KB at offset + k * $10000; a
+    // tile row is one byte of it, 0x1000 tiles of 8 rows fill its first 32 KB.
+    gfx_bank_[gfx_index] = uint8_t(bank_index);
+    gfx_bpp_[gfx_index] = uint8_t(bpp);
+    for (int k = 0; k < 8; k++) {
+        for (int half = 0; half < 2; half++) {
+            const uint32_t at = offset + uint32_t(k) * 0x10000u + uint32_t(half) * 0x4000u;
+            gfx_planes_[gfx_index][size_t(k)][size_t(half)] =
+                (k < bpp && at / 0x4000 < gfx_chunks_.size()) ? gfx_chunks_[at / 0x4000] : nullptr;
+        }
+    }
     bank_gfx_[size_t(bpp - 4)][size_t(bank_index)] = gfx_index;
     bank_color_shift_[gfx_index] = uint8_t(bpp - 3);
     return gfx_index;
 }
 
-void AtariSystem1::convert_background(std::vector<uint8_t>& gfx_rom,
-                                      const std::vector<uint8_t>& proms) {
-    for (uint8_t& byte : gfx_rom) byte = uint8_t(~byte);
+void AtariSystem1::convert_background(const std::vector<uint8_t>& proms) {
     for (auto& row : bank_gfx_) row.fill(0);
     next_gfx_index_ = 1;
     bank_color_shift_.fill(1);
+    gfx_bank_.fill(0);
+    gfx_bpp_.fill(0);
 
     constexpr uint8_t kPlane4 = 0x10;
     constexpr uint8_t kPlane5 = 0x20;
@@ -538,7 +614,7 @@ void AtariSystem1::convert_background(std::vector<uint8_t>& gfx_rom,
                 if (prom2 & kPlane5) bpp = 6;
             }
             const uint8_t offset = uint8_t(prom1 & kOffsetMask);
-            uint8_t bank = decode_bank(prom1, prom2, bpp, gfx_rom);
+            uint8_t bank = decode_bank(prom1, prom2, bpp);
             if (obj == 0) {
                 uint8_t color = uint8_t((uint8_t(~prom2) & kPfColor) >> (bpp - 4));
                 uint8_t used_offset = offset;
@@ -558,6 +634,58 @@ void AtariSystem1::convert_background(std::vector<uint8_t>& gfx_rom,
     }
 }
 
+bool AtariSystem1::debug_tiles_match() const {
+    // The ROM image as the old decode saw it: $FF where no ROM, inverted.
+    std::vector<uint8_t> image(gfx_bytes_);
+    for (size_t i = 0; i < image.size(); i++) {
+        const uint8_t* chunk = gfx_chunks_[i / 0x4000];
+        image[i] = uint8_t(~(chunk ? chunk[i % 0x4000] : 0xff));
+    }
+    std::vector<uint8_t> chars(char_rom_, char_rom_ + 0x2000);
+    GfxSet set;
+    set.decode(char_layout(), chars);
+    uint8_t pens[8];
+    for (int code = 0; code < 0x200; code++)
+        for (int row = 0; row < 8; row++) {
+            tile_row(0, code, row, pens);
+            if (std::memcmp(pens, set.element(code) + row * 8, 8) != 0) return false;
+        }
+    for (int gfx = 1; gfx < next_gfx_index_ && gfx < 16; gfx++) {
+        if (gfx_bank_[size_t(gfx)] == 0) continue;
+        const size_t offset = size_t(0x80000) * size_t(gfx_bank_[size_t(gfx)] - 1);
+        std::vector<uint8_t> bank(image.begin() + std::ptrdiff_t(offset),
+                                  image.begin() + std::ptrdiff_t(offset + 0x80000));
+        set.decode(bank_layout(gfx_bpp_[size_t(gfx)]), bank);
+        for (int code = 0; code < 0x1000; code++)
+            for (int row = 0; row < 8; row++) {
+                tile_row(gfx, code, row, pens);
+                if (std::memcmp(pens, set.element(code) + row * 8, 8) != 0) return false;
+            }
+    }
+    return true;
+}
+
+void AtariSystem1::tile_row(int gfx, int code, int row, uint8_t* pens) const {
+    if (gfx == 0) {
+        // 2bpp alphanumerics: 16 bytes a character, 2 a row; pixels 0-3 from
+        // the first byte, 4-7 from the second, plane 0 (the pen's MSB) in
+        // the high nibble.
+        const uint8_t* r = char_rom_ + size_t(code & 0x1ff) * 16 + size_t(row) * 2;
+        const uint32_t lo = kCharPens.value[r[0]], hi = kCharPens.value[r[1]];
+        std::memcpy(pens, &lo, 4);
+        std::memcpy(pens + 4, &hi, 4);
+        return;
+    }
+    const unsigned at = unsigned(code & 0xfff) * 8 + unsigned(row);
+    uint64_t packed = 0;
+    for (int k = 0; k < gfx_bpp_[size_t(gfx)]; k++) {
+        const uint8_t* plane = gfx_planes_[size_t(gfx)][size_t(k)][at >> 14];
+        const uint8_t b = plane ? uint8_t(~plane[at & 0x3fff]) : 0;
+        packed |= kSpread.value[b] << k;
+    }
+    std::memcpy(pens, &packed, 8);
+}
+
 void AtariSystem1::reset() {
     slapstic_.reset();
     rom_bank_ = slapstic_.current_bank();
@@ -565,6 +693,7 @@ void AtariSystem1::reset() {
     sound_cpu_.reset();
     ym_.reset();
     pokey_.reset();
+    pokey_pending_ = 0;
     via_.reset();
     tms_.reset();
     in0_ = 0xff6f;
@@ -601,12 +730,46 @@ void AtariSystem1::reset() {
     line_ = 0;
     audio_accumulator_ = 0;
     audio_.clear();
-    alpha_dirty_.fill(true);
-    playfield_dirty_.fill(true);
-    std::fill(alpha_.begin(), alpha_.end(), kTransparent);
-    std::fill(playfield_.begin(), playfield_.end(), 0);
-    std::fill(pf_index_.begin(), pf_index_.end(), 0);
-    std::fill(framebuffer_.begin(), framebuffer_.end(), 0xff000000u);
+    slot_of_.fill(0);
+    slots_used_ = 0;
+    slot_palette_.fill(0xff000000u);
+    std::fill(screen_.begin(), screen_.end(), uint8_t(0));
+    framebuffer_stale_ = true;
+}
+
+void AtariSystem1::set_sample_rate_limit(int rate) {
+    if (rate <= 0 || uint32_t(rate) >= YM2151::kSampleRate) return;
+    sample_rate_ = uint32_t(rate);
+    ym_.set_sample_rate(sample_rate_);
+}
+
+void AtariSystem1::set_picture_limit(int width, int height) {
+    width_ = std::min(std::max(width, 1), int(kScreenWidth));
+    height_ = std::min(std::max(height, 1), int(kScreenHeight));
+    crop_x_ = (kScreenWidth - width_) / 2;
+    crop_y_ = (kScreenHeight - height_) / 2;
+    screen_.clear();
+    screen_.shrink_to_fit();
+    screen_.assign(size_t(width_) * size_t(height_), 0);
+    framebuffer_.clear();
+    framebuffer_.shrink_to_fit();
+    framebuffer_stale_ = true;
+}
+
+const uint32_t* AtariSystem1::framebuffer() const {
+    if (framebuffer_stale_) {
+        framebuffer_.resize(screen_.size());
+        for (size_t i = 0; i < screen_.size(); i++) framebuffer_[i] = slot_palette_[screen_[i]];
+        framebuffer_stale_ = false;
+    }
+    return framebuffer_.data();
+}
+
+uint16_t AtariSystem1::rom_word(uint32_t address) const {
+    const RomPair& page = main_pages_[(address >> 12) & 0x7f];
+    if (page.even == nullptr) return 0;
+    const uint32_t i = (address & 0xfff) >> 1;
+    return uint16_t((page.even[i] << 8) | page.odd[i]);
 }
 
 void AtariSystem1::set_sound_reset(bool running) {
@@ -631,15 +794,20 @@ void AtariSystem1::set_sound_reset(bool running) {
 
 uint16_t AtariSystem1::main_read(uint32_t address) {
     address &= 0xffffff;
-    if (address <= 0x7ffff) return rom_[(address >> 1) & 0x3ffff];
+    if (address <= 0x7ffff) return rom_word(address);
     if (address >= 0x80000 && address <= 0x87fff) {
-        const uint16_t value = slapstic_rom_[rom_bank_ & 3][(address & 0x1fff) >> 1];
+        const RomPair& page = slapstic_pages_[size_t(rom_bank_ & 3) * 2 + ((address >> 12) & 1)];
+        const uint32_t i = (address & 0xfff) >> 1;
+        const uint16_t value = page.even ? uint16_t((page.even[i] << 8) | page.odd[i]) : 0;
         rom_bank_ = slapstic_.tweak(uint16_t((address & 0x7fff) >> 1));
         return value;
     }
     if (address == 0x2e0000) return int3_state_ ? 0x0080 : 0;
     if (address >= 0x400000 && address <= 0x401fff) return ram_[(address & 0x1fff) >> 1];
-    if (address >= 0x900000 && address <= 0x9fffff) return ram2_[(address & 0xfffff) >> 1];
+    if (address >= 0x900000 && address <= 0x9fffff) {
+        const auto& page = ram2_[(address & 0xfffff) >> 12];
+        return page ? (*page)[(address & 0xfff) >> 1] : 0;
+    }
     if (address >= 0xa00000 && address <= 0xa03fff) return ram3_[(address & 0x3fff) >> 1];
     if (address >= 0xb00000 && address <= 0xb007ff) return palette_ram_[(address & 0x7ff) >> 1];
     if (address >= 0xf00000 && address <= 0xf00fff) {
@@ -689,10 +857,7 @@ void AtariSystem1::main_write(uint32_t address, uint16_t value) {
     }
     if (address == 0x860000) {
         const uint16_t diff = uint16_t(bankselect_ ^ value);
-        if (diff & 0x04) {
-            playfield_tile_bank_ = uint8_t((value >> 2) & 1);
-            playfield_dirty_.fill(true);
-        }
+        if (diff & 0x04) playfield_tile_bank_ = uint8_t((value >> 2) & 1);
         if (diff & 0x80) set_sound_reset((value & 0x80) != 0);
         motion_objects_->set_bank((value >> 3) & 7);
         bankselect_ = value;
@@ -709,15 +874,13 @@ void AtariSystem1::main_write(uint32_t address, uint16_t value) {
         return;
     }
     if (address >= 0x900000 && address <= 0x9fffff) {
-        ram2_[(address & 0xfffff) >> 1] = value;
+        auto& page = ram2_[(address & 0xfffff) >> 12];
+        if (!page) page = std::make_unique<std::array<uint16_t, 0x800>>();
+        (*page)[(address & 0xfff) >> 1] = value;
         return;
     }
     if (address >= 0xa00000 && address <= 0xa01fff) {
-        const uint16_t offset = uint16_t((address & 0x1fff) >> 1);
-        if (ram3_[offset] != value) {
-            ram3_[offset] = value;
-            playfield_dirty_[offset] = true;
-        }
+        ram3_[(address & 0x1fff) >> 1] = value;
         return;
     }
     if (address >= 0xa02000 && address <= 0xa02fff) {
@@ -735,11 +898,7 @@ void AtariSystem1::main_write(uint32_t address, uint16_t value) {
         return;
     }
     if (address >= 0xa03000 && address <= 0xa03fff) {
-        const uint16_t offset = uint16_t((address & 0xfff) >> 1);
-        if (ram3_[(0x3000 >> 1) + offset] != value) {
-            ram3_[(0x3000 >> 1) + offset] = value;
-            alpha_dirty_[offset] = true;
-        }
+        ram3_[(0x3000 >> 1) + ((address & 0xfff) >> 1)] = value;
         return;
     }
     if (address >= 0xb00000 && address <= 0xb007ff) {
@@ -768,21 +927,28 @@ void AtariSystem1::main_write(uint32_t address, uint16_t value) {
 
 void AtariSystem1::set_palette(int index, uint16_t value) {
     palette_ram_[size_t(index)] = value;
+    palette_set_[size_t(index)] = true;
+}
+
+uint32_t AtariSystem1::palette_colour(int index) const {
+    // Entries never set read as 0 (as the old 32-bit palette table did).
+    if (!palette_set_[size_t(index)]) return 0;
+    const uint16_t value = palette_ram_[size_t(index)];
     const uint16_t intensity = uint16_t(value >> 12);
     const uint8_t red = pal4bit_intensity(uint16_t(value >> 8), intensity);
     const uint8_t green = pal4bit_intensity(uint16_t(value >> 4), intensity);
     const uint8_t blue = pal4bit_intensity(value, intensity);
-    palette_[size_t(index)] =
-        0xff000000u | (uint32_t(red) << 16) | (uint32_t(green) << 8) | uint32_t(blue);
-    if (index < 0x20) alpha_dirty_.fill(true);
-    else playfield_dirty_.fill(true);
+    return 0xff000000u | (uint32_t(red) << 16) | (uint32_t(green) << 8) | uint32_t(blue);
 }
 
 uint8_t AtariSystem1::sound_read(uint16_t address) {
     // MAME: RAM $0000-$0FFF mirrored at $2000; I/O at $1800-$187F with
     // mirrors 0x278e / 0x278f / 0x2780.
-    if ((address & ~0x2000) <= 0x0fff) return sound_memory_[address & 0x0fff];
-    if (address >= 0x4000) return sound_memory_[address];
+    if ((address & ~0x2000) <= 0x0fff) return sound_ram_[address & 0x0fff];
+    if (address >= 0x4000) {
+        const uint8_t* page = sound_rom_[address >> 14];
+        return page ? page[address & 0x3fff] : 0;
+    }
     if (has_speech() && via_selected(address)) return via_.read(uint8_t(address & 0x0f));
     if ((address & ~0x278e) == 0x1800 || (address & ~0x278e) == 0x1801) return ym_.status();
     if ((address & ~0x278f) == 0x1810) {
@@ -797,6 +963,7 @@ uint8_t AtariSystem1::sound_read(uint16_t address) {
         return value;
     }
     if ((address & ~0x2780) >= 0x1870 && (address & ~0x2780) <= 0x187f) {
+        sync_pokey();
         return pokey_.read(address & 0x0f);
     }
     return 0xff;
@@ -804,7 +971,7 @@ uint8_t AtariSystem1::sound_read(uint16_t address) {
 
 void AtariSystem1::sound_write(uint16_t address, uint8_t value) {
     if ((address & ~0x2000) <= 0x0fff) {
-        sound_memory_[address & 0x0fff] = value;
+        sound_ram_[address & 0x0fff] = value;
         return;
     }
     if (has_speech() && via_selected(address)) {
@@ -831,18 +998,38 @@ void AtariSystem1::sound_write(uint16_t address, uint8_t value) {
     const uint16_t outlatch = uint16_t(address & ~0x2788);
     if (outlatch >= 0x1820 && outlatch <= 0x1827) return;
     if ((address & ~0x2780) >= 0x1870 && (address & ~0x2780) <= 0x187f) {
+        sync_pokey();
         pokey_.write(address & 0x0f, value);
+    }
+}
+
+// The POKEY runs in batches: up to the 6502's next access to it or to the
+// end of the instruction on which a sound sample is due (its interrupt line
+// is not wired, so nothing else sees it in between).
+void AtariSystem1::sync_pokey() {
+    if (pokey_pending_ > 0) {
+        pokey_.run(pokey_pending_);
+        pokey_pending_ = 0;
     }
 }
 
 void AtariSystem1::on_sound_cycles(int cycles) {
     ym_.run_timers(cycles * 2);
-    pokey_.run(cycles);
+    pokey_pending_ += cycles;
     if (has_speech()) via_.tick(cycles);
-    const int tms_clocks =
-        int((int64_t(cycles) * int64_t(tms_.clock()) + (kSoundClock / 2)) / kSoundClock);
+    // The TMS5220 clocks in these 6502 cycles, rounded (a table per clock
+    // setting: no division per instruction on a CPU without one).
+    if (tms_.clock() != tms_table_clock_) {
+        tms_table_clock_ = tms_.clock();
+        for (size_t c = 0; c < tms_clocks_.size(); ++c)
+            tms_clocks_[c] = uint16_t((uint64_t(c) * tms_table_clock_ + (kSoundClock / 2)) / kSoundClock);
+    }
+    const int tms_clocks = size_t(cycles) < tms_clocks_.size()
+                               ? tms_clocks_[size_t(cycles)]
+                               : int((int64_t(cycles) * int64_t(tms_.clock()) + (kSoundClock / 2)) / kSoundClock);
     tms_.tick(tms_clocks);
-    audio_accumulator_ += int64_t(cycles) * YM2151::kSampleRate;
+    audio_accumulator_ += int64_t(cycles) * sample_rate_;
+    if (audio_accumulator_ >= kSoundClock) sync_pokey();
     while (audio_accumulator_ >= kSoundClock) {
         audio_accumulator_ -= kSoundClock;
         const int32_t sample = ym_.update() + pokey_.update() + tms_.last_sample();
@@ -850,110 +1037,131 @@ void AtariSystem1::on_sound_cycles(int cycles) {
     }
 }
 
-void AtariSystem1::draw_alpha_tile(int offset) {
-    const int x = offset % 64;
-    const int y = offset / 64;
-    const uint16_t atrib = ram3_[(0x3000 >> 1) + offset];
-    const int color = (atrib >> 10) & 7;
-    const int base = color << 2;
-    const bool opaque = (atrib & 0x2000) != 0;
-    const uint8_t* pixels = chars_.element(atrib & 0x3ff);
+void AtariSystem1::draw_motion_tile(int code, int color, bool hflip, bool vflip, int x, int y,
+                                    int gfx, int priority) {
+    // Only the rows of the band being drawn.
+    if (y + 8 <= band_y0_ || y >= band_y1_) return;
+    const int set = gfx_valid(gfx) && gfx > 0 ? gfx : (gfx_valid(1) ? 1 : 0);
     for (int row = 0; row < 8; row++) {
-        const size_t target = size_t((y * 8 + row) * kAlphaWidth + x * 8);
+        const int ty = y + row;
+        if (ty < band_y0_ || ty >= band_y1_ || ty < 0 || ty >= kScreenHeight) continue;
+        uint8_t pens[8];
+        tile_row(set, code, vflip ? (7 - row) : row, pens);
+        uint16_t* line = band_.data() + size_t(ty - band_y0_) * kScreenWidth;
         for (int column = 0; column < 8; column++) {
-            const uint8_t pen = pixels[row * 8 + column];
-            if (!opaque && pen == 0) alpha_[target + size_t(column)] = kTransparent;
-            else alpha_[target + size_t(column)] = int16_t(base + pen);
+            const int tx = x + column;
+            if (tx < 0 || tx >= kScreenWidth) continue;
+            const uint8_t pen = pens[hflip ? (7 - column) : column];
+            if (pen == 0) continue;
+            const uint16_t mo = uint16_t(((color + pen) & 0x0fff) | ((priority ? 1 : 0) << 12));
+            mix_motion_object_pixel(line[tx], mo);
         }
     }
 }
 
-void AtariSystem1::draw_playfield_tile(int offset) {
-    const int x = offset % 64;
-    const int y = offset / 64;
-    const uint16_t atrib = ram3_[size_t(offset)];
-    const uint16_t lookup =
-        playfield_lookup_[((atrib >> 8) & 0x7f) | (uint16_t(playfield_tile_bank_) << 7)];
-    const int gfx_index = (lookup >> 8) & 0xf;
-    const int shift = bank_color_shift_[size_t(gfx_index)];
-    const int color = 0x20 + ((((lookup >> 12) & 0xf) << shift));
-    // MAME gfx granularity is 8, colorbase 0x100: palette = 0x100 + color * 8.
-    const int base = 0x100 + (color << 3);
-    const int code = ((lookup & 0xff) << 8) | (atrib & 0xff);
-    const bool hflip = (atrib & 0x8000) != 0;
-    const GfxSet& tiles = gfx_[size_t(gfx_index)].total() > 0 ? gfx_[size_t(gfx_index)] : gfx_[1];
-    if (tiles.total() == 0) return;
-    const uint8_t* pixels = tiles.element(code);
-    for (int row = 0; row < 8; row++) {
-        const size_t target = size_t((y * 8 + row) * kPlayfieldWidth + x * 8);
-        for (int column = 0; column < 8; column++) {
-            const int src = hflip ? (7 - column) : column;
-            playfield_[target + size_t(column)] = int16_t(base + pixels[row * 8 + src]);
-        }
-    }
-}
-
-void AtariSystem1::update_video() {
-    for (int offset = 0; offset < 0x800; offset++) {
-        if (!alpha_dirty_[size_t(offset)]) continue;
-        draw_alpha_tile(offset);
-        alpha_dirty_[size_t(offset)] = false;
-    }
-    for (int offset = 0; offset < 0x1000; offset++) {
-        if (!playfield_dirty_[size_t(offset)]) continue;
-        draw_playfield_tile(offset);
-        playfield_dirty_[size_t(offset)] = false;
-    }
-
-    for (int y = 0; y < kScreenHeight; y++) {
+bool AtariSystem1::compose_band(int y0, int y1) {
+    band_y0_ = y0;
+    band_y1_ = y1;
+    // Playfield: 64x64 tiles of 8x8 on a 512x512 map, scrolled per line.
+    for (int y = y0; y < y1; y++) {
+        uint16_t* line = band_.data() + size_t(y - y0) * kScreenWidth;
         const int sx = int(scroll_x_line_[size_t(y)]) & (kPlayfieldWidth - 1);
         const int sy = int(scroll_y_line_[size_t(y)]) & (kPlayfieldHeight - 1);
         const int py = (y + sy) & (kPlayfieldHeight - 1);
-        for (int x = 0; x < kScreenWidth; x++) {
+        int x = 0;
+        while (x < kScreenWidth) {
             const int px = (x + sx) & (kPlayfieldWidth - 1);
-            pf_index_[size_t(y * kScreenWidth + x)] =
-                uint16_t(playfield_[size_t(py * kPlayfieldWidth + px)] & 0x3ff);
+            const int offset = (py >> 3) * 64 + (px >> 3);
+            const uint16_t atrib = ram3_[size_t(offset)];
+            const uint16_t lookup =
+                playfield_lookup_[((atrib >> 8) & 0x7f) | (uint16_t(playfield_tile_bank_) << 7)];
+            int gfx_index = (lookup >> 8) & 0xf;
+            const int shift = bank_color_shift_[size_t(gfx_index)];
+            const int color = 0x20 + ((((lookup >> 12) & 0xf) << shift));
+            // MAME gfx granularity is 8, colorbase 0x100: palette = 0x100 + color * 8.
+            const int base = 0x100 + (color << 3);
+            const int code = ((lookup & 0xff) << 8) | (atrib & 0xff);
+            const bool hflip = (atrib & 0x8000) != 0;
+            if (!gfx_valid(gfx_index) || gfx_index == 0) gfx_index = 1;
+            uint8_t pens[8];
+            tile_row(gfx_index, code, py & 7, pens);
+            if (hflip) std::reverse(pens, pens + 8);
+            const int first = px & 7;
+            const int count = std::min(8 - first, kScreenWidth - x);
+            for (int column = 0; column < count; column++)
+                line[x + column] = uint16_t((base + pens[first + column]) & 0x3ff);
+            x += count;
         }
     }
 
     motion_objects_->draw(0, 256, -1,
-                          [this](int code, int color, bool hflip, bool vflip, int x, int y,
-                                 int gfx, int priority) {
-                              const GfxSet& tiles =
-                                  (gfx > 0 && gfx < int(gfx_.size()) && gfx_[size_t(gfx)].total() > 0)
-                                      ? gfx_[size_t(gfx)]
-                                      : (gfx_[1].total() > 0 ? gfx_[1] : chars_);
-                              if (tiles.total() == 0) return;
-                              const uint8_t* pixels = tiles.element(code);
-                              for (int row = 0; row < 8; row++) {
-                                  const int ty = y + row;
-                                  if (ty < 0 || ty >= kScreenHeight) continue;
-                                  const int src_row = vflip ? (7 - row) : row;
-                                  for (int column = 0; column < 8; column++) {
-                                      const int tx = x + column;
-                                      if (tx < 0 || tx >= kScreenWidth) continue;
-                                      const int src_col = hflip ? (7 - column) : column;
-                                      const uint8_t pen = pixels[src_row * 8 + src_col];
-                                      if (pen == 0) continue;
-                                      const uint16_t mo = uint16_t(((color + pen) & 0x0fff) |
-                                                                   ((priority ? 1 : 0) << 12));
-                                      mix_motion_object_pixel(tx, ty, mo);
-                                  }
-                              }
+                          [this](int code, int color, bool hflip, bool vflip, int x, int y, int gfx,
+                                 int priority) {
+                              draw_motion_tile(code, color, hflip, vflip, x, y, gfx, priority);
                           });
 
-    for (int y = 0; y < kScreenHeight; y++) {
-        for (int x = 0; x < kScreenWidth; x++) {
-            const int16_t character = alpha_[size_t(y * kAlphaWidth + x)];
-            uint16_t index = pf_index_[size_t(y * kScreenWidth + x)];
-            if (character != kTransparent) index = uint16_t(character & 0x3ff);
-            framebuffer_[size_t(y * kScreenWidth + x)] = palette_[size_t(index) & 0x3ff];
+    // Alphanumerics over the top, then each palette entry gets its slot.
+    bool fits = true;
+    for (int y = y0; y < y1; y++) {
+        uint16_t* line = band_.data() + size_t(y - y0) * kScreenWidth;
+        for (int cx = 0; cx < kScreenWidth / 8; cx++) {
+            const uint16_t atrib = ram3_[size_t(0x3000 >> 1) + size_t((y >> 3) * 64 + cx)];
+            const bool opaque = (atrib & 0x2000) != 0;
+            const uint8_t* r = char_rom_ + size_t(atrib & 0x1ff) * 16 + size_t(y & 7) * 2;
+            if (!opaque && r[0] == 0 && r[1] == 0) continue;  // all clear
+            const int base = ((atrib >> 10) & 7) << 2;
+            uint8_t pens[8];
+            tile_row(0, atrib & 0x3ff, y & 7, pens);
+            uint16_t* cell = line + cx * 8;
+            for (int column = 0; column < 8; column++) {
+                const uint8_t pen = pens[column];
+                if (opaque || pen != 0) cell[column] = uint16_t((base + pen) & 0x3ff);
+            }
+        }
+        const int out_y = y - crop_y_;
+        if (out_y < 0 || out_y >= height_) continue;
+        uint8_t* dst = screen_.data() + size_t(out_y) * size_t(width_);
+        const uint16_t* src = line + crop_x_;
+        for (int x = 0; x < width_; x++) {
+            const uint16_t index = src[x];
+            uint16_t slot = slot_of_[index];
+            if (slot == 0) {
+                if (slots_used_ < 256) {
+                    slot_index_[size_t(slots_used_)] = index;
+                    slot = uint16_t(++slots_used_);
+                    slot_of_[index] = slot;
+                } else {
+                    fits = false;
+                    slot = 1;
+                }
+            }
+            dst[x] = uint8_t(slot - 1);
         }
     }
+    return fits;
 }
 
-void AtariSystem1::mix_motion_object_pixel(int x, int y, uint16_t mo) {
-    uint16_t& pf = pf_index_[size_t(y * kScreenWidth + x)];
+void AtariSystem1::update_video() {
+    framebuffer_stale_ = true;
+    // The motion objects are drawn once per band; a neighbour object follows
+    // the x position of the one before it, from the previous frame for the
+    // first, so each pass starts from where the frame did.
+    const uint32_t last_xpos = motion_objects_->last_xpos();
+    for (int attempt = 0; attempt < 2; attempt++) {
+        bool fits = true;
+        for (int y = 0; y < kScreenHeight; y += kBandLines) {
+            motion_objects_->set_last_xpos(last_xpos);
+            fits = compose_band(y, std::min(y + kBandLines, kScreenHeight)) && fits;
+        }
+        if (fits) break;
+        // More entries than slots: start the slots afresh for this frame.
+        slot_of_.fill(0);
+        slots_used_ = 0;
+    }
+    for (int i = 0; i < slots_used_; i++) slot_palette_[size_t(i)] = palette_colour(slot_index_[size_t(i)] & 0x3ff);
+}
+
+void AtariSystem1::mix_motion_object_pixel(uint16_t& pf, uint16_t mo) {
     if (mo & 0xf000) {
         // High priority: mix PF pen into palette 0x300 unless the MO pen is 1.
         if ((mo & 0x0f) != 1) {
@@ -1019,7 +1227,12 @@ void AtariSystem1::run_frame() {
             reschedule_int3(line_);
         }
         if (line_ == 239) {
-            update_video();
+            if (draw_enabled_) {
+                update_video();
+            } else {
+                // Not shown: only the motion objects' carried x position moves on.
+                motion_objects_->draw(0, 256, -1, [](int, int, bool, bool, int, int, int, int) {});
+            }
             vblank_ = 0;
             main_cpu_.set_irq(4, IrqLine::Assert);
         }

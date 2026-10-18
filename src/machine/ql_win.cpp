@@ -236,4 +236,6 @@ void install_ql_win_rom(uint8_t* dest) {
     std::memcpy(dest, kWinRom, sizeof(kWinRom));
 }
 
+size_t ql_win_rom_size() { return sizeof(kWinRom); }
+
 }  // namespace dsp

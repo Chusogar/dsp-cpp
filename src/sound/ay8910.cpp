@@ -8,6 +8,7 @@ namespace dsp {
 namespace {
 
 constexpr int kStep = 0x1000;
+static_assert(kStep == 1 << 12, "update() divides by kStep with a shift of 12");
 constexpr int kMaxOutput = 0x7fff;
 
 enum Reg {
@@ -45,6 +46,10 @@ const std::array<int32_t, 32> kVolTable = build_volume_table();
 }  // namespace
 
 AY8910::AY8910(uint32_t clock, float amplitude) : clock_(clock), amplitude_(amplitude) {
+    int exponent = 0;
+    const float fraction = std::frexp(amplitude, &exponent);  // amplitude = fraction * 2^exponent
+    amp_mantissa_ = int64_t(std::ldexp(fraction, 24));        // the 24 bits of a float, exactly
+    amp_exponent_ = exponent - 24;
     update_step_ = int32_t((int64_t(kStep) * kSampleRate * 8) / clock_);
     period_a_ = period_b_ = period_c_ = period_e_ = period_n_ = update_step_;
     reset();
@@ -332,10 +337,15 @@ int32_t AY8910::update() {
         }
     }
 
-    double mixed = (double(vol_a) * vol_a_ / kStep + double(vol_b) * vol_b_ / kStep +
-                    double(vol_c) * vol_c_ / kStep) *
-                   amplitude_;
-    return int32_t(mixed);
+    // (vol_a * vol_a_ + ...) / kStep * amplitude_, truncated like the double
+    // expression this replaces. The sum is below 2^27 and the mantissa below
+    // 2^24, so the product is exact (as it was in double): same result.
+    const int64_t sum = int64_t(vol_a) * vol_a_ + int64_t(vol_b) * vol_b_ + int64_t(vol_c) * vol_c_;
+    const int64_t scaled = sum * amp_mantissa_;
+    const int shift = amp_exponent_ - 12;  // kStep = 2^12
+    if (shift >= 0) return int32_t(scaled << shift);
+    const int64_t magnitude = (scaled < 0 ? -scaled : scaled) >> -shift;
+    return int32_t(scaled < 0 ? -magnitude : magnitude);
 }
 
 }  // namespace dsp
