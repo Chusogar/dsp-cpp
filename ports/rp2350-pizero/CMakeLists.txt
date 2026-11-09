@@ -103,6 +103,35 @@ target_link_libraries(dsp_pizero PRIVATE
   tinyusb_host
   tinyusb_pico_pio_usb
 )
+# The hottest code of some drivers in RAM instead of running from the flash
+# through its 16 KB cache (shared by both cores): their objects' .text and
+# .rodata go to .data (copied at boot). DSP_PICO_RAM_OBJECTS adds others.
+set(DSP_PICO_RAM_OBJECTS "" CACHE STRING "Object files (e.g. m6502.cpp.o) whose code runs from RAM")
+set(ram_objects ${DSP_PICO_RAM_OBJECTS})
+if("atari_lynx" IN_LIST DSP_PORT_DRIVERS)
+  list(APPEND ram_objects m6502.cpp.o atari_lynx.cpp.o lynx_mikey.cpp.o lynx_suzy.cpp.o)
+endif()
+list(REMOVE_DUPLICATES ram_objects)
+if(ram_objects)
+  file(READ ${PICO_SDK_PATH}/src/rp2_common/pico_crt0/rp2350/memmap_default.ld ld)
+  set(excl "")
+  foreach(o IN LISTS ram_objects)
+    string(APPEND excl " *${o}")
+  endforeach()
+  set(text_line "*(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:) .text*)")
+  set(rodata_line "*(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:) .rodata*)")
+  string(FIND "${ld}" "${text_line}" t)
+  string(FIND "${ld}" "${rodata_line}" r)
+  if(t LESS 0 OR r LESS 0)
+    message(FATAL_ERROR "memmap_default.ld of this SDK has no .text/.rodata exclusion line to extend")
+  endif()
+  string(REPLACE "${text_line}" "*(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:${excl}) .text*)" ld "${ld}")
+  string(REPLACE "${rodata_line}" "*(EXCLUDE_FILE(*libgcc.a: *libc.a:*lib_a-mem*.o *libm.a:${excl}) .rodata*)" ld "${ld}")
+  file(WRITE ${CMAKE_BINARY_DIR}/memmap_dsp.ld "${ld}")
+  pico_set_linker_script(dsp_pizero ${CMAKE_BINARY_DIR}/memmap_dsp.ld)
+  message(STATUS "dsp port: code in RAM: ${ram_objects}")
+endif()
+
 pico_enable_stdio_uart(dsp_pizero 1)
 pico_enable_stdio_usb(dsp_pizero 0)
 pico_set_program_name(dsp_pizero "dsp-cpp")

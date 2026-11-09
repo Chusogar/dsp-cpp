@@ -205,12 +205,14 @@ void LynxMikey::timer_write(int which, int offset, uint8_t value) {
 void LynxMikey::clock_audio(int channel) {
     Audio& audio = audio_[size_t(channel)];
     uint16_t shifter = uint16_t(audio.shifter & 0x0fff);
-    int taps = 0;
     const uint16_t taps_mask =
         uint16_t(audio.feedback | (uint16_t(audio.other & 0x0f) << 8));
-    for (int bit = 0; bit < 12; bit++) {
-        if ((taps_mask & (1 << bit)) && (shifter & (1 << bit))) taps ^= 1;
-    }
+    unsigned v = unsigned(taps_mask & shifter);  // (the parity of the taps)
+    v ^= v >> 8;
+    v ^= v >> 4;
+    v ^= v >> 2;
+    v ^= v >> 1;
+    const int taps = int(v & 1);
     const int out_bit = shifter & 1;
     shifter = uint16_t((shifter >> 1) | (taps ? 0x800 : 0));
     audio.shifter = shifter;
@@ -289,36 +291,68 @@ void LynxMikey::audio_write(int channel, int offset, uint8_t value) {
     }
 }
 
-void LynxMikey::tick(int cpu_cycles) {
+void LynxMikey::tick_timers(int cpu_cycles) {
     for (int which = 0; which < kTimerCount; which++) {
         Timer& timer = timers_[size_t(which)];
         if (!timer.count_en() || timer.linked() || timer.done()) continue;
-        const int scale = prescale(timer.clock_sel());
+        const int shift = prescale_shift(timer.clock_sel());
         timer.accum += cpu_cycles;
-        while (timer.accum >= scale) {
-            timer.accum -= scale;
-            if (timer.counter > 0) {
-                timer.counter -= 1;
-            } else {
-                expire_timer(which);
-            }
+        int ticks = timer.accum >> shift;
+        timer.accum -= ticks << shift;
+        if (which == 4 && ticks > timer.counter && timer.reload_en() && uart_idle()) {
+            // the UART's baud timer with the UART idle: its borrows only count
+            // to 8 (uart_clock has nothing to do), all of them at once
+            ticks -= timer.counter + 1;
+            const int period = timer.bakup + 1, borrows = 1 + ticks / period;
+            timer.counter = uint8_t(timer.bakup - ticks % period);
+            uart_div_ = (uart_div_ + borrows) & 7;
+            continue;
         }
-    }
-    for (int channel = 0; channel < kAudioCount; channel++) {
-        Audio& audio = audio_[size_t(channel)];
-        if (!audio.count_en() || audio.linked() || audio.done()) continue;
-        const int scale = prescale(audio.clock_sel());
-        audio.accum += cpu_cycles;
-        while (audio.accum >= scale) {
-            audio.accum -= scale;
-            if (audio.counter > 0) {
-                audio.counter -= 1;
-            } else {
-                clock_audio(channel);
+        while (ticks > 0) {
+            if (ticks <= timer.counter) {
+                timer.counter = uint8_t(timer.counter - ticks);
+                break;
             }
+            ticks -= timer.counter + 1;
+            timer.counter = 0;
+            expire_timer(which);  // (reloads the counter, or stops the timer)
+            if (timer.done()) break;
         }
     }
     uart_update_irq();
+}
+
+void LynxMikey::tick_audio(int cpu_cycles) {
+    for (int channel = 0; channel < kAudioCount; channel++) {
+        Audio& audio = audio_[size_t(channel)];
+        if (!audio.count_en() || audio.linked() || audio.done()) continue;
+        const int shift = prescale_shift(audio.clock_sel());
+        audio.accum += cpu_cycles;
+        int ticks = audio.accum >> shift;
+        audio.accum -= ticks << shift;
+        while (ticks > 0) {
+            if (ticks <= audio.counter) {
+                audio.counter = uint8_t(audio.counter - ticks);
+                break;
+            }
+            ticks -= audio.counter + 1;
+            audio.counter = 0;
+            clock_audio(channel);
+            if (audio.done()) break;
+        }
+    }
+}
+
+int LynxMikey::next_event() const {
+    int next = 4096;
+    for (int which = 0; which < kTimerCount; which++) {
+        const Timer& timer = timers_[size_t(which)];
+        if (!timer.count_en() || timer.linked() || timer.done()) continue;
+        if (which == 4 && timer.reload_en() && uart_idle()) continue;  // (nothing happens when it borrows)
+        const int n = ((timer.counter + 1) << prescale_shift(timer.clock_sel())) - timer.accum;
+        if (n < next) next = n;
+    }
+    return next > 0 ? next : 1;
 }
 
 uint32_t LynxMikey::pal_argb(int index) const {

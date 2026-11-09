@@ -57,12 +57,18 @@ public:
     bool bios_loaded() const { return bios_loaded_; }
 
     uint16_t debug_pc() const { return cpu_.pc(); }
+    // The CPU's busy-loop skipping (on by default): frames are the same
+    // without it, only slower (the tests check that).
+    void set_idle_skip(bool on) { cpu_.set_idle_skip(on); }
+    uint32_t debug_cycles_skipped() const { return cpu_.cycles_skipped(); }
     uint8_t debug_iodir() const { return mikey_.iodir(); }
 
 private:
     uint8_t read_byte(uint16_t address);
     void write_byte(uint16_t address, uint8_t value);
-    void on_cpu_cycles(int cycles);
+    void catch_up();
+    void mk_sync();
+    void map_pages();
     void present_frame();
     uint8_t cart_read();
     void cart_strobe(uint8_t sysctl, uint8_t iodat);
@@ -88,7 +94,14 @@ private:
     uint8_t last_sysctl_ = 0;
     uint8_t mapctl_ = 0;
 
-    uint64_t audio_accumulator_ = 0;
+    // The CPU runs in slices up to the next Mikey timer due (or Suzy done),
+    // with no call per instruction; catch_up() brings Mikey, Suzy and the
+    // sound up to the CPU after each slice and before any access to them.
+    uint32_t clock_mark_ = 0;      // the CPU's cycles_run() caught up to
+    int mk_pending_ = 0;           // cycles Mikey's timers have not had yet
+    int mk_next_ = 1;              // ... and when the next one is due
+    int frame_debt_ = 0;           // cycles the last frame ran past its end
+    uint32_t audio_acc32_ = 0;
     std::vector<int16_t> audio_;
 };
 

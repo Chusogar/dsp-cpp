@@ -1093,6 +1093,39 @@ void test_atari_lynx_bars() {
           "the Lynx LCD is 160x102");
 }
 
+// Busy loops skipped (M6502 idle skip): the same pictures and sound as
+// running every pass, and the bars cart's final JMP-to-itself skipped.
+void test_atari_lynx_idle_skip() {
+    const std::vector<uint8_t> image = make_lynx_bars_cart();
+    namespace fs = std::filesystem;
+    const fs::path dir = "/tmp/dsp-lynx-test-bars";
+    fs::create_directories(dir);
+    const fs::path path = dir / "bars.lnx";
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(image.data()), std::streamsize(image.size()));
+    }
+    dsp::AtariLynx skip, every;
+    every.set_idle_skip(false);
+    std::string error;
+    check(skip.init(path.string(), &error) && every.init(path.string(), &error), "the Lynx bars cart loads twice");
+    bool same = true;
+    std::vector<int16_t> a, b;
+    for (int frame = 0; frame < 30; frame++) {
+        skip.run_frame();
+        every.run_frame();
+        a.clear();
+        b.clear();
+        skip.drain_audio(a);
+        every.drain_audio(b);
+        same = same && a == b &&
+               std::memcmp(skip.framebuffer(), every.framebuffer(), 160 * 102 * sizeof(uint32_t)) == 0;
+    }
+    check(same, "the Lynx gives the same frames and sound with busy loops skipped");
+    check(skip.debug_cycles_skipped() > 100000 && every.debug_cycles_skipped() == 0,
+          "the Lynx skips the bars cart's busy loop");
+}
+
 void test_atari_lynx_bios() {
     dsp::AtariLynx lynx;
     std::string error;
@@ -11509,6 +11542,7 @@ int main() {
     test_lynx_suzy_math();
     test_lynx_suzy_blit();
     test_atari_lynx_bars();
+    test_atari_lynx_idle_skip();
     test_atari_lynx_bios();
     test_lynx_comlynx_loopback();
     test_lynx_california_games_if_present();

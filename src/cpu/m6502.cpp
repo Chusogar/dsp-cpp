@@ -255,17 +255,106 @@ void M6502::branch(bool condition, uint8_t offset) {
     if (!condition) return;
     const uint16_t target = uint16_t(pc_ + int8_t(offset));
     extra_cycles_ += ((target ^ pc_) & 0xff00) != 0 ? 2 : 1;
+    if (target < pc_ && idle_skip_) spin_hit_ = true;
     pc_ = target;
+}
+
+// Busy loops, fast-forwarded exactly (set_idle_skip), at the jumps back:
+// - When one lands on the same address twice with the registers and flags
+//   the same and memory the same (every byte written in between back to what
+//   it was, no access through the handlers: direct pages only, which nothing
+//   else changes while the CPU runs), every pass from there on is that same
+//   pass until an interrupt: the passes left in this run are counted as run
+//   without running them. A pass takes the cycles between the two landings.
+//   (Waiting for a flag the interrupt sets, through subroutines or not.)
+// - DEX / DEY ; BNE back to it: the count runs down by the passes that fit.
+// Returns the cycles skipped.
+int M6502::spin(int budget) {
+    const uint16_t pc = pc_;
+    SpinSlot& s = spin_[size_t((pc ^ (pc >> 3)) & 3)];
+    if (s.pc != pc) {  // a first landing here: only noted
+        s.pc = pc;
+        s.valid = false;
+        s.misses = s.wait = 0;
+        return 0;
+    }
+    if (s.wait) {  // a loop that kept changing: looked at again later
+        s.wait--;
+        return 0;
+    }
+    if (nmi_request_ != IrqLine::Clear || (irq_request_ != IrqLine::Clear && !p.irq_disable)) return 0;
+    const uint8_t* code = pages_ ? pages_->read[pc >> 8] : nullptr;
+    if (code && (pc & 0xff) < 0xfd && code[(pc & 0xff) + 1] == 0xd0 && code[(pc & 0xff) + 2] == 0xfd) {
+        const uint8_t op = code[pc & 0xff];
+        uint8_t* const r = op == 0xca ? &x : op == 0x88 ? &y : nullptr;
+        // (a pass is 5 cycles: 2 + 3, no page crossed: pc & 0xff < 0xfd)
+        if (r && *r > 1 && budget > 6) {
+            uint32_t n = uint32_t(budget - 1) / 5;
+            if (n > uint32_t(*r - 1)) n = uint32_t(*r - 1);
+            *r = uint8_t(*r - n);
+            p.z = false;
+            p.n = (*r & 0x80) != 0;
+            return int(n * 5);
+        }
+        return 0;
+    }
+    const int cap = int(kLog);
+    const uint32_t regs = uint32_t(a) | uint32_t(x) << 8 | uint32_t(y) << 16 | uint32_t(sp) << 24;
+    const uint8_t f = get_flags();
+    if (s.valid && s.regs == regs && s.flags == f && s.io == io_count_ && log_n_ <= cap) {
+        // the bytes written since: each back to its value then (its first entry's old value)
+        bool same = true;
+        for (int i = s.log; i < log_n_ && same; i++) {
+            bool first = true;
+            for (int j = s.log; j < i && first; j++) first = log_[size_t(j)].at != log_[size_t(i)].at;
+            if (first) same = *log_[size_t(i)].at == log_[size_t(i)].old;
+        }
+        const uint32_t cost = cycles_run_ - s.clock;
+        if (same && cost > 0 && budget > 1 && cost < uint32_t(budget)) {
+            const uint32_t n = uint32_t(budget - 1) / cost;
+            const int skip = int(n * cost);
+            s.clock = cycles_run_ + uint32_t(skip);
+            s.log = log_n_;
+            s.misses = 0;
+            return skip;
+        }
+    }
+    if (s.valid && ++s.misses >= 8) {  // a counting loop, say: not every pass
+        s.misses = 0;
+        s.wait = 255;
+    }
+    if (log_n_ > cap - 16) {  // the log nearly full: from scratch
+        log_n_ = 0;
+        for (auto& o : spin_) o.valid = false;
+    }
+    s.valid = true;
+    s.log = log_n_;
+    s.io = io_count_;
+    s.regs = regs;
+    s.flags = f;
+    s.clock = cycles_run_;
+    return 0;
 }
 
 int M6502::run(int cycles) {
     int executed = 0;
+    for (auto& o : spin_) o.valid = false;  // (memory may have changed between runs)
+    log_n_ = 0;
+    // (the model's tables, picked once a run: the model does not change in one)
+    const uint8_t* const modes = cmos_ ? kModeCmos : kMode;
+    const uint8_t* const cycle_table = cmos_ ? kCyclesCmos : kCycles;
     while (executed < cycles) {
         extra_cycles_ = 0;
         if (halted_) {
+            if (!cycle_handler_) {  // nobody to tell: the rest of the run at once
+                cycles_run_ += uint32_t(cycles - executed);
+                executed = cycles;
+                break;
+            }
             const int step = std::min(cycles - executed, 8);
             executed += step;
-            if (cycle_handler_) cycle_handler_(step);
+            cycles_run_ += uint32_t(step);
+            cycle_handler_(step);
             continue;
         }
         if (!after_ei_) {
@@ -276,8 +365,6 @@ int M6502::run(int cycles) {
 
         // Opcode fetch (SYNC high): a driver hook may substitute the byte.
         const uint8_t instruction = opcode_read_ ? opcode_read_(pc_++) : fetch();
-        const uint8_t* const modes = cmos_ ? kModeCmos : kMode;
-        const uint8_t* const cycle_table = cmos_ ? kCyclesCmos : kCycles;
         uint8_t offset = 0;
         switch (modes[instruction]) {
             case 0x0:  // implicit
@@ -485,6 +572,7 @@ int M6502::run(int cycles) {
                 push(a);
                 break;
             case 0x4c:  // jmp
+                if (address_ < pc_ && idle_skip_) spin_hit_ = true;
                 pc_ = address_;
                 break;
             case 0x50:  // bvc
@@ -831,11 +919,23 @@ int M6502::run(int cycles) {
 
         const int elapsed = cycle_table[instruction] + extra_cycles_;
         executed += elapsed;
+        cycles_run_ += uint32_t(elapsed);
         if (cycle_handler_) cycle_handler_(elapsed);
         if (stolen_cycles_ != 0) {
             executed += stolen_cycles_;
+            cycles_run_ += uint32_t(stolen_cycles_);
             if (cycle_handler_) cycle_handler_(stolen_cycles_);
             stolen_cycles_ = 0;
+        }
+        if (spin_hit_) {
+            spin_hit_ = false;
+            const int skip = spin(cycles - executed);
+            if (skip) {
+                executed += skip;
+                cycles_run_ += uint32_t(skip);
+                skipped_ += uint32_t(skip);
+                if (cycle_handler_) cycle_handler_(skip);
+            }
         }
     }
     return executed;

@@ -64,6 +64,16 @@ public:
     void steal_cycles(int cycles);
 
     uint32_t clock() const { return clock_; }
+    // Cycles run, all told (wraps): a machine that runs the CPU in slices
+    // without a cycle handler catches up with it from this.
+    uint32_t cycles_run() const { return cycles_run_; }
+    // Busy loops fast-forwarded exactly (see M6502::spin), for a machine
+    // whose RAM is all direct pages (set_direct_page) and nothing else
+    // writes while the CPU runs: when a jump back lands twice on the same
+    // place with the same registers and memory, every pass is that same pass
+    // until an interrupt. Off by default.
+    void set_idle_skip(bool on) { idle_skip_ = on; }
+    uint32_t cycles_skipped() const { return skipped_; }
     uint16_t pc() const { return pc_; }
     void set_pc(uint16_t value) { pc_ = value; }
 
@@ -74,16 +84,46 @@ private:
     uint8_t read(uint16_t address) {
         if (pages_)
             if (const uint8_t* page = pages_->read[address >> 8]) return page[address & 0xff];
+        io_count_++;
         return read_(address);
     }
     void write(uint16_t address, uint8_t value) {
         if (pages_)
             if (uint8_t* page = pages_->write[address >> 8]) {
-                page[address & 0xff] = value;
+                uint8_t* const at = &page[address & 0xff];
+                if (idle_skip_ && *at != value) log_write(at);
+                *at = value;
                 return;
             }
+        io_count_++;
         write_(address, value);
     }
+    // Idle skip: the direct bytes written since a landing was noted, with
+    // their values then (only those that changed), and the accesses through
+    // the handlers (anything could happen there).
+    void log_write(uint8_t* at) {
+        if (log_n_ < int(kLog)) log_[size_t(log_n_)] = {at, *at};
+        log_n_++;
+    }
+    int spin(int budget);
+    static constexpr size_t kLog = 48;
+    struct LogEntry { uint8_t* at; uint8_t old; };
+    struct SpinSlot {
+        uint16_t pc = 0;
+        bool valid = false;
+        uint8_t misses = 0, wait = 0;
+        uint32_t regs = 0, clock = 0, io = 0;
+        uint8_t flags = 0;
+        int log = 0;
+    };
+    bool idle_skip_ = false;
+    bool spin_hit_ = false;
+    uint32_t cycles_run_ = 0;
+    uint32_t skipped_ = 0;
+    uint32_t io_count_ = 0;
+    int log_n_ = 0;
+    std::array<LogEntry, kLog> log_{};
+    std::array<SpinSlot, 4> spin_{};
     struct Pages {
         std::array<const uint8_t*, 256> read{};
         std::array<uint8_t*, 256> write{};

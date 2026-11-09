@@ -125,7 +125,13 @@ AtariLynx::AtariLynx() : cpu_(kCpuClock) {
     cpu_.set_cmos(true);
     cpu_.set_memory_handlers([this](uint16_t a) { return read_byte(a); },
                              [this](uint16_t a, uint8_t v) { write_byte(a, v); });
-    cpu_.set_cycle_handler([this](int cycles) { on_cpu_cycles(cycles); });
+    // RAM as the CPU's own pages below $FC00 (map_pages() for the rest), no
+    // cycle handler (catch_up() after each slice), busy loops skipped
+    for (int page = 0; page < 0xfc; page++) {
+        cpu_.set_direct_page(uint8_t(page), ram_.data() + page * 0x100, ram_.data() + page * 0x100);
+    }
+    map_pages();
+    cpu_.set_idle_skip(true);
     suzy_.set_ram(ram_.data());
     suzy_.set_cart0([this]() { return cart_read(); });
     mikey_.set_irq_callback([this](bool asserted) {
@@ -285,6 +291,13 @@ bool AtariLynx::load_media(const std::string& path, std::string* error) {
         suzy_.reset();
         mikey_.reset();
         mapctl_ = 0x0c;
+        map_pages();
+        mk_pending_ = 0;
+        mk_next_ = 1;
+        audio_acc32_ = 0;
+        clock_mark_ = cpu_.cycles_run();
+        frame_debt_ = 0;
+        cpu_.set_halted(false);
         const size_t copy = std::min(size_t(length), data.size() - 10);
         for (size_t i = 0; i < copy; i++) ram_[(start + i) & 0xffff] = data[10 + i];
         ram_[0xfffc] = uint8_t(start);
@@ -306,10 +319,15 @@ void AtariLynx::reset() {
     suzy_.reset();
     mikey_.reset();
     mapctl_ = 0;
+    map_pages();
     cart_block_ = 0;
     cart_counter_ = 0;
     last_sysctl_ = 0;
-    audio_accumulator_ = 0;
+    mk_pending_ = 0;
+    mk_next_ = 1;
+    audio_acc32_ = 0;
+    clock_mark_ = cpu_.cycles_run();
+    frame_debt_ = 0;
     audio_.clear();
     framebuffer_.fill(0xff000000);
     cpu_.set_halted(false);
@@ -355,9 +373,12 @@ uint8_t AtariLynx::read_byte(uint16_t address) {
         if (address <= 0xfff7 && rom_on) return boot_rom_[address - 0xfe00];
     }
     if (address >= 0xfc00 && address <= 0xfcff && (mapctl_ & 0x01) == 0) {
+        catch_up();
         return suzy_.read(uint8_t(address));
     }
     if (address >= 0xfd00 && address <= 0xfdff && (mapctl_ & 0x02) == 0) {
+        catch_up();
+        mk_sync();
         return mikey_.read(uint8_t(address));
     }
     return ram_[address];
@@ -366,15 +387,20 @@ uint8_t AtariLynx::read_byte(uint16_t address) {
 void AtariLynx::write_byte(uint16_t address, uint8_t value) {
     if (address == 0xfff9) {
         mapctl_ = value;
+        map_pages();
         return;
     }
     if (address >= 0xfc00 && address <= 0xfcff && (mapctl_ & 0x01) == 0) {
+        catch_up();
         suzy_.write(uint8_t(address), value);
         return;
     }
     if (address >= 0xfd00 && address <= 0xfdff && (mapctl_ & 0x02) == 0) {
+        catch_up();
+        mk_sync();
         mikey_.write(uint8_t(address), value);
-        if (address == 0xfd91 && suzy_.busy()) cpu_.set_halted(true);
+        mk_next_ = mikey_.next_event();
+        if (address == 0xfd91 && suzy_.busy()) cpu_.set_halted(true);  // CPUSLEEP while Suzy draws
         return;
     }
     if ((address & 0xfffe) == 0xfff8) {
@@ -384,15 +410,50 @@ void AtariLynx::write_byte(uint16_t address, uint8_t value) {
     ram_[address] = value;
 }
 
-void AtariLynx::on_cpu_cycles(int cycles) {
-    mikey_.tick(cycles);
-    suzy_.tick(cycles);
-    if (cpu_.halted() && !suzy_.busy()) cpu_.set_halted(false);
-    audio_accumulator_ += uint64_t(cycles) * uint32_t(LynxMikey::kSampleRate);
-    while (audio_accumulator_ >= kCpuClock) {
-        audio_accumulator_ -= kCpuClock;
+// The CPU's direct pages above $FC00 as MAPCTL has them: Suzy's and Mikey's
+// pages when they are RAM, and the boot ROM's first page (where it runs)
+// read straight; $FF00-$FFFF (vectors, MAPCTL) always through the handlers.
+void AtariLynx::map_pages() {
+    for (int i = 0; i < 2; i++) {
+        uint8_t* const ram = ram_.data() + (0xfc + i) * 0x100;
+        const bool is_ram = ((mapctl_ >> i) & 1) != 0;
+        cpu_.set_direct_page(uint8_t(0xfc + i), is_ram ? ram : nullptr, is_ram ? ram : nullptr);
+    }
+    cpu_.set_direct_page(0xfe, (mapctl_ & 0x04) ? ram_.data() + 0xfe00 : boot_rom_.data(), ram_.data() + 0xfe00);
+}
+
+void AtariLynx::mk_sync() {
+    if (mk_pending_) mikey_.tick_timers(mk_pending_);
+    mk_pending_ = 0;
+    mk_next_ = mikey_.next_event();
+}
+
+// Mikey's timers, Suzy and the sound for the cycles the CPU ran since the
+// last time: after each slice of CPU (up to the next timer due) and before
+// any access to Mikey or Suzy. No call per instruction.
+void AtariLynx::catch_up() {
+    const int cycles = int(cpu_.cycles_run() - clock_mark_);
+    if (cycles <= 0) return;
+    clock_mark_ = cpu_.cycles_run();
+    // the sound channels up to each sample of these cycles, then the sample
+    const uint32_t rate = uint32_t(LynxMikey::kSampleRate);
+    int left = cycles;
+    while (left > 0) {
+        const int need = int((kCpuClock - audio_acc32_ + rate - 1) / rate);
+        if (need > left) {
+            audio_acc32_ += uint32_t(left) * rate;
+            mikey_.tick_audio(left);
+            break;
+        }
+        audio_acc32_ += uint32_t(need) * rate - kCpuClock;
+        mikey_.tick_audio(need);
+        left -= need;
         audio_.push_back(mikey_.mix_sample());
     }
+    mk_pending_ += cycles;
+    if (mk_pending_ >= mk_next_) mk_sync();
+    suzy_.tick(cycles);
+    if (cpu_.halted() && !suzy_.busy()) cpu_.set_halted(false);
 }
 
 void AtariLynx::present_frame() {
@@ -400,6 +461,8 @@ void AtariLynx::present_frame() {
         framebuffer_.fill(0xff000000);
         return;
     }
+    uint32_t pal[16];  // (the palette once a frame, not once a pixel)
+    for (int i = 0; i < 16; i++) pal[i] = mikey_.pal_argb(i);
     uint16_t address = uint16_t(mikey_.display_pointer() & 0xfffc);
     if (mikey_.flip_screen()) {
         for (int y = 0; y < kScreenHeight; y++) {
@@ -407,8 +470,8 @@ void AtariLynx::present_frame() {
             uint16_t line = uint16_t(address + y * 80);
             for (int x = kScreenWidth - 2; x >= 0; line++, x -= 2) {
                 const uint8_t byte = ram_[line];
-                framebuffer_[size_t(dest + x + 1)] = mikey_.pal_argb(byte >> 4);
-                framebuffer_[size_t(dest + x + 0)] = mikey_.pal_argb(byte & 0x0f);
+                framebuffer_[size_t(dest + x + 1)] = pal[byte >> 4];
+                framebuffer_[size_t(dest + x + 0)] = pal[byte & 0x0f];
             }
         }
     } else {
@@ -416,15 +479,26 @@ void AtariLynx::present_frame() {
             const int dest = y * kScreenWidth;
             for (int x = 0; x < kScreenWidth; address++, x += 2) {
                 const uint8_t byte = ram_[address];
-                framebuffer_[size_t(dest + x + 0)] = mikey_.pal_argb(byte >> 4);
-                framebuffer_[size_t(dest + x + 1)] = mikey_.pal_argb(byte & 0x0f);
+                framebuffer_[size_t(dest + x + 0)] = pal[byte >> 4];
+                framebuffer_[size_t(dest + x + 1)] = pal[byte & 0x0f];
             }
         }
     }
 }
 
 void AtariLynx::run_frame() {
-    for (int line = 0; line < kScanlines; line++) cpu_.run(kCyclesPerLine);
+    // the CPU in slices that end where a timer is due (or Suzy is done)
+    const uint32_t end = clock_mark_ + uint32_t(kScanlines * kCyclesPerLine - frame_debt_);
+    while (int32_t(end - cpu_.cycles_run()) > 0) {
+        int slice = int(end - cpu_.cycles_run());
+        const int due = mk_next_ - mk_pending_;
+        if (due < slice) slice = due;
+        if (suzy_.busy() && suzy_.remaining() < slice) slice = suzy_.remaining();
+        if (slice < 1) slice = 1;
+        cpu_.run(slice);
+        catch_up();
+    }
+    frame_debt_ = int(cpu_.cycles_run() - end);  // (the last instruction ran past the frame)
     present_frame();
 }
 
