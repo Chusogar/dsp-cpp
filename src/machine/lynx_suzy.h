@@ -36,6 +36,7 @@ public:
     // Sprite engine remaining cycles (CPU is halted via Mikey CPUSLEEP).
     void tick(int cycles);
     bool busy() const { return busy_; }
+    int remaining() const { return remaining_; }  // cycles until the sprites are done
 
     void set_joystick(uint8_t joy) { joystick_ = joy; }
     void set_switches(uint8_t value) { switches_ = value; }
@@ -57,6 +58,8 @@ private:
     void blit_packed(int16_t y, int xdir, int bpp, uint8_t mask);
     void blit_rle(int16_t y, int xdir, int bpp, uint8_t mask);
     void plot(int16_t x, int16_t y, uint8_t color);
+    void put_run(int16_t& xi, int xdir, int16_t y, uint8_t color, uint16_t& width_acc, int reps);
+    void put_pixel(int16_t& xi, int xdir, int16_t y, uint8_t color, uint16_t& width_acc);
 
     uint8_t* ram_ = nullptr;
     std::array<uint8_t, 0x100> data_{};
@@ -98,6 +101,8 @@ private:
     uint16_t scb_next_ = 0;
     bool sprite_collide_ = false;
     bool everon_ = false;
+    bool run_plain_ = false;       // this sprite's mode only writes the pen (put_run)
+    bool run_background_ = false;  // ... and pen 0 too
     uint8_t fred_ = 0;
     int memory_accesses_ = 0;
     bool no_collide_ = false;

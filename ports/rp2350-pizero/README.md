@@ -43,6 +43,10 @@ spectrum, c64. Other choices and an embedded game:
 ./build.sh -- -DDSP_AUDIO_PIN=19        # extra CMake options after --
 ```
 
+With the `atari_lynx` driver its CPU, Mikey and Suzy run from RAM instead
+of the flash (whose 16 KB cache both cores share); other objects can be
+added with `-- -DDSP_PICO_RAM_OBJECTS="name.cpp.o;..."`.
+
 An SDK you already have can be used with `PICO_SDK_PATH=/path/to/pico-sdk`
 (2.1.1 or later, with the TinyUSB submodule); the other dependencies go to
 `deps/` (or `$DSP_PICO_DEPS`). By hand:

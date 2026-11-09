@@ -32,8 +32,21 @@ public:
     uint8_t read(uint8_t offset);
     void write(uint8_t offset, uint8_t value);
 
-    // Advance by 65C02 cycles (4 Mikey clocks each at 16 MHz).
-    void tick(int cpu_cycles);
+    // Advance by 65C02 cycles (4 Mikey clocks each at 16 MHz): the timers
+    // (tick_timers) and the free-running sound channels (tick_audio).
+    void tick(int cpu_cycles) {
+        tick_timers(cpu_cycles);
+        tick_audio(cpu_cycles);
+    }
+    // The timers alone. A machine that runs the CPU in slices calls it up to
+    // next_event() at most, so that interrupts fall where they are due.
+    void tick_timers(int cpu_cycles);
+    // The free-running sound channels alone: they interrupt nobody, so they
+    // can be brought up to each sound sample instead of cutting the slices.
+    void tick_audio(int cpu_cycles);
+    // CPU cycles until the next timer underflows (at most 4096). The UART's
+    // baud timer counts only while the UART has something to do.
+    int next_event() const;
 
     bool irq_pending() const { return interrupt_ != 0; }
     uint8_t interrupt() const { return interrupt_; }
@@ -97,6 +110,11 @@ private:
     uint8_t audio_read(int channel, int offset) const;
     void audio_write(int channel, int offset, uint8_t value);
     static int prescale(int clock_sel);
+    // The prescalers are powers of two: 4 << clock_sel (7 taken as 0)
+    static int prescale_shift(int clock_sel) { return clock_sel <= 6 ? clock_sel + 2 : 2; }
+    bool uart_idle() const {
+        return uart_tx_countdown_ == kUartInactive && uart_rx_countdown_ == kUartInactive && !uart_send_break_;
+    }
     void uart_clock();
     void uart_loopback(int data);
     void uart_update_irq();

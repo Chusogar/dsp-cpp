@@ -1,5 +1,7 @@
 #include "machine/lynx_suzy.h"
 
+#include <cstring>
+
 #include <algorithm>
 
 namespace dsp {
@@ -277,6 +279,80 @@ void LynxSuzy::plot(int16_t x, int16_t y, uint8_t color) {
     }
 }
 
+// `reps` runs of a pen's pixels (as many as the width says each) from xi
+// on, at once; the modes that only write the pen (no collision buffer, no
+// xor) a byte at a time. The same pixels, in the same order, as one at a time.
+void LynxSuzy::put_run(int16_t& xi, int xdir, int16_t y, uint8_t color, uint16_t& width_acc, int reps) {
+    int n;
+    if (reps == 1 || width_ >= 0xff00) {
+        n = 0;
+        for (int i = 0; i < reps; i++) {  // (the 16-bit accumulator as it was, for the widest)
+            width_acc = uint16_t(width_acc + width_);
+            n += width_acc >> 8;
+            width_acc &= 0xff;
+        }
+    } else {
+        const int total = width_acc + reps * width_;
+        n = total >> 8;
+        width_acc = uint16_t(total & 0xff);
+    }
+    if (n == 0) return;
+    const int x0 = xi;
+    xi = int16_t(x0 + n * xdir);
+    int lo = xdir > 0 ? x0 : x0 - (n - 1);
+    int hi = xdir > 0 ? x0 + n - 1 : x0;
+    if (n > 0x8000) {  // (the wrap of the 16-bit position, as it was)
+        for (int i = 0, x = x0; i < n; i++, x = int16_t(x + xdir))
+            if (x >= 0 && x < kScreenWidth) plot(int16_t(x), y, color);
+        return;
+    }
+    if (lo < 0) lo = 0;
+    if (hi > kScreenWidth - 1) hi = kScreenWidth - 1;
+    if (lo > hi) return;
+    if (!run_plain_) {
+        for (int x = lo; x <= hi; x++) plot(int16_t(x), y, color);
+        return;
+    }
+    everon_ = true;
+    if (color == 0 && !run_background_) return;
+    memory_accesses_ += hi - lo + 1;
+    const uint16_t base = uint16_t(screen_ + y * 80);
+    int x = lo;
+    if (x & 1) {
+        ram_write_nibble(uint16_t(base + x / 2), color, false);
+        x++;
+    }
+    const uint8_t both = uint8_t((color << 4) | (color & 0x0f));
+    const int bytes = (hi + 1 - x) / 2;
+    if (bytes > 0) {
+        // (straight into RAM unless the row wraps past $FFFF or reaches $FFF8-9)
+        const unsigned first = uint16_t(base + x / 2);
+        if (ram_ && first + unsigned(bytes) <= 0xfff8) {
+            std::memset(ram_ + first, both, size_t(bytes));
+        } else {
+            for (int i = 0; i < bytes; i++) ram_write(uint16_t(first + i), both);
+        }
+        x += bytes * 2;
+    }
+    if (x == hi) ram_write_nibble(uint16_t(base + x / 2), color, true);
+}
+
+// One pen's pixel at width 1.0 (unscaled, as most sprites are) in a mode
+// that only writes the pen: what put_run does for it, without its work.
+inline void LynxSuzy::put_pixel(int16_t& xi, int xdir, int16_t y, uint8_t color, uint16_t& width_acc) {
+    if (width_ != 0x100 || !run_plain_) {
+        put_run(xi, xdir, y, color, width_acc, 1);
+        return;
+    }
+    const int x = xi;  // (width_acc + 0x100: one pixel, the fraction unchanged)
+    xi = int16_t(x + xdir);
+    if (unsigned(x) >= unsigned(kScreenWidth)) return;
+    everon_ = true;
+    if (color == 0 && !run_background_) return;
+    memory_accesses_ += 1;
+    ram_write_nibble(uint16_t(screen_ + y * 80 + x / 2), color, (x & 1) == 0);
+}
+
 void LynxSuzy::blit_packed(int16_t y, int xdir, int bpp, uint8_t mask) {
     const int next_line = ram_read(bitmap_);
     memory_accesses_ += 1;
@@ -291,11 +367,7 @@ void LynxSuzy::blit_packed(int16_t y, int xdir, int bpp, uint8_t mask) {
         while (bits > bpp) {
             const uint8_t color = color_[(buffer >> (bits - bpp)) & mask];
             bits -= bpp;
-            width_acc = uint16_t(width_acc + width_);
-            for (int i = 0; i < (width_acc >> 8); i++, xi = int16_t(xi + xdir)) {
-                if (xi >= 0 && xi < kScreenWidth) plot(xi, y, color);
-            }
-            width_acc &= 0xff;
+            put_pixel(xi, xdir, y, color, width_acc);
         }
     }
 }
@@ -330,11 +402,7 @@ void LynxSuzy::blit_rle(int16_t y, int xdir, int bpp, uint8_t mask) {
                 }
                 const uint8_t color = color_[(buffer >> (bits - bpp)) & mask];
                 bits -= bpp;
-                width_acc = uint16_t(width_acc + width_);
-                for (int i = 0; i < (width_acc >> 8); i++, xi = int16_t(xi + xdir)) {
-                    if (xi >= 0 && xi < kScreenWidth) plot(xi, y, color);
-                }
-                width_acc &= 0xff;
+                put_pixel(xi, xdir, y, color, width_acc);
             }
         } else {
             if (count == 0) return;
@@ -347,13 +415,7 @@ void LynxSuzy::blit_rle(int16_t y, int xdir, int bpp, uint8_t mask) {
             }
             const uint8_t color = color_[(buffer >> (bits - bpp)) & mask];
             bits -= bpp;
-            for (; count >= 0; count--) {
-                width_acc = uint16_t(width_acc + width_);
-                for (int i = 0; i < (width_acc >> 8); i++, xi = int16_t(xi + xdir)) {
-                    if (xi >= 0 && xi < kScreenWidth) plot(xi, y, color);
-                }
-                width_acc &= 0xff;
-            }
+            put_run(xi, xdir, y, color, width_acc, count + 1);  // (one pen, count + 1 times)
         }
     }
 }
@@ -388,6 +450,13 @@ void LynxSuzy::blit_lines() {
     if (spr_ctl0_ & 0x20) xdir = -xdir;  // HFLIP
     if (spr_ctl0_ & 0x10) ydir = -ydir;  // VFLIP
     height_acc_ = (ydir == 1) ? height_offset_ : 0;
+    {
+        const int mode = mode_ & 7;
+        const bool collide = sprite_collide_ && !no_collide_;
+        run_background_ = mode == kBackground || mode == kBackgroundNoColl;
+        run_plain_ = mode == kBackgroundNoColl || mode == kNoColl ||
+                     (!collide && (mode == kBackground || mode == kNormalSprite || mode == kShadow));
+    }
     for (int16_t y = int16_t(y_pos_ - yoff_);;) {
         const int offset = ram_read(bitmap_);
         memory_accesses_ += 1;
