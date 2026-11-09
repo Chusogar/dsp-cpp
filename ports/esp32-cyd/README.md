@@ -9,6 +9,9 @@ card layout, embedded games).
 
 > Compiles with the scripts below; **not yet tried on the board**.
 
+> Indiana Jones and the Temple of Doom, Road Runner and Gauntlet run on a
+> stock CYD as single-game firmware built from [`../lean/`](../lean/README.md).
+
 ## Memory: read this first
 
 The standard CYD has **no PSRAM**: about 300 KB of RAM in total, and the

@@ -1,0 +1,8 @@
+# ROMs and what is generated from them are never committed
+roms/
+main/drivers/arcades/*/rom_data.c
+build/
+dist/
+deps/
+sdkconfig
+sdkconfig.old
