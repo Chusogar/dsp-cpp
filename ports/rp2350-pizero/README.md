@@ -7,6 +7,9 @@ share (menu, SD card layout, embedded games, keys).
 
 > Compiles with the scripts below; **not yet tried on the board**.
 
+> Indiana Jones and the Temple of Doom, Road Runner and Gauntlet at full speed:
+> single-game firmware built from [`../lean/`](../lean/README.md).
+
 ## Hardware
 
 | Function | Pins | Notes |

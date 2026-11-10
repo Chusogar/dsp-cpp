@@ -11,6 +11,12 @@ the front end is different.
 | [`rp2350-pizero/`](rp2350-pizero/README.md) | Waveshare RP2350-PiZero (RP2350B, 8 MB PSRAM) | HDMI 640x480 (320x240 doubled), 65536 colours | USB keyboard, mouse or HID gamepad (PIO-USB port) | PWM on GPIO18 | micro-SD |
 | [`rp2040-pizero/`](rp2040-pizero/README.md) | Waveshare RP2040-PiZero (RP2040, no PSRAM; low-memory drivers only) | HDMI 640x480 (320x240 doubled), 256 colours from the driver's palette | USB keyboard or HID gamepad (native USB port) | PWM on GPIO4 | micro-SD |
 
+[`lean/`](lean/README.md) builds Indiana Jones and the Temple of Doom, Road
+Runner and Gauntlet **one game per firmware** for the ESP32 CYD (stock, no
+PSRAM) and the RP2350-PiZero, at full speed, with memory-lean C cores (ROMs in
+flash, the picture drawn by lines, Musashi, busy loops skipped) instead of the
+desktop drivers.
+
 > **Status:** all three firmwares compile with the scripts here (ESP32 core 2.0.17
 > + FabGL 1.0.9; Pico SDK 2.1.1 + PicoDVI), and the shared front end is run
 > and tested on the desktop (`common/host`). They have **not been tried on the
