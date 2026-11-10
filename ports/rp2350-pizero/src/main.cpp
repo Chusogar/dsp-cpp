@@ -3,6 +3,7 @@
 // the normal dsp code.
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include "audio_pwm.h"
 #include "hardware/clocks.h"
@@ -44,6 +45,26 @@ public:
             const uint16_t* xs = map_.xs.data();
             for (int x = 0; x < map_.dst_w; ++x) dst[x] = rgb565(src[xs[x]]);
         }
+    }
+
+    // A machine that composes its picture on request (Machine::pen_rows():
+    // the lean Atari machines): straight into the screen, a band at a time,
+    // with no frame buffer of the driver's.
+    bool present_pen_rows(const dsp::Machine::PenRows& rows, int width, int height, int display_width,
+                          int display_height) override {
+        if (rows.colors > int(sizeof lut_ / sizeof lut_[0])) return false;
+        if (band_.size() < 16 * size_t(width)) band_.assign(16 * size_t(width), 0);
+        if (map_.update(width, height, display_width, display_height, VIDEO_WIDTH, VIDEO_HEIGHT))
+            std::memset(video_framebuffer, 0, sizeof video_framebuffer);
+        for (int i = 0; i < rows.colors; ++i) lut_[i] = rgb565(rows.palette[i]);
+        dsp::port::PenRowCursor cursor(rows, width, height, band_.data());
+        const uint16_t* xs = map_.xs.data();
+        for (int y = 0; y < map_.dst_h; ++y) {
+            const uint16_t* src = cursor.row(map_.ys[size_t(y)]);
+            uint16_t* dst = &video_framebuffer[size_t(map_.dst_y + y) * VIDEO_WIDTH + size_t(map_.dst_x)];
+            for (int x = 0; x < map_.dst_w; ++x) dst[x] = lut_[src[xs[x]]];
+        }
+        return true;
     }
 
     void draw_rows(int y, int rows, const uint32_t* argb) override {
@@ -92,6 +113,8 @@ public:
 
 private:
     dsp::port::ScaleMap map_;
+    std::vector<uint16_t> band_;  // 16 rows of a pen_rows() picture
+    uint16_t lut_[0x400];
 };
 
 uint64_t g_main_stack[DSP_MAIN_STACK_BYTES / 8];

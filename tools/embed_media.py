@@ -119,7 +119,8 @@ def write_c(out, game, files, rom_arg, media_args, extra, entries=None):
             with open(path, "rb") as src:
                 data = src.read()
             f.write(f"/* {rel} ({len(data)} bytes) */\n")
-            f.write(f"static const unsigned char dsp_embed_{index}[{max(len(data), 1)}] = {{\n")
+            # (aligned: prepared ROM images are read in place as 32-bit words)
+            f.write(f"static const unsigned char dsp_embed_{index}[{max(len(data), 1)}] __attribute__((aligned(4))) = {{\n")
             if not data:
                 f.write("0\n")
             for start in range(0, len(data), BYTES_PER_LINE):

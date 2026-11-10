@@ -111,6 +111,15 @@ set(ram_objects ${DSP_PICO_RAM_OBJECTS})
 if("atari_lynx" IN_LIST DSP_PORT_DRIVERS)
   list(APPEND ram_objects m6502.cpp.o atari_lynx.cpp.o lynx_mikey.cpp.o lynx_suzy.cpp.o)
 endif()
+# The lean Atari machines (src/lean), as cMESYS places them: Musashi's core,
+# the machine (with its 6502) and the sound chips. The 68010's opcode table
+# (m68k_tables.c) stays in flash.
+if("gauntlet" IN_LIST DSP_PORT_DRIVERS)
+  list(APPEND ram_objects m68kcpu.c.o gauntlet_core.c.o pokey.c.o ym2151.c.o tms5220.c.o)
+endif()
+if("atari_system1_lean" IN_LIST DSP_PORT_DRIVERS)
+  list(APPEND ram_objects m68kcpu.c.o atarisy1_core.c.o pokey.c.o ym2151.c.o tms5220.c.o)
+endif()
 list(REMOVE_DUPLICATES ram_objects)
 if(ram_objects)
   file(READ ${PICO_SDK_PATH}/src/rp2_common/pico_crt0/rp2350/memmap_default.ld ld)

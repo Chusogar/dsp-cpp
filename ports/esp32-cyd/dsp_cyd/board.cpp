@@ -124,11 +124,36 @@ public:
                          int display_width, int display_height) override {
         if (job_busy_) return true;  // core 0 still on the previous frame
         if (present_task_ == nullptr) {
-            xTaskCreatePinnedToCore(present_task, "dsp-lcd", 3072, this, 2, &present_task_, 0);
+            xTaskCreatePinnedToCore(present_task, "dsp-lcd", 6144, this, 2, &present_task_, 0);
         }
         Job& j = job_;
         for (int i = 0; i < 256; ++i) j.lut[i] = cyd::to565be(palette[i]);
         j.pens = pens;
+        j.width = width;
+        j.height = height;
+        j.display_width = display_width;
+        j.display_height = display_height;
+        job_busy_ = true;
+        xTaskNotifyGive(present_task_);
+        return true;
+    }
+
+    // A machine that composes its picture on request (Machine::pen_rows():
+    // the lean Atari machines): core 0 composes it band by band and sends it
+    // while the emulation carries on on core 1, so there is no frame buffer
+    // at all (the boards without PSRAM).
+    bool present_pen_rows(const dsp::Machine::PenRows& rows, int width, int height, int display_width,
+                          int display_height) override {
+        if (rows.colors > int(sizeof job_.lut_rows / sizeof job_.lut_rows[0])) return false;
+        if (job_busy_) return true;  // core 0 still on the previous frame
+        if (pen_band_.size() < 16 * size_t(width)) pen_band_.assign(16 * size_t(width), 0);
+        if (present_task_ == nullptr) {
+            xTaskCreatePinnedToCore(present_task, "dsp-lcd", 6144, this, 2, &present_task_, 0);
+        }
+        Job& j = job_;
+        for (int i = 0; i < rows.colors; ++i) j.lut_rows[i] = cyd::to565be(rows.palette[i]);
+        j.pens = nullptr;
+        j.rows = rows;
         j.width = width;
         j.height = height;
         j.display_width = display_width;
@@ -273,9 +298,11 @@ private:
     bool touch_select_held_ = false;
 
     struct Job {
-        const uint8_t* pens = nullptr;
+        const uint8_t* pens = nullptr;          // 8-bit picture, or
+        dsp::Machine::PenRows rows;             // (pens == nullptr) rows composed here
         int width = 0, height = 0, display_width = 0, display_height = 0;
         uint16_t lut[256];
+        uint16_t lut_rows[0x400];
     };
 
     void wait_present() {
@@ -298,14 +325,23 @@ private:
         }
         cyd::lcd_window(map_.dst_x, map_.dst_y, map_.dst_x + map_.dst_w - 1, map_.dst_y + map_.dst_h - 1);
         const uint16_t* xs = map_.xs.data();
+        dsp::port::PenRowCursor cursor(j.rows, j.width, j.height, pen_band_.data());
         int band = 0;
         for (int y0 = 0; y0 < map_.dst_h; y0 += cyd::kBandRows) {
             const int rows = std::min(cyd::kBandRows, map_.dst_h - y0);
             uint16_t* out = cyd::lcd_band(band);
-            for (int r = 0; r < rows; ++r) {
-                const uint8_t* src = j.pens + size_t(map_.ys[size_t(y0 + r)]) * size_t(j.width);
-                uint16_t* dst = out + r * map_.dst_w;
-                for (int x = 0; x < map_.dst_w; ++x) dst[x] = j.lut[src[xs[x]]];
+            if (j.pens == nullptr) {
+                for (int r = 0; r < rows; ++r) {
+                    const uint16_t* src = cursor.row(map_.ys[size_t(y0 + r)]);
+                    uint16_t* dst = out + r * map_.dst_w;
+                    for (int x = 0; x < map_.dst_w; ++x) dst[x] = j.lut_rows[src[xs[x]]];
+                }
+            } else {
+                for (int r = 0; r < rows; ++r) {
+                    const uint8_t* src = j.pens + size_t(map_.ys[size_t(y0 + r)]) * size_t(j.width);
+                    uint16_t* dst = out + r * map_.dst_w;
+                    for (int x = 0; x < map_.dst_w; ++x) dst[x] = j.lut[src[xs[x]]];
+                }
             }
             cyd::lcd_push(out, rows * map_.dst_w);  // converts the next band meanwhile
             band ^= 1;
@@ -314,6 +350,7 @@ private:
     }
 
     Job job_;
+    std::vector<uint16_t> pen_band_;  // 16 rows of a pen_rows() picture
     volatile bool job_busy_ = false;
     TaskHandle_t present_task_ = nullptr;
     dsp::port::ScaleMap map_;

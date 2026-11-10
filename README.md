@@ -557,6 +557,32 @@ digital joystick (Indy, Peter) or the analog stick (Road Runner, through the
 ADC at `$f40000`). The Marble Madness trackball is not emulated yet (reads as
 `$FF`, matching the Pascal stub).
 
+#### Lean machines: Gauntlet, Indiana Jones and Road Runner
+
+Gauntlet (`--game gauntlet`), Indiana Jones and Road Runner run on the C
+machines of `src/lean` (from cMESYS, the same code its ESP32 CYD and RP2350
+builds run): Musashi for the 68010 (its names prefixed `lean_`, so it links
+beside `src/cpu/musashi`), the programs' busy loops and the sound 6502's
+polling loop fast-forwarded exactly, the sound chips' work done lazily, the
+tiles packed to 4bpp rows and the picture composed from the video RAM. The
+drivers (`gauntlet.cpp`, `atari_system1_lean.cpp`) load the ROM sets and hand
+the frames over; Marble Madness and Peter Pack Rat stay on `AtariSystem1`.
+
+On the boards the picture is composed band by band straight into the screen
+(`Machine::pen_rows()`), and the ROMs are read in place from flash when the set
+is *prepared* (the images the machine runs from, ~0.8 MB for Gauntlet, 1.1 MB
+for Indy, 1.4 MB for Road Runner), so a stock ESP32 CYD (no PSRAM) has room for
+them (~82 KB of heap):
+
+```bash
+cmake --build build --target lean_roms
+./build/lean_roms gauntlet roms/gauntlet.zip roms/gauntlet_lean
+./build/lean_roms indydoom roms/indytemp.zip roms/indytemp_lean   # atarisy1.zip beside it
+./build/lean_roms roadrunn roms/roadrunn.zip roms/roadrunn_lean
+# then embed the folder: -DDSP_PORT_DRIVERS="gauntlet;atari_system1_lean"
+#   -DDSP_EMBED_ENTRIES="Gauntlet=--game gauntlet roms/gauntlet_lean;..."
+```
+
 ### Atari System 2 (Paperboy, Super Sprint, APB, 720 Degrees)
 
 Atari System 2 replaces the 68000 with a 10 MHz DEC T-11 (`src/cpu/t11.cpp`, a

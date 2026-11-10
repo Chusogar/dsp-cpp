@@ -207,6 +207,25 @@
     "src/video/gfx.cpp"
    ]
   },
+  "atari_system1_lean": {
+   "group": "arcade",
+   "sources": [
+    "src/drivers/arcade/atari_system1_lean.cpp",
+    "src/lean/atari_mo.c",
+    "src/lean/atarisy1/atarisy1_core.c",
+    "src/lean/lean_bus.c",
+    "src/lean/m68k/m68k_tables.c",
+    "src/lean/m68k/m68kcpu.c",
+    "src/lean/m68k/m68kopac.c",
+    "src/lean/m68k/m68kopdm.c",
+    "src/lean/m68k/m68kopnz.c",
+    "src/lean/pokey.c",
+    "src/lean/slapstic.c",
+    "src/lean/tms5220.c",
+    "src/lean/via6522.c",
+    "src/lean/ym2151.c"
+   ]
+  },
   "atari_system2": {
    "group": "arcade",
    "sources": [
@@ -423,6 +442,17 @@
     "src/video/gfx.cpp"
    ]
   },
+  "chinagate": {
+   "group": "arcade",
+   "sources": [
+    "src/cpu/m6809.cpp",
+    "src/cpu/z80.cpp",
+    "src/drivers/arcade/chinagate.cpp",
+    "src/sound/okim6295.cpp",
+    "src/sound/ym2151.cpp",
+    "src/video/gfx.cpp"
+   ]
+  },
   "citycon": {
    "group": "arcade",
    "sources": [
@@ -503,17 +533,6 @@
     "src/video/gfx.cpp"
    ]
   },
-  "chinagate": {
-   "group": "arcade",
-   "sources": [
-    "src/cpu/m6809.cpp",
-    "src/cpu/z80.cpp",
-    "src/drivers/arcade/chinagate.cpp",
-    "src/sound/okim6295.cpp",
-    "src/sound/ym2151.cpp",
-    "src/video/gfx.cpp"
-   ]
-  },
   "doubledragon": {
    "group": "arcade",
    "sources": [
@@ -581,15 +600,19 @@
   "gauntlet": {
    "group": "arcade",
    "sources": [
-    "src/cpu/m6502.cpp",
-    "src/cpu/m68000.cpp",
     "src/drivers/arcade/gauntlet.cpp",
-    "src/machine/slapstic.cpp",
-    "src/sound/pokey.cpp",
-    "src/sound/tms5220.cpp",
-    "src/sound/ym2151.cpp",
-    "src/video/atari_mo.cpp",
-    "src/video/gfx.cpp"
+    "src/lean/atari_mo.c",
+    "src/lean/gauntlet/gauntlet_core.c",
+    "src/lean/lean_bus.c",
+    "src/lean/m68k/m68k_tables.c",
+    "src/lean/m68k/m68kcpu.c",
+    "src/lean/m68k/m68kopac.c",
+    "src/lean/m68k/m68kopdm.c",
+    "src/lean/m68k/m68kopnz.c",
+    "src/lean/pokey.c",
+    "src/lean/slapstic.c",
+    "src/lean/tms5220.c",
+    "src/lean/ym2151.c"
    ]
   },
   "gba": {
@@ -1217,8 +1240,7 @@
     "src/cpu/m6502.cpp",
     "src/drivers/arcade/tetris_atari_hw.cpp",
     "src/machine/slapstic.cpp",
-    "src/sound/pokey.cpp",
-    "src/video/gfx.cpp"
+    "src/sound/pokey.cpp"
    ]
   },
   "trackfld": {

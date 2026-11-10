@@ -35,6 +35,9 @@
 #if DSP_DRIVER_ATARI_SYSTEM1
 #include "drivers/arcade/atari_system1.h"
 #endif
+#if DSP_DRIVER_ATARI_SYSTEM1_LEAN
+#include "drivers/arcade/atari_system1_lean.h"
+#endif
 #if DSP_DRIVER_ATARI_SYSTEM2
 #include "drivers/arcade/atari_system2.h"
 #endif
@@ -430,6 +433,13 @@ std::unique_ptr<Machine> create_machine(DriverQuery& q) {
     if (q.is("junglek") || q.is("jungleking")) {
         return std::make_unique<dsp::TaitoSJ>(dsp::TaitoSJ::Variant::JungleKing);
     }
+#endif
+#if DSP_DRIVER_ATARI_SYSTEM1_LEAN
+	// Indiana Jones and Road Runner: the lean machine of src/lean/atarisy1.
+	if (q.is("indydoom")) return std::make_unique<dsp::AtariSystem1Lean>(dsp::AtariSystem1Lean::Game::Indy);
+	if (q.is("roadrunn") || q.is("roadrunner")) {
+		return std::make_unique<dsp::AtariSystem1Lean>(dsp::AtariSystem1Lean::Game::RoadRunner);
+	}
 #endif
 #if DSP_DRIVER_ATARI_SYSTEM1
 	if (q.is("indydoom")) return std::make_unique<dsp::AtariSystem1>(dsp::AtariSystem1::Game::Indy);

@@ -200,6 +200,7 @@ add_library(dsp_lib STATIC
   src/drivers/arcade/blockout.cpp
   src/drivers/arcade/mikie.cpp
   src/drivers/arcade/gauntlet.cpp
+  src/drivers/arcade/atari_system1_lean.cpp
   src/drivers/arcade/doubledragon.cpp
   src/drivers/arcade/taitosj.cpp
   src/drivers/arcade/mrdo.cpp
@@ -352,6 +353,29 @@ add_library(dsp_lib STATIC
   src/core/embedded_media.cpp
   src/core/fs_compat.cpp
 )
+# The lean C machines of the Atari 68010 games (src/lean, from cMESYS: the
+# same code the ESP32 and RP2350 boards run), used by the Gauntlet and Atari
+# System 1 drivers. Their Musashi has every global name prefixed (lean_), so it
+# links beside the one of src/cpu/musashi.
+set(DSP_LEAN_SOURCES
+  src/lean/m68k/m68kcpu.c
+  src/lean/m68k/m68kops.c
+  src/lean/m68k/m68kopac.c
+  src/lean/m68k/m68kopdm.c
+  src/lean/m68k/m68kopnz.c
+  src/lean/m68k/m68k_tables.c
+  src/lean/lean_bus.c
+  src/lean/ym2151.c
+  src/lean/pokey.c
+  src/lean/tms5220.c
+  src/lean/slapstic.c
+  src/lean/via6522.c
+  src/lean/atari_mo.c
+  src/lean/gauntlet/gauntlet_core.c
+  src/lean/atarisy1/atarisy1_core.c
+)
+target_sources(dsp_lib PRIVATE ${DSP_LEAN_SOURCES})
+set_source_files_properties(${DSP_LEAN_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
 target_include_directories(dsp_lib PUBLIC src)
 # File access through the small POSIX layer of src/core/fs_compat.cpp instead
 # of std::filesystem, as on the microcontroller ports (ports/): lets that code
@@ -603,6 +627,11 @@ add_executable(a2gs_run EXCLUDE_FROM_ALL
 target_include_directories(a2gs_run PRIVATE src)
 target_link_libraries(a2gs_run PRIVATE ZLIB::ZLIB)
 target_compile_options(a2gs_run PRIVATE -Wall -Wextra)
+
+# Prepared ROM sets of the lean Atari machines (src/lean) for the boards:
+# lean_roms gauntlet|indydoom|roadrunn ROMSET OUTDIR
+add_executable(lean_roms EXCLUDE_FROM_ALL tools/lean_roms.cpp)
+target_link_libraries(lean_roms PRIVATE dsp_lib)
 
 # Macintosh II headless runner (screenshots, scripted keys/mouse, instruction
 # trace): macii_run ROMSET FRAMES OUTPREFIX [scsi-disk-image]

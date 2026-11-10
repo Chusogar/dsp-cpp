@@ -160,6 +160,21 @@ public:
     };
     virtual Rgb1Rows rgb1_rows() const { return {}; }
     bool has_rgb1_rows() const { return rgb1_rows().fn != nullptr; }
+    // Optional, for boards short of RAM: the picture composed on request, `n`
+    // rows from row `y` (n <= 16), as entries of `palette` (`colors` ARGB
+    // entries, updated at the end of each frame), screen_width() each. A board
+    // that shows these needs no frame buffer of the driver's (framebuffer()
+    // is then never called); like Rgb1Rows, a plain function that only reads
+    // the machine's state, so it may run on the other core while run_frame()
+    // goes on with the next frame.
+    using PenRowsFn = void (*)(const void* source, int y, int n, uint16_t* pens);
+    struct PenRows {
+        PenRowsFn fn = nullptr;
+        const void* source = nullptr;
+        const uint32_t* palette = nullptr;
+        int colors = 0;
+    };
+    virtual PenRows pen_rows() const { return {}; }
     bool render_row_rgb1(int y, uint8_t* red, uint8_t* green, uint8_t* blue) const {
         const Rgb1Rows rows = rgb1_rows();
         if (rows.fn == nullptr) return false;

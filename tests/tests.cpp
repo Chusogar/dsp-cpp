@@ -35,6 +35,8 @@
 #include "video/snes_ppu.h"
 #include "video/nes_ppu.h"
 #include "drivers/arcade/atari_system1.h"
+#include "drivers/arcade/atari_system1_lean.h"
+#include "drivers/arcade/gauntlet.h"
 #include "drivers/arcade/atari_system2.h"
 #include "drivers/computers/apple2.h"
 #include "drivers/computers/apple2gs.h"
@@ -4547,6 +4549,107 @@ void test_paperboy_if_present() {
     std::vector<int16_t> audio;
     machine.drain_audio(audio);
     check(!audio.empty(), "Paperboy produces audio samples");
+}
+
+
+// The lean Atari machines (src/lean): busy loops fast-forwarded, sound made,
+// pen_rows() equal to the frame buffer, a prepared set (write_prepared) runs
+// the same, and Gauntlet and System 1 take turns in one program (one Musashi).
+template <class M>
+uint64_t lean_picture_hash(const M& machine) {
+    const uint32_t* fb = machine.framebuffer();
+    uint64_t h = 1469598103934665603ull;
+    for (int i = 0; i < machine.screen_width() * machine.screen_height(); i++) h = (h ^ fb[i]) * 1099511628211ull;
+    return h;
+}
+
+template <class M>
+void check_lean_machine(M& machine, const char* name) {
+    std::vector<int16_t> audio;
+    int peak = 0;
+    for (int i = 0; i < 900; i++) {
+        dsp::MachineInputs inputs{};
+        inputs.coin1 = i >= 600 && i < 606;  // (Gauntlet's attract mode is silent)
+        machine.set_inputs(inputs);
+        machine.run_frame();
+        audio.clear();
+        machine.drain_audio(audio);
+        for (int16_t v : audio) peak = std::max(peak, std::abs(int(v)));
+    }
+    std::string what = std::string(name) + ": the 68010 busy loop is fast-forwarded";
+    check(machine.debug_skipped_main() > 0, what.c_str());
+    what = std::string(name) + ": the 6502 polling loop is fast-forwarded";
+    check(machine.debug_skipped_sound() > 0, what.c_str());
+    what = std::string(name) + ": the attract mode or a coin makes sound";
+    check(peak > 500, what.c_str());
+    const uint32_t* fb = machine.framebuffer();
+    const dsp::Machine::PenRows rows = machine.pen_rows();
+    bool same = rows.fn != nullptr && rows.colors == 0x400;
+    std::vector<uint16_t> pens(16 * size_t(machine.screen_width()));
+    for (int y = 0; same && y < machine.screen_height(); y += 16) {
+        rows.fn(rows.source, y, 16, pens.data());
+        for (int i = 0; i < 16 * machine.screen_width(); i++)
+            if (rows.palette[pens[size_t(i)] & 0x3ff] != fb[size_t(y) * size_t(machine.screen_width()) + size_t(i)]) {
+                same = false;
+                break;
+            }
+    }
+    what = std::string(name) + ": pen_rows() draws the frame buffer's picture";
+    check(same, what.c_str());
+}
+
+void test_lean_atari_if_present() {
+    const char* gauntlet_zip = "/tmp/roms/gauntlet.zip";
+    const char* indy_zip = "/tmp/roms/indytemp.zip";
+    const char* road_zip = "/tmp/roms/roadrunn.zip";
+    std::string error;
+    if (std::ifstream(gauntlet_zip)) {
+        dsp::Gauntlet machine;
+        check(machine.init(gauntlet_zip, &error), "Gauntlet ROM set loads");
+        check_lean_machine(machine, "Gauntlet");
+        // A prepared set runs the same frames.
+        const std::string dir = "/tmp/dsp_lean_gauntlet";
+        std::filesystem::create_directories(dir);
+        check(machine.write_prepared(dir, &error), "Gauntlet writes its prepared images");
+        dsp::Gauntlet a, b;
+        check(a.init(gauntlet_zip, &error) && b.init(dir, &error), "Gauntlet loads from a prepared set");
+        for (int i = 0; i < 300; i++) {
+            a.run_frame();
+            b.run_frame();
+        }
+        check(lean_picture_hash(a) == lean_picture_hash(b), "Gauntlet from a prepared set draws the same");
+    }
+    const std::pair<const char*, dsp::AtariSystem1Lean::Game> sets[] = {
+        {indy_zip, dsp::AtariSystem1Lean::Game::Indy}, {road_zip, dsp::AtariSystem1Lean::Game::RoadRunner}};
+    for (const auto& set : sets) {
+        if (!std::ifstream(set.first)) continue;
+        dsp::AtariSystem1Lean machine(set.second);
+        check(machine.init(set.first, &error), "System 1 ROM set loads");
+        check_lean_machine(machine, machine.title());
+        const std::string dir = std::string("/tmp/dsp_lean_as1_") + (set.second == dsp::AtariSystem1Lean::Game::Indy ? "indy" : "rr");
+        std::filesystem::create_directories(dir);
+        check(machine.write_prepared(dir, &error), "System 1 writes its prepared images");
+        dsp::AtariSystem1Lean a(set.second), b(set.second);
+        check(a.init(set.first, &error) && b.init(dir, &error), "System 1 loads from a prepared set");
+        for (int i = 0; i < 300; i++) {
+            a.run_frame();
+            b.run_frame();
+        }
+        check(lean_picture_hash(a) == lean_picture_hash(b), "System 1 from a prepared set draws the same");
+    }
+    // Two machines in one program, run in turns: each installs its bus.
+    if (std::ifstream(gauntlet_zip) && std::ifstream(indy_zip)) {
+        dsp::Gauntlet g1, g2;
+        dsp::AtariSystem1Lean indy(dsp::AtariSystem1Lean::Game::Indy);
+        check(g1.init(gauntlet_zip, &error) && g2.init(gauntlet_zip, &error) && indy.init(indy_zip, &error),
+              "Gauntlet and Indy load together");
+        for (int i = 0; i < 300; i++) {
+            g1.run_frame();
+            if (i % 3 == 0) indy.run_frame();
+        }
+        for (int i = 0; i < 300; i++) g2.run_frame();
+        check(lean_picture_hash(g1) == lean_picture_hash(g2), "Gauntlet runs the same beside another 68010 machine");
+    }
 }
 
 void test_atari_system1_missing_roms() {
@@ -11645,6 +11748,7 @@ int main() {
     test_starwars_small_picture_if_present();
     test_polepos_driver();
     test_atari_system1_missing_roms();
+    test_lean_atari_if_present();
     test_t11_reset_and_moves();
     test_t11_addressing_and_bytes();
     test_t11_stack_and_interrupts();

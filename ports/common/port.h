@@ -69,6 +69,14 @@ public:
         (void)machine;
         return false;
     }
+    // A machine with Machine::pen_rows(): this frame's picture composed band
+    // by band straight into the board's screen (no frame buffer of the
+    // driver's). false: not supported, present() is used.
+    virtual bool present_pen_rows(const Machine::PenRows& rows, int width, int height, int display_width,
+                                  int display_height) {
+        (void)rows, (void)width, (void)height, (void)display_width, (void)display_height;
+        return false;
+    }
     // True: a short press of F12 during a game switches turbo on and off (no
     // frame pacing, sound off, one frame in 8 drawn); holding F12 still goes
     // back to the menu. Boards with a keyboard enable it.
@@ -136,6 +144,28 @@ struct ScaleMap {
                 int screen_w, int screen_h);
     // Forces the next update() to report a change (after a menu was drawn).
     void invalidate() { src_w = 0; }
+};
+
+// Reads a Machine::PenRows picture row by row, composing it 16 rows at a
+// time into `band` (16 * width entries) as the rows are asked for in order.
+class PenRowCursor {
+public:
+    PenRowCursor(const Machine::PenRows& rows, int width, int height, uint16_t* band)
+        : rows_(rows), width_(width), height_(height), band_(band) {}
+    const uint16_t* row(int y) {
+        if (y < first_ || y >= first_ + count_) {
+            first_ = y & ~15;
+            count_ = height_ - first_ < 16 ? height_ - first_ : 16;
+            rows_.fn(rows_.source, first_, count_, band_);
+        }
+        return band_ + size_t(y - first_) * size_t(width_);
+    }
+
+private:
+    Machine::PenRows rows_;
+    int width_, height_;
+    uint16_t* band_;
+    int first_ = 0, count_ = 0;
 };
 
 // Turns the host keyboard/gamepad into the machine's inputs, with the same

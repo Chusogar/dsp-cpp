@@ -198,6 +198,23 @@ public:
         present(argb.data(), width, height, dw, dh);
         return true;
     }
+    bool present_pen_rows(const dsp::Machine::PenRows& rows, int width, int height, int dw, int dh) override {
+        if (!board_like) return false;
+        release_menu();
+        g_heap_flash = true;  // (the board's own screen memory)
+        static std::vector<uint32_t> argb;
+        static std::vector<uint16_t> band;
+        argb.resize(size_t(width) * size_t(height));
+        band.resize(16 * size_t(width));
+        g_heap_flash = false;
+        dsp::port::PenRowCursor cursor(rows, width, height, band.data());
+        for (int y = 0; y < height; ++y) {
+            const uint16_t* pens = cursor.row(y);
+            for (int x = 0; x < width; ++x) argb[size_t(y) * size_t(width) + size_t(x)] = rows.palette[pens[x]];
+        }
+        present(argb.data(), width, height, dw, dh);
+        return true;
+    }
     bool present_indexed4(const uint8_t* pens, const uint32_t* palette, int width, int height, int dw,
                           int dh) override {
         if (!board_like) return false;

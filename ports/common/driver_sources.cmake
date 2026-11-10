@@ -150,6 +150,22 @@ set(DSP_PORT_SOURCES_atari_system1
   src/video/atari_mo.cpp
   src/video/gfx.cpp
 )
+set(DSP_PORT_SOURCES_atari_system1_lean
+  src/drivers/arcade/atari_system1_lean.cpp
+  src/lean/atari_mo.c
+  src/lean/atarisy1/atarisy1_core.c
+  src/lean/lean_bus.c
+  src/lean/m68k/m68k_tables.c
+  src/lean/m68k/m68kcpu.c
+  src/lean/m68k/m68kopac.c
+  src/lean/m68k/m68kopdm.c
+  src/lean/m68k/m68kopnz.c
+  src/lean/pokey.c
+  src/lean/slapstic.c
+  src/lean/tms5220.c
+  src/lean/via6522.c
+  src/lean/ym2151.c
+)
 set(DSP_PORT_SOURCES_atari_system2
   src/cpu/m6502.cpp
   src/cpu/t11.cpp
@@ -309,6 +325,14 @@ set(DSP_PORT_SOURCES_centipede
   src/sound/pokey.cpp
   src/video/gfx.cpp
 )
+set(DSP_PORT_SOURCES_chinagate
+  src/cpu/m6809.cpp
+  src/cpu/z80.cpp
+  src/drivers/arcade/chinagate.cpp
+  src/sound/okim6295.cpp
+  src/sound/ym2151.cpp
+  src/video/gfx.cpp
+)
 set(DSP_PORT_SOURCES_citycon
   src/cpu/m6809.cpp
   src/drivers/arcade/citycon.cpp
@@ -371,14 +395,6 @@ set(DSP_PORT_SOURCES_dec0
   src/video/deco_bac06.cpp
   src/video/gfx.cpp
 )
-set(DSP_PORT_SOURCES_chinagate
-  src/cpu/m6809.cpp
-  src/cpu/z80.cpp
-  src/drivers/arcade/chinagate.cpp
-  src/sound/okim6295.cpp
-  src/sound/ym2151.cpp
-  src/video/gfx.cpp
-)
 set(DSP_PORT_SOURCES_doubledragon
   src/cpu/hd63701.cpp
   src/cpu/m6809.cpp
@@ -426,15 +442,19 @@ set(DSP_PORT_SOURCES_gamegear
   src/sound/sn76496.cpp
 )
 set(DSP_PORT_SOURCES_gauntlet
-  src/cpu/m6502.cpp
-  src/cpu/m68000.cpp
   src/drivers/arcade/gauntlet.cpp
-  src/machine/slapstic.cpp
-  src/sound/pokey.cpp
-  src/sound/tms5220.cpp
-  src/sound/ym2151.cpp
-  src/video/atari_mo.cpp
-  src/video/gfx.cpp
+  src/lean/atari_mo.c
+  src/lean/gauntlet/gauntlet_core.c
+  src/lean/lean_bus.c
+  src/lean/m68k/m68k_tables.c
+  src/lean/m68k/m68kcpu.c
+  src/lean/m68k/m68kopac.c
+  src/lean/m68k/m68kopdm.c
+  src/lean/m68k/m68kopnz.c
+  src/lean/pokey.c
+  src/lean/slapstic.c
+  src/lean/tms5220.c
+  src/lean/ym2151.c
 )
 set(DSP_PORT_SOURCES_gba
   src/cpu/arm7tdmi.cpp
@@ -901,7 +921,6 @@ set(DSP_PORT_SOURCES_tetris_atari_hw
   src/drivers/arcade/tetris_atari_hw.cpp
   src/machine/slapstic.cpp
   src/sound/pokey.cpp
-  src/video/gfx.cpp
 )
 set(DSP_PORT_SOURCES_trackfld
   src/cpu/m6809.cpp

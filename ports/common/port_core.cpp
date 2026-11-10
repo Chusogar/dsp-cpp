@@ -612,15 +612,21 @@ int Port::play(const std::vector<std::string>& args, int max_frames, std::string
             skipped = 0;  // the board shows the rows as they are
         } else {
             skipped = 0;
+            const Machine::PenRows pen_rows = machine->pen_rows();
             const uint8_t* pens = machine->indexed_framebuffer();
             const bool packed = machine->indexed_bits() == 4;
-            if (pens == nullptr ||
-                !(packed ? hal_.present_indexed4(pens, machine->indexed_palette(), machine->screen_width(),
+            const bool shown =
+                (pen_rows.fn != nullptr &&
+                 hal_.present_pen_rows(pen_rows, machine->screen_width(), machine->screen_height(),
+                                       machine->display_width(), machine->display_height())) ||
+                (pens != nullptr &&
+                 (packed ? hal_.present_indexed4(pens, machine->indexed_palette(), machine->screen_width(),
                                                  machine->screen_height(), machine->display_width(),
                                                  machine->display_height())
                          : hal_.present_indexed(pens, machine->indexed_palette(), machine->screen_width(),
                                                 machine->screen_height(), machine->display_width(),
-                                                machine->display_height()))) {
+                                                machine->display_height())));
+            if (!shown) {
                 hal_.present(machine->framebuffer(), machine->screen_width(), machine->screen_height(),
                              machine->display_width(), machine->display_height());
             }
