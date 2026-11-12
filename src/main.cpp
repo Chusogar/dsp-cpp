@@ -348,6 +348,11 @@ static int run_dsp(int argc, char** argv) {
 #endif
 }
 
+#ifdef _WIN32
+// On Windows SDL2main supplies WinMain and calls SDL_main: SDL.h renames main.
+#include <SDL.h>
+#endif
+
 int main(int argc, char** argv) { return run_dsp(argc, argv); }
 
 #ifdef __EMSCRIPTEN__
